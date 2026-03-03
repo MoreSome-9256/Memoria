@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter analyze:*)",
+      "Bash(flutter run:*)",
+      "Bash(flutter pub get:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(flutter --version:*)",
+      "WebSearch",
+      "Bash(cat:*)",
+      "Bash(flutter pub run build_runner:*)"
+    ]
+  }
+}

@@ -50,47 +50,68 @@ class StoryService {
       final sortedPhotos = List<PhotoEntity>.from(selectedPhotos)
         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-      final locationMode = _detectLocationMode(sortedPhotos);
-      print("📍 故事位置线索模式: $locationMode");
+      // 🌟 2. 提取用于给后端生成音乐和故事的核心特征
+      // 收集所有出现过的标签，并去重
+      final allTags = sortedPhotos
+          .expand((p) => p.aiTags ?? <String>[])
+          .toSet()
+          .toList();
 
-      print("📝 开始生成故事：${sortedPhotos.length} 张照片");
+      // 计算平均欢乐值
+      double totalJoy = 0;
+      int validJoyCount = 0;
+      for (var p in sortedPhotos) {
+        if (p.joyScore != null) {
+          totalJoy += p.joyScore!;
+          validJoyCount++;
+        }
+      }
+      final avgJoyScore = validJoyCount > 0 ? totalJoy / validJoyCount : 0.0;
 
-      // 2. 构造照片描述文本（供 LLM 理解）
-      final photoDescriptions = StoryPromptHelper.buildPhotoDescriptions(
-        sortedPhotos,
+      print(
+        "📝 开始请求后端生成图文与配乐：${sortedPhotos.length} 张照片, 标签: $allTags, 欢乐值: $avgJoyScore",
       );
 
-      // 3. 调用 LLM 生成故事内容
-      final content = await _generateStoryContent(
-        title: title,
-        subtitle: subtitle,
-        event: event,
-        photoDescriptions: photoDescriptions,
-        length: length,
-        locationMode: locationMode,
+      // 🌟 3. 调用 LLMService 新写的综合接口
+      final llmService = LLMService();
+      final resultData = await llmService.generateStoryAndMusic(
+        eventId: event.id,
+        tags: allTags.take(10).toList(), // 最多传10个高频词防撑爆
+        joyScore: avgJoyScore,
+        stylePreference: subtitle.isNotEmpty ? subtitle : "治愈风",
       );
 
-      if (content == null) {
-        print("❌ LLM 生成失败");
+      if (resultData == null || resultData['data'] == null) {
+        print("❌ 云端生成失败，可能是网络问题");
         return null;
       }
 
-      // 4. 创建并保存故事实体
+      // 4. 解析返回的数据
+      final finalTitle = resultData['data']['story_title'] ?? title;
+      final scriptContent = resultData['data']['script_content'] ?? "生成失败";
+      final bgmUrl = resultData['data']['bgm_url']; // 拿到专属音乐链接！
+
+      // 5. 创建并保存故事实体
       final story = StoryEntity.create(
-        title: title,
-        subtitle: subtitle,
-        content: content,
+        title: finalTitle,
+        subtitle: subtitle, // 保留用户的输入偏好
+        content: scriptContent, 
         eventId: event.id,
         photoIds: sortedPhotos.map((p) => p.id).toList(),
       );
 
-      // 保存到数据库
+      // ⚠️ 如果你的 StoryEntity 里有 bgmUrl 字段，记得在这里赋值：
+      // story.bgmUrl = bgmUrl;
+
+      // 6. 存入数据库
       final isar = PhotoService().isar;
       await isar.writeTxn(() async {
         await isar.collection<StoryEntity>().put(story);
       });
 
-      print("✅ 故事生成成功：ID=${story.id}");
+      print("✅ 综合视听故事生成成功：ID=${story.id}");
+      if (bgmUrl != null) print("🎵 附带专属 BGM: $bgmUrl");
+
       return story;
     } catch (e) {
       print("❌ 故事生成异常: $e");
@@ -99,7 +120,7 @@ class StoryService {
   }
 
   /// 🤖 调用 LLM 生成故事内容
-  Future<String?> _generateStoryContent({
+  /*Future<String?> _generateStoryContent({
     required String title,
     required String subtitle,
     required EventEntity event,
@@ -144,9 +165,9 @@ class StoryService {
         length,
       );
     }
-  }
+  }*/
 
-  String _detectLocationMode(List<PhotoEntity> photos) {
+  /*String _detectLocationMode(List<PhotoEntity> photos) {
     final hasAddress = photos.any(
       (photo) =>
           (photo.formattedAddress?.trim().isNotEmpty ?? false) ||
@@ -164,10 +185,10 @@ class StoryService {
     }
 
     return 'time-tag-only';
-  }
+  }*/
 
   /// 🧪 模拟模式：生成假的故事内容（用于开发测试）
-  Future<String> _generateMockStoryContent(
+  /*Future<String> _generateMockStoryContent(
     String title,
     String subtitle,
     List<String> photoDescriptions,
@@ -179,7 +200,7 @@ class StoryService {
       photoDescriptions: photoDescriptions,
       isShort: length == StoryLength.short,
     );
-  }
+  }*/
 
   /// 📊 获取所有故事
   Future<List<StoryEntity>> getAllStories() async {

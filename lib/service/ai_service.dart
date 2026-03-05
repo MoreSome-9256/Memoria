@@ -1,4 +1,5 @@
 import 'dart:io';
+// import 'dart:math'; // ➕ 新增：用于生成随机的假数据
 import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:isar/isar.dart';
@@ -219,6 +220,24 @@ class AIService {
               }
             }
           }
+         // ➕ --- 下方为新增的 Mock Data 生成逻辑 ---
+          // 模拟一定的处理耗时，防止瞬间跑完导致 UI 闪烁
+          /*await Future.delayed(const Duration(milliseconds: 50));
+
+          final random = Random();
+          // 从字典的 values 里随机挑几个中文标签
+          final mockTagPool = _tagTranslation.values.toList();
+          mockTagPool.shuffle();
+          // 随机给1到3个标签
+          List<String> validTags = mockTagPool
+              .take(random.nextInt(3) + 1)
+              .toList();
+
+          // 随机生成 0 到 3 个人脸
+          int faceCount = random.nextInt(4);
+          // 如果有人脸，随机生成一个 0.0 到 1.0 的微笑概率；没脸就是 0
+          double maxSmileProb = faceCount > 0 ? random.nextDouble() : 0.0;*/
+          // ➕ --- Mock Data 生成逻辑结束 ---
 
           // 🎯 计算综合 joyScore
           double joyScore = AIScoreHelper.calculateJoyScore(
@@ -244,7 +263,7 @@ class AIService {
 
           final fileName = photo.path.split('/').last;
           print(
-            "✅ [AI] $fileName -> 标签:$validTags 人脸:$faceCount 欢乐:${joyScore.toStringAsFixed(2)}",
+            "✅ [AI 探针] ID:${photo.id} ($fileName) -> 标签: ${validTags.isEmpty ? '无' : validTags.join(', ')} | 欢乐值: ${joyScore.toStringAsFixed(2)}",
           );
         } catch (e) {
           print("❌ AI 分析失败: $e");

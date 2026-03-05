@@ -61,11 +61,13 @@ class PhotoService {
 
     // 先做反向同步：清理系统相册已删除/已不可访问的照片
     final removedCount = await _removeUnavailablePhotos();
+    // 🌟 新增：获取相册里的真实总照片数
+    final int totalCount = await albums[0].assetCountAsync;
 
-    // 当前限制单次扫描数量，避免一次性处理过多资源
+    // 🌟 修改：将 end: 200 改为 end: totalCount，全量读取！
     final List<AssetEntity> assets = await albums[0].getAssetListRange(
       start: 0,
-      end: 200,
+      end: totalCount,
     );
 
     print("🚀 开始扫描相册...");
@@ -107,11 +109,11 @@ class PhotoService {
           continue;
         }
 
-        if (PhotoFilterHelper.isLikelyScreenshotByRatio(width, height)) {
+        /*if (PhotoFilterHelper.isLikelyScreenshotByRatio(width, height)) {
           skippedScreenshot++;
           print("⏭️  跳过截图: ${file.path.split('/').last} (宽=$width 高=$height)");
           continue; // 跳过截图
-        }
+        }*/
 
         // if (!PhotoFilterHelper.isLikelyCameraPhoto(file.path)) {
         //   skippedNonCamera++;

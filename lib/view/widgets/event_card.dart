@@ -66,7 +66,7 @@ class EventCard extends StatelessWidget {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  /*const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
                     children: event.tags.map((tag) {
@@ -75,7 +75,7 @@ class EventCard extends StatelessWidget {
                         visualDensity: VisualDensity.compact,
                       );
                     }).toList(),
-                  ),
+                  ),*/
                 ],
               ),
             ),

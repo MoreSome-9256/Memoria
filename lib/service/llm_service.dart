@@ -387,4 +387,78 @@ class LLMService {
     final result = buffer.toString().trim();
     return result.isEmpty ? null : result;
   }
+  // ---------------------------------------------------------
+  // 🌟 下方为全新重构：对接团队自研后端的“图文+音乐”综合生成接口
+  // ---------------------------------------------------------
+
+  // 🚧 核心开关：等后端兄弟说“接口写好了”，把这里改成 false！
+  final bool _useMockBackend = true;
+
+  /// 🚀 全新接口：向团队服务器发送标签，获取故事和专属 BGM
+  Future<Map<String, dynamic>?> generateStoryAndMusic({
+    required int eventId,
+    required List<String> tags,
+    required double joyScore,
+    String stylePreference = "治愈风",
+  }) async {
+    // ----------------------------------------------------
+    // 🎭 阶段一：后端没写完时的 Mock 逻辑 (假装请求了网络)
+    // ----------------------------------------------------
+    if (_useMockBackend) {
+      print("☁️ [Mock] 正在请求云端生成故事和音乐... 标签: $tags");
+      await Future.delayed(const Duration(seconds: 2)); // 模拟大模型思考的延迟
+
+      // 直接返回我们之前对齐好的契约 JSON
+      return {
+        "code": 200,
+        "msg": "success",
+        "data": {
+          "story_title": "AI 生成：${tags.isNotEmpty ? tags.first : '美好'}的时光",
+          "script_content":
+              "## 难忘的一天\n\n这不仅是一次简单的出行，更是充满${stylePreference}的独特体验。我们看到了 ${tags.join('、')}，平均欢乐值高达 $joyScore，这一刻值得被永远铭记。\n\n![img](0) \n\n期待下一次的相遇。",
+          "bgm_url": "http://127.0.0.1/dummy_music.mp3", // 后端还没写完，先给个假的音频占位符
+        },
+      };
+    }
+
+    // ----------------------------------------------------
+    // 🌐 阶段二：后端写完后的真实网络请求逻辑
+    // ----------------------------------------------------
+    try {
+      print("☁️ [Real] 正在向服务器发送真实请求...");
+
+      // ⚠️ 这里换成队友 B 最终给你的真实局域网 IP 和接口路径
+      final serverUrl = 'http://192.168.x.x:8000/api/generate_story';
+
+      // 注意：这里我们不用学长的那个 _dio，因为他的 _dio 绑定了 LLM 的 Authorization 请求头
+      // 我们临时建一个干净的 Dio 发给自己的服务器
+      final myBackendDio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 60), // 音频生成比较慢
+        ),
+      );
+
+      final response = await myBackendDio.post(
+        serverUrl,
+        data: {
+          "event_id": eventId,
+          "tags": tags,
+          "joy_score": joyScore,
+          "style_preference": stylePreference,
+        },
+      );
+
+      if (response.statusCode == 200) {
+        print("✅ 服务器成功返回了故事和音乐！");
+        return response.data; // 返回的数据交给上一层解析
+      } else {
+        print("❌ 云端接口报错，状态码: ${response.statusCode}");
+        return null;
+      }
+    } catch (e) {
+      print("❌ 网络请求崩溃: $e");
+      return null;
+    }
+  }
 }

@@ -19,7 +19,7 @@ class _AlbumPageState extends State<AlbumPage> {
   late Stream<List<EventEntity>> _eventsStream;
 
   // 🔄 刷新数据：扫描相册 + 运行聚类
-  Future<void> _refreshData({bool clearCacheFirst = false}) async {
+  /*Future<void> _refreshData({bool clearCacheFirst = false}) async {
     if (_isRefreshing) return; // 防止重复点击
 
     setState(() => _isRefreshing = true);
@@ -63,6 +63,73 @@ class _AlbumPageState extends State<AlbumPage> {
       }
     } finally {
       setState(() => _isRefreshing = false);
+    }
+  }*/
+  // 🔄 刷新数据：极速扫描相册 + 后台静默 AI
+  Future<void> _refreshData({bool clearCacheFirst = false}) async {
+    if (_isRefreshing) return; // 防止重复点击
+
+    setState(() => _isRefreshing = true);
+
+    try {
+      if (clearCacheFirst) {
+        await PhotoService().clearAllCachedData();
+      }
+
+      // 1. ⚡ 极速操作：扫描相册（仅入库原始可用数据）
+      final scanSummary = await PhotoService().scanAndSyncPhotos();
+
+      // 2. ⚡ 极速操作：运行聚类算法（通过时间/GPS聚合成 Event）
+      await EventService().runClustering();
+
+      // ==========================================
+      // 🚀 核心改动：到这里基础数据已经搞定，立刻关闭加载动画！
+      // ==========================================
+      setState(() => _isRefreshing = false);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            // 🌟 让提示框悬浮，不再挤压底部栏
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              clearCacheFirst
+                  ? '✅ 已清空重扫，发现${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
+                  : '✅ 相册已极速更新，发现${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...',
+            ),
+            duration: const Duration(seconds: 3), // 提示稍长一点
+          ),
+        );
+      }
+
+      // 3. 🤫 静默操作：剥离主线程，让 AI 在后台慢慢抠图打标签
+      // ⚠️ 注意：这里去掉了 await，它不会再阻塞后续代码和 UI 了！
+      AIService()
+          .analyzePhotosInBackground()
+          .then((_) {
+            print("🎉 [后台任务] 所有照片的 AI 标签已静默添加完毕！");
+            // 你可以随时在这里发送广播，或者静默更新部分特定 UI
+          })
+          .catchError((e) {
+            print("❌ [后台任务] AI 分析出错: $e");
+          });
+    } on PhotoScanException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('⚠️ ${e.message}')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('❌ 更新失败: $e')));
+      }
+    } finally {
+      // 兜底逻辑：如果前面的极速操作抛出异常，确保能关掉加载动画
+      if (_isRefreshing && mounted) {
+        setState(() => _isRefreshing = false);
+      }
     }
   }
 
@@ -129,65 +196,37 @@ class _AlbumPageState extends State<AlbumPage> {
       body: StreamBuilder<List<EventEntity>>(
         stream: _eventsStream,
         builder: (context, snapshot) {
-          // 加载中
-          if (snapshot.connectionState == ConnectionState.waiting) {
+          // 1. 🌟 优化后的加载判断逻辑
+          // 只有在“还在连接”且“完全没有历史数据”时，才显示大转圈
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              !snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          // 错误处理
+          // 2. 错误处理 (保持原样)
           if (snapshot.hasError) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline, size: 64, color: Colors.red),
-                  const SizedBox(height: 16),
-                  Text('加载失败: ${snapshot.error}'),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: _refreshData,
-                    child: const Text('重试'),
-                  ),
-                ],
-              ),
-            );
+            return _buildErrorState(snapshot.error.toString());
           }
 
+          // 获取实体列表
           final eventEntities = snapshot.data ?? [];
 
-          // 空状态
+          // 3. 🌟 空状态：如果数据库返回了空列表，立刻显示空提示，不再转圈
           if (eventEntities.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.photo_library_outlined,
-                    size: 64,
-                    color: Colors.grey,
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('暂无事件', style: TextStyle(fontSize: 18)),
-                  const SizedBox(height: 8),
-                  const Text(
-                    '点击右上角刷新按钮扫描相册',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    onPressed: _refreshData,
-                    icon: const Icon(Icons.add_photo_alternate),
-                    label: const Text('扫描相册'),
-                  ),
-                ],
-              ),
-            );
+            return _buildEmptyState();
           }
 
-          // 将 EventEntity 转为 Event 并按年份/季节分组
+          // 4. 有数据时的处理逻辑
           return FutureBuilder<Map<String, List<Event>>>(
+            // 🚀 这里使用了我们刚才优化的 Future.wait 并行处理方法
             future: _groupEvents(eventEntities),
             builder: (context, groupSnapshot) {
+              // 错误捕获：防止转换 UI 模型时崩溃导致无限转圈
+              if (groupSnapshot.hasError) {
+                return Center(child: Text('数据转换错误: ${groupSnapshot.error}'));
+              }
+
+              // 正在进行并行转换时的小转圈
               if (!groupSnapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
               }
@@ -212,7 +251,6 @@ class _AlbumPageState extends State<AlbumPage> {
                         ),
                       ),
                       ...events.map((event) => EventCard(event: event)),
-                      const SizedBox(height: 0),
                     ],
                   );
                 }).toList(),
@@ -220,6 +258,47 @@ class _AlbumPageState extends State<AlbumPage> {
             },
           );
         },
+      ),
+    );
+  }
+  // 🎨 1. 构建空状态界面
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.photo_library_outlined,
+            size: 64,
+            color: Colors.grey,
+          ),
+          const SizedBox(height: 16),
+          const Text('暂无照片', style: TextStyle(fontSize: 18)),
+          const SizedBox(height: 8),
+          const Text('点击右上角刷新按钮扫描相册', style: TextStyle(color: Colors.grey)),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: _refreshData,
+            icon: const Icon(Icons.add_photo_alternate),
+            label: const Text('扫描相册'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 🎨 2. 构建错误提示界面
+  Widget _buildErrorState(String errorMessage) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.error_outline, size: 64, color: Colors.red),
+          const SizedBox(height: 16),
+          Text('加载失败: $errorMessage'),
+          const SizedBox(height: 16),
+          ElevatedButton(onPressed: _refreshData, child: const Text('重试')),
+        ],
       ),
     );
   }
@@ -231,13 +310,14 @@ class _AlbumPageState extends State<AlbumPage> {
     final grouped = <String, List<Event>>{};
     final isar = PhotoService().isar;
 
-    for (final entity in eventEntities) {
-      // 转换为 UI 模型
-      final event = await entity.toUIModel(isar);
+    // 1. 🚀 关键改动：使用 Future.wait 并行处理所有事件转换，不再一个一个等
+    final List<Event> allEvents = await Future.wait(
+      eventEntities.map((entity) => entity.toUIModel(isar)),
+    );
 
-      // 分组键：年份 · 季节
+    // 2. 快速分组
+    for (final event in allEvents) {
       final key = '${event.year} · ${event.season}';
-
       if (!grouped.containsKey(key)) {
         grouped[key] = [];
       }

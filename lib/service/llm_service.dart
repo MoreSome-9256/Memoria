@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import '../models/entity/event_entity.dart';
 
@@ -392,72 +393,67 @@ class LLMService {
   // ---------------------------------------------------------
 
   // 🚧 核心开关：等后端兄弟说“接口写好了”，把这里改成 false！
-  final bool _useMockBackend = true;
+  final bool _useMockBackend = false;
 
-  /// 🚀 全新接口：向团队服务器发送标签，获取故事和专属 BGM
+  /// 🚀 真实接口：向 DeepSeek 发送标签，实时生成故事（已为世杰前辈优化 Prompt）
   Future<Map<String, dynamic>?> generateStoryAndMusic({
     required int eventId,
     required List<String> tags,
     required double joyScore,
     String stylePreference = "治愈风",
   }) async {
-    // ----------------------------------------------------
-    // 🎭 阶段一：后端没写完时的 Mock 逻辑 (假装请求了网络)
-    // ----------------------------------------------------
-    if (_useMockBackend) {
-      print("☁️ [Mock] 正在请求云端生成故事和音乐... 标签: $tags");
-      await Future.delayed(const Duration(seconds: 2)); // 模拟大模型思考的延迟
+    print("☁️ [DeepSeek] 正在为世杰前辈实时创作故事... 标签: $tags, 欢乐值: $joyScore");
 
-      // 直接返回我们之前对齐好的契约 JSON
+    // 1. 构造一个具有强烈文学感的 Prompt，要求 AI 返回 JSON
+    final prompt = """
+你是一位极具洞察力和文采的游记作家。请根据以下识别出的相册视觉特征，为我创作一段感性的、第一人称的旅行回忆。
+
+【识别到的灵感词】：${tags.isEmpty ? '安静的角落, 时光的碎片' : tags.join(', ')}
+【整体情感基调】：${joyScore > 0.7 ? '极其欢乐与温暖' : '平静与沉思'} (欢乐指数: ${joyScore.toStringAsFixed(2)})
+【风格偏好】：$stylePreference
+
+【输出要求】：
+1. 标题必须以 "AI 生成：" 开头，体现文艺感。
+2. 正文请不要出现“标签”、“数值”、“欢乐值”等任何机器术语，要像真正的日记。
+3. 请在正文合适的位置插入占位符 ![img](0) 来模拟插入图片。
+4. **必须且只能**以 JSON 格式返回，不要有任何多余的解释。
+
+格式示例：
+{
+  "story_title": "AI 生成：阳光跳跃的午后",
+  "script_content": "正文内容..."
+}
+""";
+
+    try {
+      // 2. 调用我们已经写好的真实底层通道 _chatCompletion
+      final responseText = await _chatCompletion(prompt);
+
+      if (responseText == null || responseText.isEmpty) {
+        print("❌ DeepSeek 返回内容为空");
+        return null;
+      }
+
+      // 3. 简单的 JSON 清洗（防止 AI 带了 ```json 的 Markdown 外壳）
+      final cleanJson = responseText
+          .replaceAll('```json', '')
+          .replaceAll('```', '')
+          .trim();
+
+      final Map<String, dynamic> decoded = jsonDecode(cleanJson);
+
+      // 4. 封装成上一层 StoryService 期待的返回契约
       return {
         "code": 200,
         "msg": "success",
         "data": {
-          "story_title": "AI 生成：${tags.isNotEmpty ? tags.first : '美好'}的时光",
-          "script_content":
-              "## 难忘的一天\n\n这不仅是一次简单的出行，更是充满${stylePreference}的独特体验。我们看到了 ${tags.join('、')}，平均欢乐值高达 $joyScore，这一刻值得被永远铭记。\n\n![img](0) \n\n期待下一次的相遇。",
-          "bgm_url": "http://127.0.0.1/dummy_music.mp3", // 后端还没写完，先给个假的音频占位符
+          "story_title": decoded['story_title'] ?? "AI 生成：美好的时光",
+          "script_content": decoded['script_content'] ?? "故事正在酝酿中...",
+          "bgm_url": "[http://127.0.0.1/dummy_music.mp3](http://127.0.0.1/dummy_music.mp3)", // 音乐暂用占位，等后端上线
         },
       };
-    }
-
-    // ----------------------------------------------------
-    // 🌐 阶段二：后端写完后的真实网络请求逻辑
-    // ----------------------------------------------------
-    try {
-      print("☁️ [Real] 正在向服务器发送真实请求...");
-
-      // ⚠️ 这里换成队友 B 最终给你的真实局域网 IP 和接口路径
-      final serverUrl = 'http://192.168.x.x:8000/api/generate_story';
-
-      // 注意：这里我们不用学长的那个 _dio，因为他的 _dio 绑定了 LLM 的 Authorization 请求头
-      // 我们临时建一个干净的 Dio 发给自己的服务器
-      final myBackendDio = Dio(
-        BaseOptions(
-          connectTimeout: const Duration(seconds: 15),
-          receiveTimeout: const Duration(seconds: 60), // 音频生成比较慢
-        ),
-      );
-
-      final response = await myBackendDio.post(
-        serverUrl,
-        data: {
-          "event_id": eventId,
-          "tags": tags,
-          "joy_score": joyScore,
-          "style_preference": stylePreference,
-        },
-      );
-
-      if (response.statusCode == 200) {
-        print("✅ 服务器成功返回了故事和音乐！");
-        return response.data; // 返回的数据交给上一层解析
-      } else {
-        print("❌ 云端接口报错，状态码: ${response.statusCode}");
-        return null;
-      }
     } catch (e) {
-      print("❌ 网络请求崩溃: $e");
+      print("❌ DeepSeek 实时调用崩溃: $e");
       return null;
     }
   }

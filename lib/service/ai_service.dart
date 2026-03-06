@@ -8,6 +8,8 @@ import '../models/entity/event_entity.dart';
 import '../utils/ai_score_helper.dart';
 import 'photo_service.dart';
 import 'event_service.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:path_provider/path_provider.dart';
 
 class AIService {
   static final AIService _instance = AIService._internal();
@@ -198,28 +200,53 @@ class AIService {
         continue;
       }
 
-      print("🤖 开始 AI 视觉分析（含情感分析），本批次: ${photosToAnalyze.length} 张");
+      print("🤖 开始 AI 视觉分析（含情感分析），本批次: ${photosToAnalyze
+          .length} 张");
 
       // 3. 开始送入 ML Kit（原代码这里的 for 循环变量名记得改成 photosToAnalyze 哦）
       for (final photo in photosToAnalyze) {
-        // 检查文件是否存在
+        // 检查原文件是否存在
         final file = File(photo.path);
         if (!file.existsSync()) {
-          // 文件丢了，标记为已处理以免死循环
           await _markAsAnalyzed(photo.id, [], 0, 0.0, 0.0, isar);
           print("⚠️ 文件不存在，跳过: ${photo.path}");
           continue;
         }
 
+        File? compressedTempFile; // 用于记录临时文件，方便稍后清理
+
         try {
-          final inputImage = InputImage.fromFile(file);
+          // ---------------------------------------------------------
+          // 🔧 工业级预处理：Native 层极速降采样压缩
+          // ---------------------------------------------------------
+          final tempDir = await getTemporaryDirectory();
+          // 给临时文件起个名字（加上 photo.id 防止冲突）
+          final targetPath = '${tempDir.path}/temp_mlkit_${photo.id}.jpg';
+
+          // 将任何分辨率的巨型图片，瞬间压缩至长宽不超过 1024 的安全尺寸
+          final XFile? result = await FlutterImageCompress.compressAndGetFile(
+            file.absolute.path,
+            targetPath,
+            minWidth: 1024,
+            minHeight: 1024,
+            quality: 80, // 80%的质量对机器视觉来说已经极其清晰了
+          );
+
+          if (result == null) {
+            throw Exception("图片压缩返回 null，跳过");
+          }
+
+          compressedTempFile = File(result.path);
+
+          // 🚀 送入 ML Kit 的，是压缩后的“瘦身版”图片！绝不 OOM！
+          final inputImage = InputImage.fromFile(compressedTempFile);
+          // ---------------------------------------------------------
 
           // 📸 任务1：图像标签识别
           final labels = await imageLabeler.processImage(inputImage);
           List<String> validTags = [];
           for (ImageLabel label in labels) {
             final text = label.label;
-            // 如果有中文映射就用中文，没有就保留英文
             final translated = _tagTranslation[text] ?? text;
             validTags.add(translated);
           }
@@ -229,7 +256,6 @@ class AIService {
           int faceCount = faces.length;
           double maxSmileProb = 0.0;
 
-          // 找到最高的微笑概率
           for (Face face in faces) {
             if (face.smilingProbability != null) {
               final prob = face.smilingProbability!;
@@ -238,24 +264,6 @@ class AIService {
               }
             }
           }
-         // ➕ --- 下方为新增的 Mock Data 生成逻辑 ---
-          // 模拟一定的处理耗时，防止瞬间跑完导致 UI 闪烁
-          /*await Future.delayed(const Duration(milliseconds: 50));
-
-          final random = Random();
-          // 从字典的 values 里随机挑几个中文标签
-          final mockTagPool = _tagTranslation.values.toList();
-          mockTagPool.shuffle();
-          // 随机给1到3个标签
-          List<String> validTags = mockTagPool
-              .take(random.nextInt(3) + 1)
-              .toList();
-
-          // 随机生成 0 到 3 个人脸
-          int faceCount = random.nextInt(4);
-          // 如果有人脸，随机生成一个 0.0 到 1.0 的微笑概率；没脸就是 0
-          double maxSmileProb = faceCount > 0 ? random.nextDouble() : 0.0;*/
-          // ➕ --- Mock Data 生成逻辑结束 ---
 
           // 🎯 计算综合 joyScore
           double joyScore = AIScoreHelper.calculateJoyScore(
@@ -274,24 +282,26 @@ class AIService {
             isar,
           );
 
-          // 🔗 收集受影响的事件 ID
           if (photo.eventId != null) {
             affectedEventIds.add(photo.eventId!);
           }
 
-          final fileName = photo.path.split('/').last;
-          print(
-            "✅ [AI 探针] ID:${photo.id} ($fileName) -> 标签: ${validTags.isEmpty ? '无' : validTags.join(', ')} | 欢乐值: ${joyScore.toStringAsFixed(2)}",
-          );
+          final fileName = photo.path
+              .split('/')
+              .last;
+          print("✅ [AI 探针] ID:${photo.id} ($fileName) -> 标签: ${validTags
+              .isEmpty ? '无' : validTags.join(', ')}");
         } catch (e) {
-          print("❌ AI 分析失败: $e");
-          // 失败了也暂时标记为 true，避免死循环
+          print("❌ AI 分析(含压缩)失败: $e");
           await _markAsAnalyzed(photo.id, [], 0, 0.0, 0.0, isar);
+        } finally {
+          // 🧹 极其重要：无论成功失败，必须清理临时文件，绝不占用用户的闪存空间！
+          if (compressedTempFile != null && compressedTempFile.existsSync()) {
+            compressedTempFile.deleteSync();
+          }
         }
 
-        totalAnalyzed++;
-
-        // ⏳ 休息一下，防止 UI 掉帧 (AI 运算很吃 CPU)
+        // ⏳ 休息一下，给系统喘息的时间
         await Future.delayed(const Duration(milliseconds: 100));
       }
     }

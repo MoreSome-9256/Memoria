@@ -44,6 +44,10 @@ dependencies:
   flutter_markdown: ^0.7.4+1
   # ➕ 新增：底层原生图片压缩库
   flutter_image_compress: ^2.4.0
+  # ➕ 高德定位官方插件
+  amap_flutter_location: ^3.0.0
+  # ➕ 动态权限申请库（定位必备）
+  permission_handler: ^11.3.0
 
 dev_dependencies:
   flutter_test:

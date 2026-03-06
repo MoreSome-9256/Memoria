@@ -16,7 +16,7 @@ class EventService {
 
   static const String _amapWebKey = String.fromEnvironment(
     'AMAP_WEB_KEY',
-    defaultValue: '',
+    defaultValue: '7fe01f8a449b2aac28068feac9177316',
   );
 
   final Dio _dio = Dio(

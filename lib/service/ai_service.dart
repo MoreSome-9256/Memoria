@@ -160,30 +160,48 @@ class AIService {
     final affectedEventIds = <int>{};
 
     while (true) {
-      // 1. 捞出还没分析过 AI 的照片（仅处理会展示的事件）
+      // 1. 捞出还没分析过 AI 的照片
       final pendingPhotos = await isar
           .collection<PhotoEntity>()
           .filter()
           .isAiAnalyzedEqualTo(false)
-          .limit(batchSize * 4)
+          .limit(batchSize * 4) // 一次性多捞一点用于筛选
           .findAll();
 
-      final photos = pendingPhotos
-          .where(
-            (photo) =>
-                photo.eventId != null &&
-                eligibleEventIds.contains(photo.eventId),
-          )
-          .take(batchSize)
-          .toList();
-
-      if (photos.isEmpty) {
+      // 【修复点1】：如果数据库里真的没有未分析的照片了，才彻底退出
+      if (pendingPhotos.isEmpty) {
         break;
       }
 
-      print("🤖 开始 AI 视觉分析（含情感分析），本批次: ${photos.length} 张");
+      // 2. 分流：需要真正跑 AI 的 vs 需要直接丢弃的
+      final photosToAnalyze = <PhotoEntity>[];
+      final photosToSkip = <PhotoEntity>[];
 
-      for (final photo in photos) {
+      for (var photo in pendingPhotos) {
+        if (photo.eventId != null && eligibleEventIds.contains(photo.eventId)) {
+          if (photosToAnalyze.length < batchSize) {
+            photosToAnalyze.add(photo);
+          }
+        } else {
+          photosToSkip.add(photo);
+        }
+      }
+
+      // 【修复点2】：把那些不需要展示的照片，强行标记为已分析（置空标签），疏通队列！
+      for (var skipPhoto in photosToSkip) {
+        await _markAsAnalyzed(skipPhoto.id, [], 0, 0.0, 0.0, isar);
+      }
+
+      // 如果这一批刚好全是不合格的废片，继续去捞下一批，千万别 break！
+      if (photosToAnalyze.isEmpty) {
+        print("⏩ 本批次照片均不满足展示阈值，已静默清理，继续拉取下一批...");
+        continue;
+      }
+
+      print("🤖 开始 AI 视觉分析（含情感分析），本批次: ${photosToAnalyze.length} 张");
+
+      // 3. 开始送入 ML Kit（原代码这里的 for 循环变量名记得改成 photosToAnalyze 哦）
+      for (final photo in photosToAnalyze) {
         // 检查文件是否存在
         final file = File(photo.path);
         if (!file.existsSync()) {

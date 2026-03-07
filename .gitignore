@@ -60,3 +60,22 @@ CLAUDE.md
 
 # test
 /imgs/
+
+# --- AI Model & Checkpoint Files ---
+# 忽略 PyTorch 权重文件
+*.pt
+*.pth
+/checkpoints/
+
+# 忽略 ONNX 模型及其外部数据文件
+*.onnx
+*.onnx.data
+
+# 忽略将来可能生成的 TFLite 文件
+*.tflite
+
+# 忽略导出的模型记录
+/ai_tools/exported_models/
+
+# 忽略 TensorFlow 的中间导出目录
+/saved_model/

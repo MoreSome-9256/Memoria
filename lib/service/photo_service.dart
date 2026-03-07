@@ -93,20 +93,24 @@ class PhotoService {
 
     await _isar.writeTxn(() async {
       for (final asset in assets) {
-        final file = await asset.file;
-        final latLong = await asset.latlngAsync();
-        // 不需要打印了
-        _logAssetExtInfo(asset: asset, filePath: file?.path, latLong: latLong);
-
-        // 增量更新检查
+        // 🌟 核心修复 1：把增量检查提到最前面！
         final existing = await _isar
             .collection<PhotoEntity>()
             .filter()
             .assetIdEqualTo(asset.id)
             .findFirst();
+
+        // 如果数据库里已经有了，直接跳过，绝不触发后续极其耗时的 IO 操作！
         if (existing != null) continue;
 
+        // 🌟 核心修复 2：只有全新的照片，才去底层拿数据
+        final file = await asset.file;
         if (file == null) continue;
+
+        final latLong = await asset.latlngAsync();
+
+        // 现在的日志只会打印【新增】的照片，终端终于不会被疯狂刷屏了！
+        _logAssetExtInfo(asset: asset, filePath: file.path, latLong: latLong);
 
         final timestamp = asset.createDateTime.millisecondsSinceEpoch;
         if (!PhotoFilterHelper.hasValidTimestamp(timestamp)) {
@@ -114,7 +118,7 @@ class PhotoService {
           continue;
         }
 
-        // 📐 获取图片尺寸并过滤截图
+        // 📐 获取图片尺寸并过滤
         final width = asset.width;
         final height = asset.height;
         if (width <= 0 || height <= 0) {
@@ -122,25 +126,13 @@ class PhotoService {
           continue;
         }
 
-        /*if (PhotoFilterHelper.isLikelyScreenshotByRatio(width, height)) {
-          skippedScreenshot++;
-          print("⏭️  跳过截图: ${file.path.split('/').last} (宽=$width 高=$height)");
-          continue; // 跳过截图
-        }*/
-
-        // if (!PhotoFilterHelper.isLikelyCameraPhoto(file.path)) {
-        //   skippedNonCamera++;
-        //   print("⏭️  跳过非相机命名: ${file.path.split('/').last}");
-        //   continue;
-        // }
-
-        // 无 GPS 图片也入库，后续聚类会按“时间信号”参与
         final hasGps = PhotoFilterHelper.hasValidGps(
           latLong?.latitude,
           latLong?.longitude,
         );
         if (!hasGps) insertedNoGps++;
 
+        // 入库新照片
         final newPhoto = PhotoEntity()
           ..assetId = asset.id
           ..timestamp = timestamp
@@ -246,6 +238,69 @@ class PhotoService {
 
     return {'total': total, 'withGPS': withGPS, 'aiAnalyzed': aiAnalyzed};
   }
+
+  /// 🚀 Memoria 2.0 升级脚本：重置所有照片的 AI 分析状态
+
+  /// 当底层模型从 ML Kit 切换到 MobileCLIP 时调用
+
+  Future<void> migrateToMobileClip() async {
+
+    print("🔄 开始执行 Memoria 2.0 AI 数据迁移...");
+
+
+
+    // 1. 查出所有已经用旧模型（ML Kit）分析过的照片
+
+    final oldPhotos = await _isar.collection<PhotoEntity>()
+
+        .filter()
+
+        .isAiAnalyzedEqualTo(true)
+
+        .findAll();
+
+
+
+    if (oldPhotos.isEmpty) {
+
+      print("✅ 没有需要迁移的旧照片。");
+
+      return;
+
+    }
+
+
+
+    // 2. 将它们的状态重置，并清空旧标签
+
+    for (var photo in oldPhotos) {
+
+      photo.isAiAnalyzed = false;
+
+      photo.aiTags = []; // 清空 ML Kit 时代干瘪的标签
+
+      // photo.vector = null; // 如果你未来加了向量字段，也在这里清空
+
+    }
+
+
+
+    // 3. 批量写回数据库
+
+    await _isar.writeTxn(() async {
+
+      await _isar.collection<PhotoEntity>().putAll(oldPhotos);
+
+    });
+
+
+
+    print("🎉 成功重置了 ${oldPhotos.length} 张照片的 AI 状态！");
+
+    print("后台的闲时 AI 任务将会自动用 MobileCLIP 重新扫描并提取 512 维高维向量。");
+
+  }
+
 }
 
 enum PhotoScanError { permissionDenied, noAlbum, noEligiblePhoto }

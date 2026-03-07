@@ -129,31 +129,18 @@ class AIService {
   };
 
   // 🧠 核心方法：批量分析未处理的照片（包含人脸检测和情感分析）
+  // 🧠 核心方法：批量分析未处理的照片（包含人脸检测和情感分析）
   Future<void> analyzePhotosInBackground({int batchSize = 10}) async {
     final isar = PhotoService().isar;
-    /*final visibleEvents = await isar
-        .collection<EventEntity>()
-        .where()
-        .findAll();
-    final eligibleEventIds = visibleEvents
-        .where((event) => event.photoCount >= EventService.minPhotosForDisplay)
-        .map((event) => event.id)
-        .toSet();
 
-    if (eligibleEventIds.isEmpty) {
-      print("ℹ️ 没有满足展示阈值的事件，跳过 AI 分析");
-      return;
-    }
-*/
     // 2. 初始化 ML Kit 组件
     final ImageLabelerOptions labelerOptions = ImageLabelerOptions(
-      confidenceThreshold: 0.6, // 置信度 > 0.6 才要
+      confidenceThreshold: 0.6,
     );
     final imageLabeler = ImageLabeler(options: labelerOptions);
 
-    // 🎭 初始化人脸检测器（启用分类以获取 smilingProbability）
     final FaceDetectorOptions faceOptions = FaceDetectorOptions(
-      enableClassification: true, // 关键：启用微笑分类
+      enableClassification: true,
       enableTracking: false,
     );
     final faceDetector = FaceDetector(options: faceOptions);
@@ -162,116 +149,68 @@ class AIService {
     final affectedEventIds = <int>{};
 
     while (true) {
-      // 🌟 核心修复：直接从数据库老老实实地捞一批未分析的照片，不搞花里胡哨的预取过滤
-      final photos = await isar
+      // 🌟 修复点：直接拉取未分析的照片，不搞复杂的预取和过滤
+      final photosToAnalyze = await isar
           .collection<PhotoEntity>()
           .filter()
           .isAiAnalyzedEqualTo(false)
-          .limit(batchSize) // 直接取 10 张
+          .limit(batchSize)
           .findAll();
 
-      if (photos.isEmpty) {
+      if (photosToAnalyze.isEmpty) {
         break;
       }
 
-      // 2. 分流：需要真正跑 AI 的 vs 需要直接丢弃的
-      final photosToAnalyze = <PhotoEntity>[];
-      final photosToSkip = <PhotoEntity>[];
+      print("🤖 开始 AI 视觉分析，本批次: ${photosToAnalyze.length} 张");
 
-      for (var photo in pendingPhotos) {
-        if (photo.eventId != null && eligibleEventIds.contains(photo.eventId)) {
-          if (photosToAnalyze.length < batchSize) {
-            photosToAnalyze.add(photo);
-          }
-        } else {
-          photosToSkip.add(photo);
-        }
-      }
-
-      // 【修复点2】：把那些不需要展示的照片，强行标记为已分析（置空标签），疏通队列！
-      for (var skipPhoto in photosToSkip) {
-        await _markAsAnalyzed(skipPhoto.id, [], 0, 0.0, 0.0, isar);
-      }
-
-      // 如果这一批刚好全是不合格的废片，继续去捞下一批，千万别 break！
-      if (photosToAnalyze.isEmpty) {
-        print("⏩ 本批次照片均不满足展示阈值，已静默清理，继续拉取下一批...");
-        continue;
-      }
-
-      print("🤖 开始 AI 视觉分析（含情感分析），本批次: ${photosToAnalyze
-          .length} 张");
-
-      // 3. 开始送入 ML Kit（原代码这里的 for 循环变量名记得改成 photosToAnalyze 哦）
       for (final photo in photosToAnalyze) {
-        // 检查原文件是否存在
         final file = File(photo.path);
         if (!file.existsSync()) {
           await _markAsAnalyzed(photo.id, [], 0, 0.0, 0.0, isar);
-          print("⚠️ 文件不存在，跳过: ${photo.path}");
           continue;
         }
 
-        File? compressedTempFile; // 用于记录临时文件，方便稍后清理
+        File? compressedTempFile;
 
         try {
-          // ---------------------------------------------------------
-          // 🔧 工业级预处理：Native 层极速降采样压缩
-          // ---------------------------------------------------------
           final tempDir = await getTemporaryDirectory();
-          // 给临时文件起个名字（加上 photo.id 防止冲突）
           final targetPath = '${tempDir.path}/temp_mlkit_${photo.id}.jpg';
 
-          // 将任何分辨率的巨型图片，瞬间压缩至长宽不超过 1024 的安全尺寸
-          final XFile? result = await FlutterImageCompress.compressAndGetFile(
+          // 🔧 压缩图片，防止 OOM
+          final result = await FlutterImageCompress.compressAndGetFile(
             file.absolute.path,
             targetPath,
             minWidth: 1024,
             minHeight: 1024,
-            quality: 80, // 80%的质量对机器视觉来说已经极其清晰了
+            quality: 80,
           );
 
-          if (result == null) {
-            throw Exception("图片压缩返回 null，跳过");
-          }
-
+          if (result == null) throw Exception("压缩失败");
           compressedTempFile = File(result.path);
 
-          // 🚀 送入 ML Kit 的，是压缩后的“瘦身版”图片！绝不 OOM！
           final inputImage = InputImage.fromFile(compressedTempFile);
-          // ---------------------------------------------------------
 
-          // 📸 任务1：图像标签识别
+          // 📸 任务1：标签识别
           final labels = await imageLabeler.processImage(inputImage);
-          List<String> validTags = [];
-          for (ImageLabel label in labels) {
-            final text = label.label;
-            final translated = _tagTranslation[text] ?? text;
-            validTags.add(translated);
-          }
+          List<String> validTags = labels
+              .map((l) => _tagTranslation[l.label] ?? l.label)
+              .toList();
 
-          // 😊 任务2：人脸检测和情感分析
+          // 😊 任务2：情感分析
           final faces = await faceDetector.processImage(inputImage);
           int faceCount = faces.length;
-          double maxSmileProb = 0.0;
+          double maxSmileProb = faces.isNotEmpty
+              ? faces
+                    .map((f) => f.smilingProbability ?? 0.0)
+                    .reduce((a, b) => a > b ? a : b)
+              : 0.0;
 
-          for (Face face in faces) {
-            if (face.smilingProbability != null) {
-              final prob = face.smilingProbability!;
-              if (prob > maxSmileProb) {
-                maxSmileProb = prob;
-              }
-            }
-          }
-
-          // 🎯 计算综合 joyScore
           double joyScore = AIScoreHelper.calculateJoyScore(
             faceCount: faceCount,
             maxSmileProb: maxSmileProb,
             tags: validTags,
           );
 
-          // 💾 存入数据库
           await _markAsAnalyzed(
             photo.id,
             validTags,
@@ -284,38 +223,27 @@ class AIService {
           if (photo.eventId != null) {
             affectedEventIds.add(photo.eventId!);
           }
-
-          final fileName = photo.path
-              .split('/')
-              .last;
-          print("✅ [AI 探针] ID:${photo.id} ($fileName) -> 标签: ${validTags
-              .isEmpty ? '无' : validTags.join(', ')}");
+          totalAnalyzed++;
         } catch (e) {
-          print("❌ AI 分析(含压缩)失败: $e");
+          print("❌ AI 分析失败: $e");
           await _markAsAnalyzed(photo.id, [], 0, 0.0, 0.0, isar);
         } finally {
-          // 🧹 极其重要：无论成功失败，必须清理临时文件，绝不占用用户的闪存空间！
+          // 🧹 清理临时文件
           if (compressedTempFile != null && compressedTempFile.existsSync()) {
             compressedTempFile.deleteSync();
           }
         }
-
-        // ⏳ 休息一下，给系统喘息的时间
         await Future.delayed(const Duration(milliseconds: 100));
       }
     }
 
-    // 6. 关闭资源
     imageLabeler.close();
     faceDetector.close();
 
-    // 🔔 批量通知 EventService 刷新智能信息
     if (affectedEventIds.isNotEmpty) {
-      print("🔔 通知 EventService 刷新 ${affectedEventIds.length} 个事件");
       await EventService().refreshEventSmartInfo(affectedEventIds.toList());
     }
-
-    print("✅ 所有照片 AI 分析完成，总计处理: $totalAnalyzed 张");
+    print("✅ AI 分析完成，总计处理: $totalAnalyzed 张");
   }
 
   // 将 AI 分析结果写入数据库（增强版）

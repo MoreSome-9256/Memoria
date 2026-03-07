@@ -7,7 +7,7 @@ import mobileclip
 import jieba.posseg as pseg
 
 # ================= 🌟 核心配置区 =================
-DEEPSEEK_API_KEY = "sk-c365fe2d01df4d3cbab0786999caca88"
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 TXT_FILE = "ai_tools/现代汉语常用词表.txt"
 OUTPUT_DICT_FILE = "ai_tools/ds_filtered_dict.json"      # 🌟 新增：保存 DS 中间翻译词表的路径
 OUTPUT_VECTOR_FILE = "ai_tools/expanded_tags_vectors.json"

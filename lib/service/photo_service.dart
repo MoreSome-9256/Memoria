@@ -1,6 +1,8 @@
 import 'package:isar/isar.dart';
+import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../models/entity/photo_entity.dart';
 import '../models/entity/event_entity.dart';
@@ -39,6 +41,17 @@ class PhotoService {
   // 1️⃣ 扫描相册 (快速入库，带截图过滤)
   Future<PhotoScanSummary> scanAndSyncPhotos() async {
     final totalBefore = await _isar.collection<PhotoEntity>().count();
+
+    // 🌟 核心修复：针对 Android 10+ 的动态权限申请
+    if (Platform.isAndroid) {
+      // 1. 弹出系统弹窗，请求访问媒体位置（解决 0 GPS 的关键）
+      final locationStatus = await Permission.accessMediaLocation.request();
+      if (locationStatus.isGranted) {
+        print("✅ 成功获得读取照片真实 GPS 的特权");
+      } else {
+        print("⚠️ 用户拒绝了位置特权，照片经纬度将被系统抹除为 null");
+      }
+    }
 
     // 权限检查
     final PermissionState ps = await PhotoManager.requestPermissionExtend();

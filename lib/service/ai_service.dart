@@ -129,7 +129,7 @@ class AIService {
   // 🧠 核心方法：批量分析未处理的照片（包含人脸检测和情感分析）
   Future<void> analyzePhotosInBackground({int batchSize = 10}) async {
     final isar = PhotoService().isar;
-    final visibleEvents = await isar
+    /*final visibleEvents = await isar
         .collection<EventEntity>()
         .where()
         .findAll();
@@ -142,7 +142,7 @@ class AIService {
       print("ℹ️ 没有满足展示阈值的事件，跳过 AI 分析");
       return;
     }
-
+*/
     // 2. 初始化 ML Kit 组件
     final ImageLabelerOptions labelerOptions = ImageLabelerOptions(
       confidenceThreshold: 0.6, // 置信度 > 0.6 才要
@@ -160,22 +160,13 @@ class AIService {
     final affectedEventIds = <int>{};
 
     while (true) {
-      // 1. 捞出还没分析过 AI 的照片（仅处理会展示的事件）
-      final pendingPhotos = await isar
+      // 🌟 核心修复：直接从数据库老老实实地捞一批未分析的照片，不搞花里胡哨的预取过滤
+      final photos = await isar
           .collection<PhotoEntity>()
           .filter()
           .isAiAnalyzedEqualTo(false)
-          .limit(batchSize * 4)
+          .limit(batchSize) // 直接取 10 张
           .findAll();
-
-      final photos = pendingPhotos
-          .where(
-            (photo) =>
-                photo.eventId != null &&
-                eligibleEventIds.contains(photo.eventId),
-          )
-          .take(batchSize)
-          .toList();
 
       if (photos.isEmpty) {
         break;

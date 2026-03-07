@@ -394,71 +394,98 @@ class LLMService {
   // 🚧 核心开关：等后端兄弟说“接口写好了”，把这里改成 false！
   final bool _useMockBackend = true;
 
-  /// 🚀 全新接口：向团队服务器发送标签，获取故事和专属 BGM
+  /// 🚀 临时重构版：绕过未完成的后端，直接用本地 DeepSeek 生成故事
   Future<Map<String, dynamic>?> generateStoryAndMusic({
     required int eventId,
     required List<String> tags,
     required double joyScore,
+    required int photoCount,
+    String? location, // ➕ 新增地点参数
+    String? date, // ➕ 新增时间参数
     String stylePreference = "治愈风",
   }) async {
-    // ----------------------------------------------------
-    // 🎭 阶段一：后端没写完时的 Mock 逻辑 (假装请求了网络)
-    // ----------------------------------------------------
-    if (_useMockBackend) {
-      print("☁️ [Mock] 正在请求云端生成故事和音乐... 标签: $tags");
-      await Future.delayed(const Duration(seconds: 2)); // 模拟大模型思考的延迟
+    print("🚀 [临时接管] 后端没好，直接呼叫 DeepSeek 大模型写小作文...");
 
-      // 直接返回我们之前对齐好的契约 JSON
+    // 1. 📝 构造专门给 DeepSeek 的提示词 (Prompt)
+    // 1. 🎬 升级版：AI 导演短视频脚本生成 Prompt
+    final prompt =
+        '''
+你现在是一位拥有百万粉丝的爆款短视频导演兼金牌编剧（精通小红书、抖音网感）。
+请根据以下用户上传的图片特征标签，构思短视频/Vlog的剪辑思路和旁白脚本。
+
+地点：$location
+时间：$date
+素材特征线索：${tags.join('、')}
+情感基调：$stylePreference
+整体欢乐值：$joyScore（满分1.0，分数决定文风是幽默、治愈还是深沉）
+
+请严格按照以下三个部分，输出结构化的纯文本内容（禁止使用 ** 加粗等 Markdown 语法）：
+
+【一、 素材内容分析】
+（根据标签推测并总结出以下三点，语言要像专业的视觉分析报告）
+- 主体：(推测画面中主要出现了什么，如：人物、猫咪、建筑等)
+- 场景：(推测画面所处环境，如：温馨室内、繁华街道等)
+- 事件：(推测正在发生的故事，如：朋友聚餐、萌宠捣乱、独自漫步等)
+
+【二、 备选故事脚本】
+（请基于上述分析，生成 2 个不同视角的短视频分镜脚本，必须包含以下要素）
+
+故事1：[填写吸引人的网感标题，如：这个家没我得散！]
+- 叙事顺序：(如：发现目标 -> 试探 -> 搞破坏 -> 结局)
+- 分镜与文案：
+  1. (画面描述)：(配音台词或旁白)
+  2. (画面描述)：(配音台词或旁白)
+  3. (画面描述)：(配音台词或旁白)
+
+故事2：[填写吸引人的网感标题，如：打工人的周末治愈碎片]
+- 叙事顺序：(填写该故事的发展脉络)
+- 分镜与文案：
+  1. (画面描述)：(配音台词或旁白)
+  2. (画面描述)：(配音台词或旁白)
+  3. (画面描述)：(配音台词或旁白)
+
+【三、 成片风格总结】
+（对上述生成的2个脚本进行一句话的视听风格总结）
+- 《故事1标题》：(例如：从戏精萌宠视角叙事，搭配手绘的剪辑风格和欢快的BGM)
+- 《故事2标题》：(例如：以轻松日常的文风叙事，配上治愈系Vlog音乐)
+
+注意：
+1. 绝对不要输出任何前言后语（如“好的，为您生成”）。
+2. 请直接输出从【一、 素材内容分析】开始的正文。
+''';
+
+    // 2. 🧠 直接调用本类中已有的真实大模型生成方法
+    final realStory = await generateBlogText(prompt);
+    // 🌟 新增这行打印：让我们亲眼看看 DeepSeek 到底写了什么神仙句子！
+    print("📜 [绝密档案] DeepSeek 真实输出内容：\n$realStory");
+    if (realStory != null && realStory.isNotEmpty) {
+      // 🌟 新增：暴力清洗掉大模型自作主张加的 Markdown 加粗符号
+      final cleanedStory = realStory.replaceAll('**', '');
+      print("✅ DeepSeek 故事生成完毕！");
+      // 3. 📦 包装成 UI 界面期待的 JSON 格式
       return {
         "code": 200,
         "msg": "success",
         "data": {
-          "story_title": "AI 生成：${tags.isNotEmpty ? tags.first : '美好'}的时光",
-          "script_content":
-              "## 难忘的一天\n\n这不仅是一次简单的出行，更是充满${stylePreference}的独特体验。我们看到了 ${tags.join('、')}，平均欢乐值高达 $joyScore，这一刻值得被永远铭记。\n\n![img](0) \n\n期待下一次的相遇。",
-          "bgm_url": "http://127.0.0.1/dummy_music.mp3", // 后端还没写完，先给个假的音频占位符
+          "story_title": "AI 漫游：${tags.isNotEmpty ? tags.first : '美好'}的记忆",
+          // 🌟 核心突破：把假文本换成真正的大模型生成内容！
+          "script_content": realStory,
+          // 🎵 音乐暂时用假的顶着，等后端兄弟把 AI 音乐生成接好
+          "bgm_url": "http://127.0.0.1/dummy_music.mp3",
         },
       };
-    }
-
-    // ----------------------------------------------------
-    // 🌐 阶段二：后端写完后的真实网络请求逻辑
-    // ----------------------------------------------------
-    try {
-      print("☁️ [Real] 正在向服务器发送真实请求...");
-
-      // ⚠️ 这里换成队友 B 最终给你的真实局域网 IP 和接口路径
-      final serverUrl = 'http://192.168.x.x:8000/api/generate_story';
-
-      // 注意：这里我们不用学长的那个 _dio，因为他的 _dio 绑定了 LLM 的 Authorization 请求头
-      // 我们临时建一个干净的 Dio 发给自己的服务器
-      final myBackendDio = Dio(
-        BaseOptions(
-          connectTimeout: const Duration(seconds: 15),
-          receiveTimeout: const Duration(seconds: 60), // 音频生成比较慢
-        ),
-      );
-
-      final response = await myBackendDio.post(
-        serverUrl,
-        data: {
-          "event_id": eventId,
-          "tags": tags,
-          "joy_score": joyScore,
-          "style_preference": stylePreference,
+    } else {
+      print("❌ DeepSeek 生成失败，降级使用默认文本");
+      // 生成失败的兜底防崩溃逻辑
+      return {
+        "code": 200,
+        "msg": "success",
+        "data": {
+          "story_title": "未命名的记忆",
+          "script_content": "时光静好，这段记忆同样珍贵。（AI 生成超时或失败）",
+          "bgm_url": "http://127.0.0.1/dummy_music.mp3",
         },
-      );
-
-      if (response.statusCode == 200) {
-        print("✅ 服务器成功返回了故事和音乐！");
-        return response.data; // 返回的数据交给上一层解析
-      } else {
-        print("❌ 云端接口报错，状态码: ${response.statusCode}");
-        return null;
-      }
-    } catch (e) {
-      print("❌ 网络请求崩溃: $e");
-      return null;
+      };
     }
   }
 }

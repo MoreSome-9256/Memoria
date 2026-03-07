@@ -76,8 +76,11 @@ class StoryService {
       final llmService = LLMService();
       final resultData = await llmService.generateStoryAndMusic(
         eventId: event.id,
-        tags: allTags.take(10).toList(), // 最多传10个高频词防撑爆
+        tags: allTags.take(40).toList(), // 最多传40个高频词防撑爆
         joyScore: avgJoyScore,
+        photoCount: event.photoCount, // ➕ 传入该事件下的真实照片数量
+        location: event.city ?? event.province ?? '未知地点', // ➕ 传入高德定位的城市
+        date: event.dateRangeText, // ➕ 传入照片的真实日期
         stylePreference: subtitle.isNotEmpty ? subtitle : "治愈风",
       );
 

@@ -16,7 +16,7 @@ class EventService {
 
   static const String _amapWebKey = String.fromEnvironment(
     'AMAP_WEB_KEY',
-    defaultValue: '',
+    defaultValue: '', // 高德地图的api key
   );
 
   final Dio _dio = Dio(

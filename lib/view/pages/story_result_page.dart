@@ -29,15 +29,39 @@ class StoryResultPage extends StatefulWidget {
     required StoryEntity storyEntity,
     required List<PhotoEntity> photos,
   }) {
-    // 解析 Markdown 为 StorySection 列表
     final sectionMaps = storyEntity.parseToSections(photos);
-    final sections = sectionMaps.map((map) {
-      return StorySection(
-        text: map['text'] as String,
-        photo: map['photo'] as Photo,
-      );
-    }).toList();
+    List<StorySection> sections = [];
 
+    // 🌟 核心修复：大模型“不听话”时的 UI 兜底保护逻辑
+    if (sectionMaps.isEmpty &&
+        (storyEntity.content != null && storyEntity.content.isNotEmpty)) {
+      print("⚠️ 警告：未检测到图片占位符，触发 UI 兜底保护！");
+      // 强行把所有文字变成一个段落，配上第一张照片
+      if (photos.isNotEmpty) {
+        sections.add(
+          StorySection(
+            text: storyEntity.content,
+            photo: Photo(
+              id: photos.first.assetId,
+              path: photos.first.path,
+              dateTaken: DateTime.fromMillisecondsSinceEpoch(
+                photos.first.timestamp,
+              ),
+              tags: photos.first.aiTags ?? [],
+              location: photos.first.city ?? photos.first.province,
+            ),
+          ),
+        );
+      }
+    } else {
+      // 正常解析成功的情况
+      sections = sectionMaps.map((map) {
+        return StorySection(
+          text: map['text'] as String,
+          photo: map['photo'] as Photo,
+        );
+      }).toList();
+    }
     // 使用第一张照片作为 hero 图
     final heroPhoto = photos.isNotEmpty
         ? Photo(

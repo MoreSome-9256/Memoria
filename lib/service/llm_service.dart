@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import '../models/entity/event_entity.dart';
 
@@ -392,9 +393,9 @@ class LLMService {
   // ---------------------------------------------------------
 
   // 🚧 核心开关：等后端兄弟说“接口写好了”，把这里改成 false！
-  final bool _useMockBackend = true;
+  final bool _useMockBackend = false;
 
-  /// 🚀 临时重构版：绕过未完成的后端，直接用本地 DeepSeek 生成故事
+  /// 🚀 真实接口：向 DeepSeek 发送标签，实时生成故事（已为世杰前辈优化 Prompt）
   Future<Map<String, dynamic>?> generateStoryAndMusic({
     required int eventId,
     required List<String> tags,

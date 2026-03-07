@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Photo Manager Permissions -->
     <!-- Android 12 and below: Read external storage -->
@@ -12,10 +12,19 @@
 
     <!-- Access photo GPS location data (required for clustering) -->
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <application
         android:label="photo_album"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+
+        <meta-data
+            android:name="com.amap.api.v2.apikey"
+            android:value="882068209088957ae9afdc7e7bbae4f9" />
+
+        <service android:name="com.amap.api.location.APSService" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

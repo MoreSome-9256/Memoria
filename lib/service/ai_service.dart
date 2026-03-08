@@ -1,13 +1,16 @@
 import 'dart:io';
+import 'dart:math' as math;
 // import 'dart:math'; // ➕ 新增：用于生成随机的假数据
+import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:isar/isar.dart';
 import '../models/entity/photo_entity.dart';
-import '../models/entity/event_entity.dart';
 import '../utils/ai_score_helper.dart';
 import 'photo_service.dart';
 import 'event_service.dart';
+import 'mobileclip_tag_service.dart';
+import 'mobileclip_vision_service.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -15,6 +18,14 @@ class AIService {
   static final AIService _instance = AIService._internal();
   factory AIService() => _instance;
   AIService._internal();
+
+  final ValueNotifier<AIAnalysisProgress> _progressNotifier =
+      ValueNotifier<AIAnalysisProgress>(AIAnalysisProgress.idle());
+
+  bool _isAnalyzing = false;
+
+  ValueListenable<AIAnalysisProgress> get progressListenable =>
+      _progressNotifier;
 
   // 简单的标签翻译字典 (毕设演示够用了，也可以接翻译API)
   final Map<String, String> _tagTranslation = {
@@ -130,8 +141,43 @@ class AIService {
 
   // 🧠 核心方法：批量分析未处理的照片（包含人脸检测和情感分析）
   // 🧠 核心方法：批量分析未处理的照片（包含人脸检测和情感分析）
-  Future<void> analyzePhotosInBackground({int batchSize = 10}) async {
+  Future<void> analyzePhotosInBackground({
+    int batchSize = 10,
+    int? maxPhotos,
+  }) async {
+    if (_isAnalyzing) {
+      debugPrint('⏭️ AI 打标任务已在运行，跳过重复启动');
+      return;
+    }
+
+    _isAnalyzing = true;
     final isar = PhotoService().isar;
+    final mobileClipVision = MobileClipVisionService();
+    final mobileClipTagService = MobileClipTagService();
+    await mobileClipVision.warmUp();
+    await mobileClipTagService.warmUp();
+
+    final pendingCount = await isar
+        .collection<PhotoEntity>()
+        .filter()
+        .isAiAnalyzedEqualTo(false)
+        .count();
+    final targetTotal = maxPhotos == null
+        ? pendingCount
+        : math.min(pendingCount, maxPhotos);
+
+    if (targetTotal <= 0) {
+      _progressNotifier.value = AIAnalysisProgress.idle();
+      _isAnalyzing = false;
+      return;
+    }
+
+    _progressNotifier.value = AIAnalysisProgress.running(
+      total: targetTotal,
+      completed: 0,
+      failed: 0,
+      currentStep: '准备开始 AI 打标',
+    );
 
     // 2. 初始化 ML Kit 组件
     final ImageLabelerOptions labelerOptions = ImageLabelerOptions(
@@ -147,103 +193,184 @@ class AIService {
 
     var totalAnalyzed = 0;
     final affectedEventIds = <int>{};
+    var remainingPhotos = maxPhotos;
+    var failedCount = 0;
+    var processedCount = 0;
 
-    while (true) {
-      // 🌟 修复点：直接拉取未分析的照片，不搞复杂的预取和过滤
-      final photosToAnalyze = await isar
-          .collection<PhotoEntity>()
-          .filter()
-          .isAiAnalyzedEqualTo(false)
-          .limit(batchSize)
-          .findAll();
+    try {
+      while (true) {
+        if (remainingPhotos != null && remainingPhotos <= 0) {
+          break;
+        }
 
-      if (photosToAnalyze.isEmpty) {
-        break;
+        final currentBatchSize = remainingPhotos == null
+            ? batchSize
+            : math.min(batchSize, remainingPhotos);
+
+        // 🌟 修复点：直接拉取未分析的照片，不搞复杂的预取和过滤
+        final photosToAnalyze = await isar
+            .collection<PhotoEntity>()
+            .filter()
+            .isAiAnalyzedEqualTo(false)
+            .sortByTimestampDesc()
+            .limit(currentBatchSize)
+            .findAll();
+
+        if (photosToAnalyze.isEmpty) {
+          break;
+        }
+
+        debugPrint("🤖 开始 AI 视觉分析，本批次: ${photosToAnalyze.length} 张");
+
+        for (final photo in photosToAnalyze) {
+          final file = File(photo.path);
+          var didFail = false;
+          File? compressedTempFile;
+          _progressNotifier.value = AIAnalysisProgress.running(
+            total: targetTotal,
+            completed: processedCount,
+            failed: failedCount,
+            currentStep: '正在分析第 ${processedCount + 1} / $targetTotal 张',
+          );
+
+          try {
+            if (!file.existsSync()) {
+              await _markAsAnalyzed(photo.id, [], 0, 0.0, 0.0, isar);
+              didFail = true;
+              continue;
+            }
+
+            final tempDir = await getTemporaryDirectory();
+            final targetPath = '${tempDir.path}/temp_mlkit_${photo.id}.jpg';
+
+            // 🔧 压缩图片，防止 OOM
+            final result = await FlutterImageCompress.compressAndGetFile(
+              file.absolute.path,
+              targetPath,
+              minWidth: 1024,
+              minHeight: 1024,
+              quality: 80,
+            );
+
+            if (result == null) throw Exception("压缩失败");
+            compressedTempFile = File(result.path);
+
+            final embedding = await mobileClipVision.embedImageFile(
+              compressedTempFile,
+            );
+
+            final inputImage = InputImage.fromFile(compressedTempFile);
+
+            // 📸 任务1：标签识别
+            final labels = await imageLabeler.processImage(inputImage);
+            final mlKitTags = labels
+                .map((label) => _tagTranslation[label.label] ?? label.label)
+                .toList(growable: false);
+            final mobileClipTags = await mobileClipTagService.retrieveTags(
+              embedding,
+            );
+            final validTags = _mergePreferredTags(mobileClipTags, mlKitTags);
+
+            // 😊 任务2：情感分析
+            final faces = await faceDetector.processImage(inputImage);
+            int faceCount = faces.length;
+            double maxSmileProb = faces.isNotEmpty
+                ? faces
+                      .map((f) => f.smilingProbability ?? 0.0)
+                      .reduce((a, b) => a > b ? a : b)
+                : 0.0;
+
+            double joyScore = AIScoreHelper.calculateJoyScore(
+              faceCount: faceCount,
+              maxSmileProb: maxSmileProb,
+              tags: validTags,
+            );
+
+            await _markAsAnalyzed(
+              photo.id,
+              validTags,
+              faceCount,
+              maxSmileProb,
+              joyScore,
+              isar,
+            );
+
+            if (photo.eventId != null) {
+              affectedEventIds.add(photo.eventId!);
+            }
+            totalAnalyzed++;
+            if (remainingPhotos != null) {
+              remainingPhotos--;
+            }
+          } catch (e) {
+            didFail = true;
+            debugPrint("❌ AI 分析失败: $e");
+            await _markAsAnalyzed(photo.id, [], 0, 0.0, 0.0, isar);
+            if (remainingPhotos != null) {
+              remainingPhotos--;
+            }
+          } finally {
+            if (didFail) {
+              failedCount++;
+            }
+            processedCount++;
+            _progressNotifier.value = AIAnalysisProgress.running(
+              total: targetTotal,
+              completed: processedCount,
+              failed: failedCount,
+              currentStep: processedCount >= targetTotal
+                  ? '正在收尾整理结果'
+                  : '已完成 $processedCount / $targetTotal 张',
+            );
+
+            // 🧹 清理临时文件
+            if (compressedTempFile != null && compressedTempFile.existsSync()) {
+              compressedTempFile.deleteSync();
+            }
+          }
+          await Future.delayed(const Duration(milliseconds: 100));
+        }
       }
 
-      print("🤖 开始 AI 视觉分析，本批次: ${photosToAnalyze.length} 张");
+      imageLabeler.close();
+      faceDetector.close();
 
-      for (final photo in photosToAnalyze) {
-        final file = File(photo.path);
-        if (!file.existsSync()) {
-          await _markAsAnalyzed(photo.id, [], 0, 0.0, 0.0, isar);
+      if (affectedEventIds.isNotEmpty) {
+        await EventService().refreshEventSmartInfo(affectedEventIds.toList());
+      }
+      debugPrint("✅ AI 分析完成，总计处理: $totalAnalyzed 张");
+    } finally {
+      _progressNotifier.value = AIAnalysisProgress.idle();
+      _isAnalyzing = false;
+    }
+  }
+
+  List<String> _mergePreferredTags(
+    List<String> mobileClipTags,
+    List<String> fallbackTags, {
+    int maxTags = 5,
+  }) {
+    final merged = <String>[];
+
+    void addTags(List<String> source) {
+      for (final tag in source) {
+        final normalized = tag.trim();
+        if (normalized.isEmpty || merged.contains(normalized)) {
           continue;
         }
-
-        File? compressedTempFile;
-
-        try {
-          final tempDir = await getTemporaryDirectory();
-          final targetPath = '${tempDir.path}/temp_mlkit_${photo.id}.jpg';
-
-          // 🔧 压缩图片，防止 OOM
-          final result = await FlutterImageCompress.compressAndGetFile(
-            file.absolute.path,
-            targetPath,
-            minWidth: 1024,
-            minHeight: 1024,
-            quality: 80,
-          );
-
-          if (result == null) throw Exception("压缩失败");
-          compressedTempFile = File(result.path);
-
-          final inputImage = InputImage.fromFile(compressedTempFile);
-
-          // 📸 任务1：标签识别
-          final labels = await imageLabeler.processImage(inputImage);
-          List<String> validTags = labels
-              .map((l) => _tagTranslation[l.label] ?? l.label)
-              .toList();
-
-          // 😊 任务2：情感分析
-          final faces = await faceDetector.processImage(inputImage);
-          int faceCount = faces.length;
-          double maxSmileProb = faces.isNotEmpty
-              ? faces
-                    .map((f) => f.smilingProbability ?? 0.0)
-                    .reduce((a, b) => a > b ? a : b)
-              : 0.0;
-
-          double joyScore = AIScoreHelper.calculateJoyScore(
-            faceCount: faceCount,
-            maxSmileProb: maxSmileProb,
-            tags: validTags,
-          );
-
-          await _markAsAnalyzed(
-            photo.id,
-            validTags,
-            faceCount,
-            maxSmileProb,
-            joyScore,
-            isar,
-          );
-
-          if (photo.eventId != null) {
-            affectedEventIds.add(photo.eventId!);
-          }
-          totalAnalyzed++;
-        } catch (e) {
-          print("❌ AI 分析失败: $e");
-          await _markAsAnalyzed(photo.id, [], 0, 0.0, 0.0, isar);
-        } finally {
-          // 🧹 清理临时文件
-          if (compressedTempFile != null && compressedTempFile.existsSync()) {
-            compressedTempFile.deleteSync();
-          }
+        merged.add(normalized);
+        if (merged.length >= maxTags) {
+          return;
         }
-        await Future.delayed(const Duration(milliseconds: 100));
       }
     }
 
-    imageLabeler.close();
-    faceDetector.close();
-
-    if (affectedEventIds.isNotEmpty) {
-      await EventService().refreshEventSmartInfo(affectedEventIds.toList());
+    addTags(mobileClipTags);
+    if (merged.isEmpty) {
+      addTags(fallbackTags);
     }
-    print("✅ AI 分析完成，总计处理: $totalAnalyzed 张");
+
+    return merged;
   }
 
   // 将 AI 分析结果写入数据库（增强版）
@@ -281,4 +408,54 @@ class AIService {
 
     return {'total': total, 'analyzed': analyzed, 'pending': total - analyzed};
   }
+}
+
+class AIAnalysisProgress {
+  const AIAnalysisProgress({
+    required this.isRunning,
+    required this.total,
+    required this.completed,
+    required this.failed,
+    required this.currentStep,
+  });
+
+  factory AIAnalysisProgress.idle() {
+    return const AIAnalysisProgress(
+      isRunning: false,
+      total: 0,
+      completed: 0,
+      failed: 0,
+      currentStep: '',
+    );
+  }
+
+  factory AIAnalysisProgress.running({
+    required int total,
+    required int completed,
+    required int failed,
+    required String currentStep,
+  }) {
+    return AIAnalysisProgress(
+      isRunning: true,
+      total: total,
+      completed: completed,
+      failed: failed,
+      currentStep: currentStep,
+    );
+  }
+
+  final bool isRunning;
+  final int total;
+  final int completed;
+  final int failed;
+  final String currentStep;
+
+  double get fraction {
+    if (total <= 0) {
+      return 0;
+    }
+    return (completed / total).clamp(0, 1).toDouble();
+  }
+
+  bool get isVisible => isRunning && total > 0;
 }

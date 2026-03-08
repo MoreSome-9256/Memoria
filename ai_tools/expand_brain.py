@@ -15,7 +15,7 @@ if not DEEPSEEK_API_KEY:
 TXT_FILE = "ai_tools/现代汉语常用词表.txt"
 OUTPUT_DICT_FILE = "ai_tools/ds_filtered_dict.json"      # 🌟 新增：保存 DS 中间翻译词表的路径
 OUTPUT_VECTOR_FILE = "ai_tools/expanded_tags_vectors.json"
-MAX_WORDS = 1000  # 我们这次多读一点，因为 DS 会大浪淘沙过滤掉很多废词！
+MAX_WORDS = 100000  # 我们这次多读一点，因为 DS 会大浪淘沙过滤掉很多废词！
 # =================================================
 
 def extract_visual_nouns(txt_path, max_count):

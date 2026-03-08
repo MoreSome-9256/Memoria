@@ -14,6 +14,14 @@ class EventService {
   factory EventService() => _instance;
   EventService._internal();
 
+  static const Set<String> _blockedSmartTitleTags = <String>{
+    '套路',
+    '未婚妻',
+    '字幕',
+    '房主',
+    '采购员',
+  };
+
   static const String _amapWebKey = String.fromEnvironment(
     'AMAP_WEB_KEY',
     defaultValue: '7fe01f8a449b2aac28068feac9177316',
@@ -56,25 +64,30 @@ class EventService {
   }
 
   // 🧮 核心方法：运行时空聚类算法
-  Future<void> runClustering() async {
+  Future<void> runClustering({
+    int? maxPhotos,
+  }) async {
     final isar = PhotoService().isar;
 
-    // 1. 读取所有照片（按时间倒序）
-    final allPhotos = await isar
-        .collection<PhotoEntity>()
-        .where()
-        .sortByTimestampDesc()
-        .findAll();
+    // 1. 读取照片
+    final query = isar.collection<PhotoEntity>().where().sortByTimestampDesc();
+    final recentPhotos = maxPhotos == null
+        ? await query.findAll()
+        : await query.limit(maxPhotos).findAll();
 
-    if (allPhotos.isEmpty) {
+    if (recentPhotos.isEmpty) {
       print("⚠️ 没有照片可以聚类");
       return;
     }
 
-    print("🔍 开始聚类分析，共 ${allPhotos.length} 张照片");
+    print(
+      maxPhotos == null
+          ? "🔍 开始聚类分析，共 ${recentPhotos.length} 张照片"
+          : "🔍 开始聚类分析（最近 ${recentPhotos.length} 张照片）",
+    );
 
     // 2. 反转为时间升序（方便按时间顺序处理）
-    final photos = allPhotos.reversed.toList();
+    final photos = recentPhotos.reversed.toList();
 
     // 3. 聚类逻辑
     final clusterResult = EventClusterHelper.clusterPhotos(
@@ -89,6 +102,16 @@ class EventService {
 
     // 4. 将聚类结果存入数据库并设置 eventId 反向关联
     await isar.writeTxn(() async {
+      final photosWithEvent = await isar
+          .collection<PhotoEntity>()
+          .filter()
+          .eventIdIsNotNull()
+          .findAll();
+      for (final photo in photosWithEvent) {
+        photo.eventId = null;
+      }
+      await isar.collection<PhotoEntity>().putAll(photosWithEvent);
+
       // 清空旧事件
       await isar.collection<EventEntity>().clear();
 
@@ -522,6 +545,7 @@ class EventService {
     if (tagCounts == null || tagCounts.isEmpty) return [];
 
     final sortedTags = tagCounts.entries.toList()
+      ..removeWhere((entry) => _blockedSmartTitleTags.contains(entry.key))
       ..sort((a, b) => b.value.compareTo(a.value));
 
     return sortedTags.take(count).map((e) => e.key).toList();
@@ -558,6 +582,9 @@ class EventService {
     for (final photo in photos) {
       if (photo.aiTags != null) {
         for (final tag in photo.aiTags!) {
+          if (_blockedSmartTitleTags.contains(tag)) {
+            continue;
+          }
           tagCounts[tag] = (tagCounts[tag] ?? 0) + 1;
         }
       }

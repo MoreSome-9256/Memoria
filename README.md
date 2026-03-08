@@ -68,6 +68,57 @@ flutter run \
   --dart-define=LLM_API_KEY=YOUR_API_KEY
 ```
 
+## MobileCLIP 资源生成
+
+仓库默认不提交以下可再生产物：
+
+- `assets/expanded_tags_taxonomy.json`
+- `assets/expanded_tags_vectors.json`
+- `ai_tools/expanded_tags_vectors.json`
+- `ai_tools/expanded_tags_taxonomy.json`
+- `mobileclip_vision.onnx`
+- `mobileclip_vision_ir9.onnx`
+
+原因：这些文件体积大，且都可以通过脚本重新生成；其中 `assets/expanded_tags_vectors.json` 已经不再被运行时使用，Flutter 运行时实际只依赖 `assets/expanded_tags_taxonomy.json` 和 `mobileclip_vision_ir9.onnx`。
+
+在首次运行应用前，请先自行下载 MobileCLIP-S2 基模，并放到以下固定路径：
+
+- `checkpoints/mobileclip_s2.pt`
+
+在首次运行应用前，请先准备本地 Python 环境以及 `torch`、`mobileclip`、`jieba`、`requests`、`onnx` 等脚本依赖，然后按顺序执行：
+
+```bash
+# 1. 从常用词表中过滤并向量化中文视觉标签
+python ai_tools/expand_brain.py
+
+# 2. 基于向量词库构建带类别信息的 taxonomy
+python ai_tools/build_taxonomy.py
+
+# 3. 导出 MobileCLIP ONNX 模型
+python ai_tools/export_mobileclip_onnx.py
+```
+
+`expand_brain.py` 和 `build_taxonomy.py` 依赖 `DEEPSEEK_API_KEY` 环境变量：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "YOUR_KEY"
+```
+
+生成完成后，将 taxonomy 复制到 Flutter 资源目录：
+
+```powershell
+Copy-Item ai_tools/expanded_tags_taxonomy.json assets/expanded_tags_taxonomy.json
+```
+
+导出脚本会在项目根目录生成以下 ONNX 文件：
+
+- `mobileclip_vision.onnx`
+- `mobileclip_vision_ir9.onnx`
+
+其中 `mobileclip_vision_ir9.onnx` 是 Flutter 运行时实际加载的模型；`mobileclip_vision.onnx` 主要用于导出中间产物和桌面侧校验。
+
+如果缺少 `checkpoints/mobileclip_s2.pt`、`assets/expanded_tags_taxonomy.json` 或 `mobileclip_vision_ir9.onnx`，`flutter run` 会因为缺失资源而失败。
+
 ## 常用命令
 
 ```bash

@@ -39,7 +39,9 @@ class PhotoService {
   }
 
   // 1️⃣ 扫描相册 (快速入库，带截图过滤)
-  Future<PhotoScanSummary> scanAndSyncPhotos() async {
+  Future<PhotoScanSummary> scanAndSyncPhotos({
+    int? maxAssets,
+  }) async {
     final totalBefore = await _isar.collection<PhotoEntity>().count();
 
     // 🌟 核心修复：针对 Android 10+ 的动态权限申请
@@ -76,14 +78,20 @@ class PhotoService {
     final removedCount = await _removeUnavailablePhotos();
     // 🌟 新增：获取相册里的真实总照片数
     final int totalCount = await albums[0].assetCountAsync;
+    final int fetchCount = maxAssets == null
+        ? totalCount
+        : (maxAssets < totalCount ? maxAssets : totalCount);
 
-    // 🌟 修改：将 end: 200 改为 end: totalCount，全量读取！
     final List<AssetEntity> assets = await albums[0].getAssetListRange(
       start: 0,
-      end: totalCount,
+      end: fetchCount,
     );
 
-    print("🚀 开始扫描相册...");
+    print(
+      maxAssets == null
+          ? "🚀 开始扫描相册（全量）..."
+          : "🚀 开始扫描相册（最近 $fetchCount / $totalCount 张）...",
+    );
 
     int skippedInvalidTime = 0;
     int insertedNoGps = 0;
@@ -239,68 +247,89 @@ class PhotoService {
     return {'total': total, 'withGPS': withGPS, 'aiAnalyzed': aiAnalyzed};
   }
 
+  Future<int> requeueLatestPhotosForAi({
+    int? maxPhotos,
+  }) async {
+    final query = _isar.collection<PhotoEntity>().where().sortByTimestampDesc();
+    final photos = maxPhotos == null
+        ? await query.findAll()
+        : await query.limit(maxPhotos).findAll();
+
+    if (photos.isEmpty) {
+      return 0;
+    }
+
+    var updatedCount = 0;
+    for (final photo in photos) {
+      final needsReset =
+          photo.isAiAnalyzed ||
+          (photo.aiTags != null && photo.aiTags!.isNotEmpty);
+      if (!needsReset) {
+        continue;
+      }
+
+      photo.isAiAnalyzed = false;
+      photo.aiTags = <String>[];
+      photo.faceCount = 0;
+      photo.smileProb = 0.0;
+      photo.joyScore = 0.0;
+      updatedCount++;
+    }
+
+    if (updatedCount == 0) {
+      return 0;
+    }
+
+    await _isar.writeTxn(() async {
+      await _isar.collection<PhotoEntity>().putAll(photos);
+    });
+
+    final scopeText = maxPhotos == null ? '${photos.length} 张照片' : '最近 $maxPhotos 张照片';
+    print('🔁 已将 $scopeText 中的 $updatedCount 张重新加入 AI 打标队列');
+    return updatedCount;
+  }
+
   /// 🚀 Memoria 2.0 升级脚本：重置所有照片的 AI 分析状态
 
   /// 当底层模型从 ML Kit 切换到 MobileCLIP 时调用
 
   Future<void> migrateToMobileClip() async {
-
     print("🔄 开始执行 Memoria 2.0 AI 数据迁移...");
-
-
 
     // 1. 查出所有已经用旧模型（ML Kit）分析过的照片
 
-    final oldPhotos = await _isar.collection<PhotoEntity>()
-
+    final oldPhotos = await _isar
+        .collection<PhotoEntity>()
         .filter()
-
         .isAiAnalyzedEqualTo(true)
-
         .findAll();
 
-
-
     if (oldPhotos.isEmpty) {
-
       print("✅ 没有需要迁移的旧照片。");
 
       return;
-
     }
-
-
 
     // 2. 将它们的状态重置，并清空旧标签
 
     for (var photo in oldPhotos) {
-
       photo.isAiAnalyzed = false;
 
       photo.aiTags = []; // 清空 ML Kit 时代干瘪的标签
 
       // photo.vector = null; // 如果你未来加了向量字段，也在这里清空
-
     }
-
-
 
     // 3. 批量写回数据库
 
     await _isar.writeTxn(() async {
-
       await _isar.collection<PhotoEntity>().putAll(oldPhotos);
-
     });
-
-
 
     print("🎉 成功重置了 ${oldPhotos.length} 张照片的 AI 状态！");
 
     print("后台的闲时 AI 任务将会自动用 MobileCLIP 重新扫描并提取 512 维高维向量。");
-
   }
-
 }
 
 enum PhotoScanError { permissionDenied, noAlbum, noEligiblePhoto }

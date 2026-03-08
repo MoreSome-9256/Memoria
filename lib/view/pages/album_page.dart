@@ -82,6 +82,9 @@ class _AlbumPageState extends State<AlbumPage> {
       // 2. ⚡ 极速操作：运行聚类算法（通过时间/GPS聚合成 Event）
       await EventService().runClustering();
 
+      // 3. 🔁 把旧 ML Kit 结果重新加入队列，强制切换到 MobileCLIP 中文打标
+      final requeuedCount = await PhotoService().requeueLatestPhotosForAi();
+
       // ==========================================
       // 🚀 核心改动：到这里基础数据已经搞定，立刻关闭加载动画！
       // ==========================================
@@ -95,23 +98,25 @@ class _AlbumPageState extends State<AlbumPage> {
             content: Text(
               clearCacheFirst
                   ? '✅ 已清空重扫，发现${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
-                  : '✅ 相册已极速更新，发现${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...',
+                  : requeuedCount > 0
+                  ? '✅ 相册已更新，已将$requeuedCount张旧照片重新加入中文打标队列。'
+                  : '✅ 相册已极速更新，AI正在后台悄悄打标...',
             ),
             duration: const Duration(seconds: 3), // 提示稍长一点
           ),
         );
       }
 
-      // 3. 🤫 静默操作：剥离主线程，让 AI 在后台慢慢抠图打标签
+      // 4. 🤫 静默操作：剥离主线程，让 AI 在后台慢慢抠图打标签
       // ⚠️ 注意：这里去掉了 await，它不会再阻塞后续代码和 UI 了！
       AIService()
           .analyzePhotosInBackground()
           .then((_) {
-            print("🎉 [后台任务] 所有照片的 AI 标签已静默添加完毕！");
+            debugPrint("🎉 [后台任务] 所有照片的 AI 标签已静默添加完毕！");
             // 你可以随时在这里发送广播，或者静默更新部分特定 UI
           })
           .catchError((e) {
-            print("❌ [后台任务] AI 分析出错: $e");
+            debugPrint("❌ [后台任务] AI 分析出错: $e");
           });
     } on PhotoScanException catch (e) {
       if (mounted) {
@@ -193,74 +198,155 @@ class _AlbumPageState extends State<AlbumPage> {
           ),
         ],
       ),
-      body: StreamBuilder<List<EventEntity>>(
-        stream: _eventsStream,
-        builder: (context, snapshot) {
-          // 1. 🌟 优化后的加载判断逻辑
-          // 只有在“还在连接”且“完全没有历史数据”时，才显示大转圈
-          if (snapshot.connectionState == ConnectionState.waiting &&
-              !snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: ValueListenableBuilder<AIAnalysisProgress>(
+        valueListenable: AIService().progressListenable,
+        builder: (context, progress, _) {
+          return Column(
+            children: [
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                child: progress.isVisible
+                    ? _buildAnalysisProgressBanner(progress)
+                    : const SizedBox.shrink(),
+              ),
+              Expanded(
+                child: StreamBuilder<List<EventEntity>>(
+                  stream: _eventsStream,
+                  builder: (context, snapshot) {
+                    // 1. 🌟 优化后的加载判断逻辑
+                    // 只有在“还在连接”且“完全没有历史数据”时，才显示大转圈
+                    if (snapshot.connectionState == ConnectionState.waiting &&
+                        !snapshot.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
 
-          // 2. 错误处理 (保持原样)
-          if (snapshot.hasError) {
-            return _buildErrorState(snapshot.error.toString());
-          }
+                    // 2. 错误处理 (保持原样)
+                    if (snapshot.hasError) {
+                      return _buildErrorState(snapshot.error.toString());
+                    }
 
-          // 获取实体列表
-          final eventEntities = snapshot.data ?? [];
+                    // 获取实体列表
+                    final eventEntities = snapshot.data ?? [];
 
-          // 3. 🌟 空状态：如果数据库返回了空列表，立刻显示空提示，不再转圈
-          if (eventEntities.isEmpty) {
-            return _buildEmptyState();
-          }
+                    // 3. 🌟 空状态：如果数据库返回了空列表，立刻显示空提示，不再转圈
+                    if (eventEntities.isEmpty) {
+                      return _buildEmptyState();
+                    }
 
-          // 4. 有数据时的处理逻辑
-          return FutureBuilder<Map<String, List<Event>>>(
-            // 🚀 这里使用了我们刚才优化的 Future.wait 并行处理方法
-            future: _groupEvents(eventEntities),
-            builder: (context, groupSnapshot) {
-              // 错误捕获：防止转换 UI 模型时崩溃导致无限转圈
-              if (groupSnapshot.hasError) {
-                return Center(child: Text('数据转换错误: ${groupSnapshot.error}'));
-              }
+                    // 4. 有数据时的处理逻辑
+                    return FutureBuilder<Map<String, List<Event>>>(
+                      // 🚀 这里使用了我们刚才优化的 Future.wait 并行处理方法
+                      future: _groupEvents(eventEntities),
+                      builder: (context, groupSnapshot) {
+                        // 错误捕获：防止转换 UI 模型时崩溃导致无限转圈
+                        if (groupSnapshot.hasError) {
+                          return Center(
+                            child: Text('数据转换错误: ${groupSnapshot.error}'),
+                          );
+                        }
 
-              // 正在进行并行转换时的小转圈
-              if (!groupSnapshot.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
+                        // 正在进行并行转换时的小转圈
+                        if (!groupSnapshot.hasData) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
 
-              final groupedEvents = groupSnapshot.data!;
+                        final groupedEvents = groupSnapshot.data!;
 
-              return ListView(
-                padding: const EdgeInsets.all(16),
-                children: groupedEvents.entries.map((entry) {
-                  final seasonTitle = entry.key;
-                  final events = entry.value;
+                        return ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: groupedEvents.entries.map((entry) {
+                            final seasonTitle = entry.key;
+                            final events = entry.value;
 
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        child: Text(
-                          seasonTitle,
-                          style: Theme.of(context).textTheme.titleLarge
-                              ?.copyWith(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      ...events.map((event) => EventCard(event: event)),
-                    ],
-                  );
-                }).toList(),
-              );
-            },
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 16,
+                                  ),
+                                  child: Text(
+                                    seasonTitle,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleLarge
+                                        ?.copyWith(fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                ...events.map(
+                                  (event) => EventCard(event: event),
+                                ),
+                              ],
+                            );
+                          }).toList(),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
           );
         },
       ),
     );
   }
+
+  Widget _buildAnalysisProgressBanner(AIAnalysisProgress progress) {
+    final completedText = '${progress.completed}/${progress.total}';
+    final failedSuffix = progress.failed > 0 ? '，失败 ${progress.failed}' : '';
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.teal.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.teal.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome, size: 18, color: Colors.teal),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'AI 正在后台打标 $completedText$failedSuffix',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Text(
+                '${(progress.fraction * 100).round()}%',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Colors.teal,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          LinearProgressIndicator(
+            value: progress.fraction,
+            minHeight: 8,
+            borderRadius: BorderRadius.circular(999),
+            backgroundColor: Colors.teal.withValues(alpha: 0.12),
+            valueColor: const AlwaysStoppedAnimation<Color>(Colors.teal),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            progress.currentStep,
+            style: TextStyle(color: Colors.grey[700], fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
   // 🎨 1. 构建空状态界面
   Widget _buildEmptyState() {
     return Center(

@@ -100,9 +100,13 @@ class _EventDetailPageState extends State<EventDetailPage> {
                       const SizedBox(width: 16),
                       const Icon(Icons.location_on, size: 16),
                       const SizedBox(width: 8),
-                      Text(
-                        widget.event.location,
-                        style: Theme.of(context).textTheme.bodyLarge,
+                      Expanded(
+                        child: Text(
+                          widget.event.location,
+                          style: Theme.of(context).textTheme.bodyLarge,
+                          overflow: TextOverflow.ellipsis, // 超出变省略号
+                          maxLines: 1,
+                        ),
                       ),
                     ],
                   ),
@@ -127,7 +131,14 @@ class _EventDetailPageState extends State<EventDetailPage> {
                           children: [
                             Text(theme.emoji),
                             const SizedBox(width: 4),
-                            Text(theme.title),
+                            // 🌟 修复点 2：用 Flexible 限制 AI 生成的超长标题
+                            Flexible(
+                              child: Text(
+                                theme.title,
+                                overflow: TextOverflow.ellipsis, // 超出变省略号
+                                maxLines: 1,
+                              ),
+                            ),
                           ],
                         ),
                         selected: isSelected,

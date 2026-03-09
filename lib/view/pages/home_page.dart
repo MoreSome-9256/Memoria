@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
 import '../../service/photo_service.dart';
 import '../../models/entity/photo_entity.dart';
+import 'create_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -232,7 +233,13 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(height: 16),
                 ElevatedButton(
                   onPressed: () {
-                    // 跳转逻辑可以根据需要后续添加
+                    // 🌟 核心跳转逻辑：压入路由栈，前往搜索创建页
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const CreatePage(),
+                      ),
+                    );
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.white.withOpacity(0.95),

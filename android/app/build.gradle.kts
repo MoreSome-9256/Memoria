@@ -16,7 +16,12 @@ android {
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
+        jvmTarget = "17"
+    }
+
+    // 🌟 替换为合规的 Kotlin DSL 语法
+    androidResources {
+        noCompress += listOf("tflite", "pt", "bin", "onnx", "mp3")
     }
 
     defaultConfig {

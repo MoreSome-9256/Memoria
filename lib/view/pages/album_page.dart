@@ -16,7 +16,8 @@ class AlbumPage extends StatefulWidget {
 class _AlbumPageState extends State<AlbumPage> {
   bool _isRefreshing = false;
 
-  late Stream<List<EventEntity>> _eventsStream;
+  // 🌟 1. 改为直接监听最终 UI 数据结构的 Stream
+  late Stream<Map<String, List<Event>>> _uiEventsStream;
 
   // 🔄 刷新数据：扫描相册 + 运行聚类
   /*Future<void> _refreshData({bool clearCacheFirst = false}) async {
@@ -169,7 +170,11 @@ class _AlbumPageState extends State<AlbumPage> {
   @override
   void initState() {
     super.initState();
-    _eventsStream = EventService().watchEvents();
+    // 🌟 2. 使用 asyncMap 把异步处理逻辑直接塞进数据流的管道里
+    // 这样 UI 层只负责接收完全处理好的数据，彻底消灭 FutureBuilder 嵌套！
+    _uiEventsStream = EventService().watchEvents().asyncMap((eventEntities) {
+      return _groupEvents(eventEntities);
+    });
   }
 
   @override
@@ -210,79 +215,52 @@ class _AlbumPageState extends State<AlbumPage> {
                     : const SizedBox.shrink(),
               ),
               Expanded(
-                child: StreamBuilder<List<EventEntity>>(
-                  stream: _eventsStream,
+                // 🌟 核心修改区：彻底干掉 FutureBuilder，直接使用单层 StreamBuilder
+                child: StreamBuilder<Map<String, List<Event>>>(
+                  stream: _uiEventsStream,
                   builder: (context, snapshot) {
-                    // 1. 🌟 优化后的加载判断逻辑
-                    // 只有在“还在连接”且“完全没有历史数据”时，才显示大转圈
+                    // 1. 只有在完全没有历史数据且正在等待时，才显示大转圈
+                    // AI在后台疯狂打标触发流更新时，hasData 为 true，这里就不会进，彻底告别闪烁！
                     if (snapshot.connectionState == ConnectionState.waiting &&
                         !snapshot.hasData) {
                       return const Center(child: CircularProgressIndicator());
                     }
 
-                    // 2. 错误处理 (保持原样)
+                    // 2. 错误处理
                     if (snapshot.hasError) {
                       return _buildErrorState(snapshot.error.toString());
                     }
 
-                    // 获取实体列表
-                    final eventEntities = snapshot.data ?? [];
+                    // 3. 获取转换好的成品数据
+                    final groupedEvents = snapshot.data ?? {};
 
-                    // 3. 🌟 空状态：如果数据库返回了空列表，立刻显示空提示，不再转圈
-                    if (eventEntities.isEmpty) {
+                    // 4. 空状态处理
+                    if (groupedEvents.isEmpty) {
                       return _buildEmptyState();
                     }
 
-                    // 4. 有数据时的处理逻辑
-                    return FutureBuilder<Map<String, List<Event>>>(
-                      // 🚀 这里使用了我们刚才优化的 Future.wait 并行处理方法
-                      future: _groupEvents(eventEntities),
-                      builder: (context, groupSnapshot) {
-                        // 错误捕获：防止转换 UI 模型时崩溃导致无限转圈
-                        if (groupSnapshot.hasError) {
-                          return Center(
-                            child: Text('数据转换错误: ${groupSnapshot.error}'),
-                          );
-                        }
+                    // 5. 直接渲染列表
+                    return ListView(
+                      padding: const EdgeInsets.all(16),
+                      children: groupedEvents.entries.map((entry) {
+                        final seasonTitle = entry.key;
+                        final events = entry.value;
 
-                        // 正在进行并行转换时的小转圈
-                        if (!groupSnapshot.hasData) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
-
-                        final groupedEvents = groupSnapshot.data!;
-
-                        return ListView(
-                          padding: const EdgeInsets.all(16),
-                          children: groupedEvents.entries.map((entry) {
-                            final seasonTitle = entry.key;
-                            final events = entry.value;
-
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 16,
-                                  ),
-                                  child: Text(
-                                    seasonTitle,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleLarge
-                                        ?.copyWith(fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                                ...events.map(
-                                  (event) => EventCard(event: event),
-                                ),
-                              ],
-                            );
-                          }).toList(),
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              child: Text(
+                                seasonTitle,
+                                style: Theme.of(context).textTheme.titleLarge
+                                    ?.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            ...events.map((event) => EventCard(event: event)),
+                          ],
                         );
-                      },
+                      }).toList(),
                     );
                   },
                 ),

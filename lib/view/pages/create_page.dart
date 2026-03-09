@@ -4,6 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/photo_service.dart';
+import '../../models/event.dart';
+import '../../models/vo/photo.dart';
+import '../../models/ai_theme.dart';
+import 'config_page.dart';
 // 如果有封装好的图片显示组件可以替换这里的 Image.file
 
 class CreatePage extends StatefulWidget {
@@ -267,7 +271,7 @@ class _CreatePageState extends State<CreatePage> {
     });
   }
 
-  // 🚀 生成故事（下一步操作）
+  // 🚀 生成故事（跳转到配置页）
   void _generateStory() {
     if (_selectedPhotoIds.isEmpty) {
       ScaffoldMessenger.of(
@@ -276,18 +280,67 @@ class _CreatePageState extends State<CreatePage> {
       return;
     }
 
-    // 获取选中的真实照片对象
-    final selectedPhotos = _searchResults
+    // 获取选中的真实照片实体
+    final selectedEntities = _searchResults
         .where((p) => _selectedPhotoIds.contains(p.id))
         .toList();
 
-    print(
-      "✅ 准备使用 ${selectedPhotos.length} 张图片生成故事，主题是: ${_searchController.text}",
+    // 🌟 1. 组装 Photo 列表 (严格适配你的 Photo 类)
+    final mappedPhotos = selectedEntities.map((p) {
+      return Photo(
+        id: p.assetId, // 使用 assetId 确保和底层对应
+        location: p.city ?? p.province ?? '未知地点',
+        path: p.path,
+        dateTaken: DateTime.fromMillisecondsSinceEpoch(p.timestamp),
+        tags: p.aiTags ?? [],
+        isSelected: true,
+      );
+    }).toList();
+
+    // 🌟 2. 动态计算时间范围 (提取选出照片的最早和最晚时间)
+    DateTime startDate = DateTime.now();
+    DateTime endDate = DateTime.now();
+    if (mappedPhotos.isNotEmpty) {
+      final sortedDates = mappedPhotos.map((p) => p.dateTaken).toList()..sort();
+      startDate = sortedDates.first;
+      endDate = sortedDates.last;
+    }
+
+    final themeTitle = _searchController.text.trim().isNotEmpty
+        ? _searchController.text.trim()
+        : '我的专属回忆';
+
+    // 🌟 3. 构造虚拟的 AI 推荐主题 (严格适配 AITheme)
+    final virtualTheme = AITheme(
+      id: 'manual_theme',
+      emoji: '✨',
+      title: themeTitle,
+      subtitle: '自定义回忆',
     );
 
-    // TODO: 在这里带着 selectedPhotos 和 _searchController.text 跳转到 DeepSeek 故事生成页面
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('即将根据选中的 ${_selectedPhotoIds.length} 张照片生成故事...')),
+    // 🌟 4. 构造虚拟 Event (严格适配你的 Event 类构造函数)
+    final virtualEvent = Event(
+      id: '-1',
+      title: themeTitle,
+      season: '精选', // 既然是手动跨时空选的，就叫精选
+      year: startDate.year,
+      location: '多地精选',
+      startDate: startDate,
+      endDate: endDate,
+      photos: mappedPhotos,
+      aiThemes: [virtualTheme], // 直接把刚刚建好的主题塞进去
+    );
+
+    // 🌟 5. 携带合规的虚拟数据，正式起飞前往配置页！
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ConfigPage(
+          event: virtualEvent,
+          selectedPhotos: virtualEvent.photos,
+          selectedTheme: virtualTheme,
+        ),
+      ),
     );
   }
 

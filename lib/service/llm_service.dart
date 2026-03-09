@@ -395,110 +395,99 @@ class LLMService {
   // 🚧 核心开关：等后端兄弟说“接口写好了”，把这里改成 false！
   final bool _useMockBackend = false;
 
-  /// 🚀 真实接口：向 DeepSeek 发送标签，实时生成故事（已为世杰前辈优化 Prompt）
+  /// 🚀 真实接口：向 DeepSeek 发送标签，实时生成故事
   Future<Map<String, dynamic>?> generateStoryAndMusic({
     required int eventId,
     required List<String> tags,
     required double joyScore,
     required int photoCount,
-    String? location, // ➕ 新增地点参数
-    String? date,     // ➕ 新增时间参数
+    String? location,
+    String? date,
     String stylePreference = "治愈风",
+    String? photoDetails, // 🌟 新增：接收具体到每一张图的镜头特征
+    String? themeTitle, // 🌟 新增：接收用户输入的主题
+    String? themeSubtitle, // 🌟 新增：接收用户选择的副标题
   }) async {
-    print("☁️ [DeepSeek] 创作中... 地点: $location, 标签: $tags, 欢乐值: $joyScore, 图片数: $photoCount");
-    print("🚀 [临时接管] 后端没好，直接呼叫 DeepSeek 大模型写小作文...");
+    print("☁️ [DeepSeek] 创作中... 主题: $themeTitle, 图片数: $photoCount");
+    print("🚀 [请求发送] 正在携带具体的帧画面特征呼叫大模型...");
 
-    // 1. 📝 构造专门给 DeepSeek 的提示词 (Prompt)
-    // 1. 🎬 升级版：AI 导演短视频脚本生成 Prompt
+    // 1. 🎬 终极铁血版：禁止推测，必须基于事实的 Prompt
     final prompt =
-    '''
+        '''
 你现在是一位拥有百万粉丝的爆款短视频导演兼金牌编剧（精通小红书、抖音网感）。
-请根据以下用户上传的图片特征标签，构思短视频/Vlog的剪辑思路和旁白脚本。
+请严格基于以下【真实的画面素材记录】，构思短视频/Vlog的剪辑思路和旁白脚本。
 
-【背景信息】
-- 时间：${date ?? '未知时间'}
-- 地点：${location ?? '未知地点'}
+【既定背景与要求】
+- 核心主题：${themeTitle ?? '未命名回忆'}
+- 情感切入点：${themeSubtitle ?? stylePreference}
+- 整体时空：${date ?? '某天'} · ${location ?? '某地'}
+- 欢乐指数：${joyScore.toStringAsFixed(2)} / 1.0
 - 照片总数：$photoCount 张
-- 灵感词汇：${tags.isEmpty ? '安静的角落, 时光的碎片' : tags.join(', ')}
-- 情感基调：${joyScore > 0.7 ? '极其欢乐与温暖' : '平静与沉思'} (欢乐指数: ${joyScore.toStringAsFixed(2)})
-- 风格偏好：$stylePreference
+
+【🎬 真实镜头分镜表（绝对不许篡改或推测，必须作为客观事实使用）】
+${photoDetails ?? '总体画面元素：' + tags.join(', ')}
 
 请严格按照以下三个部分，输出结构化的纯文本内容（禁止使用 ** 加粗等 Markdown 语法）：
 
-【一、 素材内容分析】
-（根据标签推测并总结出以下三点，语言要像专业的视觉分析报告）
-- 主体：(推测画面中主要出现了什么)
-- 场景：(推测画面所处环境)
-- 事件：(推测正在发生的故事)
+【一、 素材内容提炼】
+（直接陈述客观事实，绝对禁止出现“推测”、“可能”等不确定词汇）
+- 核心主体：(画面中真实出现了什么人或物)
+- 场景环境：(画面所处的真实环境)
+- 故事线索：(这组真实照片串联起来的情感脉络)
 
 【二、 备选故事脚本】
-（请基于上述分析，生成 2 个不同视角的短视频分镜脚本）
+（请基于真实的镜头分镜表，生成 2 个不同视角的短视频脚本）
 
-⚠️ 核心图文排版要求（非常重要）：
+⚠️ 核心图文排版要求（生死攸关，千万不能错）：
 本次故事共有 $photoCount 张照片。你必须在分镜脚本中，使用 Markdown 图片占位符将这 $photoCount 张照片全部按顺序穿插进去！
 占位符格式严格为：![img](0)、![img](1)、![img](2)... 一直到 ![img](${photoCount - 1})。
-一个都不能少！请根据叙事节奏，将它们均匀分布在各个分镜中。
+一个都不能少！并且要和上面【真实镜头分镜表】里的序号一一对应！
 
-故事1：[填写吸引人的网感标题，如：这个家没我得散！]
-- 叙事顺序：(如：发现目标 -> 试探 -> 搞破坏 -> 结局)
+故事1：[填写极其吸引人的小红书爆款标题]
+- 叙事顺序：(如：开篇引入 -> 细节展现 -> 情感升华)
 - 分镜与文案：
-  ![img](0) (画面描述)：(配音台词或旁白)
-  ![img](1) (画面描述)：(配音台词或旁白)
+  ![img](0) (结合镜头1的客观画面描述)：(走心的配音台词或旁白)
+  ![img](1) (结合镜头2的客观画面描述)：(走心的配音台词或旁白)
   ... (继续穿插剩下的占位符)
 
-故事2：[填写吸引人的网感标题，如：打工人的周末治愈碎片]
+故事2：[填写带有Vlog网感的治愈系标题]
 - 叙事顺序：(填写该故事的发展脉络)
 - 分镜与文案：
-  ![img](0) (画面描述)：(配音台词或旁白)
-  ![img](1) (画面描述)：(配音台词或旁白)
+  ![img](0) (结合镜头1的客观画面描述)：(生活化的配音台词)
+  ![img](1) (结合镜头2的客观画面描述)：(生活化的配音台词)
   ... (继续穿插剩下的占位符)
 
 【三、 成片风格总结】
 （对上述生成的2个脚本进行一句话的视听风格总结）
-- 《故事1标题》：(例如：从戏精萌宠视角叙事，搭配手绘的剪辑风格和欢快的BGM)
-- 《故事2标题》：(例如：以轻松日常的文风叙事，配上治愈系Vlog音乐)
+- 《故事1标题》：(例如：以轻松日常的文风叙事，配上治愈系Vlog音乐)
+- 《故事2标题》：(例如：采用快节奏卡点剪辑，搭配欢快的背景音)
 
-注意：请直接输出从【一、 素材内容分析】开始的正文，绝对不要输出任何前言后语。
+注意：请直接输出从【一、 素材内容提炼】开始的正文，绝对不要输出任何“好的”、“没问题”等前言后语。
 ''';
 
-    // 🌟 注意这里：必须要有一个 try 把网络请求包起来！
     try {
-      // 2. 🧠 直接调用本类中已有的真实大模型生成方法
       final realStory = await generateBlogText(prompt);
 
-      // 🌟 让我们亲眼看看 DeepSeek 到底写了什么神仙句子！
       print("📜 [绝密档案] DeepSeek 真实输出内容：\n$realStory");
 
       if (realStory != null && realStory.isNotEmpty) {
-        // 🌟 暴力清洗掉大模型自作主张加的 Markdown 加粗符号
         final cleanedStory = realStory.replaceAll('**', '');
         print("✅ DeepSeek 故事生成完毕！");
 
-        // 3. 📦 包装成 UI 界面期待的 JSON 格式
         return {
           "code": 200,
           "msg": "success",
           "data": {
-            "story_title": "AI 漫游：${tags.isNotEmpty ? tags.first : '美好'}的记忆",
-            "script_content": cleanedStory, // 使用清洗后的文本
+            "story_title": themeTitle ?? "未命名的记忆",
+            "script_content": cleanedStory,
             "bgm_url": "http://127.0.0.1/dummy_music.mp3",
           },
         };
       } else {
-        print("❌ DeepSeek 生成失败，降级使用默认文本");
-        // 生成失败的兜底防崩溃逻辑
-        return {
-          "code": 200,
-          "msg": "success",
-          "data": {
-            "story_title": "未命名的记忆",
-            "script_content": "时光静好，这段记忆同样珍贵。（AI 生成超时或失败）",
-            "bgm_url": "http://127.0.0.1/dummy_music.mp3",
-          },
-        };
+        throw Exception("DeepSeek 返回了空数据");
       }
-    } catch (e) { // 🌟 这里的 catch 现在有 try 撑腰啦！
-      print("❌ DeepSeek 实时调用崩溃: $e");
+    } catch (e) {
+      print("❌ DeepSeek 调用崩溃: $e");
       return null;
     }
   }

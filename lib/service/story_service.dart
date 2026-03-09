@@ -50,14 +50,12 @@ class StoryService {
       final sortedPhotos = List<PhotoEntity>.from(selectedPhotos)
         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-      // 🌟 2. 提取用于给后端生成音乐和故事的核心特征
-      // 收集所有出现过的标签，并去重
+      // 🌟 2. 提取用于给后端生成故事的核心特征
       final allTags = sortedPhotos
           .expand((p) => p.aiTags ?? <String>[])
           .toSet()
           .toList();
 
-      // 计算平均欢乐值
       double totalJoy = 0;
       int validJoyCount = 0;
       for (var p in sortedPhotos) {
@@ -68,20 +66,54 @@ class StoryService {
       }
       final avgJoyScore = validJoyCount > 0 ? totalJoy / validJoyCount : 0.0;
 
-      print(
-        "📝 开始请求后端生成图文与配乐：${sortedPhotos.length} 张照片, 标签: $allTags, 欢乐值: $avgJoyScore",
-      );
+      // ==========================================
+      // 🌟 核心新增：将照片特征转化为大模型能懂的“文本分镜”
+      // 注意：序号从 0 开始，为了和大模型里的 ![img](0) 完美对齐！
+      // ==========================================
+      StringBuffer photoContext = StringBuffer();
+      for (int i = 0; i < sortedPhotos.length; i++) {
+        final p = sortedPhotos[i];
 
+        final tags = p.aiTags?.isNotEmpty == true
+            ? p.aiTags!.join("、")
+            : "日常画面";
+        // 🌟 加上这句，亲眼看看数据库里的毒标签！
+        print("🕵️‍♂️ [抓内鬼] 传给 AI 的第 $i 张照片真实标签是: $tags");
+        final loc = [
+          p.province,
+          p.city,
+          p.district,
+        ].where((e) => e != null && e.isNotEmpty).join("");
+
+        final date = DateTime.fromMillisecondsSinceEpoch(p.timestamp);
+        final timeStr = "${date.month}月${date.day}日";
+
+        photoContext.writeln(
+          "【镜头 $i】拍摄于 $timeStr ${loc.isNotEmpty ? '($loc)' : ''}，画面真实元素有：$tags",
+        );
+      }
+      // ==========================================
+
+      print("📝 开始请求后端生成图文：${sortedPhotos.length} 张照片, 欢乐值: $avgJoyScore");
+
+      // 🌟 3. 调用 LLMService 新写的综合接口
       // 🌟 3. 调用 LLMService 新写的综合接口
       final llmService = LLMService();
       final resultData = await llmService.generateStoryAndMusic(
         eventId: event.id,
-        tags: allTags.take(40).toList(), // 最多传40个高频词防撑爆
+        tags: allTags.take(40).toList(),
         joyScore: avgJoyScore,
-        photoCount: event.photoCount, // ➕ 传入该事件下的真实照片数量
-        location: event.city ?? event.province ?? '未知地点', // ➕ 传入高德定位的城市
-        date: event.dateRangeText,                          // ➕ 传入照片的真实日期
+        // 兜底：如果虚拟事件没记照片数，就用真实传进来的数组长度
+        photoCount: event.photoCount > 0
+            ? event.photoCount
+            : sortedPhotos.length,
+        location: event.city ?? event.province ?? '未知地点',
+        date: event.dateRangeText,
         stylePreference: subtitle.isNotEmpty ? subtitle : "治愈风",
+        // 👇 重点：把刚才在 llm_service 里加的三个参数传进去！
+        photoDetails: photoContext.toString(),
+        themeTitle: title,
+        themeSubtitle: subtitle,
       );
 
       if (resultData == null || resultData['data'] == null) {

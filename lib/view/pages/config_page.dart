@@ -61,15 +61,30 @@ class _ConfigPageState extends State<ConfigPage> {
     try {
       // 1. 获取 EventEntity（通过 Event.id 查询）
       final isar = PhotoService().isar;
-      final eventEntityId = int.parse(widget.event.id);
-      final eventEntity = await isar.collection<EventEntity>().get(
-        eventEntityId,
-      );
+      EventEntity? eventEntity;
 
-      if (eventEntity == null) {
-        throw Exception('Event not found');
+      if (widget.event.id == '-1') {
+        // 🕵️‍♂️ 拦截到虚拟 Event！直接在内存中捏一个对象，【绝对不要】存进数据库！
+        eventEntity = EventEntity()
+          ..id =
+              -1 // 强制给个负数 ID，作为内存幽灵的标识
+          ..title = widget.event.title
+          ..startTime = widget.event.startDate.millisecondsSinceEpoch
+          ..endTime = widget.event.endDate.millisecondsSinceEpoch
+        // 如果你的实体里有 photoCount，可以加上：
+         ..photoCount = widget.selectedPhotos.length;
+
+        // ❌ 之前这里有一段 await isar.writeTxn(...) 存入数据库的代码，全删掉！
+        // 因为一旦落盘，它就会出现在你的相册列表里疯狂吸入照片！
+      } else {
+        // 正常走系统自动聚类的相册逻辑
+        final eventEntityId = int.parse(widget.event.id);
+        eventEntity = await isar.collection<EventEntity>().get(eventEntityId);
       }
 
+      if (eventEntity == null) {
+        throw Exception('未找到或创建事件档案失败');
+      }
       // 2. 严格按用户选择的照片生成故事
       final selectedAssetIds = widget.selectedPhotos
           .map((photo) => photo.id)

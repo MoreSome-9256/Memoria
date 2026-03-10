@@ -2,9 +2,16 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
+
 import '../../service/photo_service.dart';
 import '../../models/entity/photo_entity.dart';
+import '../../models/event.dart';
+import '../../models/vo/photo.dart';
+import '../../models/ai_theme.dart';
 import 'create_page.dart';
+import 'config_page.dart'; // 🌟 引入配置页用于跳转
+import 'package:photo_manager/photo_manager.dart';
+import 'event_detail_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -19,11 +26,16 @@ class _HomePageState extends State<HomePage> {
   int _currentPhotoIndex = 0;
   Timer? _timer;
 
+  // 💡 用于动态发现模块的卡片数据
+  List<Map<String, dynamic>> _discoverCards = [];
+
   @override
   void initState() {
     super.initState();
     // 启动时加载照片数据
     _loadRecentPhotos();
+    // 🌟 启动本地推荐引擎
+    _generateDiscoverCards();
   }
 
   @override
@@ -33,45 +45,45 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
-  /// 1. 时间优先的背景照片加载逻辑
+  // ==========================================
+  // 📸 Hero Card 轮播逻辑 (保持不变)
+  // ==========================================
   Future<void> _loadRecentPhotos() async {
     final isar = PhotoService().isar;
 
-    // 🔍 策略 A：先抓取最近拍摄的 100 张照片作为候选池
-    // 假设 PhotoEntity 中的时间字段为 time（如果是 startTime 请对应修改）
     var recentCandidates = await isar.photoEntitys
         .where()
-        .sortByTimestampDesc() // 🌟 关键：按时间从新到旧排序
-        .limit(100) // 取最近的 100 张，基数够大才好选美的
+        .sortByTimestampDesc()
+        .limit(100)
         .findAll();
 
-    // 🔍 策略 B：在候选池中应用“防天塌”过滤器
     var filtered = recentCandidates.where((p) {
-      // 1. 物理尺寸过滤（排除截屏）
       if (p.width != null && p.height != null) {
         double ratio = p.width! / p.height!;
         if (ratio < 0.6 || ratio > 1.8) return false;
       }
-
-      // 2. 标签过滤（排除文字、截图等）
       final forbiddenTags = {'Screen', 'Text', 'Document', '屏幕', '文字', '截图'};
       if (p.aiTags != null &&
           p.aiTags!.any((tag) => forbiddenTags.contains(tag))) {
         return false;
       }
-
-      // 3. 质量初筛（如果有 AI 评分，优先选高分的）
-      // 如果还没来得及 AI 分析，我们先保留它，以免初期没图显示
       if (p.isAiAnalyzed && (p.joyScore ?? 0) < 0.1) return false;
-
       return true;
     }).toList();
 
-    // 🔍 策略 C：取过滤后的前 15 张（这 15 张就是最近且最美的）
-    // 为了让 10 秒切换不那么单调，我们可以稍微打乱一下顺序
     final selection = filtered.take(15).toList();
     selection.shuffle();
-
+    // ==========================================
+    // 🌟 新增：修复缓存路径失效问题
+    // 遍历选中的照片，用永远不变的 assetId 换取最新有效路径
+    // ==========================================
+    for (var photo in selection) {
+      final asset = await AssetEntity.fromId(photo.assetId);
+      final file = await asset?.file;
+      if (file != null && file.path.isNotEmpty) {
+        photo.path = file.path; // 将内存中的旧路径替换为新路径
+      }
+    }
     if (selection.isNotEmpty && mounted) {
       setState(() {
         _displayPhotos = selection;
@@ -80,7 +92,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 2. 开启背景切换定时器
   void _startBackgroundTimer() {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 10), (timer) {
@@ -92,6 +103,308 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  // ==========================================
+  // 🧠 核心：本地智能回忆推荐引擎
+  // ==========================================
+  Future<void> _generateDiscoverCards() async {
+    final isar = PhotoService().isar;
+    final now = DateTime.now();
+    final List<Map<String, dynamic>> finalCards = [];
+    const int maxCards = 2; // 页面最多展示 2 张卡片
+
+    // 🥇 规则 1：时间策略（动态感知 年底/月底/往年今日）
+    final timeCard = await _buildTimeRuleCard(isar, now);
+    if (timeCard != null) {
+      finalCards.add(timeCard);
+    }
+
+    // 🥈 规则 2：内容画像策略（按照片数量降序）
+    if (finalCards.length < maxCards) {
+      final contentCards = await _buildContentRuleCards(isar);
+      for (var card in contentCards) {
+        if (finalCards.length >= maxCards) break;
+        finalCards.add(card);
+      }
+    }
+    // ==========================================
+    // 🌟 新增：修复发现卡片封面图路径失效问题
+    // 只更新每张卡片第一张图（封面）的路径即可，节省性能
+    // ==========================================
+    for (var card in finalCards) {
+      List<PhotoEntity> photos = card['photos'];
+      if (photos.isNotEmpty) {
+        final firstPhoto = photos.first;
+        final asset = await AssetEntity.fromId(firstPhoto.assetId);
+        final file = await asset?.file;
+        if (file != null && file.path.isNotEmpty) {
+          firstPhoto.path = file.path;
+        }
+      }
+    }
+
+    // 🥉 规则 3：地点保底策略
+    if (finalCards.length < maxCards) {
+      final locationCards = await _buildLocationRuleCards(isar);
+      for (var card in locationCards) {
+        if (finalCards.length >= maxCards) break;
+        finalCards.add(card);
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _discoverCards = finalCards;
+      });
+    }
+  }
+
+  Future<Map<String, dynamic>?> _buildTimeRuleCard(
+    Isar isar,
+    DateTime now,
+  ) async {
+    // 1. 年度总结 (12.20 - 1.10)
+    if ((now.month == 12 && now.day >= 20) ||
+        (now.month == 1 && now.day <= 10)) {
+      final targetYear = now.month == 12 ? now.year : now.year - 1;
+      final start = DateTime(targetYear, 1, 1).millisecondsSinceEpoch;
+      final end = DateTime(
+        targetYear,
+        12,
+        31,
+        23,
+        59,
+        59,
+      ).millisecondsSinceEpoch;
+      final photos = await isar.photoEntitys
+          .filter()
+          .timestampBetween(start, end)
+          .findAll();
+
+      if (photos.length >= 10)
+        return _createCard(
+          '我的 $targetYear 年度总结',
+          '回眸这一年的 ${photos.length} 个瞬间',
+          '年度大片',
+          Colors.purple.shade50,
+          Colors.purple.shade200,
+          Icons.auto_awesome,
+          photos.take(20).toList(),
+        );
+    }
+
+    // 2. 月度总结 (每月 25 号之后)
+    if (now.day >= 25) {
+      final start = DateTime(now.year, now.month, 1).millisecondsSinceEpoch;
+      final end = DateTime(
+        now.year,
+        now.month + 1,
+        0,
+        23,
+        59,
+        59,
+      ).millisecondsSinceEpoch;
+      final photos = await isar.photoEntitys
+          .filter()
+          .timestampBetween(start, end)
+          .findAll();
+
+      if (photos.length >= 8)
+        return _createCard(
+          '${now.month}月碎片',
+          '把 ${now.month} 月的温柔收集成册',
+          '月度回顾',
+          Colors.blue.shade50,
+          Colors.blue.shade300,
+          Icons.calendar_month,
+          photos.take(20).toList(),
+        );
+    }
+
+    // 3. 往年今日
+    List<PhotoEntity> historyPhotos = [];
+    int historyYear = now.year;
+    for (int i = 1; i <= 5; i++) {
+      final start = DateTime(
+        now.year - i,
+        now.month,
+        now.day,
+      ).millisecondsSinceEpoch;
+      final end = DateTime(
+        now.year - i,
+        now.month,
+        now.day,
+        23,
+        59,
+        59,
+      ).millisecondsSinceEpoch;
+      final photos = await isar.photoEntitys
+          .filter()
+          .timestampBetween(start, end)
+          .findAll();
+      if (photos.isNotEmpty) {
+        historyPhotos.addAll(photos);
+        if (historyYear == now.year) historyYear = now.year - i;
+      }
+    }
+    if (historyPhotos.length >= 3)
+      return _createCard(
+        '那年今日',
+        '梦回 $historyYear 年的今天',
+        '时光机',
+        Colors.orange.shade50,
+        Colors.orange.shade300,
+        Icons.history,
+        historyPhotos.take(20).toList(),
+      );
+
+    return null;
+  }
+
+  Future<List<Map<String, dynamic>>> _buildContentRuleCards(Isar isar) async {
+    final recentPhotos = await isar.photoEntitys
+        .where()
+        .sortByTimestampDesc()
+        .limit(500)
+        .findAll();
+    List<PhotoEntity> pets = [], scenery = [], foods = [], happy = [];
+
+    for (var p in recentPhotos) {
+      final tagsStr = p.aiTags?.join(' ').toLowerCase() ?? '';
+      if (tagsStr.contains('猫') ||
+          tagsStr.contains('狗') ||
+          tagsStr.contains('宠物') ||
+          tagsStr.contains('cat'))
+        pets.add(p);
+      else if (tagsStr.contains('风景') ||
+          tagsStr.contains('山') ||
+          tagsStr.contains('海') ||
+          tagsStr.contains('自然') ||
+          tagsStr.contains('出游'))
+        scenery.add(p);
+      else if (tagsStr.contains('美食') ||
+          tagsStr.contains('饭') ||
+          tagsStr.contains('菜') ||
+          tagsStr.contains('餐厅') ||
+          tagsStr.contains('甜点'))
+        foods.add(p);
+      if (p.joyScore != null && p.joyScore! > 0.6) happy.add(p);
+    }
+
+    List<Map<String, dynamic>> candidates = [];
+    if (pets.length >= 5)
+      candidates.add(
+        _createCard(
+          '萌宠心动瞬间',
+          '抓拍到 ${pets.length} 个可爱瞬间',
+          '毛孩子',
+          Colors.cyan.shade50,
+          Colors.cyan.shade300,
+          Icons.pets,
+          pets.take(20).toList(),
+        ),
+      );
+    if (scenery.length >= 8)
+      candidates.add(
+        _createCard(
+          '出游回忆',
+          '吹过的风和看过的风景',
+          '在路上',
+          Colors.teal.shade50,
+          Colors.teal.shade300,
+          Icons.landscape,
+          scenery.take(20).toList(),
+        ),
+      );
+    if (foods.length >= 6)
+      candidates.add(
+        _createCard(
+          '我的美食日记',
+          '唯有爱与美食不可辜负',
+          '吃货必看',
+          Colors.red.shade50,
+          Colors.red.shade200,
+          Icons.restaurant,
+          foods.take(20).toList(),
+        ),
+      );
+    if (happy.length >= 5)
+      candidates.add(
+        _createCard(
+          '愉快回忆',
+          '保存了 ${happy.length} 张灿烂笑脸',
+          '治愈系',
+          Colors.yellow.shade50,
+          Colors.orange.shade300,
+          Icons.sentiment_very_satisfied,
+          happy.take(20).toList(),
+        ),
+      );
+
+    candidates.sort(
+      (a, b) =>
+          (b['photos'] as List).length.compareTo((a['photos'] as List).length),
+    );
+    return candidates;
+  }
+
+  Future<List<Map<String, dynamic>>> _buildLocationRuleCards(Isar isar) async {
+    final recentPhotos = await isar.photoEntitys
+        .where()
+        .sortByTimestampDesc()
+        .limit(1000)
+        .findAll();
+    Map<String, List<PhotoEntity>> locationGroups = {};
+    for (var p in recentPhotos) {
+      final loc = p.city ?? p.province;
+      if (loc != null && loc.isNotEmpty)
+        locationGroups.putIfAbsent(loc, () => []).add(p);
+    }
+
+    List<Map<String, dynamic>> candidates = [];
+    locationGroups.forEach((loc, photos) {
+      if (photos.length >= 10)
+        candidates.add(
+          _createCard(
+            '$loc·漫游记',
+            '在 $loc 留下的 ${photos.length} 个足迹',
+            '城市印记',
+            Colors.indigo.shade50,
+            Colors.indigo.shade300,
+            Icons.place,
+            photos.take(20).toList(),
+          ),
+        );
+    });
+    candidates.sort(
+      (a, b) =>
+          (b['photos'] as List).length.compareTo((a['photos'] as List).length),
+    );
+    return candidates;
+  }
+
+  Map<String, dynamic> _createCard(
+    String title,
+    String subtitle,
+    String tag,
+    Color bgColor,
+    Color tagColor,
+    IconData icon,
+    List<PhotoEntity> photos,
+  ) {
+    return {
+      'title': title,
+      'subtitle': subtitle,
+      'tag': tag,
+      'bgColor': bgColor,
+      'tagColor': tagColor,
+      'icon': icon,
+      'photos': photos,
+    };
+  }
+
+  // ==========================================
+  // 🎨 页面主 UI 结构
+  // ==========================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -112,11 +425,11 @@ class _HomePageState extends State<HomePage> {
               children: [
                 _buildHeader(),
                 const SizedBox(height: 24),
-                _buildHeroCard(context), // 🌟 这里现在是动态的了
+                _buildHeroCard(context),
                 const SizedBox(height: 32),
                 _buildSectionTitle('发现'),
                 const SizedBox(height: 16),
-                _buildDiscoverList(),
+                _buildDiscoverList(), // 🌟 动态渲染推荐列表
                 const SizedBox(height: 32),
                 _buildSectionTitle('我的作品'),
                 const SizedBox(height: 16),
@@ -128,8 +441,6 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-
-  // --- UI 构建方法 ---
 
   Widget _buildHeader() {
     return Row(
@@ -157,14 +468,13 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// 3. 核心改进：带动态淡入淡出背景的 Hero Card
   Widget _buildHeroCard(BuildContext context) {
     final hasPhotos = _displayPhotos.isNotEmpty;
     final currentPhoto = hasPhotos ? _displayPhotos[_currentPhotoIndex] : null;
 
     return Container(
       width: double.infinity,
-      height: 220, // 稍微调高一点，气场更强
+      height: 220,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
@@ -179,18 +489,16 @@ class _HomePageState extends State<HomePage> {
       ),
       child: Stack(
         children: [
-          // 🖼️ 背景层：使用 AnimatedSwitcher 实现平滑的淡入淡出效果
           Positioned.fill(
             child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 1200), // 1.2秒的平滑过渡
+              duration: const Duration(milliseconds: 1200),
               child: hasPhotos
                   ? Image.file(
-                      File(currentPhoto!.path), // 从本地路径读取文件
-                      key: ValueKey(currentPhoto.id), // Key 变化时触发切换动画
+                      File(currentPhoto!.path),
+                      key: ValueKey(currentPhoto.id),
                       width: double.infinity,
                       height: double.infinity,
                       fit: BoxFit.cover,
-                      // 💡 关键：添加暗色遮罩，确保白色的文字能看清
                       color: Colors.black.withOpacity(0.35),
                       colorBlendMode: BlendMode.darken,
                     )
@@ -203,8 +511,6 @@ class _HomePageState extends State<HomePage> {
                     ),
             ),
           ),
-
-          // ✍️ 文本内容层
           Positioned(
             left: 20,
             bottom: 20,
@@ -233,7 +539,6 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(height: 16),
                 ElevatedButton(
                   onPressed: () {
-                    // 🌟 核心跳转逻辑：压入路由栈，前往搜索创建页
                     Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -273,88 +578,171 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // 🌟 动态渲染发现列表
   Widget _buildDiscoverList() {
+    if (_discoverCards.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(24),
+        alignment: Alignment.center,
+        child: Column(
+          children: [
+            Icon(
+              Icons.bubble_chart_outlined,
+              size: 48,
+              color: Colors.purple.shade100,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '正在浩瀚相册里寻找美好回忆...',
+              style: TextStyle(color: Colors.grey),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Column(
-      children: [
-        _buildDiscoverCard(
-          title: '萌宠心动瞬间',
-          subtitle: '检测到15张图片，建议生成视频\n2天前，济南',
-          tag: '新回忆',
-          bgColor: Colors.blue.shade50,
-          tagColor: Colors.blue.shade200,
-        ),
-        const SizedBox(height: 16),
-        _buildDiscoverCard(
-          title: '我的2025年度总结',
-          subtitle: '查看2025的高光时刻',
-          tag: '待生成',
-          bgColor: Colors.purple.shade50,
-          tagColor: Colors.purple.shade200,
-        ),
-      ],
+      children: _discoverCards.map((cardData) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16.0),
+          child: _buildDiscoverCard(cardData),
+        );
+      }).toList(),
     );
   }
 
-  Widget _buildDiscoverCard({
-    required String title,
-    required String subtitle,
-    required String tag,
-    required Color bgColor,
-    required Color tagColor,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              width: 80,
-              height: 80,
-              color: Colors.white54,
-              child: const Icon(Icons.auto_awesome, color: Colors.grey),
+  // 🌟 动态构建单张发现卡片，并绑定点击跳转事件
+  Widget _buildDiscoverCard(Map<String, dynamic> cardData) {
+    final List<PhotoEntity> photos = cardData['photos'];
+    final firstPhoto = photos.isNotEmpty ? photos.first : null;
+
+    return GestureDetector(
+      onTap: () {
+        if (photos.isEmpty) return;
+
+        // 1. 组装合法的 UI 模型 Photo 列表
+        final mappedPhotos = photos
+            .map(
+              (p) => Photo(
+                id: p.assetId,
+                location: p.city ?? p.province ?? '未知地点',
+                path: p.path,
+                dateTaken: DateTime.fromMillisecondsSinceEpoch(p.timestamp),
+                isSelected: true,
+              ),
+            )
+            .toList();
+
+        // 2. 推算时间范围
+        final sortedDates = mappedPhotos.map((p) => p.dateTaken).toList()
+          ..sort();
+
+        // 3. 构造虚拟 AI 推荐主题
+        final virtualTheme = AITheme(
+          id: 'discover_theme',
+          emoji: '✨',
+          title: cardData['title'],
+          subtitle: cardData['tag'],
+        );
+
+        // 4. 构造穿透底层的虚拟 Event
+        final virtualEvent = Event(
+          id: '-1',
+          title: cardData['title'],
+          season: '智能推荐',
+          year: sortedDates.first.year,
+          location: '精选回忆',
+          startDate: sortedDates.first,
+          endDate: sortedDates.last,
+          photos: mappedPhotos,
+          aiThemes: [virtualTheme],
+        );
+
+        // ==========================================
+        // 🌟 5. 核心修改：先去详情页确认/筛选照片！
+        // ==========================================
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => EventDetailPage(
+              event: virtualEvent, // 直接把虚拟事件丢给它
             ),
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: tagColor,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    tag,
-                    style: const TextStyle(fontSize: 10, color: Colors.white),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: const TextStyle(fontSize: 12, color: Colors.black54),
-                ),
-              ],
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: cardData['bgColor'],
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.03),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
             ),
-          ),
-        ],
+          ],
+        ),
+        child: Row(
+          children: [
+            // 左侧缩略图（优先展示照片，没有则展示图标）
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: 80,
+                height: 80,
+                color: Colors.white54,
+                child: firstPhoto != null
+                    ? Image.file(File(firstPhoto.path), fit: BoxFit.cover)
+                    : Icon(
+                        cardData['icon'] as IconData,
+                        color: Colors.grey.shade600,
+                        size: 32,
+                      ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: cardData['tagColor'],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      cardData['tag'],
+                      style: const TextStyle(fontSize: 10, color: Colors.white),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    cardData['title'],
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    cardData['subtitle'],
+                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: Colors.grey.shade400),
+          ],
+        ),
       ),
     );
   }

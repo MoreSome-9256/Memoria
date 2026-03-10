@@ -28,6 +28,7 @@ class PhotoEntity {
   String? city; // 市：北京市 / 青岛市 (直辖市这里可能为空或与省相同)
 
   String? district; // 区：朝阳区 / 市南区
+  String? locationName; // 更细粒度地点：学校/商场/园区/楼栋/POI
   String? formattedAddress; // 完整地址：北京市朝阳区xx街道...
 
   String? adcode; // 城市编码 (如 110101)，用于精确数据分析
@@ -38,6 +39,8 @@ class PhotoEntity {
   // 🤖 AI 分析相关
   List<String>? aiTags; // AI 识别的标签（美食、海滩等）
   bool isAiAnalyzed = false; // AI 分析状态标记
+  String? ocrText; // OCR 提取出的原始文本
+  List<String>? ocrTags; // 从 OCR 文本中提炼出的短标签
 
   // 👤 人脸识别信息 (用于后续 AI 选图)
   int faceCount = 0; // 检测到的人脸数量

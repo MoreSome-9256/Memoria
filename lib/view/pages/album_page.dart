@@ -19,6 +19,14 @@ class _AlbumPageState extends State<AlbumPage> {
   // 🌟 1. 改为直接监听最终 UI 数据结构的 Stream
   late Stream<Map<String, List<Event>>> _uiEventsStream;
 
+  static const int _fullRefreshOption = -1;
+  static const List<int> _refreshPhotoOptions = <int>[
+    100,
+    300,
+    500,
+    _fullRefreshOption,
+  ];
+
   // 🔄 刷新数据：扫描相册 + 运行聚类
   /*Future<void> _refreshData({bool clearCacheFirst = false}) async {
     if (_isRefreshing) return; // 防止重复点击
@@ -67,24 +75,39 @@ class _AlbumPageState extends State<AlbumPage> {
     }
   }*/
   // 🔄 刷新数据：极速扫描相册 + 后台静默 AI
-  Future<void> _refreshData({bool clearCacheFirst = false}) async {
+  Future<void> _refreshData({
+    bool clearCacheFirst = false,
+    int? recentPhotoLimit,
+  }) async {
     if (_isRefreshing) return; // 防止重复点击
 
     setState(() => _isRefreshing = true);
 
     try {
+      late final PhotoScanSummary scanSummary;
+      var requeuedCount = 0;
+
       if (clearCacheFirst) {
-        await PhotoService().clearAllCachedData();
+        await AIService().stopAnalysisAndWait();
+        scanSummary = await PhotoService().rebuildAllCachedData(
+          maxAssets: recentPhotoLimit,
+        );
+      } else {
+        // 1. ⚡ 极速操作：扫描相册（仅入库原始可用数据）
+        scanSummary = await PhotoService().scanAndSyncPhotos(
+          maxAssets: recentPhotoLimit,
+        );
       }
 
-      // 1. ⚡ 极速操作：扫描相册（仅入库原始可用数据）
-      final scanSummary = await PhotoService().scanAndSyncPhotos();
-
-      // 2. ⚡ 极速操作：运行聚类算法（通过时间/GPS聚合成 Event）
+      // 2. ⚡ 聚类仍走全量，避免只聚最近 N 张时把旧事件清空
       await EventService().runClustering();
 
-      // 3. 🔁 把旧 ML Kit 结果重新加入队列，强制切换到 MobileCLIP 中文打标
-      final requeuedCount = await PhotoService().requeueLatestPhotosForAi();
+      if (!clearCacheFirst) {
+        // 3. 🔁 把旧 ML Kit 结果重新加入队列，强制切换到 MobileCLIP 中文打标
+        requeuedCount = await PhotoService().requeueLatestPhotosForAi(
+          maxPhotos: recentPhotoLimit,
+        );
+      }
 
       // ==========================================
       // 🚀 核心改动：到这里基础数据已经搞定，立刻关闭加载动画！
@@ -98,10 +121,16 @@ class _AlbumPageState extends State<AlbumPage> {
             behavior: SnackBarBehavior.floating,
             content: Text(
               clearCacheFirst
-                  ? '✅ 已清空重扫，发现${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
+                ? recentPhotoLimit == null
+                  ? '✅ 已安全重建缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
+                  : '✅ 已安全重建最近$recentPhotoLimit张照片缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
                   : requeuedCount > 0
-                  ? '✅ 相册已更新，已将$requeuedCount张旧照片重新加入中文打标队列。'
-                  : '✅ 相册已极速更新，AI正在后台悄悄打标...',
+                  ? recentPhotoLimit == null
+                        ? '✅ 相册已更新，已将$requeuedCount张旧照片重新加入中文打标队列。'
+                        : '✅ 已刷新最近$recentPhotoLimit张照片，并将其中$requeuedCount张重新加入中文打标队列。'
+                  : recentPhotoLimit == null
+                  ? '✅ 相册已极速更新，AI正在后台悄悄打标...'
+                  : '✅ 已刷新最近$recentPhotoLimit张照片，AI 正在后台悄悄打标...',
             ),
             duration: const Duration(seconds: 3), // 提示稍长一点
           ),
@@ -111,7 +140,7 @@ class _AlbumPageState extends State<AlbumPage> {
       // 4. 🤫 静默操作：剥离主线程，让 AI 在后台慢慢抠图打标签
       // ⚠️ 注意：这里去掉了 await，它不会再阻塞后续代码和 UI 了！
       AIService()
-          .analyzePhotosInBackground()
+          .analyzePhotosInBackground(maxPhotos: recentPhotoLimit)
           .then((_) {
             debugPrint("🎉 [后台任务] 所有照片的 AI 标签已静默添加完毕！");
             // 你可以随时在这里发送广播，或者静默更新部分特定 UI
@@ -167,6 +196,52 @@ class _AlbumPageState extends State<AlbumPage> {
     }
   }
 
+  Future<void> _showRefreshOptions() async {
+    if (_isRefreshing) {
+      return;
+    }
+
+    final selected = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ListTile(
+                title: Text('选择刷新范围'),
+                subtitle: Text('先只跑最近一部分照片，或者全量运行'),
+              ),
+              ..._refreshPhotoOptions.map((option) {
+                final isFull = option == _fullRefreshOption;
+                final label = isFull ? '全部运行' : '先跑最近 $option 张';
+                final subtitle = isFull
+                    ? '扫描全部照片并对全部待处理照片后台打标'
+                    : '仅扫描最近照片，并只重排这部分照片的 AI 打标';
+                return ListTile(
+                  leading: Icon(isFull ? Icons.all_inclusive : Icons.flash_on),
+                  title: Text(label),
+                  subtitle: Text(subtitle),
+                  onTap: () => Navigator.pop(context, option),
+                );
+              }),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted || selected == null) {
+      return;
+    }
+
+    await _refreshData(
+      recentPhotoLimit: selected == _fullRefreshOption ? null : selected,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -198,8 +273,8 @@ class _AlbumPageState extends State<AlbumPage> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.refresh),
-            onPressed: _isRefreshing ? null : _refreshData,
-            tooltip: '扫描相册并聚类',
+            onPressed: _isRefreshing ? null : _showRefreshOptions,
+            tooltip: '选择刷新范围',
           ),
         ],
       ),
@@ -275,6 +350,12 @@ class _AlbumPageState extends State<AlbumPage> {
   Widget _buildAnalysisProgressBanner(AIAnalysisProgress progress) {
     final completedText = '${progress.completed}/${progress.total}';
     final failedSuffix = progress.failed > 0 ? '，失败 ${progress.failed}' : '';
+    final title = progress.isPaused
+        ? 'AI 打标已暂停 $completedText$failedSuffix'
+        : progress.isStopping
+        ? 'AI 正在结束本轮打标 $completedText$failedSuffix'
+        : 'AI 正在后台打标 $completedText$failedSuffix';
+    final aiService = AIService();
 
     return Container(
       width: double.infinity,
@@ -294,7 +375,7 @@ class _AlbumPageState extends State<AlbumPage> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'AI 正在后台打标 $completedText$failedSuffix',
+                  title,
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
@@ -320,6 +401,26 @@ class _AlbumPageState extends State<AlbumPage> {
             progress.currentStep,
             style: TextStyle(color: Colors.grey[700], fontSize: 12),
           ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              OutlinedButton.icon(
+                onPressed: progress.isStopping
+                    ? null
+                    : progress.isPaused
+                    ? aiService.resumeAnalysis
+                    : aiService.pauseAnalysis,
+                icon: Icon(progress.isPaused ? Icons.play_arrow : Icons.pause),
+                label: Text(progress.isPaused ? '继续' : '暂停'),
+              ),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: progress.isStopping ? null : aiService.stopAnalysis,
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: const Text('结束本轮'),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -342,7 +443,7 @@ class _AlbumPageState extends State<AlbumPage> {
           const Text('点击右上角刷新按钮扫描相册', style: TextStyle(color: Colors.grey)),
           const SizedBox(height: 24),
           ElevatedButton.icon(
-            onPressed: _refreshData,
+            onPressed: _showRefreshOptions,
             icon: const Icon(Icons.add_photo_alternate),
             label: const Text('扫描相册'),
           ),

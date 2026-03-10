@@ -4,7 +4,6 @@ import 'package:photo_manager/photo_manager.dart';
 import '../models/entity/story_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
-import '../utils/story_prompt_helper.dart';
 import 'photo_service.dart';
 import 'llm_service.dart';
 import '../view/pages/config_page.dart'; // for StoryLength enum
@@ -15,6 +14,26 @@ class StoryService {
   static final StoryService _instance = StoryService._internal();
   factory StoryService() => _instance;
   StoryService._internal();
+
+  static const Set<String> _textSceneTags = <String>{
+    '文字',
+    '文本',
+    '文档',
+    '屏幕',
+    '截图',
+    '聊天',
+    '表格',
+    '课件',
+    '试卷',
+    '海报',
+    '春联',
+    '书页',
+    '书本',
+    '页面',
+    '黑板',
+    '广告',
+    '专题',
+  };
 
   /// 📝 核心方法：生成故事
   ///
@@ -49,12 +68,37 @@ class StoryService {
       // 1. 按时间顺序排序照片（确保故事的连贯性）
       final sortedPhotos = List<PhotoEntity>.from(selectedPhotos)
         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        final promptTagsByPhoto = sortedPhotos
+          .map(_buildPromptTagsForPhoto)
+          .toList(growable: false);
 
       // 🌟 2. 提取用于给后端生成故事的核心特征
-      final allTags = sortedPhotos
-          .expand((p) => p.aiTags ?? <String>[])
+        final allTags = promptTagsByPhoto
+          .expand((tags) => tags)
           .toSet()
           .toList();
+      final allOcrTags = sortedPhotos
+          .expand((p) => p.ocrTags ?? <String>[])
+          .where((tag) => tag.trim().isNotEmpty)
+          .toSet()
+          .toList();
+      final ocrHighlights = sortedPhotos
+          .asMap()
+          .entries
+          .map((entry) {
+            final text = entry.value.ocrText?.trim();
+            if (text == null || text.isEmpty) {
+              return null;
+            }
+            final shortText = text.length > 80
+                ? '${text.substring(0, 80)}...'
+                : text;
+            return '第${entry.key + 1}张：$shortText';
+          })
+          .whereType<String>()
+          .take(8)
+          .toList(growable: false);
+      final promptTags = <String>{...allTags, ...allOcrTags}.toList();
 
       double totalJoy = 0;
       int validJoyCount = 0;
@@ -66,30 +110,34 @@ class StoryService {
       }
       final avgJoyScore = validJoyCount > 0 ? totalJoy / validJoyCount : 0.0;
 
-      // ==========================================
-      // 🌟 核心新增：将照片特征转化为大模型能懂的“文本分镜”
-      // 注意：序号从 0 开始，为了和大模型里的 ![img](0) 完美对齐！
-      // ==========================================
-      StringBuffer photoContext = StringBuffer();
+      print(
+        "📝 开始请求后端生成图文与配乐：${sortedPhotos.length} 张照片, 标签: $promptTags, OCR线索: ${ocrHighlights.length} 条, 欢乐值: $avgJoyScore",
+      );
+
+      // 将照片特征转化为大模型可消费的镜头分镜文本，序号与 ![img](i) 一一对应。
+      final photoContext = StringBuffer();
       for (int i = 0; i < sortedPhotos.length; i++) {
         final p = sortedPhotos[i];
 
-        final tags = p.aiTags?.isNotEmpty == true
-            ? p.aiTags!.join("、")
+        final tags = promptTagsByPhoto[i].isNotEmpty
+            ? promptTagsByPhoto[i].join("、")
             : "日常画面";
-        // 🌟 加上这句，亲眼看看数据库里的毒标签！
         print("🕵️‍♂️ [抓内鬼] 传给 AI 的第 $i 张照片真实标签是: $tags");
         final loc = [
+          p.locationName,
+          p.district,
           p.province,
           p.city,
-          p.district,
         ].where((e) => e != null && e.isNotEmpty).join("");
 
         final date = DateTime.fromMillisecondsSinceEpoch(p.timestamp);
         final timeStr = "${date.month}月${date.day}日";
+        final textHint = _isTextHeavyPhoto(p)
+            ? '；该图以屏幕或文档文字为主，不要推断人物身份、关系或职业'
+            : '';
 
         photoContext.writeln(
-          "【镜头 $i】拍摄于 $timeStr ${loc.isNotEmpty ? '($loc)' : ''}，画面真实元素有：$tags",
+          "【镜头 $i】拍摄于 $timeStr ${loc.isNotEmpty ? '($loc)' : ''}，画面真实元素有：$tags$textHint",
         );
       }
       // ==========================================
@@ -101,13 +149,12 @@ class StoryService {
       final llmService = LLMService();
       final resultData = await llmService.generateStoryAndMusic(
         eventId: event.id,
-        tags: allTags.take(40).toList(),
+        tags: promptTags.take(40).toList(), // 最多传40个高频词防撑爆
+        ocrTags: allOcrTags.take(20).toList(),
+        ocrHighlights: ocrHighlights,
         joyScore: avgJoyScore,
-        // 兜底：如果虚拟事件没记照片数，就用真实传进来的数组长度
-        photoCount: event.photoCount > 0
-            ? event.photoCount
-            : sortedPhotos.length,
-        location: event.city ?? event.province ?? '未知地点',
+        photoCount: event.photoCount > 0 ? event.photoCount : sortedPhotos.length,
+        location: event.locationName ?? event.district ?? event.city ?? event.province ?? '未知地点',
         date: event.dateRangeText,
         stylePreference: subtitle.isNotEmpty ? subtitle : "治愈风",
         // 👇 重点：把刚才在 llm_service 里加的三个参数传进去！
@@ -152,6 +199,70 @@ class StoryService {
       print("❌ 故事生成异常: $e");
       return null;
     }
+  }
+
+  List<String> _buildPromptTagsForPhoto(PhotoEntity photo) {
+    final aiTags = (photo.aiTags ?? const <String>[])
+        .map((tag) => tag.trim())
+        .where((tag) => tag.isNotEmpty)
+        .toList(growable: false);
+    final ocrTags = (photo.ocrTags ?? const <String>[])
+        .map((tag) => tag.trim())
+        .where((tag) => tag.isNotEmpty && !_looksLikeAsciiNoise(tag))
+        .toList(growable: false);
+
+    if (_isTextHeavyPhoto(photo, aiTags: aiTags, ocrTags: ocrTags)) {
+      final result = <String>[];
+
+      void addTag(String value) {
+        if (value.isEmpty || result.contains(value)) {
+          return;
+        }
+        result.add(value);
+      }
+
+      for (final tag in aiTags) {
+        if (_textSceneTags.contains(tag)) {
+          addTag(tag);
+        }
+      }
+
+      for (final tag in ocrTags) {
+        addTag(tag);
+      }
+
+      if (photo.isProbablyScreenshot) {
+        addTag('截图');
+      }
+
+      if (result.isEmpty) {
+        addTag(photo.isProbablyScreenshot ? '屏幕' : '文字');
+      }
+
+      return result.take(5).toList(growable: false);
+    }
+
+    return aiTags.take(5).toList(growable: false);
+  }
+
+  bool _isTextHeavyPhoto(
+    PhotoEntity photo, {
+    List<String>? aiTags,
+    List<String>? ocrTags,
+  }) {
+    final effectiveAiTags = aiTags ?? photo.aiTags ?? const <String>[];
+    final effectiveOcrTags = ocrTags ?? photo.ocrTags ?? const <String>[];
+    final ocrText = photo.ocrText?.trim() ?? '';
+    final textLikeAiCount = effectiveAiTags.where(_textSceneTags.contains).length;
+
+    return photo.isProbablyScreenshot ||
+        effectiveOcrTags.length >= 2 ||
+        ocrText.length >= 12 ||
+        textLikeAiCount >= 2;
+  }
+
+  bool _looksLikeAsciiNoise(String value) {
+    return RegExp(r'^[A-Za-z0-9_./-]+$').hasMatch(value);
   }
 
   /// 🤖 调用 LLM 生成故事内容

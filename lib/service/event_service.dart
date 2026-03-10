@@ -22,6 +22,26 @@ class EventService {
     '采购员',
   };
 
+  static const Set<String> _textSceneTags = <String>{
+    '文字',
+    '文本',
+    '文档',
+    '屏幕',
+    '截图',
+    '聊天',
+    '表格',
+    '课件',
+    '试卷',
+    '海报',
+    '春联',
+    '书页',
+    '书本',
+    '页面',
+    '黑板',
+    '广告',
+    '专题',
+  };
+
   static const String _amapWebKey = String.fromEnvironment(
     'AMAP_WEB_KEY',
     defaultValue: '7fe01f8a449b2aac28068feac9177316',
@@ -144,13 +164,13 @@ class EventService {
 
     final isar = PhotoService().isar;
 
-    // 查询需要解析地址的事件（有GPS但 city 为空）
+    // 查询需要解析地址的事件（有GPS但还没有细粒度地点）
     final events = await isar
         .collection<EventEntity>()
         .filter()
         .avgLatitudeIsNotNull()
         .photoCountGreaterThan(minPhotosForDisplay - 1)
-        .cityIsNull()
+      .locationNameIsNull()
         .limit(10) // 每次最多处理 10 个事件
         .findAll();
 
@@ -169,7 +189,7 @@ class EventService {
         final regeocode = await _reverseGeocodeWithAmap(
           latitude: event.avgLatitude!,
           longitude: event.avgLongitude!,
-          extensions: 'base',
+          extensions: 'all',
         );
         final data = regeocode['addressComponent'];
         if (data is! Map<String, dynamic>) {
@@ -177,11 +197,22 @@ class EventService {
         }
 
         final province = _extractNonEmptyString(data, ['province']);
+        final district = _extractNonEmptyString(data, ['district']);
         String? city = _extractNonEmptyString(data, ['city']);
-        city ??= _extractNonEmptyString(data, ['district']);
+        city ??= district;
         city ??= province;
         final adcode = _extractNonEmptyString(data, ['adcode']);
         final citycode = _extractNonEmptyString(data, ['citycode']);
+        final formattedAddress = _extractNonEmptyString(regeocode, [
+          'formatted_address',
+        ]);
+        final locationName = _extractLocationName(
+          regeocode,
+          data,
+          city: city,
+          district: district,
+          formattedAddress: formattedAddress,
+        );
 
         await isar.writeTxn(() async {
           final e = await isar.collection<EventEntity>().get(event.id);
@@ -191,16 +222,19 @@ class EventService {
 
           e.province = province;
           e.city = city;
+          e.district = district;
+          e.locationName = locationName;
+          e.formattedAddress = formattedAddress;
 
-          if (e.city != null && e.city!.isNotEmpty) {
-            e.title = "${e.city} · ${e.dateRangeText}";
+          if (e.location.isNotEmpty) {
+            e.title = "${e.location} · ${e.dateRangeText}";
           }
 
           await isar.collection<EventEntity>().put(e);
         });
 
         print(
-          "📍 事件地址解析成功: ${event.title} -> ${city ?? province ?? '未知地点'} "
+          "📍 事件地址解析成功: ${event.title} -> ${locationName ?? district ?? city ?? province ?? '未知地点'} "
           "(adcode=${adcode ?? '-'} citycode=${citycode ?? '-'})",
         );
       } catch (e) {
@@ -289,6 +323,13 @@ class EventService {
         String? city = _extractNonEmptyString(addressComponent, ['city']);
         city ??= district;
         city ??= province;
+        final locationName = _extractLocationName(
+          regeocode,
+          addressComponent,
+          city: city,
+          district: district,
+          formattedAddress: formattedAddress,
+        );
 
         await isar.writeTxn(() async {
           final latest = await isar.collection<PhotoEntity>().get(photo.id);
@@ -298,6 +339,7 @@ class EventService {
           latest.province = province;
           latest.city = city;
           latest.district = district;
+          latest.locationName = locationName;
           latest.adcode = adcode;
           latest.formattedAddress = formattedAddress;
           latest.isLocationProcessed = true;
@@ -305,7 +347,7 @@ class EventService {
         });
 
         print(
-          "📌 照片地址解析成功: id=${photo.id} city=${city ?? '-'} district=${district ?? '-'}",
+          "📌 照片地址解析成功: id=${photo.id} location=${locationName ?? city ?? '-'} district=${district ?? '-'}",
         );
       } catch (e) {
         print("❌ 照片地址解析失败: id=${photo.id} error=$e");
@@ -370,6 +412,151 @@ class EventService {
       }
     }
     return null;
+  }
+
+  String? _extractLocationName(
+    Map<String, dynamic> regeocode,
+    Map<String, dynamic> addressComponent, {
+    String? city,
+    String? district,
+    String? formattedAddress,
+  }) {
+    final poi = regeocode['pois'];
+    if (poi is List && poi.isNotEmpty) {
+      final firstPoi = poi.first;
+      if (firstPoi is Map<String, dynamic>) {
+        final poiName = _extractNonEmptyString(firstPoi, ['name']);
+        if (_isUsefulLocationName(poiName, city: city, district: district)) {
+          return poiName;
+        }
+      }
+    }
+
+    final aois = regeocode['aois'];
+    if (aois is List && aois.isNotEmpty) {
+      final firstAoi = aois.first;
+      if (firstAoi is Map<String, dynamic>) {
+        final aoiName = _extractNonEmptyString(firstAoi, ['name']);
+        if (_isUsefulLocationName(aoiName, city: city, district: district)) {
+          return aoiName;
+        }
+      }
+    }
+
+    final building = addressComponent['building'];
+    if (building is Map<String, dynamic>) {
+      final buildingName = _extractNonEmptyString(building, ['name']);
+      if (_isUsefulLocationName(buildingName, city: city, district: district)) {
+        return buildingName;
+      }
+    }
+
+    final neighborhood = addressComponent['neighborhood'];
+    if (neighborhood is Map<String, dynamic>) {
+      final neighborhoodName = _extractNonEmptyString(neighborhood, ['name']);
+      if (_isUsefulLocationName(neighborhoodName, city: city, district: district)) {
+        return neighborhoodName;
+      }
+    }
+
+    final formattedAddressName = _extractLocationNameFromFormattedAddress(
+      formattedAddress,
+      addressComponent,
+      city: city,
+      district: district,
+    );
+    if (_isUsefulLocationName(
+      formattedAddressName,
+      city: city,
+      district: district,
+    )) {
+      return formattedAddressName;
+    }
+
+    final township = _extractNonEmptyString(addressComponent, ['township']);
+    if (_isUsefulLocationName(township, city: city, district: district)) {
+      return township;
+    }
+
+    return district ?? city;
+  }
+
+  String? _extractLocationNameFromFormattedAddress(
+    String? formattedAddress,
+    Map<String, dynamic> addressComponent, {
+    String? city,
+    String? district,
+  }) {
+    if (formattedAddress == null) {
+      return null;
+    }
+
+    var candidate = formattedAddress.trim();
+    if (candidate.isEmpty) {
+      return null;
+    }
+
+    final province = _extractNonEmptyString(addressComponent, ['province']);
+    final township = _extractNonEmptyString(addressComponent, ['township']);
+    final streetName = _extractStreetName(addressComponent);
+    final prefixes = <String>{
+      if (province != null && province.isNotEmpty) province,
+      if (city != null && city.isNotEmpty) city,
+      if (district != null && district.isNotEmpty) district,
+      if (township != null && township.isNotEmpty) township,
+      if (streetName != null && streetName.isNotEmpty) streetName,
+    }.toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
+
+    var changed = true;
+    while (changed && candidate.isNotEmpty) {
+      changed = false;
+      for (final prefix in prefixes) {
+        if (candidate.startsWith(prefix)) {
+          candidate = candidate.substring(prefix.length).trim();
+          changed = true;
+        }
+      }
+      candidate = candidate.replaceFirst(RegExp(r'^[,，\s]+'), '').trim();
+    }
+
+    if (_isUsefulLocationName(candidate, city: city, district: district)) {
+      return candidate;
+    }
+
+    return null;
+  }
+
+  String? _extractStreetName(Map<String, dynamic> addressComponent) {
+    final streetName = _extractNonEmptyString(addressComponent, ['street']);
+    if (streetName != null && streetName.isNotEmpty) {
+      return streetName;
+    }
+
+    final streetNumber = addressComponent['streetNumber'];
+    if (streetNumber is Map<String, dynamic>) {
+      return _extractNonEmptyString(streetNumber, ['street', 'name']);
+    }
+
+    return null;
+  }
+
+  bool _isUsefulLocationName(String? value, {String? city, String? district}) {
+    final normalized = value?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return false;
+    }
+
+    if (normalized == city || normalized == district) {
+      return false;
+    }
+
+    const ignored = <String>{'[]', '[[]]'};
+    if (ignored.contains(normalized)) {
+      return false;
+    }
+
+    return true;
   }
 
   // 📊 获取事件统计信息
@@ -532,7 +719,7 @@ class EventService {
 
     return SmartTitleGenerator.generate(
       date: date,
-      city: event.city,
+      city: event.locationName ?? event.district ?? event.city,
       province: event.province,
       topTag: topTag,
       joyScore: joyScore,
@@ -580,13 +767,11 @@ class EventService {
     // 统计3：标签频率（找出最高频标签）
     final Map<String, int> tagCounts = {};
     for (final photo in photos) {
-      if (photo.aiTags != null) {
-        for (final tag in photo.aiTags!) {
-          if (_blockedSmartTitleTags.contains(tag)) {
-            continue;
-          }
-          tagCounts[tag] = (tagCounts[tag] ?? 0) + 1;
+      for (final tag in _effectiveTagsForEventStats(photo)) {
+        if (_blockedSmartTitleTags.contains(tag)) {
+          continue;
         }
+        tagCounts[tag] = (tagCounts[tag] ?? 0) + 1;
       }
     }
 
@@ -617,5 +802,81 @@ class EventService {
       'tagCounts': tagCounts, // 返回完整的标签统计，供 LLM 使用
       'bestPhotoId': bestPhotoId,
     };
+  }
+
+  List<String> _effectiveTagsForEventStats(PhotoEntity photo) {
+    final aiTags = (photo.aiTags ?? const <String>[])
+        .map((tag) => tag.trim())
+        .where((tag) => tag.isNotEmpty && !_blockedSmartTitleTags.contains(tag))
+        .toList(growable: false);
+    final ocrTags = (photo.ocrTags ?? const <String>[])
+        .map((tag) => tag.trim())
+        .where((tag) => tag.isNotEmpty && !_blockedSmartTitleTags.contains(tag))
+        .toList(growable: false);
+
+    if (_isTextHeavyPhoto(photo, aiTags: aiTags, ocrTags: ocrTags)) {
+      final textTags = <String>[];
+
+      void addTag(String value) {
+        if (value.isEmpty || textTags.contains(value)) {
+          return;
+        }
+        textTags.add(value);
+      }
+
+      for (final tag in aiTags) {
+        if (_textSceneTags.contains(tag)) {
+          addTag(tag);
+        }
+      }
+
+      for (final tag in ocrTags) {
+        if (_looksUsefulOcrTag(tag)) {
+          addTag(tag);
+        }
+      }
+
+      if (photo.isProbablyScreenshot) {
+        addTag('截图');
+      }
+
+      if (textTags.isEmpty) {
+        addTag(photo.isProbablyScreenshot ? '屏幕' : '文字');
+      }
+
+      return textTags.take(5).toList(growable: false);
+    }
+
+    return aiTags.take(5).toList(growable: false);
+  }
+
+  bool _isTextHeavyPhoto(
+    PhotoEntity photo, {
+    required List<String> aiTags,
+    required List<String> ocrTags,
+  }) {
+    final ocrText = photo.ocrText?.trim() ?? '';
+    final textLikeAiCount = aiTags.where(_textSceneTags.contains).length;
+
+    return photo.isProbablyScreenshot ||
+        ocrTags.length >= 2 ||
+        ocrText.length >= 12 ||
+        textLikeAiCount >= 2;
+  }
+
+  bool _looksUsefulOcrTag(String tag) {
+    if (_textSceneTags.contains(tag)) {
+      return true;
+    }
+
+    if (tag.length < 2 || tag.length > 16) {
+      return false;
+    }
+
+    if (RegExp(r'^[A-Za-z0-9_./-]+$').hasMatch(tag)) {
+      return false;
+    }
+
+    return true;
   }
 }

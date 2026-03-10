@@ -51,7 +51,8 @@ class StoryPromptHelper {
     required bool isShort,
     required String locationMode,
   }) {
-    final location = event.city ?? event.province ?? '某地';
+    final location =
+      event.locationName ?? event.district ?? event.city ?? event.province ?? '某地';
     final dateStart = DateTime.fromMillisecondsSinceEpoch(event.startTime);
     final dateEnd = DateTime.fromMillisecondsSinceEpoch(event.endTime);
     final dateRange =

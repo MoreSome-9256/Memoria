@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 // import 'dart:math'; // ➕ 新增：用于生成随机的假数据
@@ -11,6 +12,7 @@ import 'photo_service.dart';
 import 'event_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'mobileclip_vision_service.dart';
+import 'ocr_service.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -19,13 +21,93 @@ class AIService {
   factory AIService() => _instance;
   AIService._internal();
 
+  static const Set<String> _blockedVisualTags = <String>{
+    'Screenshot',
+    'Cool',
+    'Glasses',
+    'Goggles',
+    'Selfie',
+    '截图',
+    '自拍',
+  };
+
   final ValueNotifier<AIAnalysisProgress> _progressNotifier =
       ValueNotifier<AIAnalysisProgress>(AIAnalysisProgress.idle());
 
   bool _isAnalyzing = false;
+  bool _pauseRequested = false;
+  bool _stopRequested = false;
+  Completer<void>? _analysisCompleter;
 
   ValueListenable<AIAnalysisProgress> get progressListenable =>
       _progressNotifier;
+
+  void pauseAnalysis() {
+    if (!_isAnalyzing || _pauseRequested) {
+      return;
+    }
+    _pauseRequested = true;
+    final current = _progressNotifier.value;
+    if (current.isVisible) {
+      _progressNotifier.value = current.copyWith(
+        isRunning: false,
+        isPaused: true,
+        currentStep: '已暂停，随时可以继续',
+      );
+    }
+  }
+
+  void resumeAnalysis() {
+    if (!_isAnalyzing || !_pauseRequested) {
+      return;
+    }
+    _pauseRequested = false;
+    final current = _progressNotifier.value;
+    if (current.isVisible) {
+      _progressNotifier.value = current.copyWith(
+        isRunning: true,
+        isPaused: false,
+        currentStep: '继续后台打标中',
+      );
+    }
+  }
+
+  void stopAnalysis() {
+    if (!_isAnalyzing) {
+      return;
+    }
+    _stopRequested = true;
+    _pauseRequested = false;
+    final current = _progressNotifier.value;
+    if (current.isVisible) {
+      _progressNotifier.value = current.copyWith(
+        isRunning: false,
+        isPaused: false,
+        isStopping: true,
+        currentStep: '正在结束本轮打标…',
+      );
+    }
+  }
+
+  Future<void> stopAnalysisAndWait({
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    if (!_isAnalyzing) {
+      return;
+    }
+
+    stopAnalysis();
+    final analysisFuture = _analysisCompleter?.future;
+    if (analysisFuture == null) {
+      return;
+    }
+
+    try {
+      await analysisFuture.timeout(timeout);
+    } on TimeoutException {
+      debugPrint('⚠️ 等待 AI 打标任务结束超时，继续执行后续流程');
+    }
+  }
 
   // 简单的标签翻译字典 (毕设演示够用了，也可以接翻译API)
   final Map<String, String> _tagTranslation = {
@@ -151,9 +233,13 @@ class AIService {
     }
 
     _isAnalyzing = true;
+    _pauseRequested = false;
+    _stopRequested = false;
+    _analysisCompleter = Completer<void>();
     final isar = PhotoService().isar;
     final mobileClipVision = MobileClipVisionService();
     final mobileClipTagService = MobileClipTagService();
+    final ocrService = OcrService();
     await mobileClipVision.warmUp();
     await mobileClipTagService.warmUp();
 
@@ -199,6 +285,11 @@ class AIService {
 
     try {
       while (true) {
+        final shouldContinue = await _waitIfPaused();
+        if (!shouldContinue || _stopRequested) {
+          break;
+        }
+
         if (remainingPhotos != null && remainingPhotos <= 0) {
           break;
         }
@@ -223,6 +314,11 @@ class AIService {
         debugPrint("🤖 开始 AI 视觉分析，本批次: ${photosToAnalyze.length} 张");
 
         for (final photo in photosToAnalyze) {
+          final shouldContinue = await _waitIfPaused();
+          if (!shouldContinue || _stopRequested) {
+            break;
+          }
+
           final file = File(photo.path);
           var didFail = false;
           File? compressedTempFile;
@@ -235,7 +331,7 @@ class AIService {
 
           try {
             if (!file.existsSync()) {
-              await _markAsAnalyzed(photo.id, [], 0, 0.0, 0.0, isar);
+              await _markAsAnalyzed(photo.id, [], '', const <String>[], 0, 0.0, 0.0, isar);
               didFail = true;
               continue;
             }
@@ -269,7 +365,17 @@ class AIService {
             final mobileClipTags = await mobileClipTagService.retrieveTags(
               embedding,
             );
-            final validTags = _mergePreferredTags(mobileClipTags, mlKitTags);
+            final visualTags = _sanitizeVisualTags(
+              _mergePreferredTags(mobileClipTags, mlKitTags),
+            );
+
+            OcrResult ocrResult = OcrResult.empty();
+            if (OcrService.shouldRunOcr(
+              visualTags,
+              aspectRatio: photo.aspectRatio,
+            )) {
+              ocrResult = await ocrService.analyzeImageFile(compressedTempFile);
+            }
 
             // 😊 任务2：情感分析
             final faces = await faceDetector.processImage(inputImage);
@@ -283,12 +389,14 @@ class AIService {
             double joyScore = AIScoreHelper.calculateJoyScore(
               faceCount: faceCount,
               maxSmileProb: maxSmileProb,
-              tags: validTags,
+              tags: visualTags,
             );
 
             await _markAsAnalyzed(
               photo.id,
-              validTags,
+              visualTags,
+              ocrResult.text,
+              ocrResult.tags,
               faceCount,
               maxSmileProb,
               joyScore,
@@ -305,7 +413,7 @@ class AIService {
           } catch (e) {
             didFail = true;
             debugPrint("❌ AI 分析失败: $e");
-            await _markAsAnalyzed(photo.id, [], 0, 0.0, 0.0, isar);
+            await _markAsAnalyzed(photo.id, [], '', const <String>[], 0, 0.0, 0.0, isar);
             if (remainingPhotos != null) {
               remainingPhotos--;
             }
@@ -314,21 +422,45 @@ class AIService {
               failedCount++;
             }
             processedCount++;
-            _progressNotifier.value = AIAnalysisProgress.running(
-              total: targetTotal,
-              completed: processedCount,
-              failed: failedCount,
-              currentStep: processedCount >= targetTotal
-                  ? '正在收尾整理结果'
-                  : '已完成 $processedCount / $targetTotal 张',
-            );
+            if (_stopRequested) {
+              _progressNotifier.value = AIAnalysisProgress.stopping(
+                total: targetTotal,
+                completed: processedCount,
+                failed: failedCount,
+                currentStep: '正在结束本轮打标…',
+              );
+            } else if (_pauseRequested) {
+              _progressNotifier.value = AIAnalysisProgress.paused(
+                total: targetTotal,
+                completed: processedCount,
+                failed: failedCount,
+                currentStep: '已暂停，随时可以继续',
+              );
+            } else {
+              _progressNotifier.value = AIAnalysisProgress.running(
+                total: targetTotal,
+                completed: processedCount,
+                failed: failedCount,
+                currentStep: processedCount >= targetTotal
+                    ? '正在收尾整理结果'
+                    : '已完成 $processedCount / $targetTotal 张',
+              );
+            }
 
             // 🧹 清理临时文件
             if (compressedTempFile != null && compressedTempFile.existsSync()) {
               compressedTempFile.deleteSync();
             }
           }
+
+          if (_stopRequested) {
+            break;
+          }
           await Future.delayed(const Duration(milliseconds: 100));
+        }
+
+        if (_stopRequested) {
+          break;
         }
       }
 
@@ -342,7 +474,20 @@ class AIService {
     } finally {
       _progressNotifier.value = AIAnalysisProgress.idle();
       _isAnalyzing = false;
+      _pauseRequested = false;
+      _stopRequested = false;
+      if (_analysisCompleter != null && !_analysisCompleter!.isCompleted) {
+        _analysisCompleter!.complete();
+      }
+      _analysisCompleter = null;
     }
+  }
+
+  Future<bool> _waitIfPaused() async {
+    while (_pauseRequested && !_stopRequested) {
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+    return !_stopRequested;
   }
 
   List<String> _mergePreferredTags(
@@ -373,10 +518,38 @@ class AIService {
     return merged;
   }
 
+  List<String> _sanitizeVisualTags(List<String> source, {int maxTags = 5}) {
+    final sanitized = <String>[];
+
+    for (final tag in source) {
+      final normalized = tag.trim();
+      if (normalized.isEmpty || sanitized.contains(normalized)) {
+        continue;
+      }
+      if (_blockedVisualTags.contains(normalized)) {
+        continue;
+      }
+      if (RegExp(r'^\d{1,2}:\d{2}$').hasMatch(normalized)) {
+        continue;
+      }
+      if (normalized.contains('智能影记') || normalized.contains('我的相册')) {
+        continue;
+      }
+      sanitized.add(normalized);
+      if (sanitized.length >= maxTags) {
+        break;
+      }
+    }
+
+    return sanitized;
+  }
+
   // 将 AI 分析结果写入数据库（增强版）
   Future<void> _markAsAnalyzed(
     Id id,
     List<String> tags,
+    String ocrText,
+    List<String> ocrTags,
     int faceCount,
     double smileProb,
     double joyScore,
@@ -387,6 +560,8 @@ class AIService {
       if (p != null) {
         p.aiTags = tags;
         p.isAiAnalyzed = true;
+        p.ocrText = ocrText.isEmpty ? null : ocrText;
+        p.ocrTags = ocrTags;
         p.faceCount = faceCount;
         p.smileProb = smileProb;
         p.joyScore = joyScore;
@@ -413,6 +588,8 @@ class AIService {
 class AIAnalysisProgress {
   const AIAnalysisProgress({
     required this.isRunning,
+    required this.isPaused,
+    required this.isStopping,
     required this.total,
     required this.completed,
     required this.failed,
@@ -422,6 +599,8 @@ class AIAnalysisProgress {
   factory AIAnalysisProgress.idle() {
     return const AIAnalysisProgress(
       isRunning: false,
+      isPaused: false,
+      isStopping: false,
       total: 0,
       completed: 0,
       failed: 0,
@@ -437,6 +616,42 @@ class AIAnalysisProgress {
   }) {
     return AIAnalysisProgress(
       isRunning: true,
+      isPaused: false,
+      isStopping: false,
+      total: total,
+      completed: completed,
+      failed: failed,
+      currentStep: currentStep,
+    );
+  }
+
+  factory AIAnalysisProgress.paused({
+    required int total,
+    required int completed,
+    required int failed,
+    required String currentStep,
+  }) {
+    return AIAnalysisProgress(
+      isRunning: false,
+      isPaused: true,
+      isStopping: false,
+      total: total,
+      completed: completed,
+      failed: failed,
+      currentStep: currentStep,
+    );
+  }
+
+  factory AIAnalysisProgress.stopping({
+    required int total,
+    required int completed,
+    required int failed,
+    required String currentStep,
+  }) {
+    return AIAnalysisProgress(
+      isRunning: false,
+      isPaused: false,
+      isStopping: true,
       total: total,
       completed: completed,
       failed: failed,
@@ -445,10 +660,32 @@ class AIAnalysisProgress {
   }
 
   final bool isRunning;
+  final bool isPaused;
+  final bool isStopping;
   final int total;
   final int completed;
   final int failed;
   final String currentStep;
+
+  AIAnalysisProgress copyWith({
+    bool? isRunning,
+    bool? isPaused,
+    bool? isStopping,
+    int? total,
+    int? completed,
+    int? failed,
+    String? currentStep,
+  }) {
+    return AIAnalysisProgress(
+      isRunning: isRunning ?? this.isRunning,
+      isPaused: isPaused ?? this.isPaused,
+      isStopping: isStopping ?? this.isStopping,
+      total: total ?? this.total,
+      completed: completed ?? this.completed,
+      failed: failed ?? this.failed,
+      currentStep: currentStep ?? this.currentStep,
+    );
+  }
 
   double get fraction {
     if (total <= 0) {
@@ -457,5 +694,5 @@ class AIAnalysisProgress {
     return (completed / total).clamp(0, 1).toDouble();
   }
 
-  bool get isVisible => isRunning && total > 0;
+  bool get isVisible => (isRunning || isPaused || isStopping) && total > 0;
 }

@@ -9,6 +9,36 @@ import '../models/entity/event_entity.dart';
 import '../models/entity/story_entity.dart';
 import '../utils/photo_filter_helper.dart';
 
+class _PreparedScanData {
+  const _PreparedScanData({
+    required this.assets,
+    required this.totalCount,
+    required this.fetchCount,
+  });
+
+  final List<AssetEntity> assets;
+  final int totalCount;
+  final int fetchCount;
+}
+
+class _ScanBuildResult {
+  const _ScanBuildResult({
+    required this.photos,
+    required this.insertedCount,
+    required this.insertedNoGps,
+    required this.skippedInvalidTime,
+    required this.skippedNonCamera,
+    required this.skippedScreenshot,
+  });
+
+  final List<PhotoEntity> photos;
+  final int insertedCount;
+  final int insertedNoGps;
+  final int skippedInvalidTime;
+  final int skippedNonCamera;
+  final int skippedScreenshot;
+}
+
 class PhotoService {
   late Isar _isar;
 
@@ -38,126 +68,78 @@ class PhotoService {
     print("🗑️ 已清空 Isar 缓存数据（照片/事件/故事）");
   }
 
+  Future<PhotoScanSummary> rebuildAllCachedData({
+    int? maxAssets,
+  }) async {
+    final totalBefore = await _isar.collection<PhotoEntity>().count();
+    final prepared = await _prepareScan(maxAssets: maxAssets);
+
+    print(
+      maxAssets == null
+          ? "🧱 开始安全重建相册缓存（全量）..."
+          : "🧱 开始安全重建相册缓存（最近 ${prepared.fetchCount} / ${prepared.totalCount} 张）...",
+    );
+
+    final built = await _buildPhotoEntities(
+      prepared.assets,
+      skipExisting: false,
+    );
+
+    if (built.photos.isEmpty) {
+      throw const PhotoScanException(
+        PhotoScanError.noEligiblePhoto,
+        '未找到可用照片：请确认相册中存在包含有效时间的相机图片资源。',
+      );
+    }
+
+    await _isar.writeTxn(() async {
+      await _isar.collection<StoryEntity>().clear();
+      await _isar.collection<EventEntity>().clear();
+      await _isar.collection<PhotoEntity>().clear();
+      await _isar.collection<PhotoEntity>().putAll(built.photos);
+    });
+
+    print(
+      "✅ 安全重建完成: 清空旧数据=$totalBefore 入库=${built.insertedCount} 无GPS=${built.insertedNoGps} 跳过[无时间=${built.skippedInvalidTime} 非相机=${built.skippedNonCamera} 截图=${built.skippedScreenshot}]",
+    );
+
+    return PhotoScanSummary(
+      totalBefore: totalBefore,
+      totalAfter: built.insertedCount,
+      removedCount: totalBefore,
+      insertedCount: built.insertedCount,
+      skippedInvalidTime: built.skippedInvalidTime,
+      insertedNoGps: built.insertedNoGps,
+      skippedNonCamera: built.skippedNonCamera,
+      skippedScreenshot: built.skippedScreenshot,
+    );
+  }
+
   // 1️⃣ 扫描相册 (快速入库，带截图过滤)
   Future<PhotoScanSummary> scanAndSyncPhotos({
     int? maxAssets,
   }) async {
     final totalBefore = await _isar.collection<PhotoEntity>().count();
-
-    // 🌟 核心修复：针对 Android 10+ 的动态权限申请
-    if (Platform.isAndroid) {
-      // 1. 弹出系统弹窗，请求访问媒体位置（解决 0 GPS 的关键）
-      final locationStatus = await Permission.accessMediaLocation.request();
-      if (locationStatus.isGranted) {
-        print("✅ 成功获得读取照片真实 GPS 的特权");
-      } else {
-        print("⚠️ 用户拒绝了位置特权，照片经纬度将被系统抹除为 null");
-      }
-    }
-
-    // 权限检查
-    final PermissionState ps = await PhotoManager.requestPermissionExtend();
-    if (!ps.isAuth && !ps.hasAccess) {
-      throw const PhotoScanException(
-        PhotoScanError.permissionDenied,
-        '未获得相册访问权限，请在系统设置中允许访问照片。',
-      );
-    }
-
-    // 获取图片资源
-    final List<AssetPathEntity> albums = await PhotoManager.getAssetPathList(
-      type: RequestType.image, // 📸 只读图片，过滤视频
-      onlyAll: true,
-    );
-
-    if (albums.isEmpty) {
-      throw const PhotoScanException(PhotoScanError.noAlbum, '未找到可读取的相册。');
-    }
+    final prepared = await _prepareScan(maxAssets: maxAssets);
 
     // 先做反向同步：清理系统相册已删除/已不可访问的照片
     final removedCount = await _removeUnavailablePhotos();
-    // 🌟 新增：获取相册里的真实总照片数
-    final int totalCount = await albums[0].assetCountAsync;
-    final int fetchCount = maxAssets == null
-        ? totalCount
-        : (maxAssets < totalCount ? maxAssets : totalCount);
-
-    final List<AssetEntity> assets = await albums[0].getAssetListRange(
-      start: 0,
-      end: fetchCount,
-    );
 
     print(
       maxAssets == null
           ? "🚀 开始扫描相册（全量）..."
-          : "🚀 开始扫描相册（最近 $fetchCount / $totalCount 张）...",
+          : "🚀 开始扫描相册（最近 ${prepared.fetchCount} / ${prepared.totalCount} 张）...",
     );
+    final built = await _buildPhotoEntities(prepared.assets, skipExisting: true);
 
-    int skippedInvalidTime = 0;
-    int insertedNoGps = 0;
-    int skippedNonCamera = 0;
-    int skippedScreenshot = 0;
-    int insertedCount = 0;
-
-    await _isar.writeTxn(() async {
-      for (final asset in assets) {
-        // 🌟 核心修复 1：把增量检查提到最前面！
-        final existing = await _isar
-            .collection<PhotoEntity>()
-            .filter()
-            .assetIdEqualTo(asset.id)
-            .findFirst();
-
-        // 如果数据库里已经有了，直接跳过，绝不触发后续极其耗时的 IO 操作！
-        if (existing != null) continue;
-
-        // 🌟 核心修复 2：只有全新的照片，才去底层拿数据
-        final file = await asset.file;
-        if (file == null) continue;
-
-        final latLong = await asset.latlngAsync();
-
-        // 现在的日志只会打印【新增】的照片，终端终于不会被疯狂刷屏了！
-        _logAssetExtInfo(asset: asset, filePath: file.path, latLong: latLong);
-
-        final timestamp = asset.createDateTime.millisecondsSinceEpoch;
-        if (!PhotoFilterHelper.hasValidTimestamp(timestamp)) {
-          skippedInvalidTime++;
-          continue;
-        }
-
-        // 📐 获取图片尺寸并过滤
-        final width = asset.width;
-        final height = asset.height;
-        if (width <= 0 || height <= 0) {
-          skippedNonCamera++;
-          continue;
-        }
-
-        final hasGps = PhotoFilterHelper.hasValidGps(
-          latLong?.latitude,
-          latLong?.longitude,
-        );
-        if (!hasGps) insertedNoGps++;
-
-        // 入库新照片
-        final newPhoto = PhotoEntity()
-          ..assetId = asset.id
-          ..timestamp = timestamp
-          ..path = file.path
-          ..width = width
-          ..height = height
-          ..latitude = hasGps ? latLong!.latitude : null
-          ..longitude = hasGps ? latLong!.longitude : null
-          ..isLocationProcessed = false;
-
-        await _isar.collection<PhotoEntity>().put(newPhoto);
-        insertedCount++;
-      }
-    });
+    if (built.photos.isNotEmpty) {
+      await _isar.writeTxn(() async {
+        await _isar.collection<PhotoEntity>().putAll(built.photos);
+      });
+    }
 
     print(
-      "✅ 基础数据同步完成: 删除=$removedCount 入库=$insertedCount 其中无GPS入库=$insertedNoGps 跳过[无时间=$skippedInvalidTime 截图=$skippedScreenshot]",
+      "✅ 基础数据同步完成: 删除=$removedCount 入库=${built.insertedCount} 其中无GPS入库=${built.insertedNoGps} 跳过[无时间=${built.skippedInvalidTime} 非相机=${built.skippedNonCamera} 截图=${built.skippedScreenshot}]",
     );
 
     final totalAfter = await _isar.collection<PhotoEntity>().count();
@@ -173,9 +155,138 @@ class PhotoService {
       totalBefore: totalBefore,
       totalAfter: totalAfter,
       removedCount: removedCount,
-      insertedCount: insertedCount,
-      skippedInvalidTime: skippedInvalidTime,
+      insertedCount: built.insertedCount,
+      skippedInvalidTime: built.skippedInvalidTime,
+      insertedNoGps: built.insertedNoGps,
+      skippedNonCamera: built.skippedNonCamera,
+      skippedScreenshot: built.skippedScreenshot,
+    );
+  }
+
+  Future<_PreparedScanData> _prepareScan({
+    int? maxAssets,
+  }) async {
+    if (Platform.isAndroid) {
+      final locationStatus = await Permission.accessMediaLocation.request();
+      if (locationStatus.isGranted) {
+        print("✅ 成功获得读取照片真实 GPS 的特权");
+      } else {
+        print("⚠️ 用户拒绝了位置特权，照片经纬度将被系统抹除为 null");
+      }
+    }
+
+    final permissionState = await PhotoManager.requestPermissionExtend();
+    if (!permissionState.isAuth && !permissionState.hasAccess) {
+      throw const PhotoScanException(
+        PhotoScanError.permissionDenied,
+        '未获得相册访问权限，请在系统设置中允许访问照片。',
+      );
+    }
+
+    final albums = await PhotoManager.getAssetPathList(
+      type: RequestType.image,
+      onlyAll: true,
+    );
+    if (albums.isEmpty) {
+      throw const PhotoScanException(PhotoScanError.noAlbum, '未找到可读取的相册。');
+    }
+
+    final totalCount = await albums[0].assetCountAsync;
+    final fetchCount = maxAssets == null
+        ? totalCount
+        : (maxAssets < totalCount ? maxAssets : totalCount);
+    final assets = await albums[0].getAssetListRange(start: 0, end: fetchCount);
+
+    return _PreparedScanData(
+      assets: assets,
+      totalCount: totalCount,
+      fetchCount: fetchCount,
+    );
+  }
+
+  Future<_ScanBuildResult> _buildPhotoEntities(
+    List<AssetEntity> assets, {
+    required bool skipExisting,
+  }) async {
+    final photos = <PhotoEntity>[];
+    var skippedInvalidTime = 0;
+    var insertedNoGps = 0;
+    var skippedNonCamera = 0;
+    var skippedScreenshot = 0;
+
+    for (final asset in assets) {
+      if (skipExisting) {
+        final existing = await _isar
+            .collection<PhotoEntity>()
+            .filter()
+            .assetIdEqualTo(asset.id)
+            .findFirst();
+        if (existing != null) {
+          continue;
+        }
+      }
+
+      final file = await asset.file;
+      if (file == null) {
+        skippedNonCamera++;
+        continue;
+      }
+
+      final width = asset.width;
+      final height = asset.height;
+      if (width <= 0 || height <= 0) {
+        skippedNonCamera++;
+        continue;
+      }
+
+      final screenshotByRatio = PhotoFilterHelper.isLikelyScreenshotByRatio(
+        width,
+        height,
+      );
+      final likelyCameraPhoto = PhotoFilterHelper.isLikelyCameraPhoto(file.path);
+      if (screenshotByRatio) {
+        skippedScreenshot++;
+        continue;
+      }
+      if (!likelyCameraPhoto) {
+        skippedNonCamera++;
+        continue;
+      }
+
+      final latLong = await asset.latlngAsync();
+      _logAssetExtInfo(asset: asset, filePath: file.path, latLong: latLong);
+
+      final timestamp = asset.createDateTime.millisecondsSinceEpoch;
+      if (!PhotoFilterHelper.hasValidTimestamp(timestamp)) {
+        skippedInvalidTime++;
+        continue;
+      }
+
+      final hasGps = PhotoFilterHelper.hasValidGps(
+        latLong?.latitude,
+        latLong?.longitude,
+      );
+      if (!hasGps) {
+        insertedNoGps++;
+      }
+
+      final newPhoto = PhotoEntity()
+        ..assetId = asset.id
+        ..timestamp = timestamp
+        ..path = file.path
+        ..width = width
+        ..height = height
+        ..latitude = hasGps ? latLong!.latitude : null
+        ..longitude = hasGps ? latLong!.longitude : null
+        ..isLocationProcessed = false;
+      photos.add(newPhoto);
+    }
+
+    return _ScanBuildResult(
+      photos: photos,
+      insertedCount: photos.length,
       insertedNoGps: insertedNoGps,
+      skippedInvalidTime: skippedInvalidTime,
       skippedNonCamera: skippedNonCamera,
       skippedScreenshot: skippedScreenshot,
     );
@@ -270,6 +381,8 @@ class PhotoService {
 
       photo.isAiAnalyzed = false;
       photo.aiTags = <String>[];
+      photo.ocrText = null;
+      photo.ocrTags = <String>[];
       photo.faceCount = 0;
       photo.smileProb = 0.0;
       photo.joyScore = 0.0;
@@ -316,6 +429,8 @@ class PhotoService {
       photo.isAiAnalyzed = false;
 
       photo.aiTags = []; // 清空 ML Kit 时代干瘪的标签
+      photo.ocrText = null;
+      photo.ocrTags = [];
 
       // photo.vector = null; // 如果你未来加了向量字段，也在这里清空
     }

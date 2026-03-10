@@ -211,11 +211,21 @@ class _CreatePageState extends State<CreatePage> {
         final locationText =
             '${photo.province ?? ''} ${photo.city ?? ''} ${photo.district ?? ''}'
                 .replaceAll(RegExp(r'[省市区县]'), '');
+        final ocrTextLower = (photo.ocrText ?? '').toLowerCase();
+        final ocrTagsLower = (photo.ocrTags ?? const <String>[])
+            .map((tag) => tag.toLowerCase())
+            .toSet();
         if (locationText.contains(remainingQuery) ||
             remainingQuery.contains(
               locationText.isNotEmpty ? locationText : '无极',
             )) {
           hitTag = true;
+        }
+        if (!hitTag && ocrTextLower.isNotEmpty) {
+          if (ocrTextLower.contains(remainingQuery) ||
+              remainingQuery.contains(ocrTextLower)) {
+            hitTag = true;
+          }
         }
         if (!hitTag && photo.aiTags != null) {
           final photoTagsLower = photo.aiTags!
@@ -226,6 +236,8 @@ class _CreatePageState extends State<CreatePage> {
             if (targetTags.any(
               (target) =>
                   photoTagsLower.contains(target) ||
+                  ocrTagsLower.contains(target) ||
+                  ocrTextLower.contains(target) ||
                   target.contains(photoTagsLower.firstOrNull ?? '无极'),
             )) {
               hitTag = true;
@@ -237,6 +249,15 @@ class _CreatePageState extends State<CreatePage> {
               (tag) =>
                   tag.toLowerCase().contains(remainingQuery) ||
                   remainingQuery.contains(tag.toLowerCase()),
+            )) {
+              hitTag = true;
+            }
+          }
+          if (!hitTag && ocrTagsLower.isNotEmpty) {
+            if (ocrTagsLower.any(
+              (tag) =>
+                  tag.contains(remainingQuery) ||
+                  remainingQuery.contains(tag),
             )) {
               hitTag = true;
             }

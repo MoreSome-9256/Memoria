@@ -259,14 +259,25 @@ class EventClusterHelper {
   }
 
   static String? _cityKey(PhotoEntity photo) {
+    final locationName = photo.locationName?.trim();
+    final district = photo.district?.trim();
+    final city = photo.city?.trim();
+    final province = photo.province?.trim();
+
+    if (locationName != null && locationName.isNotEmpty) {
+      return 'place:${province ?? ''}/${city ?? ''}/${district ?? ''}/$locationName';
+    }
+
     if (photo.adcode != null && photo.adcode!.trim().isNotEmpty) {
       return 'adcode:${photo.adcode!.trim()}';
     }
 
-    final city = photo.city?.trim();
-    final province = photo.province?.trim();
     if (city != null && city.isNotEmpty) {
       return 'city:${province ?? ''}/$city';
+    }
+
+    if (district != null && district.isNotEmpty) {
+      return 'district:${province ?? ''}/${city ?? ''}/$district';
     }
 
     return null;

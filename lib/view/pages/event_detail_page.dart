@@ -18,6 +18,18 @@ class _EventDetailPageState extends State<EventDetailPage> {
   final Set<String> _selectedPhotoIds = {};
   String? _selectedThemeId;
 
+  List<Photo> get _selectedPhotos => widget.event.photos
+      .where((photo) => _selectedPhotoIds.contains(photo.id))
+      .toList(growable: false);
+
+  List<Photo> get _textRichSelectedPhotos => _selectedPhotos
+      .where(
+        (photo) =>
+            (photo.ocrSummary?.trim().isNotEmpty ?? false) ||
+            photo.ocrTags.isNotEmpty,
+      )
+      .toList(growable: false);
+
   @override
   void initState() {
     super.initState();
@@ -37,6 +49,179 @@ class _EventDetailPageState extends State<EventDetailPage> {
         _selectedPhotoIds.add(photo.id);
       }
     });
+  }
+
+  void _showPhotoDetail(Photo photo) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.78,
+          minChildSize: 0.55,
+          maxChildSize: 0.94,
+          expand: false,
+          builder: (context, controller) {
+            return Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(24),
+                ),
+              ),
+              child: ListView(
+                controller: controller,
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+                children: [
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).dividerColor,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: AspectRatio(
+                      aspectRatio: 1,
+                      child: PathImage(path: photo.path, fit: BoxFit.cover),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    '照片详情',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildMetaRow(
+                    context,
+                    Icons.calendar_today_outlined,
+                    '${photo.dateTaken.month}月${photo.dateTaken.day}日 ${photo.dateTaken.hour.toString().padLeft(2, '0')}:${photo.dateTaken.minute.toString().padLeft(2, '0')}',
+                  ),
+                  if ((photo.location?.trim().isNotEmpty ?? false))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: _buildMetaRow(
+                        context,
+                        Icons.location_on_outlined,
+                        photo.location!,
+                      ),
+                    ),
+                  if ((photo.ocrSummary?.trim().isNotEmpty ?? false)) ...[
+                    const SizedBox(height: 20),
+                    _buildSectionTitle(context, 'OCR 摘要'),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        photo.ocrSummary!,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  _buildTagSection(
+                    context,
+                    title: 'AI 关键词',
+                    tags: photo.tags,
+                    emptyText: '这张照片暂时没有 AI 关键词。',
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                  ),
+                  const SizedBox(height: 20),
+                  _buildTagSection(
+                    context,
+                    title: 'OCR 关键词',
+                    tags: photo.ocrTags,
+                    emptyText: '这张照片没有识别出明显文字关键词。',
+                    color: Theme.of(context).colorScheme.secondaryContainer,
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildMetaRow(
+    BuildContext context,
+    IconData icon,
+    String text,
+  ) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(text, style: Theme.of(context).textTheme.bodyLarge),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSectionTitle(BuildContext context, String title) {
+    return Text(
+      title,
+      style: Theme.of(
+        context,
+      ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+    );
+  }
+
+  Widget _buildTagSection(
+    BuildContext context, {
+    required String title,
+    required List<String> tags,
+    required String emptyText,
+    required Color color,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionTitle(context, '$title (${tags.length})'),
+        const SizedBox(height: 8),
+        if (tags.isEmpty)
+          Text(
+            emptyText,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Theme.of(context).hintColor,
+            ),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: tags
+                .map(
+                  (tag) => Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(tag),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+      ],
+    );
   }
 
   void _navigateToConfigPage() {
@@ -158,6 +343,44 @@ class _EventDetailPageState extends State<EventDetailPage> {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '点按选择照片，长按查看这张照片的完整关键词。',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).hintColor,
+                    ),
+                  ),
+                  if (_textRichSelectedPhotos.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      'OCR 摘要',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ..._textRichSelectedPhotos.take(3).map((photo) {
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: ListTile(
+                          onTap: () => _showPhotoDetail(photo),
+                          leading: const Icon(Icons.text_snippet_outlined),
+                          title: Text(
+                            photo.ocrSummary ?? '识别到文本',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: photo.ocrTags.isEmpty
+                              ? null
+                              : Text(
+                                  photo.ocrTags.take(4).join('、'),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                        ),
+                      );
+                    }),
+                  ],
                   const SizedBox(height: 8),
                 ],
               ),
@@ -178,12 +401,35 @@ class _EventDetailPageState extends State<EventDetailPage> {
 
                 return GestureDetector(
                   onTap: () => _togglePhotoSelection(photo),
+                  onLongPress: () => _showPhotoDetail(photo),
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
                       PathImage(path: photo.path, fit: BoxFit.cover),
                       if (!isSelected)
                         Container(color: Colors.black.withValues(alpha: 0.5)),
+                      Positioned(
+                        left: 4,
+                        bottom: 4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '${photo.tags.length + photo.ocrTags.length}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
                       if (isSelected)
                         Positioned(
                           top: 4,

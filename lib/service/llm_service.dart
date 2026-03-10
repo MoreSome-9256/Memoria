@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:dio/dio.dart';
 import '../models/entity/event_entity.dart';
 
@@ -26,6 +25,18 @@ class LLMService {
                contentType: 'application/json',
              ),
            );
+
+  static const Set<String> _blockedTitleWords = <String>{
+    '采购员',
+    '房主',
+    '房东',
+    '未婚妻',
+    '未婚夫',
+    '套路',
+    '老婆',
+    '丈夫',
+    '情人',
+  };
 
   factory LLMService.forTest({
     required String apiKey,
@@ -114,7 +125,7 @@ class LLMService {
     final dateStr =
         '${date.year}年${date.month}月${date.day}日 - ${DateTime.fromMillisecondsSinceEpoch(event.endTime).month}月${DateTime.fromMillisecondsSinceEpoch(event.endTime).day}日';
 
-    final location = event.city ?? event.province ?? '未知地点';
+    final location = event.locationName ?? event.district ?? event.city ?? event.province ?? '未知地点';
     final season = event.season;
     final tagsStr = topTags.isNotEmpty ? topTags.join(', ') : '无';
     final joyScore = event.joyScore != null
@@ -139,6 +150,8 @@ class LLMService {
 5. 不要添加编号（如 1.、2. 等）
 6. 结合地点和标签生成创意标题
 7. 可以使用一些诗意或文艺的表达
+8. 如果标签明显偏向截图、文档、课件、聊天、春联、屏幕文字，请把事件理解为“文字/资料/屏幕记录”类画面，禁止凭 OCR 或零散词语推断人物职业、身份、关系和剧情
+9. 禁止生成“采购员、房主、未婚妻、套路”这类身份或剧情脑补词
 
 示例风格：
 - 青岛 · 海风与微笑
@@ -181,6 +194,10 @@ class LLMService {
       // 跳过过长或过短的标题
       if (cleaned.length < 3 || cleaned.length > 30) continue;
 
+      if (_blockedTitleWords.any(cleaned.contains)) {
+        continue;
+      }
+
       titles.add(cleaned);
     }
 
@@ -190,7 +207,7 @@ class LLMService {
 
   /// 🛡️ 兜底标题生成（当 LLM 失败时）
   List<String> _getFallbackTitles(EventEntity event) {
-    final location = event.city ?? event.province ?? '未知地点';
+    final location = event.locationName ?? event.district ?? event.city ?? event.province ?? '未知地点';
     final dateRange = event.dateRangeText;
 
     return ['$location · $dateRange', '$location 的记忆', '时光印记 · $location'];
@@ -204,7 +221,7 @@ class LLMService {
     // 模拟网络延迟
     await Future.delayed(const Duration(seconds: 1));
 
-    final location = event.city ?? event.province ?? '未知地点';
+    final location = event.locationName ?? event.district ?? event.city ?? event.province ?? '未知地点';
 
     // 根据标签生成模拟标题
     if (topTags.contains('美食')) {
@@ -392,13 +409,12 @@ class LLMService {
   // 🌟 下方为全新重构：对接团队自研后端的“图文+音乐”综合生成接口
   // ---------------------------------------------------------
 
-  // 🚧 核心开关：等后端兄弟说“接口写好了”，把这里改成 false！
-  final bool _useMockBackend = false;
-
   /// 🚀 真实接口：向 DeepSeek 发送标签，实时生成故事
   Future<Map<String, dynamic>?> generateStoryAndMusic({
     required int eventId,
     required List<String> tags,
+    List<String> ocrTags = const <String>[],
+    List<String> ocrHighlights = const <String>[],
     required double joyScore,
     required int photoCount,
     String? location,
@@ -408,8 +424,9 @@ class LLMService {
     String? themeTitle, // 🌟 新增：接收用户输入的主题
     String? themeSubtitle, // 🌟 新增：接收用户选择的副标题
   }) async {
-    print("☁️ [DeepSeek] 创作中... 主题: $themeTitle, 图片数: $photoCount");
-    print("🚀 [请求发送] 正在携带具体的帧画面特征呼叫大模型...");
+    print("☁️ [DeepSeek] 创作中... 地点: $location, 标签: $tags, OCR标签: $ocrTags, OCR线索数: ${ocrHighlights.length}, 欢乐值: $joyScore, 图片数: $photoCount");
+    print("🧭 [DeepSeek] 主题: $themeTitle, 副标题: $themeSubtitle");
+    print("🚀 [请求发送] 正在携带具体帧画面特征呼叫大模型...");
 
     // 1. 🎬 终极铁血版：禁止推测，必须基于事实的 Prompt
     final prompt =
@@ -423,17 +440,27 @@ class LLMService {
 - 整体时空：${date ?? '某天'} · ${location ?? '某地'}
 - 欢乐指数：${joyScore.toStringAsFixed(2)} / 1.0
 - 照片总数：$photoCount 张
+- 灵感词汇：${tags.isEmpty ? '安静的角落, 时光的碎片' : tags.join(', ')}
+- OCR 提取标签：${ocrTags.isEmpty ? '无明显文本标签' : ocrTags.join(', ')}
+- OCR 文本线索：${ocrHighlights.isEmpty ? '无' : ocrHighlights.join('；')}
+- 情感基调：${joyScore > 0.7 ? '极其欢乐与温暖' : '平静与沉思'} (欢乐指数: ${joyScore.toStringAsFixed(2)})
+- 风格偏好：$stylePreference
 
 【🎬 真实镜头分镜表（绝对不许篡改或推测，必须作为客观事实使用）】
-${photoDetails ?? '总体画面元素：' + tags.join(', ')}
+${photoDetails ?? '总体画面元素：${tags.join(', ')}'}
 
 请严格按照以下三个部分，输出结构化的纯文本内容（禁止使用 ** 加粗等 Markdown 语法）：
 
 【一、 素材内容提炼】
-（直接陈述客观事实，绝对禁止出现“推测”、“可能”等不确定词汇）
+（直接陈述客观事实，绝对禁止出现“推测”、“可能”等不确定词汇；若 OCR 提供了明确文本线索，请优先吸收）
 - 核心主体：(画面中真实出现了什么人或物)
 - 场景环境：(画面所处的真实环境)
 - 故事线索：(这组真实照片串联起来的情感脉络)
+
+【硬性约束】
+- 如果镜头描述中出现“屏幕、截图、文档、聊天、表格、课件、OCR”等线索，必须按数字内容或文档内容处理，禁止把词语误写成人物职业、亲密关系、社会身份或狗血剧情
+- 禁止把零散 OCR 词语脑补成“采购员、房主、未婚妻、套路”等角色设定
+- 当地点未知时，就明确写“未知地点”或“室内屏幕/文档场景”，不要擅自补城市
 
 【二、 备选故事脚本】
 （请基于真实的镜头分镜表，生成 2 个不同视角的短视频脚本）

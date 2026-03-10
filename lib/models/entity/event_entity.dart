@@ -24,6 +24,9 @@ class EventEntity {
   // 🏙️ 地理位置信息 (从高德解析)
   String? city; // 城市名称（如 "青岛市"）
   String? province; // 省份（如 "山东省"）
+  String? district; // 区县名称（如 "历城区"）
+  String? locationName; // 更细粒度地点：学校/商场/园区/楼栋/POI
+  String? formattedAddress; // 完整逆地址解析结果
 
   // 📸 关联的照片
   List<int> photoIds = []; // 关联的 PhotoEntity 的 id 列表
@@ -60,7 +63,8 @@ class EventEntity {
   }
 
   // 🌆 位置描述（优先使用 city，如果为空则返回 "未知地点"）
-  String get location => city ?? province ?? '未知地点';
+  String get location =>
+      locationName ?? district ?? city ?? province ?? '未知地点';
 
   // 📆 格式化日期范围
   String get dateRangeText {
@@ -95,7 +99,13 @@ class EventEntity {
           path: resolvedPath,
           dateTaken: DateTime.fromMillisecondsSinceEpoch(entity.timestamp),
           tags: entity.aiTags ?? [],
-          location: entity.city ?? entity.province,
+          ocrSummary: _buildOcrSummary(entity),
+          ocrTags: entity.ocrTags ?? const <String>[],
+          location:
+              entity.locationName ??
+              entity.district ??
+              entity.city ??
+              entity.province,
         ),
       );
     }
@@ -121,6 +131,20 @@ class EventEntity {
     final asset = await AssetEntity.fromId(entity.assetId);
     final file = await asset?.file;
     return file?.path ?? entity.path;
+  }
+
+  String? _buildOcrSummary(PhotoEntity entity) {
+    final ocrTags = entity.ocrTags ?? const <String>[];
+    if (ocrTags.isNotEmpty) {
+      return ocrTags.take(3).join(' · ');
+    }
+
+    final text = entity.ocrText?.trim();
+    if (text == null || text.isEmpty) {
+      return null;
+    }
+
+    return text.length > 36 ? '${text.substring(0, 36)}...' : text;
   }
 
   List<AITheme> _buildAiThemes() {
@@ -187,7 +211,14 @@ class EventEntity {
       ..endTime = photos.last.timestamp
       ..photoIds = photos.map((p) => p.id).toList()
       ..photoCount = photos.length
-      ..coverPhotoId = photos.first.id;
+      ..coverPhotoId = photos.first.id
+      ..province = _pickMostFrequentValue(photos.map((p) => p.province))
+      ..city = _pickMostFrequentValue(photos.map((p) => p.city))
+      ..district = _pickMostFrequentValue(photos.map((p) => p.district))
+      ..locationName = _pickMostFrequentValue(photos.map((p) => p.locationName))
+      ..formattedAddress = _pickMostFrequentValue(
+        photos.map((p) => p.formattedAddress),
+      );
 
     // 计算中心坐标
     final photosWithGPS = photos
@@ -225,5 +256,30 @@ class EventEntity {
     }
 
     return event;
+  }
+
+  static String? _pickMostFrequentValue(Iterable<String?> values) {
+    final counts = <String, int>{};
+    for (final value in values) {
+      final normalized = value?.trim();
+      if (normalized == null || normalized.isEmpty) {
+        continue;
+      }
+      counts[normalized] = (counts[normalized] ?? 0) + 1;
+    }
+
+    if (counts.isEmpty) {
+      return null;
+    }
+
+    final sorted = counts.entries.toList()
+      ..sort((a, b) {
+        final countCompare = b.value.compareTo(a.value);
+        if (countCompare != 0) {
+          return countCompare;
+        }
+        return a.key.length.compareTo(b.key.length);
+      });
+    return sorted.first.key;
   }
 }

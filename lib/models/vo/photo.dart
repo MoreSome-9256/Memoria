@@ -4,6 +4,8 @@ class Photo {
   final String path;
   final DateTime dateTaken;
   final List<String> tags;
+  final String? ocrSummary;
+  final List<String> ocrTags;
   final bool isSelected;
 
   Photo({
@@ -12,6 +14,8 @@ class Photo {
     required this.path,
     required this.dateTaken,
     this.tags = const [],
+    this.ocrSummary,
+    this.ocrTags = const [],
     this.isSelected = false,
   });
 
@@ -20,6 +24,8 @@ class Photo {
     String? path,
     DateTime? dateTaken,
     List<String>? tags,
+    String? ocrSummary,
+    List<String>? ocrTags,
     bool? isSelected,
   }) {
     return Photo(
@@ -27,6 +33,8 @@ class Photo {
       path: path ?? this.path,
       dateTaken: dateTaken ?? this.dateTaken,
       tags: tags ?? this.tags,
+      ocrSummary: ocrSummary ?? this.ocrSummary,
+      ocrTags: ocrTags ?? this.ocrTags,
       isSelected: isSelected ?? this.isSelected,
     );
   }

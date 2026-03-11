@@ -49,11 +49,11 @@
 flutter pub get
 ```
 
-### 2. 生成 Isar 代码（首次或模型变更后）
+### 2. 代码生成策略（当前阶段）
 
-```bash
-dart run build_runner build --delete-conflicting-outputs
-```
+当前仓库已提交现有 `*.g.dart` 产物，日常开发默认不依赖 `build_runner`。
+
+仅当你需要修改 Isar 实体结构时，再在独立分支临时引入生成工具链并重新生成，完成后建议移除该工具链依赖，避免长期锁定旧版 build 生态。
 
 ### 3. 运行应用
 
@@ -170,5 +170,3 @@ flutter test
 # 指定测试文件
 flutter test test/utils/event_cluster_helper_test.dart
 ```
-
-

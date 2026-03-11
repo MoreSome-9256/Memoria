@@ -6,6 +6,7 @@ import 'photo_entity.dart';
 import '../event.dart';
 import '../../utils/tag_sanitizer.dart';
 import '../vo/photo.dart';
+import '../../storage/event_photo_query_port.dart';
 
 part 'event_entity.g.dart';
 
@@ -81,14 +82,11 @@ class EventEntity {
   }
 
   // 🔄 转换为 UI 层的 Event 模型
-  Future<Event> toUIModel(Isar isar) async {
+  Future<Event> toUIModel(EventPhotoQueryPort photoQueryPort) async {
     // 1. 根据 photoIds 查询出所有照片
-    final photoEntities = await isar
-        .collection<PhotoEntity>()
-        .where()
-        .anyOf(photoIds, (q, id) => q.idEqualTo(id))
-        .sortByTimestamp() // 按时间顺序排列
-        .findAll();
+    final photoEntities = await photoQueryPort.findPhotosByIdsSortedByTimestamp(
+      photoIds,
+    );
 
     // 2. 转换为 UI 层的 Photo 对象（优先使用 assetId 解析当前可用路径）
     final photos = <Photo>[];

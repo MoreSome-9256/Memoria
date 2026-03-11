@@ -787,19 +787,15 @@ class AIService {
     Isar isar, {
     int? maxPhotos,
   }) async {
-    final nullCaptionCount = await isar
+    final analyzedPhotos = await isar
         .collection<PhotoEntity>()
         .filter()
         .isAiAnalyzedEqualTo(true)
-        .aiCaptionIsNull()
-        .count();
-    final emptyCaptionCount = await isar
-        .collection<PhotoEntity>()
-        .filter()
-        .isAiAnalyzedEqualTo(true)
-        .aiCaptionIsEmpty()
-        .count();
-    final total = nullCaptionCount + emptyCaptionCount;
+        .findAll();
+    final total = analyzedPhotos.where((photo) {
+      final caption = photo.aiCaption;
+      return caption == null || caption.trim().isEmpty;
+    }).length;
     return maxPhotos == null ? total : math.min(total, maxPhotos);
   }
 
@@ -807,28 +803,16 @@ class AIService {
     Isar isar, {
     required int limit,
   }) async {
-    final nullCaptionPhotos = await isar
+    final analyzedPhotos = await isar
         .collection<PhotoEntity>()
         .filter()
         .isAiAnalyzedEqualTo(true)
-        .aiCaptionIsNull()
         .sortByTimestampDesc()
-        .limit(limit)
         .findAll();
-    if (nullCaptionPhotos.length >= limit) {
-      return nullCaptionPhotos;
-    }
-
-    final emptyCaptionPhotos = await isar
-        .collection<PhotoEntity>()
-        .filter()
-        .isAiAnalyzedEqualTo(true)
-        .aiCaptionIsEmpty()
-        .sortByTimestampDesc()
-        .limit(limit - nullCaptionPhotos.length)
-        .findAll();
-
-    return <PhotoEntity>[...nullCaptionPhotos, ...emptyCaptionPhotos];
+    return analyzedPhotos.where((photo) {
+      final caption = photo.aiCaption;
+      return caption == null || caption.trim().isEmpty;
+    }).take(limit).toList(growable: false);
   }
 
   Future<void> _markCaptionBackfilled(

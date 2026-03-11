@@ -4,6 +4,7 @@ import '../../models/event.dart';
 import '../../service/ai_service.dart';
 import '../../service/event_service.dart';
 import '../../service/photo_service.dart';
+import '../../storage/isar_event_photo_query_port.dart';
 import '../widgets/event_card.dart';
 
 class AlbumPage extends StatefulWidget {
@@ -479,10 +480,11 @@ class _AlbumPageState extends State<AlbumPage> {
   ) async {
     final grouped = <String, List<Event>>{};
     final isar = PhotoService().isar;
+    final photoQueryPort = IsarEventPhotoQueryPort(isar);
 
     // 1. 🚀 关键改动：使用 Future.wait 并行处理所有事件转换，不再一个一个等
     final List<Event> allEvents = await Future.wait(
-      eventEntities.map((entity) => entity.toUIModel(isar)),
+      eventEntities.map((entity) => entity.toUIModel(photoQueryPort)),
     );
 
     // 2. 快速分组

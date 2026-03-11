@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:isar/isar.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/entity/event_entity.dart';
+import '../utils/tag_sanitizer.dart';
 import '../utils/event_cluster_helper.dart';
 import '../utils/smart_title_generator.dart';
 import '../service/llm_service.dart';
@@ -732,7 +733,11 @@ class EventService {
     if (tagCounts == null || tagCounts.isEmpty) return [];
 
     final sortedTags = tagCounts.entries.toList()
-      ..removeWhere((entry) => _blockedSmartTitleTags.contains(entry.key))
+      ..removeWhere(
+        (entry) =>
+            _blockedSmartTitleTags.contains(entry.key) ||
+            TagSanitizer.isBlockedExactTag(entry.key),
+      )
       ..sort((a, b) => b.value.compareTo(a.value));
 
     return sortedTags.take(count).map((e) => e.key).toList();
@@ -805,14 +810,16 @@ class EventService {
   }
 
   List<String> _effectiveTagsForEventStats(PhotoEntity photo) {
-    final aiTags = (photo.aiTags ?? const <String>[])
-        .map((tag) => tag.trim())
-        .where((tag) => tag.isNotEmpty && !_blockedSmartTitleTags.contains(tag))
-        .toList(growable: false);
-    final ocrTags = (photo.ocrTags ?? const <String>[])
-        .map((tag) => tag.trim())
-        .where((tag) => tag.isNotEmpty && !_blockedSmartTitleTags.contains(tag))
-        .toList(growable: false);
+    final aiTags = TagSanitizer.sanitizeVisualTags(
+      photo.aiTags ?? const <String>[],
+    ).where((tag) => !_blockedSmartTitleTags.contains(tag)).toList(
+      growable: false,
+    );
+    final ocrTags = TagSanitizer.sanitizeOcrTags(
+      photo.ocrTags ?? const <String>[],
+    ).where((tag) => !_blockedSmartTitleTags.contains(tag)).toList(
+      growable: false,
+    );
 
     if (_isTextHeavyPhoto(photo, aiTags: aiTags, ocrTags: ocrTags)) {
       final textTags = <String>[];

@@ -35,12 +35,21 @@ class MobileClipVisionService {
   }
 
   Future<List<double>> embedImageBytes(Uint8List imageBytes) async {
-    final session = await _loadSession();
-    final input = await compute<Uint8List, Float32List>(
+    final input = await preprocessImageBytesForBenchmark(imageBytes);
+    return embedPreprocessedInput(input);
+  }
+
+  Future<Float32List> preprocessImageBytesForBenchmark(
+    Uint8List imageBytes,
+  ) async {
+    return compute<Uint8List, Float32List>(
       _preprocessImageForMobileClip,
       imageBytes,
     );
+  }
 
+  Future<List<double>> embedPreprocessedInput(Float32List input) async {
+    final session = await _loadSession();
     final inputTensor = OrtValueTensor.createTensorWithDataList(input, <int>[
       1,
       3,
@@ -74,6 +83,8 @@ class MobileClipVisionService {
       inputTensor.release();
     }
   }
+
+  int get inputImageSize => _inputImageSize;
 
   Future<void> dispose() async {
     _session?.release();

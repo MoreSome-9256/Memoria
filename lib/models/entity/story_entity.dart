@@ -126,6 +126,7 @@ class StoryEntity {
       path: entity.path,
       dateTaken: DateTime.fromMillisecondsSinceEpoch(entity.timestamp),
       tags: entity.aiTags ?? [],
+      caption: entity.aiCaption?.trim(),
       ocrSummary: (entity.ocrTags != null && entity.ocrTags!.isNotEmpty)
           ? entity.ocrTags!.take(3).join(' · ')
           : (ocrText == null || ocrText.isEmpty)

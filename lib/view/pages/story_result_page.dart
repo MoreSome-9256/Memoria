@@ -48,6 +48,12 @@ class StoryResultPage extends StatefulWidget {
                 photos.first.timestamp,
               ),
               tags: photos.first.aiTags ?? [],
+              caption: photos.first.aiCaption?.trim(),
+              ocrSummary:
+                  (photos.first.ocrTags != null &&
+                      photos.first.ocrTags!.isNotEmpty)
+                  ? photos.first.ocrTags!.take(3).join(' · ')
+                  : photos.first.ocrText?.trim(),
               location: photos.first.city ?? photos.first.province,
             ),
           ),
@@ -71,6 +77,12 @@ class StoryResultPage extends StatefulWidget {
               photos.first.timestamp,
             ),
             tags: photos.first.aiTags ?? [],
+            caption: photos.first.aiCaption?.trim(),
+            ocrSummary:
+                (photos.first.ocrTags != null &&
+                    photos.first.ocrTags!.isNotEmpty)
+                ? photos.first.ocrTags!.take(3).join(' · ')
+                : photos.first.ocrText?.trim(),
             location: photos.first.city ?? photos.first.province,
           )
         : (sectionMaps.isNotEmpty
@@ -340,6 +352,12 @@ class _StoryResultPageState extends State<StoryResultPage> {
                         fit: BoxFit.cover,
                       ),
                     ),
+                    if ((section.photo.caption?.trim().isNotEmpty ?? false) ||
+                        (section.photo.ocrSummary?.trim().isNotEmpty ??
+                            false)) ...[
+                      const SizedBox(height: 10),
+                      _PhotoContextCard(photo: section.photo),
+                    ],
                   ],
                 ),
               );
@@ -381,4 +399,77 @@ class StorySection {
   final Photo photo;
 
   StorySection({required this.text, required this.photo});
+}
+
+class _PhotoContextCard extends StatelessWidget {
+  const _PhotoContextCard({required this.photo});
+
+  final Photo photo;
+
+  @override
+  Widget build(BuildContext context) {
+    final caption = photo.caption?.trim();
+    final ocrSummary = photo.ocrSummary?.trim();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '照片线索',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: Colors.grey[700],
+            ),
+          ),
+          if (caption != null && caption.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _PhotoContextRow(label: 'AI Caption', value: caption),
+          ],
+          if (ocrSummary != null && ocrSummary.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _PhotoContextRow(label: 'OCR 线索', value: ocrSummary),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PhotoContextRow extends StatelessWidget {
+  const _PhotoContextRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: Colors.grey[600],
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            height: 1.45,
+            color: Colors.grey[800],
+          ),
+        ),
+      ],
+    );
+  }
 }

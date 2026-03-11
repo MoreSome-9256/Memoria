@@ -4,6 +4,7 @@ import 'package:photo_manager/photo_manager.dart';
 import '../ai_theme.dart';
 import 'photo_entity.dart';
 import '../event.dart';
+import '../../utils/tag_sanitizer.dart';
 import '../vo/photo.dart';
 
 part 'event_entity.g.dart';
@@ -98,9 +99,14 @@ class EventEntity {
           id: entity.assetId, // 使用 assetId 作为 Photo 的 id
           path: resolvedPath,
           dateTaken: DateTime.fromMillisecondsSinceEpoch(entity.timestamp),
-          tags: entity.aiTags ?? [],
+          tags: TagSanitizer.sanitizeVisualTags(
+            entity.aiTags ?? const <String>[],
+          ),
+          caption: entity.aiCaption?.trim(),
           ocrSummary: _buildOcrSummary(entity),
-          ocrTags: entity.ocrTags ?? const <String>[],
+          ocrTags: TagSanitizer.sanitizeOcrTags(
+            entity.ocrTags ?? const <String>[],
+          ),
           location:
               entity.locationName ??
               entity.district ??
@@ -122,7 +128,7 @@ class EventEntity {
       startDate: DateTime.fromMillisecondsSinceEpoch(startTime),
       endDate: DateTime.fromMillisecondsSinceEpoch(endTime),
       photos: photos,
-      tags: tags,
+      tags: TagSanitizer.sanitizeDisplayTags(tags),
       aiThemes: themes,
     );
   }
@@ -134,7 +140,9 @@ class EventEntity {
   }
 
   String? _buildOcrSummary(PhotoEntity entity) {
-    final ocrTags = entity.ocrTags ?? const <String>[];
+    final ocrTags = TagSanitizer.sanitizeOcrTags(
+      entity.ocrTags ?? const <String>[],
+    );
     if (ocrTags.isNotEmpty) {
       return ocrTags.take(3).join(' · ');
     }
@@ -237,7 +245,7 @@ class EventEntity {
     final tagCounts = <String, int>{};
     for (var photo in photos) {
       if (photo.aiTags != null) {
-        for (var tag in photo.aiTags!) {
+        for (final tag in TagSanitizer.sanitizeVisualTags(photo.aiTags!)) {
           tagCounts[tag] = (tagCounts[tag] ?? 0) + 1;
         }
       }

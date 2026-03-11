@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'mobileclip_benchmark_page.dart';
+
 class ProfilePage extends StatelessWidget {
   const ProfilePage({super.key});
 
@@ -45,6 +47,19 @@ class ProfilePage extends StatelessWidget {
             '隐私设置',
             '本地优先，保护隐私',
           ),
+          _buildSettingsTile(
+            context,
+            Icons.science_outlined,
+            'MobileCLIP Benchmark',
+            '对比 ONNX 基线与未来 ncnn 接入',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const MobileClipBenchmarkPage(),
+                ),
+              );
+            },
+          ),
           _buildSettingsTile(context, Icons.info_outline, '关于', '版本 1.0.0'),
         ],
       ),
@@ -56,15 +71,15 @@ class ProfilePage extends StatelessWidget {
     IconData icon,
     String title,
     String subtitle,
+    {VoidCallback? onTap,
+    }
   ) {
     return ListTile(
       leading: Icon(icon),
       title: Text(title),
       subtitle: Text(subtitle),
       trailing: const Icon(Icons.chevron_right),
-      onTap: () {
-        // TODO: Navigate to settings detail
-      },
+      onTap: onTap,
     );
   }
 }

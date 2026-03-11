@@ -23,6 +23,15 @@ class AIService {
   factory AIService() => _instance;
   AIService._internal();
 
+  bool get supportsOnDeviceAi => _supportsOnDeviceAi;
+
+  bool get _supportsOnDeviceAi {
+    if (kIsWeb) {
+      return false;
+    }
+    return Platform.isAndroid || Platform.isIOS;
+  }
+
   static const Set<String> _blockedVisualTags = <String>{
     'Screenshot',
     'Cool',
@@ -229,6 +238,12 @@ class AIService {
     int batchSize = 10,
     int? maxPhotos,
   }) async {
+    if (!_supportsOnDeviceAi) {
+      debugPrint('⏭️ 当前平台不支持端侧 AI 打标，已跳过');
+      _progressNotifier.value = AIAnalysisProgress.idle();
+      return;
+    }
+
     if (_isAnalyzing) {
       debugPrint('⏭️ AI 打标任务已在运行，跳过重复启动');
       return;
@@ -529,6 +544,12 @@ class AIService {
     int batchSize = 12,
     int? maxPhotos,
   }) async {
+    if (!_supportsOnDeviceAi) {
+      debugPrint('⏭️ 当前平台不支持 caption 回填，已跳过');
+      _progressNotifier.value = AIAnalysisProgress.idle();
+      return;
+    }
+
     if (_isAnalyzing) {
       debugPrint('⏭️ AI 打标任务已在运行，跳过 caption 回填');
       return;

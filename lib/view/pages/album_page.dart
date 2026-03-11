@@ -85,6 +85,7 @@ class _AlbumPageState extends State<AlbumPage> {
     setState(() => _isRefreshing = true);
 
     try {
+      final supportsOnDeviceAi = AIService().supportsOnDeviceAi;
       late final PhotoScanSummary scanSummary;
       var requeuedCount = 0;
 
@@ -123,15 +124,23 @@ class _AlbumPageState extends State<AlbumPage> {
             content: Text(
               clearCacheFirst
                   ? recentPhotoLimit == null
-                        ? '✅ 已安全重建缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
-                        : '✅ 已安全重建最近$recentPhotoLimit张照片缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
+                  ? supportsOnDeviceAi
+                    ? '✅ 已安全重建缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
+                    : '✅ 已安全重建缓存，恢复${scanSummary.totalAfter}张照片。当前平台仅完成扫描与聚类，端侧 AI 打标仅支持 Android / iOS。'
+                  : supportsOnDeviceAi
+                  ? '✅ 已安全重建最近$recentPhotoLimit张照片缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
+                  : '✅ 已安全重建最近$recentPhotoLimit张照片缓存，恢复${scanSummary.totalAfter}张照片。当前平台仅完成扫描与聚类，端侧 AI 打标仅支持 Android / iOS。'
                   : requeuedCount > 0
                   ? recentPhotoLimit == null
                         ? '✅ 相册已更新，已将$requeuedCount张旧照片重新加入中文打标队列。'
                         : '✅ 已刷新最近$recentPhotoLimit张照片，并将其中$requeuedCount张重新加入中文打标队列。'
                   : recentPhotoLimit == null
+                ? supportsOnDeviceAi
                   ? '✅ 相册已极速更新，AI正在后台悄悄打标...'
-                  : '✅ 已刷新最近$recentPhotoLimit张照片，AI 正在后台悄悄打标...',
+                  : '✅ 相册已极速更新。当前平台仅完成扫描与聚类，端侧 AI 打标仅支持 Android / iOS。'
+                : supportsOnDeviceAi
+                ? '✅ 已刷新最近$recentPhotoLimit张照片，AI 正在后台悄悄打标...'
+                : '✅ 已刷新最近$recentPhotoLimit张照片。当前平台仅完成扫描与聚类，端侧 AI 打标仅支持 Android / iOS。',
             ),
             duration: const Duration(seconds: 3), // 提示稍长一点
           ),
@@ -140,20 +149,22 @@ class _AlbumPageState extends State<AlbumPage> {
 
       // 4. 🤫 静默操作：剥离主线程，让 AI 在后台慢慢抠图打标签
       // ⚠️ 注意：这里去掉了 await，它不会再阻塞后续代码和 UI 了！
-      AIService()
-          .analyzePhotosInBackground(maxPhotos: recentPhotoLimit)
-          .then((_) {
-            return AIService().backfillMissingCaptionsInBackground(
-              maxPhotos: recentPhotoLimit,
-            );
-          })
-          .then((_) {
-            debugPrint("🎉 [后台任务] 照片 AI 标签与 caption 已静默补齐完毕！");
-            // 你可以随时在这里发送广播，或者静默更新部分特定 UI
-          })
-          .catchError((e) {
-            debugPrint("❌ [后台任务] AI 分析出错: $e");
-          });
+      if (supportsOnDeviceAi) {
+        AIService()
+            .analyzePhotosInBackground(maxPhotos: recentPhotoLimit)
+            .then((_) {
+              return AIService().backfillMissingCaptionsInBackground(
+                maxPhotos: recentPhotoLimit,
+              );
+            })
+            .then((_) {
+              debugPrint("🎉 [后台任务] 照片 AI 标签与 caption 已静默补齐完毕！");
+              // 你可以随时在这里发送广播，或者静默更新部分特定 UI
+            })
+            .catchError((e) {
+              debugPrint("❌ [后台任务] AI 分析出错: $e");
+            });
+      }
     } on PhotoScanException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(

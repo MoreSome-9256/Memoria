@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:isar/isar.dart';
+
 import '../models/entity/photo_entity.dart';
 import '../models/mobileclip_benchmark.dart';
 import 'mobileclip_tag_service.dart';

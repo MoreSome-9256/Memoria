@@ -209,30 +209,37 @@ class _AlbumPageState extends State<AlbumPage> {
     final selected = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (context) {
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const ListTile(
-                title: Text('选择刷新范围'),
-                subtitle: Text('先只跑最近一部分照片，或者全量运行'),
-              ),
-              ..._refreshPhotoOptions.map((option) {
-                final isFull = option == _fullRefreshOption;
-                final label = isFull ? '全部运行' : '先跑最近 $option 张';
-                final subtitle = isFull
-                    ? '扫描全部照片并对全部待处理照片后台打标'
-                    : '仅扫描最近照片，并只重排这部分照片的 AI 打标';
-                return ListTile(
-                  leading: Icon(isFull ? Icons.all_inclusive : Icons.flash_on),
-                  title: Text(label),
-                  subtitle: Text(subtitle),
-                  onTap: () => Navigator.pop(context, option),
-                );
-              }),
-              const SizedBox(height: 8),
-            ],
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const ListTile(
+                  title: Text('选择刷新范围'),
+                  subtitle: Text('先只跑最近一部分照片，或者全量运行'),
+                ),
+                ..._refreshPhotoOptions.map((option) {
+                  // 这里假设你的代码里定义了 _fullRefreshOption，如果没有请替换为你实际的值
+                  final isFull = option == -1; // 假设 -1 代表全部，请根据你的代码调整
+                  final label = isFull ? '全部运行' : '先跑最近 $option 张';
+                  final subtitle = isFull
+                      ? '扫描全部照片并对全部待处理照片后台打标'
+                      : '仅扫描最近照片，并只重排这部分照片的 AI 打标';
+                  return ListTile(
+                    leading: Icon(
+                      isFull ? Icons.all_inclusive : Icons.flash_on,
+                    ),
+                    title: Text(label),
+                    subtitle: Text(subtitle),
+                    onTap: () => Navigator.pop(context, option),
+                  );
+                }),
+                // 留出底部安全距离
+                const SizedBox(height: 24),
+              ],
+            ),
           ),
         );
       },

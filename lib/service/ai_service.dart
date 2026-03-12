@@ -224,7 +224,6 @@ class AIService {
   };
 
   // 🧠 核心方法：批量分析未处理的照片（包含人脸检测和情感分析）
-  // 🧠 核心方法：批量分析未处理的照片（包含人脸检测和情感分析）
   Future<void> analyzePhotosInBackground({
     int batchSize = 10,
     int? maxPhotos,
@@ -348,6 +347,32 @@ class AIService {
               );
               didFail = true;
               continue;
+            }
+            // ==========================================
+            // 🌟 核心拦截网：在这里识别并放过截图！
+            // ==========================================
+            if (photo.isProbablyScreenshot) {
+              debugPrint("⏭️ 检测到截图，跳过 AI 视觉打标: ${photo.id}");
+              // 直接假装分析完了，随便塞个“截图”标签，所有分数打 0
+              await _markAsAnalyzed(
+                photo.id,
+                ['截图'],
+                '',
+                const <String>[],
+                0,
+                0.0,
+                0.0,
+                isar,
+              );
+
+              if (photo.eventId != null) {
+                affectedEventIds.add(photo.eventId!);
+              }
+              totalAnalyzed++;
+              if (remainingPhotos != null) {
+                remainingPhotos--;
+              }
+              continue; // 🚀 直接触发 finally 块去更新进度条，并进入下一张照片！
             }
 
             final tempDir = await getTemporaryDirectory();

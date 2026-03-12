@@ -8,6 +8,7 @@ import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import 'config_page.dart';
+import 'dart:ui';
 // 如果有封装好的图片显示组件可以替换这里的 Image.file
 
 class CreatePage extends StatefulWidget {
@@ -291,6 +292,19 @@ class _CreatePageState extends State<CreatePage> {
       }
     });
   }
+  // 🌟 新增：全选
+  void _selectAll() {
+    setState(() {
+      _selectedPhotoIds.addAll(_searchResults.map((p) => p.id));
+    });
+  }
+
+  // 🌟 新增：全不选
+  void _deselectAll() {
+    setState(() {
+      _selectedPhotoIds.clear();
+    });
+  }
 
   // 🚀 生成故事（跳转到配置页）
   void _generateStory() {
@@ -365,59 +379,377 @@ class _CreatePageState extends State<CreatePage> {
     );
   }
 
+  // ==========================================
+  // 🎨 页面主 UI 结构
+  // ==========================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('唤醒记忆'),
-        elevation: 0,
-        actions: [
-          // 当有选中的图片时，右上角显示“下一步”按钮
-          if (_selectedPhotoIds.isNotEmpty)
-            FilledButton.tonal(
-              onPressed: _generateStory,
-              child: Text('生成 (${_selectedPhotoIds.length})'),
-            ),
-          const SizedBox(width: 16),
-        ],
-      ),
-      body: Column(
+      backgroundColor: const Color(0xFFFAFAFA),
+      body: Stack(
         children: [
-          // 🔍 搜索输入区域
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: TextField(
-              controller: _searchController,
-              textInputAction: TextInputAction.search,
-              onSubmitted: _performSearch,
-              decoration: InputDecoration(
-                hintText: '想看什么？比如 "2024夏天的海边"、"我的馋嘴猫猫"...',
-                prefixIcon: const Icon(Icons.auto_awesome),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.search),
-                  onPressed: () => _performSearch(_searchController.text),
+          // 🌌 1. 极光晕染背景层
+          _buildAmbientBackground(),
+
+          // 📜 2. 主体滚动内容层
+          SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 顶部返回按钮
+                IconButton(
+                  icon: const Icon(
+                    Icons.arrow_back_ios_new,
+                    color: Colors.black87,
+                  ),
+                  onPressed: () => Navigator.pop(context),
                 ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(30),
-                  borderSide: BorderSide.none,
+
+                // 搜索完成后的头部信息
+                if (!_isSearching && _searchResults.isNotEmpty) _buildHeader(),
+
+                // 全选/全不选操作条
+                if (!_isSearching && _searchResults.isNotEmpty)
+                  _buildSelectionBar(),
+
+                // 核心：瀑布流/网格照片展示
+                Expanded(
+                  child: _isSearching
+                      ? const Center(
+                          child: CircularProgressIndicator(
+                            color: Color(0xFFD17EAD),
+                          ),
+                        )
+                      : _searchResults.isEmpty
+                      ? _buildEmptyState()
+                      : _buildPhotoGrid(),
                 ),
-                filled: true,
-                fillColor: Theme.of(
-                  context,
-                ).colorScheme.surfaceContainerHighest,
-              ),
+
+                // 底部留白，防止网格被底部悬浮搜索框彻底挡住
+                // const SizedBox(height: 140),
+              ],
             ),
           ),
 
-          // 🖼️ 结果展示区域
-          Expanded(
-            child: _isSearching
-                ? const Center(child: CircularProgressIndicator())
-                : _searchResults.isEmpty
-                ? _buildEmptyState()
-                : _buildPhotoGrid(),
+          // 🔎 3. 底部悬浮巨型搜索框
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0, // 距离底部有点呼吸感
+            child: _buildBottomSearchBar(),
           ),
         ],
+      ),
+    );
+  }
+  // 🌌 极光晕染背景生成器 (偏粉紫调)
+  Widget _buildAmbientBackground() {
+    return Stack(
+      children: [
+        Positioned(
+          top: -100,
+          left: -50,
+          child: Container(
+            width: 300,
+            height: 300,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Color(0x66FFB6C1), // 浅粉色
+            ),
+          ),
+        ),
+        Positioned(
+          top: -20,
+          right: -80,
+          child: Container(
+            width: 250,
+            height: 250,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Color(0x55E0B0FF), // 紫罗兰色
+            ),
+          ),
+        ),
+        Positioned.fill(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 90, sigmaY: 90),
+            child: Container(color: Colors.transparent),
+          ),
+        ),
+      ],
+    );
+  }
+  // 🏆 顶部 Header：大大的图标 + 搜索结果文案 + 继续按钮
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
+      child: Row(
+        children: [
+          // 左侧花哨的播放渐变方块
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFFFA07A), Color(0xFFD17EAD)], // 橙粉渐变
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFD17EAD).withValues(alpha: 0.3),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 48,
+            ),
+          ),
+          const SizedBox(width: 16),
+          // 中间文字
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '搜索完成',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '为您搜集到${_searchResults.length}张相关照片',
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                ),
+              ],
+            ),
+          ),
+          // 右侧“继续”按钮
+          ElevatedButton(
+            onPressed: _generateStory,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFD17EAD), // 粉紫色
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+            ),
+            child: const Text(
+              '继续',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ✨ 全选/全不选操作条
+  Widget _buildSelectionBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
+      child: Row(
+        children: [
+          // 全选按钮 (实心粉)
+          ElevatedButton(
+            onPressed: _selectAll,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFD17EAD),
+              foregroundColor: Colors.white,
+              elevation: 0,
+              minimumSize: const Size(60, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            child: const Text('全选', style: TextStyle(fontSize: 12)),
+          ),
+          const SizedBox(width: 12),
+          // 全不选按钮 (空心边框)
+          OutlinedButton(
+            onPressed: _deselectAll,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFFD17EAD),
+              side: const BorderSide(color: Color(0xFFD17EAD), width: 1.5),
+              minimumSize: const Size(60, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            child: const Text('全不选', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+  // 🖼️ 构建无黑罩的照片网格
+  Widget _buildPhotoGrid() {
+    return GridView.builder(
+      padding: const EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 8,
+        bottom: 140, // 👈 留出足够的高度，让最后一行照片能滚上来
+      ),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        childAspectRatio: 1.0,
+      ),
+      itemCount: _searchResults.length,
+      itemBuilder: (context, index) {
+        final photo = _searchResults[index];
+        final isSelected = _selectedPhotoIds.contains(photo.id);
+        final file = File(photo.path);
+
+        return GestureDetector(
+          onTap: () => _toggleSelection(photo.id),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // 1. 照片本身 (大圆角)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: file.existsSync()
+                    ? Image.file(file, fit: BoxFit.cover)
+                    : Container(color: Colors.grey.shade300),
+              ),
+
+              // 2. 右上角的选择指示器 (无黑罩，还原设计图的清爽感)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? const Color(0xFFD17EAD)
+                        : Colors.transparent,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isSelected
+                          ? const Color(0xFFD17EAD)
+                          : Colors.white,
+                      width: 2.5,
+                    ),
+                    boxShadow: [
+                      if (!isSelected) // 给白圈加点阴影防止在白背景图片上看不见
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.2),
+                          blurRadius: 4,
+                        ),
+                    ],
+                  ),
+                  child: isSelected
+                      ? const Icon(Icons.check, size: 16, color: Colors.white)
+                      : null,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+  // 🔎 底部巨型悬浮搜索框 (带渐变遮罩)
+  Widget _buildBottomSearchBar() {
+    return Container(
+      // 🌟 1. 外层渐变遮罩：给顶部留出 40 像素的渐变过渡区，其他边距还原原来的位置
+      padding: const EdgeInsets.only(top: 40, left: 20, right: 20, bottom: 30),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            // 顶部完全透明
+            const Color(0xFFFAFAFA).withValues(alpha: 0.0),
+            // 中间半透明过渡
+            const Color(0xFFFAFAFA).withValues(alpha: 0.7),
+            // 到底部变成实色 (与你的 Scaffold 背景色一致)
+            const Color(0xFFFAFAFA),
+          ],
+          stops: const [0.0, 0.4, 1.0], // 控制渐变的节奏，让透明部分多一点
+        ),
+      ),
+      // 🌟 2. 里层：真正的白色搜索框 (完全保持你原来的绝美设计)
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: const Color(0xFFD17EAD).withValues(alpha: 0.5),
+            width: 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFD17EAD).withValues(alpha: 0.15),
+              blurRadius: 20,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.only(
+            left: 20,
+            right: 12,
+            top: 12,
+            bottom: 12,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 多行输入框
+              TextField(
+                controller: _searchController,
+                maxLines: 3,
+                minLines: 1,
+                textInputAction: TextInputAction.search,
+                onSubmitted: _performSearch,
+                decoration: const InputDecoration(
+                  hintText: '想看什么？比如 "去年的日本之旅"...',
+                  hintStyle: TextStyle(color: Colors.grey),
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 8),
+              // 右下角的粉色搜索按钮
+              Align(
+                alignment: Alignment.bottomRight,
+                child: GestureDetector(
+                  onTap: () {
+                    FocusScope.of(context).unfocus(); // 收起键盘
+                    _performSearch(_searchController.text);
+                  },
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFD17EAD),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.search, color: Colors.white),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -447,72 +779,4 @@ class _CreatePageState extends State<CreatePage> {
     );
   }
 
-  // 构建照片网格
-  Widget _buildPhotoGrid() {
-    return GridView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-        childAspectRatio: 1.0,
-      ),
-      itemCount: _searchResults.length,
-      itemBuilder: (context, index) {
-        final photo = _searchResults[index];
-        final isSelected = _selectedPhotoIds.contains(photo.id);
-        final file = File(photo.path);
-
-        return GestureDetector(
-          onTap: () => _toggleSelection(photo.id),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // 1. 照片本身
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: file.existsSync()
-                    ? Image.file(file, fit: BoxFit.cover)
-                    : Container(color: Colors.grey[300]),
-              ),
-
-              // 2. 选中时的蒙层遮罩
-              if (isSelected)
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-
-              // 3. 右上角的勾选框
-              Positioned(
-                top: 8,
-                right: 8,
-                child: Container(
-                  width: 24,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? Theme.of(context).colorScheme.primary
-                        : Colors.transparent,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: isSelected
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.white,
-                      width: 2,
-                    ),
-                  ),
-                  child: isSelected
-                      ? const Icon(Icons.check, size: 16, color: Colors.white)
-                      : null,
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 }

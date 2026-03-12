@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
-
+import 'dart:ui';
 import '../../service/photo_service.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/event.dart';
@@ -403,42 +403,101 @@ class _HomePageState extends State<HomePage> {
   }
 
   // ==========================================
-  // 🎨 页面主 UI 结构
+  // 🎨 页面主 UI 结构 (完美复刻极光晕染与装饰 Logo)
   // ==========================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.purple.shade50, Colors.white],
-            stops: const [0.0, 0.3],
+      backgroundColor: const Color(0xFFFAFAFA), // 极浅的灰白色打底
+      body: Stack(
+        children: [
+          // 1. 🌌 极光晕染背景层 (固定在底部)
+          _buildAmbientBackground(),
+
+          // 2. 📜 滚动内容层
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              child: Stack(
+                clipBehavior: Clip.none, // 允许装饰元素稍微溢出边界
+                children: [
+                  // 🌟 3. 装饰 Logo 层 (定位在 Hero 卡片后方偏右)
+                  // 它被放在 Column 前面，所以会被 Hero 卡片遮挡一半
+                  Positioned(
+                    top: 20, // 调整到刚好在欢迎语下方、卡片后方
+                    right: -20, // 稍微偏出屏幕右侧一点，更有设计感
+                    child: Opacity(
+                      opacity: 0.6, // 透明度，别让它抢了卡片的风头
+                    ),
+                  ),
+
+                  // 4. 实际的 UI 内容层
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeader(),
+                      const SizedBox(height: 24),
+                      _buildHeroCard(context),
+                      const SizedBox(height: 32),
+                      _buildSectionTitle('发现'),
+                      const SizedBox(height: 16),
+                      _buildDiscoverList(),
+                      const SizedBox(height: 32),
+                      _buildSectionTitle('我的作品'),
+                      const SizedBox(height: 16),
+                      _buildWorksGrid(),
+                      const SizedBox(height: 40), // 底部留点白
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeader(),
-                const SizedBox(height: 24),
-                _buildHeroCard(context),
-                const SizedBox(height: 32),
-                _buildSectionTitle('发现'),
-                const SizedBox(height: 16),
-                _buildDiscoverList(), // 🌟 动态渲染推荐列表
-                const SizedBox(height: 32),
-                _buildSectionTitle('我的作品'),
-                const SizedBox(height: 16),
-                _buildWorksGrid(),
-              ],
+        ],
+      ),
+    );
+  }
+
+  // 🌌 极光晕染背景生成器
+  Widget _buildAmbientBackground() {
+    return Stack(
+      children: [
+        // 左上角的紫色色块
+        Positioned(
+          top: -80,
+          left: -50,
+          child: Container(
+            width: 250,
+            height: 250,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Color(0x55E0B0FF), // 浅紫罗兰色，带透明度
             ),
           ),
         ),
-      ),
+        // 右上角的粉蓝色色块
+        Positioned(
+          top: -20,
+          right: -80,
+          child: Container(
+            width: 300,
+            height: 300,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Color(0x4487CEEB), // 天蓝色，带透明度
+            ),
+          ),
+        ),
+        // 核心魔法：全屏高斯模糊遮罩，把硬色块糊成极光
+        Positioned.fill(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 80, sigmaY: 80), // 模糊半径拉满
+            child: Container(
+              color: Colors.transparent, // 必须有颜色才生效
+            ),
+          ),
+        ),
+      ],
     );
   }
 

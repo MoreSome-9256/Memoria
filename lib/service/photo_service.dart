@@ -245,11 +245,11 @@ class PhotoService {
       );
       if (screenshotByRatio) {
         skippedScreenshot++;
-        continue;
+        // continue;
       }
       if (!likelyCameraPhoto) {
         skippedNonCamera++;
-        continue;
+        // continue;
       }
 
       final latLong = await asset.latlngAsync();

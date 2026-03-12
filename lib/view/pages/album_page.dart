@@ -121,9 +121,9 @@ class _AlbumPageState extends State<AlbumPage> {
             behavior: SnackBarBehavior.floating,
             content: Text(
               clearCacheFirst
-                ? recentPhotoLimit == null
-                  ? '✅ 已安全重建缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
-                  : '✅ 已安全重建最近$recentPhotoLimit张照片缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
+                  ? recentPhotoLimit == null
+                        ? '✅ 已安全重建缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
+                        : '✅ 已安全重建最近$recentPhotoLimit张照片缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
                   : requeuedCount > 0
                   ? recentPhotoLimit == null
                         ? '✅ 相册已更新，已将$requeuedCount张旧照片重新加入中文打标队列。'
@@ -142,7 +142,12 @@ class _AlbumPageState extends State<AlbumPage> {
       AIService()
           .analyzePhotosInBackground(maxPhotos: recentPhotoLimit)
           .then((_) {
-            debugPrint("🎉 [后台任务] 所有照片的 AI 标签已静默添加完毕！");
+            return AIService().backfillMissingCaptionsInBackground(
+              maxPhotos: recentPhotoLimit,
+            );
+          })
+          .then((_) {
+            debugPrint("🎉 [后台任务] 照片 AI 标签与 caption 已静默补齐完毕！");
             // 你可以随时在这里发送广播，或者静默更新部分特定 UI
           })
           .catchError((e) {

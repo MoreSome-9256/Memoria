@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
+import '../utils/tag_sanitizer.dart';
+
 class MobileClipTagService {
   MobileClipTagService._internal();
 
@@ -237,6 +239,10 @@ class MobileClipTagService {
 
   bool _isNoisyCandidate(_TagVectorEntry entry) {
     if (_blockedTags.contains(entry.tag)) {
+      return true;
+    }
+
+    if (TagSanitizer.isBlockedExactTag(entry.tag)) {
       return true;
     }
 

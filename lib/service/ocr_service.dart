@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+import '../utils/tag_sanitizer.dart';
+
 class OcrService {
   OcrService._internal();
 
@@ -136,11 +138,8 @@ class OcrService {
     final ordered = <String>[];
 
     void addTag(String value) {
-      final tag = value.trim();
-      if (tag.isEmpty || ordered.contains(tag)) {
-        return;
-      }
-      if (tag.length == 1) {
+      final tag = TagSanitizer.sanitizeOcrTag(value);
+      if (tag == null || ordered.contains(tag)) {
         return;
       }
       if (RegExp(r'^\d+$').hasMatch(tag)) {
@@ -177,7 +176,7 @@ class OcrService {
       addTag(normalizedText.length > 12 ? normalizedText.substring(0, 12) : normalizedText);
     }
 
-    return ordered.take(5).toList(growable: false);
+    return TagSanitizer.sanitizeOcrTags(ordered, maxTags: 5);
   }
 
   String _buildSummary(List<String> lines, String normalizedText) {

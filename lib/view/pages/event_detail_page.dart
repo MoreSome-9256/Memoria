@@ -114,6 +114,22 @@ class _EventDetailPageState extends State<EventDetailPage> {
                         photo.location!,
                       ),
                     ),
+                  if ((photo.caption?.trim().isNotEmpty ?? false)) ...[
+                    const SizedBox(height: 20),
+                    _buildSectionTitle(context, 'AI Caption'),
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        photo.caption!,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ),
+                  ],
                   if ((photo.ocrSummary?.trim().isNotEmpty ?? false)) ...[
                     const SizedBox(height: 20),
                     _buildSectionTitle(context, 'OCR 摘要'),

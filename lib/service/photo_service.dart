@@ -68,9 +68,7 @@ class PhotoService {
     print("🗑️ 已清空 Isar 缓存数据（照片/事件/故事）");
   }
 
-  Future<PhotoScanSummary> rebuildAllCachedData({
-    int? maxAssets,
-  }) async {
+  Future<PhotoScanSummary> rebuildAllCachedData({int? maxAssets}) async {
     final totalBefore = await _isar.collection<PhotoEntity>().count();
     final prepared = await _prepareScan(maxAssets: maxAssets);
 
@@ -116,9 +114,7 @@ class PhotoService {
   }
 
   // 1️⃣ 扫描相册 (快速入库，带截图过滤)
-  Future<PhotoScanSummary> scanAndSyncPhotos({
-    int? maxAssets,
-  }) async {
+  Future<PhotoScanSummary> scanAndSyncPhotos({int? maxAssets}) async {
     final totalBefore = await _isar.collection<PhotoEntity>().count();
     final prepared = await _prepareScan(maxAssets: maxAssets);
 
@@ -130,7 +126,10 @@ class PhotoService {
           ? "🚀 开始扫描相册（全量）..."
           : "🚀 开始扫描相册（最近 ${prepared.fetchCount} / ${prepared.totalCount} 张）...",
     );
-    final built = await _buildPhotoEntities(prepared.assets, skipExisting: true);
+    final built = await _buildPhotoEntities(
+      prepared.assets,
+      skipExisting: true,
+    );
 
     if (built.photos.isNotEmpty) {
       await _isar.writeTxn(() async {
@@ -163,9 +162,7 @@ class PhotoService {
     );
   }
 
-  Future<_PreparedScanData> _prepareScan({
-    int? maxAssets,
-  }) async {
+  Future<_PreparedScanData> _prepareScan({int? maxAssets}) async {
     if (Platform.isAndroid) {
       final locationStatus = await Permission.accessMediaLocation.request();
       if (locationStatus.isGranted) {
@@ -243,7 +240,9 @@ class PhotoService {
         width,
         height,
       );
-      final likelyCameraPhoto = PhotoFilterHelper.isLikelyCameraPhoto(file.path);
+      final likelyCameraPhoto = PhotoFilterHelper.isLikelyCameraPhoto(
+        file.path,
+      );
       if (screenshotByRatio) {
         skippedScreenshot++;
         continue;
@@ -358,9 +357,7 @@ class PhotoService {
     return {'total': total, 'withGPS': withGPS, 'aiAnalyzed': aiAnalyzed};
   }
 
-  Future<int> requeueLatestPhotosForAi({
-    int? maxPhotos,
-  }) async {
+  Future<int> requeueLatestPhotosForAi({int? maxPhotos}) async {
     final query = _isar.collection<PhotoEntity>().where().sortByTimestampDesc();
     final photos = maxPhotos == null
         ? await query.findAll()
@@ -373,14 +370,17 @@ class PhotoService {
     var updatedCount = 0;
     for (final photo in photos) {
       final needsReset =
-          photo.isAiAnalyzed ||
-          (photo.aiTags != null && photo.aiTags!.isNotEmpty);
+          photo.isAiAnalyzed &&
+          ((photo.aiTags == null || photo.aiTags!.isEmpty) ||
+              (photo.imageEmbedding == null || photo.imageEmbedding!.isEmpty));
       if (!needsReset) {
         continue;
       }
 
       photo.isAiAnalyzed = false;
       photo.aiTags = <String>[];
+      photo.aiCaption = null;
+      photo.imageEmbedding = null;
       photo.ocrText = null;
       photo.ocrTags = <String>[];
       photo.faceCount = 0;
@@ -397,7 +397,9 @@ class PhotoService {
       await _isar.collection<PhotoEntity>().putAll(photos);
     });
 
-    final scopeText = maxPhotos == null ? '${photos.length} 张照片' : '最近 $maxPhotos 张照片';
+    final scopeText = maxPhotos == null
+        ? '${photos.length} 张照片'
+        : '最近 $maxPhotos 张照片';
     print('🔁 已将 $scopeText 中的 $updatedCount 张重新加入 AI 打标队列');
     return updatedCount;
   }
@@ -429,10 +431,9 @@ class PhotoService {
       photo.isAiAnalyzed = false;
 
       photo.aiTags = []; // 清空 ML Kit 时代干瘪的标签
+      photo.imageEmbedding = null;
       photo.ocrText = null;
       photo.ocrTags = [];
-
-      // photo.vector = null; // 如果你未来加了向量字段，也在这里清空
     }
 
     // 3. 批量写回数据库

@@ -8,11 +8,13 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:isar/isar.dart';
 import '../models/entity/photo_entity.dart';
 import '../utils/ai_score_helper.dart';
+import '../utils/tag_sanitizer.dart';
 import 'photo_service.dart';
 import 'event_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'mobileclip_vision_service.dart';
 import 'ocr_service.dart';
+import 'photo_caption_service.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -239,6 +241,7 @@ class AIService {
     final isar = PhotoService().isar;
     final mobileClipVision = MobileClipVisionService();
     final mobileClipTagService = MobileClipTagService();
+    final photoCaptionService = PhotoCaptionService();
     final ocrService = OcrService();
     await mobileClipVision.warmUp();
     await mobileClipTagService.warmUp();
@@ -331,7 +334,18 @@ class AIService {
 
           try {
             if (!file.existsSync()) {
-              await _markAsAnalyzed(photo.id, [], '', const <String>[], 0, 0.0, 0.0, isar);
+              await _markAsAnalyzed(
+                photo.id,
+                [],
+                const <double>[],
+                '',
+                '',
+                const <String>[],
+                0,
+                0.0,
+                0.0,
+                isar,
+              );
               didFail = true;
               continue;
             }
@@ -392,9 +406,26 @@ class AIService {
               tags: visualTags,
             );
 
+            final caption = await photoCaptionService.generateCaption(
+              imageFile: compressedTempFile,
+              visualTags: visualTags,
+              ocrTags: ocrResult.tags,
+              ocrText: ocrResult.text,
+              location:
+                  photo.locationName ??
+                  photo.district ??
+                  photo.city ??
+                  photo.province,
+              takenAt: DateTime.fromMillisecondsSinceEpoch(photo.timestamp),
+              isProbablyScreenshot: photo.isProbablyScreenshot,
+              faceCount: faceCount,
+            );
+
             await _markAsAnalyzed(
               photo.id,
               visualTags,
+              embedding,
+              caption,
               ocrResult.text,
               ocrResult.tags,
               faceCount,
@@ -413,7 +444,18 @@ class AIService {
           } catch (e) {
             didFail = true;
             debugPrint("❌ AI 分析失败: $e");
-            await _markAsAnalyzed(photo.id, [], '', const <String>[], 0, 0.0, 0.0, isar);
+            await _markAsAnalyzed(
+              photo.id,
+              [],
+              const <double>[],
+              '',
+              '',
+              const <String>[],
+              0,
+              0.0,
+              0.0,
+              isar,
+            );
             if (remainingPhotos != null) {
               remainingPhotos--;
             }
@@ -483,6 +525,173 @@ class AIService {
     }
   }
 
+  Future<void> backfillMissingCaptionsInBackground({
+    int batchSize = 12,
+    int? maxPhotos,
+  }) async {
+    if (_isAnalyzing) {
+      debugPrint('⏭️ AI 打标任务已在运行，跳过 caption 回填');
+      return;
+    }
+
+    _isAnalyzing = true;
+    _pauseRequested = false;
+    _stopRequested = false;
+    _analysisCompleter = Completer<void>();
+
+    final isar = PhotoService().isar;
+    final photoCaptionService = PhotoCaptionService();
+    final targetTotal = await _countCaptionBackfillCandidates(
+      isar,
+      maxPhotos: maxPhotos,
+    );
+
+    if (targetTotal <= 0) {
+      _progressNotifier.value = AIAnalysisProgress.idle();
+      _isAnalyzing = false;
+      return;
+    }
+
+    _progressNotifier.value = AIAnalysisProgress.running(
+      total: targetTotal,
+      completed: 0,
+      failed: 0,
+      currentStep: '准备回填旧照片 caption',
+    );
+
+    var processedCount = 0;
+    var failedCount = 0;
+    var remainingPhotos = maxPhotos;
+    final attemptedPhotoIds = <Id>{};
+
+    try {
+      while (true) {
+        final shouldContinue = await _waitIfPaused();
+        if (!shouldContinue || _stopRequested) {
+          break;
+        }
+
+        if (remainingPhotos != null && remainingPhotos <= 0) {
+          break;
+        }
+
+        final currentBatchSize = remainingPhotos == null
+            ? batchSize
+            : math.min(batchSize, remainingPhotos);
+        final photosToBackfill =
+            await _loadCaptionBackfillCandidates(
+              isar,
+              limit: currentBatchSize,
+            ).then(
+              (photos) => photos
+                  .where((photo) => !attemptedPhotoIds.contains(photo.id))
+                  .toList(growable: false),
+            );
+
+        if (photosToBackfill.isEmpty) {
+          break;
+        }
+
+        for (final photo in photosToBackfill) {
+          attemptedPhotoIds.add(photo.id);
+          final shouldContinue = await _waitIfPaused();
+          if (!shouldContinue || _stopRequested) {
+            break;
+          }
+
+          var didFail = false;
+          _progressNotifier.value = AIAnalysisProgress.running(
+            total: targetTotal,
+            completed: processedCount,
+            failed: failedCount,
+            currentStep:
+                '正在回填第 ${processedCount + 1} / $targetTotal 张照片的 caption',
+          );
+
+          try {
+            final file = File(photo.path);
+            if (!file.existsSync()) {
+              didFail = true;
+            } else {
+              final caption = await photoCaptionService.generateCaption(
+                imageFile: file,
+                visualTags: photo.aiTags ?? const <String>[],
+                ocrTags: photo.ocrTags ?? const <String>[],
+                ocrText: photo.ocrText ?? '',
+                location:
+                    photo.locationName ??
+                    photo.district ??
+                    photo.city ??
+                    photo.province,
+                takenAt: DateTime.fromMillisecondsSinceEpoch(photo.timestamp),
+                isProbablyScreenshot: photo.isProbablyScreenshot,
+                faceCount: photo.faceCount,
+              );
+              await _markCaptionBackfilled(photo.id, caption, isar);
+            }
+          } catch (e) {
+            didFail = true;
+            debugPrint('❌ caption 回填失败: $e');
+          } finally {
+            if (didFail) {
+              failedCount++;
+            }
+            processedCount++;
+            if (remainingPhotos != null) {
+              remainingPhotos--;
+            }
+
+            if (_stopRequested) {
+              _progressNotifier.value = AIAnalysisProgress.stopping(
+                total: targetTotal,
+                completed: processedCount,
+                failed: failedCount,
+                currentStep: '正在结束本轮 caption 回填…',
+              );
+            } else if (_pauseRequested) {
+              _progressNotifier.value = AIAnalysisProgress.paused(
+                total: targetTotal,
+                completed: processedCount,
+                failed: failedCount,
+                currentStep: 'caption 回填已暂停，随时可以继续',
+              );
+            } else {
+              _progressNotifier.value = AIAnalysisProgress.running(
+                total: targetTotal,
+                completed: processedCount,
+                failed: failedCount,
+                currentStep: processedCount >= targetTotal
+                    ? '正在收尾整理 caption 结果'
+                    : '已回填 $processedCount / $targetTotal 张 caption',
+              );
+            }
+          }
+
+          if (_stopRequested) {
+            break;
+          }
+
+          await Future.delayed(const Duration(milliseconds: 80));
+        }
+
+        if (_stopRequested) {
+          break;
+        }
+      }
+
+      debugPrint('✅ caption 回填完成，总计处理: $processedCount 张');
+    } finally {
+      _progressNotifier.value = AIAnalysisProgress.idle();
+      _isAnalyzing = false;
+      _pauseRequested = false;
+      _stopRequested = false;
+      if (_analysisCompleter != null && !_analysisCompleter!.isCompleted) {
+        _analysisCompleter!.complete();
+      }
+      _analysisCompleter = null;
+    }
+  }
+
   Future<bool> _waitIfPaused() async {
     while (_pauseRequested && !_stopRequested) {
       await Future.delayed(const Duration(milliseconds: 300));
@@ -522,8 +731,8 @@ class AIService {
     final sanitized = <String>[];
 
     for (final tag in source) {
-      final normalized = tag.trim();
-      if (normalized.isEmpty || sanitized.contains(normalized)) {
+      final normalized = TagSanitizer.sanitizeVisualTag(tag);
+      if (normalized == null || sanitized.contains(normalized)) {
         continue;
       }
       if (_blockedVisualTags.contains(normalized)) {
@@ -541,13 +750,15 @@ class AIService {
       }
     }
 
-    return sanitized;
+    return TagSanitizer.sanitizeVisualTags(sanitized, maxTags: maxTags);
   }
 
   // 将 AI 分析结果写入数据库（增强版）
   Future<void> _markAsAnalyzed(
     Id id,
     List<String> tags,
+    List<double> imageEmbedding,
+    String aiCaption,
     String ocrText,
     List<String> ocrTags,
     int faceCount,
@@ -560,6 +771,8 @@ class AIService {
       if (p != null) {
         p.aiTags = tags;
         p.isAiAnalyzed = true;
+        p.aiCaption = aiCaption.isEmpty ? null : aiCaption;
+        p.imageEmbedding = imageEmbedding.isEmpty ? null : imageEmbedding;
         p.ocrText = ocrText.isEmpty ? null : ocrText;
         p.ocrTags = ocrTags;
         p.faceCount = faceCount;
@@ -567,6 +780,75 @@ class AIService {
         p.joyScore = joyScore;
         await isar.collection<PhotoEntity>().put(p);
       }
+    });
+  }
+
+  Future<int> _countCaptionBackfillCandidates(
+    Isar isar, {
+    int? maxPhotos,
+  }) async {
+    final nullCaptionCount = await isar
+        .collection<PhotoEntity>()
+        .filter()
+        .isAiAnalyzedEqualTo(true)
+        .aiCaptionIsNull()
+        .count();
+    final emptyCaptionCount = await isar
+        .collection<PhotoEntity>()
+        .filter()
+        .isAiAnalyzedEqualTo(true)
+        .aiCaptionIsEmpty()
+        .count();
+    final total = nullCaptionCount + emptyCaptionCount;
+    return maxPhotos == null ? total : math.min(total, maxPhotos);
+  }
+
+  Future<List<PhotoEntity>> _loadCaptionBackfillCandidates(
+    Isar isar, {
+    required int limit,
+  }) async {
+    final nullCaptionPhotos = await isar
+        .collection<PhotoEntity>()
+        .filter()
+        .isAiAnalyzedEqualTo(true)
+        .aiCaptionIsNull()
+        .sortByTimestampDesc()
+        .limit(limit)
+        .findAll();
+    if (nullCaptionPhotos.length >= limit) {
+      return nullCaptionPhotos;
+    }
+
+    final emptyCaptionPhotos = await isar
+        .collection<PhotoEntity>()
+        .filter()
+        .isAiAnalyzedEqualTo(true)
+        .aiCaptionIsEmpty()
+        .sortByTimestampDesc()
+        .limit(limit - nullCaptionPhotos.length)
+        .findAll();
+
+    return <PhotoEntity>[...nullCaptionPhotos, ...emptyCaptionPhotos];
+  }
+
+  Future<void> _markCaptionBackfilled(
+    Id id,
+    String aiCaption,
+    Isar isar,
+  ) async {
+    final trimmedCaption = aiCaption.trim();
+    if (trimmedCaption.isEmpty) {
+      return;
+    }
+
+    await isar.writeTxn(() async {
+      final photo = await isar.collection<PhotoEntity>().get(id);
+      if (photo == null) {
+        return;
+      }
+
+      photo.aiCaption = trimmedCaption;
+      await isar.collection<PhotoEntity>().put(photo);
     });
   }
 

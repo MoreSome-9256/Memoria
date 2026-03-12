@@ -442,41 +442,43 @@ class _CreatePageState extends State<CreatePage> {
       ),
     );
   }
-  // 🌌 极光晕染背景生成器 (偏粉紫调)
+  // 🌌 极光晕染背景生成器 (终极防黑屏版)
   Widget _buildAmbientBackground() {
-    return Stack(
-      children: [
-        Positioned(
-          top: -100,
-          left: -50,
-          child: Container(
-            width: 300,
-            height: 300,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: Color(0x66FFB6C1), // 浅粉色
+    return Container(
+      color: const Color(0xFFFAFAFA), // 垫一层底色
+      // 🌟 核心修改：使用 ImageFiltered 替代 BackdropFilter
+      // 它只模糊内部的两个圆块，绝不干扰页面滑动退出的底层图层！
+      child: ImageFiltered(
+        imageFilter: ImageFilter.blur(sigmaX: 90, sigmaY: 90),
+        child: Stack(
+          children: [
+            Positioned(
+              top: -100,
+              left: -50,
+              child: Container(
+                width: 300,
+                height: 300,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0x88FFB6C1), // 稍微加深一点粉色，因为 ImageFiltered 效果更纯粹
+                ),
+              ),
             ),
-          ),
-        ),
-        Positioned(
-          top: -20,
-          right: -80,
-          child: Container(
-            width: 250,
-            height: 250,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: Color(0x55E0B0FF), // 紫罗兰色
+            Positioned(
+              top: -20,
+              right: -80,
+              child: Container(
+                width: 250,
+                height: 250,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0x77E0B0FF), // 紫罗兰色
+                ),
+              ),
             ),
-          ),
+          ],
         ),
-        Positioned.fill(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 90, sigmaY: 90),
-            child: Container(color: Colors.transparent),
-          ),
-        ),
-      ],
+      ),
     );
   }
   // 🏆 顶部 Header：大大的图标 + 搜索结果文案 + 继续按钮

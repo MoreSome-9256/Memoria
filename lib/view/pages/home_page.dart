@@ -460,44 +460,40 @@ class _HomePageState extends State<HomePage> {
 
   // 🌌 极光晕染背景生成器
   Widget _buildAmbientBackground() {
-    return Stack(
-      children: [
-        // 左上角的紫色色块
-        Positioned(
-          top: -80,
-          left: -50,
-          child: Container(
-            width: 250,
-            height: 250,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: Color(0x55E0B0FF), // 浅紫罗兰色，带透明度
+    return Container(
+      color: const Color(0xFFFAFAFA), // 浅灰白底色
+      child: ImageFiltered(
+        // 🌟 换成绝对安全的 ImageFiltered
+        imageFilter: ImageFilter.blur(sigmaX: 80, sigmaY: 80),
+        child: Stack(
+          children: [
+            Positioned(
+              top: -80,
+              left: -50,
+              child: Container(
+                width: 250,
+                height: 250,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0x88E0B0FF), // 稍微加深一点透明度
+                ),
+              ),
             ),
-          ),
-        ),
-        // 右上角的粉蓝色色块
-        Positioned(
-          top: -20,
-          right: -80,
-          child: Container(
-            width: 300,
-            height: 300,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: Color(0x4487CEEB), // 天蓝色，带透明度
+            Positioned(
+              top: -20,
+              right: -80,
+              child: Container(
+                width: 300,
+                height: 300,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0x7787CEEB), // 稍微加深一点天蓝色
+                ),
+              ),
             ),
-          ),
+          ],
         ),
-        // 核心魔法：全屏高斯模糊遮罩，把硬色块糊成极光
-        Positioned.fill(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 80, sigmaY: 80), // 模糊半径拉满
-            child: Container(
-              color: Colors.transparent, // 必须有颜色才生效
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 

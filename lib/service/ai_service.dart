@@ -353,18 +353,19 @@ class AIService {
             // ==========================================
             if (photo.isProbablyScreenshot) {
               debugPrint("⏭️ 检测到截图，跳过 AI 视觉打标: ${photo.id}");
-              // 直接假装分析完了，随便塞个“截图”标签，所有分数打 0
+              // 直接假装分析完了，随便塞个“截图”标签，其他全部塞空值
               await _markAsAnalyzed(
                 photo.id,
-                ['截图'],
-                '',
-                const <String>[],
-                0,
-                0.0,
-                0.0,
-                isar,
+                ['截图'], // visualTags
+                const <double>[], // embedding (🌟 新增：空向量)
+                '', // caption (🌟 新增：空描述)
+                '', // ocrText
+                const <String>[], // ocrTags
+                0, // faceCount
+                0.0, // maxSmileProb
+                0.0, // joyScore
+                isar, // isar 实例
               );
-
               if (photo.eventId != null) {
                 affectedEventIds.add(photo.eventId!);
               }

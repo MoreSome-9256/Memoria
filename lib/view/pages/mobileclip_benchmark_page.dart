@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/mobileclip_benchmark.dart';
 import '../../service/mobileclip_benchmark_service.dart';
+import '../widgets/path_image.dart';
 
 class MobileClipBenchmarkPage extends StatefulWidget {
   const MobileClipBenchmarkPage({super.key});
@@ -55,7 +56,7 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            '同一批照片、同一份预处理输入，先跑 ONNX 基线，再为未来 ncnn FFI 对比保留统一报告结构。',
+            '在同一批照片上对比手机端 ONNX 与作者提供的 NCNN 导出模型。ONNX 走 Flutter 预处理，NCNN 走 native resize/normalize。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -201,9 +202,12 @@ class _AdapterSummaryCard extends StatelessWidget {
             const SizedBox(height: 8),
             Text('样本数: ${summary.sampleCount}'),
             Text('Warm-up: ${summary.warmUpMs.toStringAsFixed(1)} ms'),
-            Text('平均延迟: ${summary.meanLatencyMs.toStringAsFixed(1)} ms'),
-            Text('P50 / P90: ${summary.p50LatencyMs.toStringAsFixed(1)} / ${summary.p90LatencyMs.toStringAsFixed(1)} ms'),
-            Text('最大延迟: ${summary.maxLatencyMs.toStringAsFixed(1)} ms'),
+            Text('平均预处理: ${summary.meanPreprocessMs.toStringAsFixed(1)} ms'),
+            Text('平均推理: ${summary.meanInferenceMs.toStringAsFixed(1)} ms'),
+            Text('平均标签检索: ${summary.meanTagRetrievalMs.toStringAsFixed(1)} ms'),
+            Text('平均总耗时: ${summary.meanTotalMs.toStringAsFixed(1)} ms'),
+            Text('P50 / P90 总耗时: ${summary.p50TotalMs.toStringAsFixed(1)} / ${summary.p90TotalMs.toStringAsFixed(1)} ms'),
+            Text('最大总耗时: ${summary.maxTotalMs.toStringAsFixed(1)} ms'),
             Text('平均 RSS 增量: ${(summary.meanRssDeltaBytes / 1024 / 1024).toStringAsFixed(2)} MB'),
           ],
         ),
@@ -236,6 +240,60 @@ class _ComparisonCard extends StatelessWidget {
             Text('平均 L2 距离: ${comparison.meanL2Distance.toStringAsFixed(6)}'),
             Text('Top-1 一致率: ${(comparison.top1AgreementRate * 100).toStringAsFixed(1)}%'),
             Text('Top-5 重叠率: ${(comparison.top5OverlapRate * 100).toStringAsFixed(1)}%'),
+            if (comparison.worstCases.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text('最低余弦样本', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 8),
+              ...comparison.worstCases.map(
+                (worstCase) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _WorstCaseRow(worstCase: worstCase),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WorstCaseRow extends StatelessWidget {
+  const _WorstCaseRow({required this.worstCase});
+
+  final MobileClipWorstCaseSample worstCase;
+
+  @override
+  Widget build(BuildContext context) {
+    final pathSegments = worstCase.sample.path.split(RegExp(r'[\\/]'));
+    final fileName = pathSegments.isEmpty ? worstCase.sample.path : pathSegments.last;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: AspectRatio(
+                aspectRatio: 4 / 3,
+                child: PathImage(path: worstCase.sample.path, fit: BoxFit.cover),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(fileName, style: Theme.of(context).textTheme.bodyLarge),
+            const SizedBox(height: 4),
+            Text('photoId: ${worstCase.sample.photoId}'),
+            SelectableText(worstCase.sample.path),
+            Text('cosine: ${worstCase.cosine.toStringAsFixed(6)}'),
+            Text('l2: ${worstCase.l2Distance.toStringAsFixed(6)}'),
+            Text('onnx tags: ${worstCase.leftTags.join(', ')}'),
+            Text('ncnn tags: ${worstCase.rightTags.join(', ')}'),
           ],
         ),
       ),

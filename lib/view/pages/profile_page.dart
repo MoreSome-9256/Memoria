@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'mobileclip_benchmark_page.dart';
+import 'mobileclip_vector_probe_page.dart';
 
 class ProfilePage extends StatelessWidget {
   const ProfilePage({super.key});
@@ -56,6 +57,19 @@ class ProfilePage extends StatelessWidget {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (context) => const MobileClipBenchmarkPage(),
+                ),
+              );
+            },
+          ),
+          _buildSettingsTile(
+            context,
+            Icons.analytics_outlined,
+            'MobileCLIP Vector Probe',
+            '检查指定图片在手机端 ONNX / NCNN 的向量',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const MobileClipVectorProbePage(),
                 ),
               );
             },

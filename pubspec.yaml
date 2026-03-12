@@ -51,6 +51,8 @@ dependencies:
   flutter_markdown_plus: ^1.0.7
   onnxruntime: ^1.4.1
   image: ^4.2.0
+  ffi: ^2.1.3
+  shared_preferences: ^2.5.3
 
 dev_dependencies:
   flutter_test:
@@ -82,6 +84,16 @@ flutter:
     - assets/images/logo.png
     - assets/images/welcome_bg.jpg
     - assets/expanded_tags_taxonomy.json
+    - assets/ncnn/README.md
+    - assets/ncnn/mobileclip_s2/image_encoder.ncnn.param
+    - assets/ncnn/mobileclip_s2/image_encoder.ncnn.bin
+    - assets/ncnn/mobileclip_s2/text_encoder.ncnn.param
+    - assets/ncnn/mobileclip_s2/text_encoder.ncnn.bin
+    - assets/ncnn/mobileclip_s2/projection_layer.ncnn.param
+    - assets/ncnn/mobileclip_s2/projection_layer.ncnn.bin
+    - ai_tools/test_student.png
+    - ai_tools/test1.png
+    - ai_tools/test_youleyuan.png
     - mobileclip_vision_ir9.onnx
 
   # An image asset can refer to one or more resolution-specific "variants", see

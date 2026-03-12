@@ -11,8 +11,9 @@ import '../utils/ai_score_helper.dart';
 import '../utils/tag_sanitizer.dart';
 import 'photo_service.dart';
 import 'event_service.dart';
+import 'mobileclip_backend_preference_service.dart';
+import 'mobileclip_embedding_service.dart';
 import 'mobileclip_tag_service.dart';
-import 'mobileclip_vision_service.dart';
 import 'ocr_service.dart';
 import 'photo_caption_service.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
@@ -238,11 +239,12 @@ class AIService {
     _stopRequested = false;
     _analysisCompleter = Completer<void>();
     final isar = PhotoService().isar;
-    final mobileClipVision = MobileClipVisionService();
+    final mobileClipEmbeddingService = MobileClipEmbeddingService();
     final mobileClipTagService = MobileClipTagService();
     final photoCaptionService = PhotoCaptionService();
     final ocrService = OcrService();
-    await mobileClipVision.warmUp();
+    final selectedBackend = await mobileClipEmbeddingService.getSelectedBackend();
+    await mobileClipEmbeddingService.warmUpBackend(selectedBackend);
     await mobileClipTagService.warmUp();
 
     final pendingCount = await isar
@@ -264,7 +266,7 @@ class AIService {
       total: targetTotal,
       completed: 0,
       failed: 0,
-      currentStep: '准备开始 AI 打标',
+      currentStep: '准备开始 AI 打标 (${selectedBackend.label})',
     );
 
     // 2. 初始化 ML Kit 组件
@@ -391,9 +393,11 @@ class AIService {
             if (result == null) throw Exception("压缩失败");
             compressedTempFile = File(result.path);
 
-            final embedding = await mobileClipVision.embedImageFile(
-              compressedTempFile,
-            );
+            final embedding =
+                await mobileClipEmbeddingService.embedImageFileWithBackend(
+                  compressedTempFile,
+                  selectedBackend,
+                );
 
             final inputImage = InputImage.fromFile(compressedTempFile);
 

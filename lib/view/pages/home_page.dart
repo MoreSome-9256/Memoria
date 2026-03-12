@@ -9,9 +9,10 @@ import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import 'create_page.dart';
-import 'config_page.dart'; // 🌟 引入配置页用于跳转
 import 'package:photo_manager/photo_manager.dart';
 import 'event_detail_page.dart';
+import '../../service/mobileclip_backend_preference_service.dart';
+import '../../service/mobileclip_embedding_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -28,10 +29,17 @@ class _HomePageState extends State<HomePage> {
 
   // 💡 用于动态发现模块的卡片数据
   List<Map<String, dynamic>> _discoverCards = [];
+  final MobileClipBackendPreferenceService _backendPreferenceService =
+      MobileClipBackendPreferenceService();
+  final MobileClipEmbeddingService _embeddingService =
+      MobileClipEmbeddingService();
+  MobileClipBackend _selectedBackend = MobileClipBackend.onnx;
+  bool _isSwitchingBackend = false;
 
   @override
   void initState() {
     super.initState();
+    _loadBackendPreference();
     // 启动时加载照片数据
     _loadRecentPhotos();
     // 🌟 启动本地推荐引擎
@@ -43,6 +51,59 @@ class _HomePageState extends State<HomePage> {
     // ⚠️ 极其重要：销毁页面时必须关闭定时器，防止后台内存泄露
     _timer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadBackendPreference() async {
+    await _backendPreferenceService.initialize();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _selectedBackend =
+          _backendPreferenceService.backendListenable.value;
+    });
+  }
+
+  Future<void> _switchBackend(MobileClipBackend backend) async {
+    if (_isSwitchingBackend || backend == _selectedBackend) {
+      return;
+    }
+
+    setState(() {
+      _isSwitchingBackend = true;
+    });
+
+    try {
+      await _embeddingService.switchBackendAndPersist(backend);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _selectedBackend = backend;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('AI 打标后端已切换为 ${backend.label}'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('切换到 ${backend.label} 失败: $error'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSwitchingBackend = false;
+        });
+      }
+    }
   }
 
   // ==========================================
@@ -58,10 +119,8 @@ class _HomePageState extends State<HomePage> {
         .findAll();
 
     var filtered = recentCandidates.where((p) {
-      if (p.width != null && p.height != null) {
-        double ratio = p.width! / p.height!;
-        if (ratio < 0.6 || ratio > 1.8) return false;
-      }
+      final ratio = p.width / p.height;
+      if (ratio < 0.6 || ratio > 1.8) return false;
       final forbiddenTags = {'Screen', 'Text', 'Document', '屏幕', '文字', '截图'};
       if (p.aiTags != null &&
           p.aiTags!.any((tag) => forbiddenTags.contains(tag))) {
@@ -498,26 +557,105 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildHeader() {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const CircleAvatar(
-          radius: 24,
-          backgroundColor: Colors.pinkAccent,
-          child: Icon(Icons.person, color: Colors.white),
-        ),
-        const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            Text(
-              'User_MoreSome,',
-              style: TextStyle(fontSize: 14, color: Colors.black54),
+        Row(
+          children: [
+            const CircleAvatar(
+              radius: 24,
+              backgroundColor: Colors.pinkAccent,
+              child: Icon(Icons.person, color: Colors.white),
             ),
-            Text(
-              '欢迎使用智能影记！',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Text(
+                  'User_MoreSome,',
+                  style: TextStyle(fontSize: 14, color: Colors.black54),
+                ),
+                Text(
+                  '欢迎使用智能影记！',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ],
             ),
           ],
+        ),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.85),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.purple.shade100),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '相册扫描后端',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '新的相册扫描和 AI 打标将使用当前后端',
+                style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+              ),
+              const SizedBox(height: 10),
+              SegmentedButton<MobileClipBackend>(
+                segments: const <ButtonSegment<MobileClipBackend>>[
+                  ButtonSegment<MobileClipBackend>(
+                    value: MobileClipBackend.onnx,
+                    label: Text('ONNX'),
+                    icon: Icon(Icons.verified_outlined),
+                  ),
+                  ButtonSegment<MobileClipBackend>(
+                    value: MobileClipBackend.ncnn,
+                    label: Text('NCNN'),
+                    icon: Icon(Icons.flash_on_outlined),
+                  ),
+                ],
+                selected: <MobileClipBackend>{_selectedBackend},
+                onSelectionChanged: _isSwitchingBackend
+                    ? null
+                    : (selection) {
+                        final backend = selection.first;
+                        _switchBackend(backend);
+                      },
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  if (_isSwitchingBackend)
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    Icon(
+                      _selectedBackend == MobileClipBackend.ncnn
+                          ? Icons.flash_on
+                          : Icons.verified,
+                      size: 16,
+                      color: Colors.purple.shade700,
+                    ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '当前: ${_selectedBackend.label} · ${_selectedBackend.description}',
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ],
     );

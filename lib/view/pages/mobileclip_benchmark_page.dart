@@ -39,12 +39,11 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
         _errorMessage = error.toString();
       });
     } finally {
-      if (!mounted) {
-        return;
+      if (mounted) {
+        setState(() {
+          _isRunning = false;
+        });
       }
-      setState(() {
-        _isRunning = false;
-      });
     }
   }
 

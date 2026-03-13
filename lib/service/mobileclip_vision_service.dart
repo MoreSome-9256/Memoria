@@ -6,20 +6,49 @@ import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:onnxruntime/onnxruntime.dart';
 
+enum MobileClipOnnxVariant { mobileclip2S2, legacyS2 }
+
 class MobileClipVisionService {
-  MobileClipVisionService._internal();
+  MobileClipVisionService._internal(this._variant);
 
-  static final MobileClipVisionService _instance =
-      MobileClipVisionService._internal();
+  static final Map<MobileClipOnnxVariant, MobileClipVisionService> _instances =
+      <MobileClipOnnxVariant, MobileClipVisionService>{
+        MobileClipOnnxVariant.mobileclip2S2: MobileClipVisionService._internal(
+          MobileClipOnnxVariant.mobileclip2S2,
+        ),
+        MobileClipOnnxVariant.legacyS2: MobileClipVisionService._internal(
+          MobileClipOnnxVariant.legacyS2,
+        ),
+      };
 
-  factory MobileClipVisionService() => _instance;
+  factory MobileClipVisionService({
+    MobileClipOnnxVariant variant = MobileClipOnnxVariant.mobileclip2S2,
+  }) => _instances[variant]!;
 
-  static const String _modelAssetPath = 'mobileclip_vision_ir9.onnx';
-  static const int _inputImageSize = 256;
+  final MobileClipOnnxVariant _variant;
+
+  static const String _defaultModelAssetPath =
+      'assets/mobileclip2/s2/vision_model.onnx';
+  static const String _legacyModelAssetPath = 'mobileclip_vision_ir9.onnx';
+  static const String _modelFilePathOverride = String.fromEnvironment(
+    'MOBILECLIP2_ONNX_FILE',
+    defaultValue: '',
+  );
+  static const String _modelAssetPathOverride = String.fromEnvironment(
+    'MOBILECLIP2_ONNX_ASSET',
+    defaultValue: '',
+  );
+  static const String _inputImageSizeOverride = String.fromEnvironment(
+    'MOBILECLIP_ONNX_INPUT_SIZE',
+    defaultValue: '256',
+  );
+
+  late final int _inputImageSize = _resolveInputImageSize();
 
   OrtSession? _session;
   String? _inputName;
   List<String>? _outputNames;
+  _PreprocessSpec _preprocessSpec = const _PreprocessSpec.mobileclip2();
 
   Future<void> warmUp() async {
     await _loadSession();
@@ -42,9 +71,14 @@ class MobileClipVisionService {
   Future<Float32List> preprocessImageBytesForBenchmark(
     Uint8List imageBytes,
   ) async {
-    return compute<Uint8List, Float32List>(
+    return compute<_MobileClipPreprocessRequest, Float32List>(
       _preprocessImageForMobileClip,
-      imageBytes,
+      _MobileClipPreprocessRequest(
+        imageBytes: imageBytes,
+        inputImageSize: _inputImageSize,
+        mean: _preprocessSpec.mean,
+        std: _preprocessSpec.std,
+      ),
     );
   }
 
@@ -99,9 +133,9 @@ class MobileClipVisionService {
     }
 
     OrtEnv.instance.init();
-    final modelBytes = (await rootBundle.load(
-      _modelAssetPath,
-    )).buffer.asUint8List();
+    final modelLoadResult = await _loadModelBytes();
+    final modelBytes = modelLoadResult.bytes;
+    _preprocessSpec = _preprocessSpecForModel(modelLoadResult.source);
     final sessionOptions = OrtSessionOptions();
     sessionOptions.setIntraOpNumThreads(2);
     sessionOptions.setInterOpNumThreads(1);
@@ -124,8 +158,57 @@ class MobileClipVisionService {
 
     _inputName = _session!.inputNames.first;
     _outputNames = List<String>.from(_session!.outputNames, growable: false);
-    debugPrint('🧠 MobileCLIP ONNX 就绪 input=$_inputName outputs=$_outputNames');
+    debugPrint(
+      '🧠 MobileCLIP ONNX 就绪 variant=${_variant.name} source=${modelLoadResult.source} input=$_inputName outputs=$_outputNames size=$_inputImageSize mean=${_preprocessSpec.mean} std=${_preprocessSpec.std}',
+    );
     return _session!;
+  }
+
+  Future<_ModelLoadResult> _loadModelBytes() async {
+    if (_variant == MobileClipOnnxVariant.legacyS2) {
+      final bytes =
+          (await rootBundle.load(_legacyModelAssetPath)).buffer.asUint8List();
+      return _ModelLoadResult(bytes: bytes, source: _legacyModelAssetPath);
+    }
+
+    final filePath = _modelFilePathOverride.trim();
+    if (filePath.isNotEmpty) {
+      final file = File(filePath);
+      if (!file.existsSync()) {
+        throw StateError('MOBILECLIP2_ONNX_FILE 指向的模型不存在: $filePath');
+      }
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        throw StateError('MOBILECLIP2_ONNX_FILE 模型为空: $filePath');
+      }
+      return _ModelLoadResult(bytes: bytes, source: filePath);
+    }
+
+    final assetPath = _modelAssetPathOverride.trim();
+    if (assetPath.isNotEmpty) {
+      final bytes = (await rootBundle.load(assetPath)).buffer.asUint8List();
+      return _ModelLoadResult(bytes: bytes, source: assetPath);
+    }
+
+    final bytes =
+        (await rootBundle.load(_defaultModelAssetPath)).buffer.asUint8List();
+    return _ModelLoadResult(bytes: bytes, source: _defaultModelAssetPath);
+  }
+
+  int _resolveInputImageSize() {
+    final parsed = int.tryParse(_inputImageSizeOverride);
+    if (parsed == null || parsed <= 0) {
+      return 256;
+    }
+    return parsed;
+  }
+
+  _PreprocessSpec _preprocessSpecForModel(String source) {
+    final normalizedSource = source.toLowerCase();
+    if (normalizedSource.contains('mobileclip2')) {
+      return const _PreprocessSpec.mobileclip2();
+    }
+    return const _PreprocessSpec.legacyClip();
   }
 
   List<double> _flattenOutput(Object? output) {
@@ -155,31 +238,68 @@ class MobileClipVisionService {
   }
 }
 
-const int _mobileClipInputImageSize = 256;
-Float32List _preprocessImageForMobileClip(Uint8List imageBytes) {
-  final decoded = img.decodeImage(imageBytes);
+class _ModelLoadResult {
+  const _ModelLoadResult({required this.bytes, required this.source});
+
+  final Uint8List bytes;
+  final String source;
+}
+
+class _PreprocessSpec {
+  const _PreprocessSpec({required this.mean, required this.std});
+
+  const _PreprocessSpec.mobileclip2()
+    : mean = const <double>[0.0, 0.0, 0.0],
+      std = const <double>[1.0, 1.0, 1.0];
+
+  const _PreprocessSpec.legacyClip()
+    : mean = const <double>[0.48145466, 0.4578275, 0.40821073],
+      std = const <double>[0.26862954, 0.26130258, 0.27577711];
+
+  final List<double> mean;
+  final List<double> std;
+}
+
+class _MobileClipPreprocessRequest {
+  const _MobileClipPreprocessRequest({
+    required this.imageBytes,
+    required this.inputImageSize,
+    required this.mean,
+    required this.std,
+  });
+
+  final Uint8List imageBytes;
+  final int inputImageSize;
+  final List<double> mean;
+  final List<double> std;
+}
+
+Float32List _preprocessImageForMobileClip(_MobileClipPreprocessRequest request) {
+  final decoded = img.decodeImage(request.imageBytes);
   if (decoded == null) {
     throw ArgumentError('无法解码图片数据');
   }
 
-  final preprocessed = _preprocessMobileClipImage(decoded);
-  return _toMobileClipNchw(preprocessed);
+  final preprocessed = _preprocessMobileClipImage(
+    decoded,
+    request.inputImageSize,
+  );
+  return _toMobileClipNchw(
+    preprocessed,
+    request.inputImageSize,
+    request.mean,
+    request.std,
+  );
 }
 
-img.Image _preprocessMobileClipImage(img.Image source) {
+img.Image _preprocessMobileClipImage(img.Image source, int inputImageSize) {
   final baked = img.bakeOrientation(source);
-  final resized = _resizeMobileClipShortestSide(
-    baked,
-    _mobileClipInputImageSize,
-  );
-  final cropped = _centerCropMobileClipSquare(
-    resized,
-    _mobileClipInputImageSize,
-  );
+  final resized = _resizeMobileClipShortestSide(baked, inputImageSize);
+  final cropped = _centerCropMobileClipSquare(resized, inputImageSize);
   return img.copyResize(
     cropped,
-    width: _mobileClipInputImageSize,
-    height: _mobileClipInputImageSize,
+    width: inputImageSize,
+    height: inputImageSize,
     interpolation: img.Interpolation.linear,
   );
 }
@@ -213,23 +333,27 @@ img.Image _centerCropMobileClipSquare(img.Image source, int cropSize) {
   return img.copyCrop(source, x: x, y: y, width: width, height: height);
 }
 
-Float32List _toMobileClipNchw(img.Image image) {
-  final buffer = Float32List(
-    3 * _mobileClipInputImageSize * _mobileClipInputImageSize,
-  );
+Float32List _toMobileClipNchw(
+  img.Image image,
+  int inputImageSize,
+  List<double> mean,
+  List<double> std,
+) {
+  final buffer = Float32List(3 * inputImageSize * inputImageSize);
 
   for (var channel = 0; channel < 3; channel++) {
-    final channelOffset =
-        channel * _mobileClipInputImageSize * _mobileClipInputImageSize;
-    for (var y = 0; y < _mobileClipInputImageSize; y++) {
-      for (var x = 0; x < _mobileClipInputImageSize; x++) {
+    final channelOffset = channel * inputImageSize * inputImageSize;
+    for (var y = 0; y < inputImageSize; y++) {
+      for (var x = 0; x < inputImageSize; x++) {
         final pixel = image.getPixel(x, y);
-        final value = switch (channel) {
+        final raw = switch (channel) {
           0 => pixel.r.toDouble() / 255.0,
           1 => pixel.g.toDouble() / 255.0,
           _ => pixel.b.toDouble() / 255.0,
         };
-        final index = channelOffset + y * _mobileClipInputImageSize + x;
+        final denom = std[channel] == 0 ? 1.0 : std[channel];
+        final value = (raw - mean[channel]) / denom;
+        final index = channelOffset + y * inputImageSize + x;
         buffer[index] = value;
       }
     }

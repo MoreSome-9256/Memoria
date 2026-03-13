@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:math' as math;
 // import 'dart:math'; // ➕ 新增：用于生成随机的假数据
 import 'package:flutter/foundation.dart';
-import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:isar/isar.dart';
 import '../models/entity/photo_entity.dart';
@@ -112,118 +111,6 @@ class AIService {
     }
   }
 
-  // 简单的标签翻译字典 (毕设演示够用了，也可以接翻译API)
-  final Map<String, String> _tagTranslation = {
-    'Food': '美食',
-    'Dish': '菜肴',
-    'Cuisine': '料理',
-    'Meal': '餐食',
-    'Beach': '海滩',
-    'Sea': '大海',
-    'Ocean': '海洋',
-    'Sky': '天空',
-    'Cloud': '云',
-    'Sunset': '日落',
-    'Sunrise': '日出',
-    'Plant': '植物',
-    'Tree': '树木',
-    'Flower': '花朵',
-    'Grass': '草地',
-    'Garden': '花园',
-    'Person': '人像',
-    'People': '人群',
-    'Face': '面孔',
-    'Child': '儿童',
-    'Baby': '婴儿',
-    'Cat': '猫',
-    'Dog': '狗',
-    'Pet': '宠物',
-    'Animal': '动物',
-    'Bird': '鸟',
-    'Building': '建筑',
-    'City': '城市',
-    'Architecture': '建筑物',
-    'Tower': '塔',
-    'Bridge': '桥',
-    'Mountain': '山',
-    'Hill': '山丘',
-    'Forest': '森林',
-    'Landscape': '风景',
-    'Car': '汽车',
-    'Vehicle': '车辆',
-    'Road': '道路',
-    'Street': '街道',
-    'Water': '水',
-    'Lake': '湖',
-    'River': '河',
-    'Snow': '雪',
-    'Winter': '冬天',
-    'Summer': '夏天',
-    'Spring': '春天',
-    'Autumn': '秋天',
-    'Fall': '秋天',
-    'Night': '夜晚',
-    'Evening': '傍晚',
-    'Morning': '早晨',
-    'Daytime': '白天',
-    'Indoor': '室内',
-    'Outdoor': '户外',
-    'Room': '房间',
-    'Bedroom': '卧室',
-    'Kitchen': '厨房',
-    'Restaurant': '餐厅',
-    'Table': '桌子',
-    'Chair': '椅子',
-    'Furniture': '家具',
-    'Window': '窗户',
-    'Door': '门',
-    'Wall': '墙',
-    'Ceiling': '天花板',
-    'Floor': '地板',
-    'Art': '艺术',
-    'Painting': '绘画',
-    'Sculpture': '雕塑',
-    'Museum': '博物馆',
-    'Sport': '运动',
-    'Game': '游戏',
-    'Ball': '球',
-    'Playground': '操场',
-    'Park': '公园',
-    'Festival': '节日',
-    'Party': '派对',
-    'Concert': '音乐会',
-    'Stage': '舞台',
-    'Light': '灯光',
-    'Darkness': '黑暗',
-    'Shadow': '阴影',
-    'Reflection': '倒影',
-    'Mirror': '镜子',
-    'Glass': '玻璃',
-    'Book': '书',
-    'Paper': '纸',
-    'Pen': '笔',
-    'Computer': '电脑',
-    'Phone': '手机',
-    'Screen': '屏幕',
-    'Technology': '科技',
-    'Drink': '饮料',
-    'Coffee': '咖啡',
-    'Tea': '茶',
-    'Wine': '酒',
-    'Bottle': '瓶子',
-    'Cup': '杯子',
-    'Fruit': '水果',
-    'Vegetable': '蔬菜',
-    'Dessert': '甜点',
-    'Cake': '蛋糕',
-    'Bread': '面包',
-    'Smile': '微笑',
-    'Happy': '快乐',
-    'Fun': '有趣',
-    'Beautiful': '美丽',
-    'Colorful': '色彩斑斓',
-  };
-
   // 🧠 核心方法：批量分析未处理的照片（包含人脸检测和情感分析）
   Future<void> analyzePhotosInBackground({
     int batchSize = 10,
@@ -269,12 +156,7 @@ class AIService {
       currentStep: '准备开始 AI 打标 (${selectedBackend.label})',
     );
 
-    // 2. 初始化 ML Kit 组件
-    final ImageLabelerOptions labelerOptions = ImageLabelerOptions(
-      confidenceThreshold: 0.6,
-    );
-    final imageLabeler = ImageLabeler(options: labelerOptions);
-
+    // 2. 初始化 ML Kit 人脸检测（视觉标签改由 MobileCLIP 统一生成）
     final FaceDetectorOptions faceOptions = FaceDetectorOptions(
       enableClassification: true,
       enableTracking: false,
@@ -401,16 +283,12 @@ class AIService {
 
             final inputImage = InputImage.fromFile(compressedTempFile);
 
-            // 📸 任务1：标签识别
-            final labels = await imageLabeler.processImage(inputImage);
-            final mlKitTags = labels
-                .map((label) => _tagTranslation[label.label] ?? label.label)
-                .toList(growable: false);
+            // 📸 任务1：视觉标签识别（仅使用 MobileCLIP）
             final mobileClipTags = await mobileClipTagService.retrieveTags(
               embedding,
             );
             final visualTags = _sanitizeVisualTags(
-              _mergePreferredTags(mobileClipTags, mlKitTags),
+              mobileClipTags,
             );
 
             OcrResult ocrResult = OcrResult.empty();
@@ -536,7 +414,6 @@ class AIService {
         }
       }
 
-      imageLabeler.close();
       faceDetector.close();
 
       if (affectedEventIds.isNotEmpty) {
@@ -727,34 +604,6 @@ class AIService {
       await Future.delayed(const Duration(milliseconds: 300));
     }
     return !_stopRequested;
-  }
-
-  List<String> _mergePreferredTags(
-    List<String> mobileClipTags,
-    List<String> fallbackTags, {
-    int maxTags = 5,
-  }) {
-    final merged = <String>[];
-
-    void addTags(List<String> source) {
-      for (final tag in source) {
-        final normalized = tag.trim();
-        if (normalized.isEmpty || merged.contains(normalized)) {
-          continue;
-        }
-        merged.add(normalized);
-        if (merged.length >= maxTags) {
-          return;
-        }
-      }
-    }
-
-    addTags(mobileClipTags);
-    if (merged.isEmpty) {
-      addTags(fallbackTags);
-    }
-
-    return merged;
   }
 
   List<String> _sanitizeVisualTags(List<String> source, {int maxTags = 5}) {

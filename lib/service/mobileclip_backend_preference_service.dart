@@ -1,28 +1,33 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum MobileClipBackend { onnx, ncnn }
+enum MobileClipBackend { mobileclip2Onnx, onnx, ncnn }
 
 extension MobileClipBackendX on MobileClipBackend {
   String get storageValue => switch (this) {
+    MobileClipBackend.mobileclip2Onnx => 'mobileclip2_onnx',
     MobileClipBackend.onnx => 'onnx',
     MobileClipBackend.ncnn => 'ncnn',
   };
 
   String get label => switch (this) {
-    MobileClipBackend.onnx => 'ONNX',
-    MobileClipBackend.ncnn => 'NCNN',
+    MobileClipBackend.mobileclip2Onnx => 'MobileCLIP2 ONNX',
+    MobileClipBackend.onnx => 'ONNX (旧模型)',
+    MobileClipBackend.ncnn => 'NCNN (旧模型)',
   };
 
   String get description => switch (this) {
+    MobileClipBackend.mobileclip2Onnx => '新版默认',
     MobileClipBackend.onnx => '兼容性优先',
     MobileClipBackend.ncnn => '速度优先',
   };
 
   static MobileClipBackend fromStorageValue(String? value) {
     return switch (value) {
+      'mobileclip2_onnx' => MobileClipBackend.mobileclip2Onnx,
       'ncnn' => MobileClipBackend.ncnn,
-      _ => MobileClipBackend.onnx,
+      'onnx' => MobileClipBackend.onnx,
+      _ => MobileClipBackend.mobileclip2Onnx,
     };
   }
 }
@@ -38,7 +43,7 @@ class MobileClipBackendPreferenceService {
   static const String _backendKey = 'mobileclip_backend';
 
   final ValueNotifier<MobileClipBackend> _backendNotifier =
-      ValueNotifier<MobileClipBackend>(MobileClipBackend.onnx);
+      ValueNotifier<MobileClipBackend>(MobileClipBackend.mobileclip2Onnx);
 
   SharedPreferences? _preferences;
 

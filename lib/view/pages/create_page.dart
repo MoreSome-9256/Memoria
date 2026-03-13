@@ -1,9 +1,10 @@
-import 'dart:io';
-import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'dart:io'; // 🌟 加上这行，File 类就活过来了！
 import 'package:isar/isar.dart';
+import '../../data/tag_dictionary.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/photo_service.dart';
+import '../../service/semantic_matching_service.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
@@ -20,6 +21,7 @@ class CreatePage extends StatefulWidget {
 
 class _CreatePageState extends State<CreatePage> {
   final TextEditingController _searchController = TextEditingController();
+  final SemanticMatchingService _semanticService = SemanticMatchingService();
   bool _isSearching = false;
 
   // 搜索结果
@@ -27,13 +29,35 @@ class _CreatePageState extends State<CreatePage> {
   // 用户勾选的照片集合（存 ID）
   final Set<int> _selectedPhotoIds = {};
 
+  List<String> get _candidateLabels {
+    final input = _searchController.text.trim();
+    if (input.isEmpty) {
+      return memoriaMasterLabels.take(6).toList(growable: false);
+    }
+
+    final normalizedInput = input.toLowerCase();
+    final matched = memoriaMasterLabels
+        .where(
+          (label) =>
+              label.toLowerCase().contains(normalizedInput) ||
+              normalizedInput.contains(label.toLowerCase()),
+        )
+        .toList(growable: false);
+
+    if (matched.isNotEmpty) {
+      return matched.take(6).toList(growable: false);
+    }
+
+    return memoriaMasterLabels.take(6).toList(growable: false);
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
   }
 
-  // 🧠 终极版：本地实体截流 (NER) + LLM 语义扩展
+  // 🧠 语义检索版：本地实体截流 (时间/地点) + Text Embedding 余弦排序
   Future<void> _performSearch(String query) async {
     if (query.trim().isEmpty) return;
 
@@ -59,14 +83,11 @@ class _CreatePageState extends State<CreatePage> {
     }
 
     // ==========================================
-    // 💡 阶段一：建立本地知识库 (暴力脱水版)
+    // 💡 阶段一：建立地点知识库（用于 NER）
     // ==========================================
-    final Set<String> allUniqueTags = {};
     final Set<String> allLocations = {};
 
     for (var photo in allAnalyzedPhotos) {
-      if (photo.aiTags != null) allUniqueTags.addAll(photo.aiTags!);
-
       final rawLocs = [photo.province, photo.city, photo.district];
       for (var loc in rawLocs) {
         if (loc == null || loc.trim().isEmpty) continue;
@@ -118,67 +139,9 @@ class _CreatePageState extends State<CreatePage> {
     );
 
     // ==========================================
-    // 💡 阶段三：AI 查询扩展 (仅在需要时调用)
+    // 💡 阶段三：先做时空过滤，缩小候选集合
     // ==========================================
-    List<String> targetTags = [];
-
-    if (remainingQuery.isNotEmpty) {
-      try {
-        const baseUrl = String.fromEnvironment('LLM_BASE_URL');
-        const apiPath = String.fromEnvironment('LLM_API_PATH');
-        const model = String.fromEnvironment('LLM_MODEL');
-        const apiKey = String.fromEnvironment('LLM_API_KEY');
-
-        final prompt =
-            """
-你是一个相册搜索助手。用户想要搜索的核心内容是：“$remainingQuery”。
-当前相册的标签库有：${allUniqueTags.join(', ')}。
-请挑选出所有与“$remainingQuery”在语义上相关的标签。只返回标签名，用英文逗号分隔，不要解释。如果没有相关标签，返回“无”。
-""";
-
-        print("🤖 [大模型] 正在向 DeepSeek 请求扩展查询词...");
-        final request = await HttpClient().postUrl(
-          Uri.parse('$baseUrl$apiPath'),
-        );
-        request.headers.set('Authorization', 'Bearer $apiKey');
-        request.headers.set('Content-Type', 'application/json; charset=utf-8');
-        request.write(
-          jsonEncode({
-            "model": model,
-            "messages": [
-              {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.1,
-          }),
-        );
-
-        final response = await request.close();
-        final responseBody = await response.transform(utf8.decoder).join();
-        final aiReply = jsonDecode(
-          responseBody,
-        )['choices'][0]['message']['content'].toString().trim();
-
-        print("💡 [大模型] 关联到的标签有: $aiReply");
-        if (aiReply != '无' && aiReply.isNotEmpty) {
-          targetTags = aiReply
-              .split(',')
-              .map((e) => e.trim().toLowerCase())
-              .toList();
-        }
-      } catch (e) {
-        print("⚠️ AI 请求失败，降级处理: $e");
-        targetTags = [remainingQuery.toLowerCase()];
-      }
-    } else {
-      print("⚡ [急速直达] 纯时空查询，跳过 AI 网络请求！");
-      // 模拟极速查找的视觉缓冲
-      await Future.delayed(const Duration(milliseconds: 300));
-    }
-
-    // ==========================================
-    // 💡 阶段四：本地多模态综合交叉过滤
-    // ==========================================
-    final List<PhotoEntity> matchedPhotos = [];
+    final List<PhotoEntity> candidates = [];
 
     for (var photo in allAnalyzedPhotos) {
       bool isMatch = true; // 采取 AND 淘汰制：必须同时满足被提取出的条件
@@ -205,70 +168,66 @@ class _CreatePageState extends State<CreatePage> {
         if (!hitLoc) isMatch = false;
       }
 
-      // 判定 C: 语义/标签拦截 (当且仅当存在剩余语义词时)
-      if (isMatch && remainingQuery.isNotEmpty) {
-        bool hitTag = false;
-        // 🌟 如果提取阶段不小心漏掉了（比如用户搜了个奇葩缩写），在这里做最后的地址兜底匹配
-        final locationText =
-            '${photo.province ?? ''} ${photo.city ?? ''} ${photo.district ?? ''}'
-                .replaceAll(RegExp(r'[省市区县]'), '');
-        final ocrTextLower = (photo.ocrText ?? '').toLowerCase();
-        final ocrTagsLower = (photo.ocrTags ?? const <String>[])
-            .map((tag) => tag.toLowerCase())
-            .toSet();
-        if (locationText.contains(remainingQuery) ||
-            remainingQuery.contains(
-              locationText.isNotEmpty ? locationText : '无极',
-            )) {
-          hitTag = true;
-        }
-        if (!hitTag && ocrTextLower.isNotEmpty) {
-          if (ocrTextLower.contains(remainingQuery) ||
-              remainingQuery.contains(ocrTextLower)) {
-            hitTag = true;
-          }
-        }
-        if (!hitTag && photo.aiTags != null) {
-          final photoTagsLower = photo.aiTags!
-              .map((t) => t.toLowerCase())
-              .toSet();
-          // AI 提供目标标签时
-          if (targetTags.isNotEmpty) {
-            if (targetTags.any(
-              (target) =>
-                  photoTagsLower.contains(target) ||
-                  ocrTagsLower.contains(target) ||
-                  ocrTextLower.contains(target) ||
-                  target.contains(photoTagsLower.firstOrNull ?? '无极'),
-            )) {
-              hitTag = true;
-            }
-          }
-          // AI 降级或查无结果时，用剩余词暴力兜底
-          if (!hitTag) {
-            if (photo.aiTags!.any(
-              (tag) =>
-                  tag.toLowerCase().contains(remainingQuery) ||
-                  remainingQuery.contains(tag.toLowerCase()),
-            )) {
-              hitTag = true;
-            }
-          }
-          if (!hitTag && ocrTagsLower.isNotEmpty) {
-            if (ocrTagsLower.any(
-              (tag) =>
-                  tag.contains(remainingQuery) ||
-                  remainingQuery.contains(tag),
-            )) {
-              hitTag = true;
-            }
-          }
-        }
-        if (!hitTag) isMatch = false;
-      }
-
       if (isMatch) {
-        matchedPhotos.add(photo);
+        candidates.add(photo);
+      }
+    }
+
+    if (candidates.isEmpty) {
+      print('🎯 [综合过滤] 时空过滤后候选为 0');
+      if (mounted) {
+        setState(() {
+          _searchResults = const <PhotoEntity>[];
+          _isSearching = false;
+        });
+      }
+      return;
+    }
+
+    // ==========================================
+    // 💡 阶段四：文本向量检索（语义排序）
+    // ==========================================
+    final semanticQuery = remainingQuery.isNotEmpty ? remainingQuery : query.trim();
+    List<PhotoEntity> matchedPhotos;
+
+    // 纯时空查询：直接返回候选集合（已是时间倒序）
+    if (semanticQuery.replaceAll(RegExp(r'\s+'), '').isEmpty) {
+      matchedPhotos = List<PhotoEntity>.from(candidates);
+    } else {
+      try {
+        await _semanticService.warmUp();
+        final textVector = await _semanticService.embedText(semanticQuery);
+
+        final scored = <MapEntry<PhotoEntity, double>>[];
+        for (final photo in candidates) {
+          final imageEmbedding = photo.imageEmbedding;
+          if (imageEmbedding == null || imageEmbedding.isEmpty) {
+            continue;
+          }
+          if (imageEmbedding.length != textVector.length) {
+            continue;
+          }
+          final score = _semanticService.calculateSimilarity(
+            textVector,
+            imageEmbedding,
+          );
+          scored.add(MapEntry<PhotoEntity, double>(photo, score));
+        }
+
+        if (scored.isEmpty) {
+          matchedPhotos = List<PhotoEntity>.from(candidates);
+        } else {
+          scored.sort((a, b) => b.value.compareTo(a.value));
+          matchedPhotos = scored.map((e) => e.key).toList(growable: false);
+          final preview = scored
+              .take(5)
+              .map((e) => '${e.value.toStringAsFixed(4)}#${e.key.id}')
+              .join(', ');
+          print('🧠 [语义检索] query="$semanticQuery" top5=[$preview]');
+        }
+      } catch (e) {
+        print('⚠️ 语义检索失败，降级为时空过滤结果: $e');
+        matchedPhotos = List<PhotoEntity>.from(candidates);
       }
     }
 
@@ -722,12 +681,33 @@ class _CreatePageState extends State<CreatePage> {
                 minLines: 1,
                 textInputAction: TextInputAction.search,
                 onSubmitted: _performSearch,
+                onChanged: (_) => setState(() {}),
                 decoration: const InputDecoration(
                   hintText: '想看什么？比如 "去年的日本之旅"...',
                   hintStyle: TextStyle(color: Colors.grey),
                   border: InputBorder.none,
                   isDense: true,
                 ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _candidateLabels
+                    .map(
+                      (label) => ActionChip(
+                        label: Text(label),
+                        onPressed: () {
+                          _searchController.text = label;
+                          _searchController.selection = TextSelection.fromPosition(
+                            TextPosition(offset: label.length),
+                          );
+                          FocusScope.of(context).unfocus();
+                          _performSearch(label);
+                        },
+                      ),
+                    )
+                    .toList(growable: false),
               ),
               const SizedBox(height: 8),
               // 右下角的粉色搜索按钮

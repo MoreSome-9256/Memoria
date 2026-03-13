@@ -5,7 +5,6 @@ import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import '../../models/entity/event_entity.dart';
 import '../../models/entity/photo_entity.dart';
-import '../../models/entity/story_entity.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_service.dart';
 import 'story_result_page.dart';
@@ -106,46 +105,14 @@ class _ConfigPageState extends State<ConfigPage> {
       }
 
       // 3. 调用 StoryService 生成故事
-      // ⚠️ 注意：你需要去 StoryService 里把原来的 length 参数改成接收 aspectRatio 和 platform！
-      /*final story = await StoryService().generateStory(
+      final story = await StoryService().generateStory(
         event: eventEntity,
         selectedPhotos: photoEntities,
         title: _themeController.text.trim(),
         subtitle: _selectedSubtitle ?? '',
-        // 🌟 传入新增的两个配置项 (传字符串给后端/AI更方便解析)
         aspectRatio: _selectedAspectRatio.name,
         platform: _selectedPlatform.name,
-      );*/ // 暂时注释掉！后期一定记得改回来！
-
-      // 🌟 【测试专用】手动捏一个极其逼真的假 StoryEntity
-      // 🌟 修复点：从 photoEntities (List<PhotoEntity>) 里提取 int 类型的 id
-      final databaseIds = photoEntities.map((e) => e.id).toList();
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final story = StoryEntity()
-        ..title = _themeController.text.trim().isEmpty
-            ? '测试视频生成'
-            : _themeController.text.trim()
-        ..subtitle = _selectedSubtitle ?? '沙盒测试'
-        ..createdAt = now
-        ..updatedAt = now
-        ..eventId = eventEntity
-            .id // 👈 必须传：否则存数据库时会报错
-        ..photoIds =
-            databaseIds // 👈 必须传：绑定的照片ID列表
-        ..photoCount = selectedAssetIds.length
-        ..isLlmGenerated = false
-        // ⚠️ 最最最关键的 content：必须带有 ![img](x) 占位符，否则 UI 无法切图！
-        ..content =
-            '''
-测试
-
-![img](0)
-
-Sandal Leap
-
-![img](1)
-'''
-                .trim();
+      );
 
       if (!mounted) return;
 
@@ -161,6 +128,8 @@ Sandal Leap
             builder: (context) => StoryResultPage.fromStoryEntity(
               storyEntity: story,
               photos: photoEntities,
+              isHorizontal:
+                  _selectedAspectRatio == VideoAspectRatio.horizontal,
             ),
           ),
         );

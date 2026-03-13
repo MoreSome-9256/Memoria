@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:photo_manager/photo_manager.dart';
 import '../../models/entity/event_entity.dart';
 import '../../models/event.dart';
 import '../../service/ai_service.dart';
@@ -154,7 +155,13 @@ class _AlbumPageState extends State<AlbumPage> {
             debugPrint("❌ [后台任务] AI 分析出错: $e");
           });
     } on PhotoScanException catch (e) {
-      if (mounted) {
+      if (!mounted) {
+        return;
+      }
+
+      if (e.code == PhotoScanError.permissionDenied) {
+        await _showPhotoPermissionGuide(e.message);
+      } else {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('⚠️ ${e.message}')));
@@ -171,6 +178,33 @@ class _AlbumPageState extends State<AlbumPage> {
         setState(() => _isRefreshing = false);
       }
     }
+  }
+
+  Future<void> _showPhotoPermissionGuide(String message) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('需要完整照片权限'),
+          content: Text(
+            '$message\n\n当前系统不会再次弹出照片选择器，请手动进入系统设置，将“照片与视频”权限改为“允许所有照片”。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('稍后处理'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await PhotoManager.openSetting();
+              },
+              child: const Text('去系统设置'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _resetCacheAndRescan() async {

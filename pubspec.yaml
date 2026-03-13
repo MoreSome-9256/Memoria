@@ -98,6 +98,9 @@ flutter:
     - ai_tools/test_student.png
     - ai_tools/test1.png
     - ai_tools/test_youleyuan.png
+    - assets/mobileclip2/s2/vision_model.onnx
+    - assets/mobileclip2/s2/text_model.onnx
+    - assets/clip_tokenizer/
     - mobileclip_vision_ir9.onnx
     - assets/audio/sandal_leap.mp3
     - assets/audio/sandal_leap_beats.json

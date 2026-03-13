@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../data/tag_dictionary.dart';
 import '../../service/mobileclip_vision_service.dart';
 import '../../service/ncnn_mobileclip_native_service.dart';
+import '../../service/semantic_matching_service.dart';
 
 class MobileClipVectorProbePage extends StatefulWidget {
   const MobileClipVectorProbePage({super.key});
@@ -20,11 +22,14 @@ class MobileClipVectorProbePage extends StatefulWidget {
 class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
   final MobileClipVisionService _visionService = MobileClipVisionService();
   final NcnnMobileClipNativeService _ncnnService = NcnnMobileClipNativeService();
+  final SemanticMatchingService _semanticService = SemanticMatchingService();
 
   bool _isRunning = false;
   String? _errorMessage;
+  String? _zeroShotWarning;
   String? _reportFilePath;
   List<_VectorProbeResult> _results = const <_VectorProbeResult>[];
+  List<_ZeroShotResult> _zeroShotResults = const <_ZeroShotResult>[];
 
   @override
   void initState() {
@@ -36,11 +41,28 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
     setState(() {
       _isRunning = true;
       _errorMessage = null;
+      _zeroShotWarning = null;
     });
 
     try {
       await _visionService.warmUp();
       await _ncnnService.ensureModelInitialized();
+      var zeroShotEnabled = true;
+      try {
+        await _semanticService.warmUp();
+        await _semanticService.preCacheTagMap(memoriaMasterTaxonomyPromptToLabel);
+      } catch (error) {
+        zeroShotEnabled = false;
+        final message = error.toString();
+        if (message.contains('ArgMax') || message.contains('/ArgMax')) {
+          _zeroShotWarning =
+              '当前设备内置 onnxruntime 不支持 ArgMax 算子，已自动跳过零样本打标，只保留视觉向量探针。\n\n'
+              '建议：升级 onnxruntime Android 运行库后再开启语义打标。';
+        } else {
+          _zeroShotWarning =
+              '零样本打标初始化失败，已自动跳过：$message';
+        }
+      }
       final output = <_VectorProbeResult>[];
 
       for (final sample in _probeSamples) {
@@ -60,6 +82,25 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
         );
       }
 
+      // Zero-shot tagging: reuse the onnxVectors already computed above.
+      final zsOutput = <_ZeroShotResult>[];
+      if (zeroShotEnabled) {
+        for (final probeResult in output) {
+          final scored = await _semanticService.scoreTagsForImage(
+            imageVector: probeResult.onnxVector,
+            tagMap: memoriaMasterTaxonomyPromptToLabel,
+            topK: 3,
+          );
+          zsOutput.add(
+            _ZeroShotResult(label: probeResult.sample.label, scored: scored),
+          );
+          debugPrint(
+            'ZERO_SHOT [${probeResult.sample.label}]: '
+            '${scored.map((e) => "${e.label}=${e.score.toStringAsFixed(4)}").join(", ")}',
+          );
+        }
+      }
+
       final report = <String, Object?>{
         'results': output.map((item) => item.toJson()).toList(growable: false),
       };
@@ -72,6 +113,7 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
       }
       setState(() {
         _results = output;
+        _zeroShotResults = zsOutput;
         _reportFilePath = reportFilePath;
       });
     } catch (error) {
@@ -157,7 +199,28 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
               ),
             ),
           ],
+          if (_zeroShotWarning != null) ...[
+            Card(
+              color: Theme.of(context).colorScheme.tertiaryContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: SelectableText(_zeroShotWarning!),
+              ),
+            ),
+          ],
           ..._results.map((result) => _VectorProbeCard(result: result)),
+          if (_zeroShotResults.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Text(
+                '🏷️ 零样本打标 (Zero-Shot Tagging)',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            const SizedBox(height: 4),
+            ..._zeroShotResults.map((r) => _ZeroShotCard(result: r)),
+          ],
         ],
       ),
     );
@@ -291,4 +354,82 @@ double _l2Distance(List<double> left, List<double> right) {
 String _formatVectorSlice(List<double> vector, int count) {
   final preview = vector.take(count).map((value) => value.toStringAsFixed(6));
   return '[${preview.join(', ')}]';
+}
+
+// ---------------------------------------------------------------------------
+// Zero-shot result data + card widget
+// ---------------------------------------------------------------------------
+
+class _ZeroShotResult {
+  _ZeroShotResult({required this.label, required this.scored});
+
+  final String label;
+  final List<({String label, double score})> scored;
+}
+
+class _ZeroShotCard extends StatelessWidget {
+  const _ZeroShotCard({required this.result});
+
+  final _ZeroShotResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              result.label,
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 10),
+            ...result.scored.map((entry) {
+              final pct = entry.score.clamp(0.0, 1.0);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            entry.label,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ),
+                        Text(
+                          entry.score.toStringAsFixed(4),
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.copyWith(
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: LinearProgressIndicator(
+                        value: pct,
+                        minHeight: 7,
+                        backgroundColor:
+                            colorScheme.surfaceContainerHighest,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
 }

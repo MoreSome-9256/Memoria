@@ -72,6 +72,33 @@ flutter run \
   --dart-define=LLM_API_KEY=YOUR_API_KEY
 ```
 
+当前项目常用的真机启动模板（按你们最近的配置整理）如下：
+
+```bash
+flutter run -d YOUR_DEVICE_ID \
+  --dart-define=LLM_BASE_URL=https://api.deepseek.com/v1 \
+  --dart-define=LLM_API_PATH=/chat/completions \
+  --dart-define=LLM_MODEL=deepseek-chat \
+  --dart-define=LLM_API_KEY=YOUR_API_KEY \
+  --dart-define=AMAP_WEB_KEY=YOUR_AMAP_WEB_KEY
+```
+
+如果要切换 MobileCLIP2 模型来源，也可以追加这些可选参数：
+
+```bash
+# 视觉模型：优先从本地文件读取（可选）
+--dart-define=MOBILECLIP2_ONNX_FILE=/absolute/path/to/vision_model.onnx
+
+# 视觉模型：改成其它已注册 asset（可选）
+--dart-define=MOBILECLIP2_ONNX_ASSET=assets/mobileclip2/s2/vision_model.onnx
+
+# 文本模型：从本地文件读取（可选）
+--dart-define=MOBILECLIP2_TEXT_ONNX_FILE=/absolute/path/to/text_model.onnx
+
+# 输入尺寸覆盖（可选）
+--dart-define=MOBILECLIP_ONNX_INPUT_SIZE=256
+```
+
 ## 运行配置（可选）
 
 ### 高德逆地理

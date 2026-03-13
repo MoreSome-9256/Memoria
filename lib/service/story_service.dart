@@ -51,7 +51,9 @@ class StoryService {
     required List<PhotoEntity> selectedPhotos,
     required String title,
     required String subtitle,
-    required StoryLength length,
+    // required StoryLength length,
+    required String aspectRatio,
+    required String platform
   }) async {
     try {
       if (event.photoCount < EventService.minPhotosForDisplay) {

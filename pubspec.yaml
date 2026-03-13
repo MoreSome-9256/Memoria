@@ -53,6 +53,8 @@ dependencies:
   image: ^4.2.0
   ffi: ^2.1.3
   shared_preferences: ^2.5.3
+  audioplayers: ^6.6.0
+  flutter_animate: ^4.5.2
 
 dev_dependencies:
   flutter_test:
@@ -95,6 +97,10 @@ flutter:
     - ai_tools/test1.png
     - ai_tools/test_youleyuan.png
     - mobileclip_vision_ir9.onnx
+    - assets/audio/sandal_leap.mp3
+    - assets/audio/sandal_leap_beats.json
+    - assets/audio/Hachimi.mp3
+    - assets/audio/Hachimi_beats.json
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

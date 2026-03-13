@@ -1,9 +1,0 @@
-{
-    "workbench.colorTheme": "Default Dark+",
-    "java.configuration.updateBuildConfiguration": "interactive",
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda",
-    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/.cxx/tools/debug/arm64-v8a/compile_commands.json",
-    "C_Cpp.default.configurationProvider": "ms-vscode.cpptools",
-    "cmake.sourceDirectory": "C:/Users/2887/StudioProjects/Memoria/windows/flutter"
-}

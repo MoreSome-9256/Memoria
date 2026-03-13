@@ -21,8 +21,7 @@ migrate_working_dir/
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line
 # is commented out by default.
-#.vscode/
-.vscode/c_cpp_properties.json
+.vscode/
 
 # Flutter/Dart/Pub related
 **/doc/api/
@@ -91,6 +90,7 @@ CLAUDE.md
 /saved_model_silu/
 /saved_model_pseudo_gelu/
 /saved_model_pseudo_erf/
+
 
 # --- NCNN large runtime assets ---
 # 团队协作约定：超过几十 MB 的大文件不进 Git，统一通过群文件/网盘同步。

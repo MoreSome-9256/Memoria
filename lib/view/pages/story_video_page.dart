@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:math' as math;
+import '../../effects/subtitle_effect.dart';
 
 class StoryVideoPage extends StatefulWidget {
   final String title;
@@ -38,11 +39,18 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   int _currentLyricIndex = 0;
   String _currentLyricText = "";
   // 🎛️ VFX 控制台参数
-  double _shakeIntensity = 0.8; // 震动幅度 (Amplitude)
-  double _shakeFrequency = 15.0; // 🌟 新增：震动频率/马达转速 (Frequency)，默认15
+  double _shakeIntensity = 0.0; // 震动幅度 (Amplitude)
+  double _shakeFrequency = 1.0; // 🌟 新增：震动频率/马达转速 (Frequency)，默认15
 
   bool _enableFlash = true;
   double _textBlurIntensity = 4.0;
+
+  // 🔤 字幕引擎参数
+  String _currentTextStyle =
+      'hero'; // 'standard' (普通底栏), 'hero' (居中大字), 'cards' (字卡散落)
+  double _textYPosition = 0.8; // 0.0 为顶部，0.5 为屏幕正中，1.0 为贴底
+  double _textSize = 24.0;
+  String _fontFamily = 'sans-serif'; // 以后可以接入 Google Fonts
 
   List<dynamic> _beatData = []; // 存完整的 JSON 数据（包含 ms 和 energy）
 
@@ -144,21 +152,18 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     int beatIndex = 0;
 
     _positionSubscription = _audioPlayer.onPositionChanged.listen((Duration p) {
+      // 1. 核心卫兵：防止数组越界
       if (beatIndex < _beatData.length &&
           _currentIndex < widget.sections.length - 1) {
         if (p.inMilliseconds >= _beatData[beatIndex]['ms']) {
-          // 🛑 关掉情绪绑定，变成最原始的固定节拍切图 (测试用)
-          beatIndex += 8;
-          if (mounted) setState(() => _currentIndex++);
-          // 🌟 2. 核心修正：无论高能还是平缓，只要触发了节点，图和词就一起切！
           if (mounted) {
             setState(() {
-              _currentIndex++; // 切图
+              // 🌟 修正：只在这里递增一次！
+              _currentIndex++;
+              beatIndex += 8;
 
-              // 切词逻辑：利用取模运算 (%) 让歌词循环播放，防止数组越界报错
+              // 2. 切词逻辑：利用取模让歌词循环
               if (_lyricQueue.isNotEmpty) {
-                // 如果你想让歌词停在最后一句，就用 min(_currentIndex, _lyricQueue.length - 1)
-                // 这里用循环是为了方便你一直测试看效果
                 int lyricIdx = _currentIndex % _lyricQueue.length;
                 _currentLyricText = _lyricQueue[lyricIdx];
               }
@@ -173,6 +178,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         setState(() {
           _isPlaying = false;
           _currentIndex = 0;
+          _currentLyricIndex = 0; // 重置歌词索引
         });
       }
     });
@@ -205,6 +211,16 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     if (widget.sections.isEmpty)
       return const Scaffold(body: Center(child: Text('无内容')));
     final currentSection = widget.sections[_currentIndex];
+    // 1. 先定义好字幕层，方便复用
+    final subtitleLayer = SubtitleEffectLayer(
+      text: _currentLyricText,
+      effectType: _currentTextStyle,
+      yPosition: _textYPosition,
+      fontSize: _textSize,
+      fontFamily: _fontFamily,
+      blurIntensity: _textBlurIntensity,
+      vfxController: _vfxController,
+    );
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -247,6 +263,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
               duration: 800.ms,
               child: _buildAdaptiveImageLayer(
                 currentSection.photo.path,
+                subtitleLayer,
               ), // 你的自适应画幅层
             ),
           ),
@@ -276,74 +293,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
             },
           ),
 
-          // ⬛ 3. 底部字幕遮罩
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: 250,
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomCenter,
-                  end: Alignment.topCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: 0.8),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          // 🔤 4. Kinetic Typography (动态排版字幕)
-          Positioned(
-            bottom: 120,
-            left: 24,
-            right: 24,
-            // 🌟 换成真实的动态歌词！
-            child: _currentLyricText.isEmpty
-                ? const SizedBox.shrink() // 兜底：如果是空行就不渲染
-                : Text(
-                        _currentLyricText, // 🌟 换成了咱们自己切的歌词变量！
-                        key: ValueKey<String>(
-                          _currentLyricText,
-                        ), // 🌟 关键：把 Key 绑在歌词上，歌词一变，动画就重置！
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          height: 1.5,
-                          fontWeight: FontWeight.bold,
-                          shadows: [
-                            Shadow(
-                              color: Colors.black87,
-                              blurRadius: 4,
-                              offset: Offset(0, 1),
-                            ),
-                          ],
-                        ),
-                        textAlign: TextAlign.center,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                      )
-                      .animate() // 🌟 魔法开始
-                      .fade(duration: 400.ms, curve: Curves.easeOut) // 淡入
-                      .slideY(
-                        begin: 0.5,
-                        end: 0,
-                        duration: 400.ms,
-                        curve: Curves.easeOutBack,
-                      ) // 从下往上弹入
-                      .shimmer(
-                        duration: 1000.ms,
-                        color: Colors.white70,
-                      ) // 表面扫过一道高光（极度有质感！）
-                      .blurXY(
-                        begin: _textBlurIntensity, // 换成变量
-                        end: 0,
-                        duration: 300.ms,
-                      ), // 带有焦外模糊逐渐变清晰的电影感
-          ),
+  
 
           // ⏯️ 5. 控制层
           _buildControls(),
@@ -374,61 +324,66 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       },
     );
   }*/
-  // 🎬 核心特效：根据长宽比自适应的视觉层
-  Widget _buildAdaptiveImageLayer(String imagePath) {
-    final file = File(imagePath);
-    if (!file.existsSync()) {
-      return Container(
-        key: ValueKey<String>(imagePath),
-        color: Colors.grey[900],
-      );
-    }
 
-    // 基础的 Ken Burns 放大动画
+  // 🎬 核心特效：根据长宽比自适应的视觉层（已支持字幕嵌入）
+  Widget _buildAdaptiveImageLayer(String imagePath, Widget subtitle) {
+    final file = File(imagePath);
+
+    // 1. 基础的 Ken Burns 放大动画
     Widget kenBurnsAnimation = TweenAnimationBuilder(
       tween: Tween<double>(begin: 1.0, end: 1.15),
       duration: const Duration(seconds: 5),
       builder: (context, scale, child) {
         return Transform.scale(
           scale: scale,
-          child: Image.file(
-            file,
-            fit: BoxFit.cover,
-            width: double.infinity,
-            height: double.infinity,
-          ),
+          child: file.existsSync()
+              ? Image.file(
+                  file,
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  height: double.infinity,
+                )
+              : Container(color: Colors.grey[900]),
         );
       },
     );
 
-    // 🌟 竖屏模式：直接铺满全屏，极度沉浸
+    // 🌟 将图片和字幕打包成一个“容器内容”
+    Widget containerContent = Stack(
+      fit: StackFit.expand,
+      children: [
+        kenBurnsAnimation,
+        // 🔒 字幕现在被“锁”在了这个 Stack 里，它的 Alignment 将相对于这个容器
+        subtitle,
+      ],
+    );
+
+    // 🌟 竖屏模式：依然铺满全屏
     if (!widget.isHorizontal) {
       return SizedBox.expand(
-        key: ValueKey<String>(imagePath), // 必须加 Key，保证 AnimatedSwitcher 生效
-        child: kenBurnsAnimation,
+        key: ValueKey<String>(imagePath),
+        child: containerContent,
       );
     }
-    // 🌟 横屏模式：16:9 居中显示，上下填充带有高级毛玻璃模糊的背景图
+    // 🌟 横屏模式：16:9 居中，字幕会被 ClipRect 限制在框内
     else {
       return Stack(
-        key: ValueKey<String>(imagePath), // 必须加在最外层
+        key: ValueKey<String>(imagePath),
         fit: StackFit.expand,
         children: [
-          // 1. 底层模糊背景
-          Image.file(file, fit: BoxFit.cover),
+          // 底层模糊背景
+          if (file.existsSync()) Image.file(file, fit: BoxFit.cover),
           BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-            child: Container(
-              color: Colors.black.withValues(alpha: 0.6),
-            ), // 加一层黑纱，避免背景太亮抢戏
+            child: Container(color: Colors.black.withValues(alpha: 0.6)),
           ),
           // 2. 核心 16:9 画幅层
           Center(
             child: AspectRatio(
               aspectRatio: 16 / 9,
               child: ClipRect(
-                // 裁剪掉放大的部分，不让它溢出 16:9 的框
-                child: kenBurnsAnimation,
+                // 🚀 这里是关键！内容（含字幕）现在只会在 16:9 的框内显示
+                child: containerContent,
               ),
             ),
           ),
@@ -512,106 +467,217 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       context: context,
       backgroundColor: Colors.black87,
       barrierColor: Colors.transparent, // 透明背景，不遮挡视频观看
+      isScrollControlled: true,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
-            return Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'VFX 特效控制台',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 1. 震动幅度滑块
-                  Row(
+            return SafeArea(
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        '震动幅度',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                      Expanded(
-                        child: Slider(
-                          value: _shakeIntensity,
-                          min: 0,
-                          max: 3.0,
-                          divisions: 30,
-                          activeColor: Colors.pinkAccent,
-                          onChanged: (val) {
-                            setModalState(() => _shakeIntensity = val);
-                            setState(() {});
-                          },
+                        'VFX 特效控制台',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
                         ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // 1. 震动幅度滑块
+                      Row(
+                        children: [
+                          const Text(
+                            '震动幅度',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: _shakeIntensity,
+                              min: 0,
+                              max: 3.0,
+                              divisions: 30,
+                              activeColor: Colors.pinkAccent,
+                              onChanged: (val) {
+                                setModalState(() => _shakeIntensity = val);
+                                setState(() {});
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      // 🌟 1.5 新增：震动频率 (马达转速) 滑块
+                      Row(
+                        children: [
+                          const Text(
+                            '震动频率',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: _shakeFrequency,
+                              min: 1.0,
+                              max: 50.0, // 最高一拍震 50 次，绝对够鬼畜了
+                              divisions: 49,
+                              activeColor: Colors.orangeAccent, // 换个颜色区分
+                              onChanged: (val) {
+                                setModalState(() => _shakeFrequency = val);
+                                setState(() {});
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      // 2. 闪光弹开关
+                      SwitchListTile(
+                        title: const Text(
+                          '高光闪烁 (Flash)',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                        activeColor: Colors.pinkAccent,
+                        value: _enableFlash,
+                        onChanged: (val) {
+                          setModalState(() => _enableFlash = val);
+                          setState(() {});
+                        },
+                      ),
+
+                      // 3. 字幕模糊度滑块
+                      Row(
+                        children: [
+                          const Text(
+                            '字幕失焦',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: _textBlurIntensity,
+                              min: 0,
+                              max: 20,
+                              activeColor: Colors.cyanAccent,
+                              onChanged: (val) {
+                                setModalState(() => _textBlurIntensity = val);
+                                setState(() {});
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Divider(color: Colors.white24, height: 32),
+                      const Text(
+                        '🔤 排版与字幕',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // 1. 字幕风格选择器
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            '字幕特效',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                          DropdownButton<String>(
+                            value: _currentTextStyle,
+                            dropdownColor: Colors.grey[900],
+                            style: const TextStyle(
+                              color: Colors.pinkAccent,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            underline: const SizedBox(),
+                            items: const [
+                              DropdownMenuItem(
+                                value: 'standard',
+                                child: Text('Standard (底部平滑)'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'hero',
+                                child: Text('Hero (居中呼吸)'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'cards',
+                                child: Text('Cards (字卡逐字)'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'layered',
+                                child: Text('Layered (图层堆叠)'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'outline',
+                                child: Text('Outline (大字描边)'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'strip',
+                                child: Text('Strip (文字条)'),
+                              ),
+                            ],
+                            onChanged: (val) {
+                              if (val != null) {
+                                setModalState(() => _currentTextStyle = val);
+                                setState(() {});
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+
+                      // 2. Y轴位置滑块
+                      Row(
+                        children: [
+                          const Text(
+                            '垂直位置',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: _textYPosition,
+                              min: 0.1,
+                              max: 0.9,
+                              activeColor: Colors.blueAccent,
+                              onChanged: (val) {
+                                setModalState(() => _textYPosition = val);
+                                setState(() {});
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      // 3. 字号滑块
+                      Row(
+                        children: [
+                          const Text(
+                            '字体大小',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: _textSize,
+                              min: 14.0,
+                              max: 60.0,
+                              activeColor: Colors.blueAccent,
+                              onChanged: (val) {
+                                setModalState(() => _textSize = val);
+                                setState(() {});
+                              },
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-
-                  // 🌟 1.5 新增：震动频率 (马达转速) 滑块
-                  Row(
-                    children: [
-                      const Text(
-                        '震动频率',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                      Expanded(
-                        child: Slider(
-                          value: _shakeFrequency,
-                          min: 1.0,
-                          max: 50.0, // 最高一拍震 50 次，绝对够鬼畜了
-                          divisions: 49,
-                          activeColor: Colors.orangeAccent, // 换个颜色区分
-                          onChanged: (val) {
-                            setModalState(() => _shakeFrequency = val);
-                            setState(() {});
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  // 2. 闪光弹开关
-                  SwitchListTile(
-                    title: const Text(
-                      '高光闪烁 (Flash)',
-                      style: TextStyle(color: Colors.white70),
-                    ),
-                    activeColor: Colors.pinkAccent,
-                    value: _enableFlash,
-                    onChanged: (val) {
-                      setModalState(() => _enableFlash = val);
-                      setState(() {});
-                    },
-                  ),
-
-                  // 3. 字幕模糊度滑块
-                  Row(
-                    children: [
-                      const Text(
-                        '字幕失焦',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                      Expanded(
-                        child: Slider(
-                          value: _textBlurIntensity,
-                          min: 0,
-                          max: 20,
-                          activeColor: Colors.cyanAccent,
-                          onChanged: (val) {
-                            setModalState(() => _textBlurIntensity = val);
-                            setState(() {});
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                ),
               ),
             );
           },

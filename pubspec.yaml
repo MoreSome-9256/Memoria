@@ -52,6 +52,10 @@ dependencies:
   onnxruntime: ^1.4.1
   image: ^4.2.0
 
+dependency_overrides:
+  amap_flutter_location:
+    path: third_party/amap_flutter_location
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -80,8 +84,8 @@ flutter:
   assets:
     - assets/images/logo.png
     - assets/images/welcome_bg.jpg
-    - assets/expanded_tags_taxonomy.json
-    - mobileclip_vision_ir9.onnx
+    - checkpoints/expanded_tags_taxonomy.json
+    - checkpoints/mobileclip_vision_ir9.onnx
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

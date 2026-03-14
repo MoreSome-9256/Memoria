@@ -12,10 +12,9 @@ packages:
   amap_flutter_location:
     dependency: "direct main"
     description:
-      name: amap_flutter_location
-      sha256: f35ff00e196d579608e0bc28ccbc1f6f53787644702f947de941f775769cc701
-      url: "https://pub.flutter-io.cn"
-    source: hosted
+      path: "third_party/amap_flutter_location"
+      relative: true
+    source: path
     version: "3.0.0"
   analyzer:
     dependency: transitive

@@ -1,14 +1,23 @@
 import 'package:flutter/material.dart';
 
-class ProfilePage extends StatelessWidget {
+import 'internvl_lab_page.dart';
+
+class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  bool _showInternvlLab = false;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('我的'), elevation: 0),
       body: ListView(
-        children: [
+        children: <Widget>[
           const SizedBox(height: 20),
           CircleAvatar(
             radius: 50,
@@ -45,7 +54,38 @@ class ProfilePage extends StatelessWidget {
             '隐私设置',
             '本地优先，保护隐私',
           ),
-          _buildSettingsTile(context, Icons.info_outline, '关于', '版本 1.0.0'),
+          CheckboxListTile(
+            value: _showInternvlLab,
+            title: const Text('显示 VLM 推理入口'),
+            subtitle: const Text('仅用于手机本地多模态推理，避免与正式功能冲突'),
+            controlAffinity: ListTileControlAffinity.trailing,
+            onChanged: (bool? value) {
+              setState(() {
+                _showInternvlLab = value ?? false;
+              });
+            },
+          ),
+          if (_showInternvlLab)
+            _buildSettingsTile(
+              context,
+              Icons.memory_outlined,
+              'VLM 推理',
+              '选择图片并自由提问，直接在手机上完成多模态推理',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (BuildContext context) => const InternvlLabPage(),
+                  ),
+                );
+              },
+            ),
+          _buildSettingsTile(
+            context,
+            Icons.info_outline,
+            '关于',
+            '版本 1.0.0',
+          ),
         ],
       ),
     );
@@ -55,16 +95,15 @@ class ProfilePage extends StatelessWidget {
     BuildContext context,
     IconData icon,
     String title,
-    String subtitle,
-  ) {
+    String subtitle, {
+    VoidCallback? onTap,
+  }) {
     return ListTile(
       leading: Icon(icon),
       title: Text(title),
       subtitle: Text(subtitle),
       trailing: const Icon(Icons.chevron_right),
-      onTap: () {
-        // TODO: Navigate to settings detail
-      },
+      onTap: onTap,
     );
   }
 }

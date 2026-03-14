@@ -78,6 +78,41 @@ class LLMService {
   final String _modelName;
   final Dio _dio;
 
+  /// 是否是“本地或环回地址”的无鉴权模型服务。
+  ///
+  /// 这么判断的原因是：
+  /// - 远端云服务通常需要 API Key
+  /// - 同机本地服务（未来的手机本地 InternVL，或 adb reverse 到电脑的本地服务）
+  ///   往往不需要真正的鉴权
+  ///
+  /// 这样可以避免把本地服务误判成“未配置”，从而直接走到 mock 分支。
+  bool get _isLoopbackOrLanEndpoint {
+    final normalized = _baseUrl.trim();
+    if (normalized.isEmpty) {
+      return false;
+    }
+
+    final uri = Uri.tryParse(normalized);
+    final host = (uri?.host ?? '').toLowerCase();
+    if (host.isEmpty) {
+      return false;
+    }
+
+    if (host == '127.0.0.1' || host == 'localhost' || host == '10.0.2.2') {
+      return true;
+    }
+
+    return host.startsWith('192.168.') ||
+        host.startsWith('10.') ||
+        host.startsWith('172.16.') ||
+        host.startsWith('172.17.') ||
+        host.startsWith('172.18.') ||
+        host.startsWith('172.19.') ||
+        host.startsWith('172.2') ||
+        host.startsWith('172.30.') ||
+        host.startsWith('172.31.');
+  }
+
   /// 🎨 核心方法：生成创意标题
   ///
   /// 参数:
@@ -247,7 +282,9 @@ class LLMService {
 
   /// 📊 检查 API Key 是否已配置
   bool get isApiKeyConfigured =>
-      _apiKey.trim().isNotEmpty && _baseUrl.trim().isNotEmpty;
+      _baseUrl.trim().isNotEmpty &&
+      _modelName.trim().isNotEmpty &&
+      (_apiKey.trim().isNotEmpty || _isLoopbackOrLanEndpoint);
 
   /// 📝 生成博客文本内容
   ///
@@ -285,9 +322,14 @@ class LLMService {
     // print('🌐 [LLM REQUEST] POST $baseUrl$apiPath');
     // print('🧾 [LLM REQUEST BODY] ${jsonEncode(requestBody)}');
 
+    final headers = <String, String>{};
+    if (_apiKey.trim().isNotEmpty) {
+      headers['Authorization'] = 'Bearer $_apiKey';
+    }
+
     final response = await _dio.post(
       '$baseUrl$apiPath',
-      options: Options(headers: {'Authorization': 'Bearer $_apiKey'}),
+      options: Options(headers: headers.isEmpty ? null : headers),
       data: requestBody,
     );
 

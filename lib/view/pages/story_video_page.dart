@@ -9,6 +9,13 @@ import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:math' as math;
 import '../../effects/subtitle_effect.dart';
+import 'dart:ui' as ui;
+import 'package:flutter/rendering.dart';
+import 'dart:typed_data';
+import 'package:path_provider/path_provider.dart';
+import 'package:ffmpeg_kit_flutter_full_gpl/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_full_gpl/return_code.dart';
+import 'package:gal/gal.dart';
 
 class StoryVideoPage extends StatefulWidget {
   final String title;
@@ -44,6 +51,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
   bool _enableFlash = true;
   double _textBlurIntensity = 4.0;
+  final GlobalKey _renderKey = GlobalKey();
+  int _beatIntervalMs = 500; // 默认给个500，等加载JSON时会被覆盖
 
   // 🔤 字幕引擎参数
   String _currentTextStyle =
@@ -51,6 +60,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   double _textYPosition = 0.8; // 0.0 为顶部，0.5 为屏幕正中，1.0 为贴底
   double _textSize = 24.0;
   String _fontFamily = 'sans-serif'; // 以后可以接入 Google Fonts
+
+  bool _isExporting = false; // 🌟 控制是否处于导出模式
+  double _exportProgress = 0.0; // 🌟 导出百分比 (0.0 到 1.0)
 
   List<dynamic> _beatData = []; // 存完整的 JSON 数据（包含 ms 和 energy）
 
@@ -71,6 +83,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .toList();
+    if (_lyricQueue.isNotEmpty) {
+      _currentLyricText = _lyricQueue[0];
+    }
     // 🚀 加载 JSON
     _loadBeatDataAndStart();
   }
@@ -90,12 +105,12 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       double bpm = (data['bpm'] as num).toDouble();
 
       // 🌟 2. 算出一拍到底有多少毫秒 (60000 / BPM)
-      int beatIntervalMs = (60000 / bpm).round();
-      debugPrint("🎵 当前曲目 BPM: $bpm, 每拍间隔: ${beatIntervalMs}ms");
+      _beatIntervalMs = (60000 / bpm).round(); // 保存到全局变量
+      debugPrint("🎵 当前曲目 BPM: $bpm, 每拍间隔: ${_beatIntervalMs}ms");
 
       // 🌟 3. 让控制器的周期完美对齐一拍的长度，并无限循环！
       // 注意：这里去掉了 reverse: true，因为我们需要的是心跳那种“砰...砰...”的单向衰减
-      _vfxController.duration = Duration(milliseconds: beatIntervalMs);
+      _vfxController.duration = Duration(milliseconds: _beatIntervalMs);
       _vfxController.repeat();
 
       _initAudioAndListener();
@@ -149,20 +164,37 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     // ... 播完重置逻辑略 ...
   }*/
   Future<void> _initAudioAndListener() async {
-    int beatIndex = 0;
+    // 🌟 修复 2：下一个要切图的节拍目标，直接设为第 8 拍！
+    int nextSwitchBeat = 8;
 
     _positionSubscription = _audioPlayer.onPositionChanged.listen((Duration p) {
-      // 1. 核心卫兵：防止数组越界
-      if (beatIndex < _beatData.length &&
+      int totalBeatsNeeded = widget.sections.length * 8;
+
+      // 检查是否结束
+      if (nextSwitchBeat >= totalBeatsNeeded) {
+        _audioPlayer.stop();
+        if (mounted) {
+          setState(() {
+            _isPlaying = false;
+            _currentIndex = 0;
+            nextSwitchBeat = 8; // 🌟 播放完重置回第 8 拍
+            if (_lyricQueue.isNotEmpty) {
+              _currentLyricText = _lyricQueue[0]; // 🌟 歌词也重置回第一句
+            }
+          });
+        }
+        return;
+      }
+
+      if (nextSwitchBeat < _beatData.length &&
           _currentIndex < widget.sections.length - 1) {
-        if (p.inMilliseconds >= _beatData[beatIndex]['ms']) {
+        // 🌟 只在到达我们设定的目标拍 (8, 16, 24...) 时才切图！
+        if (p.inMilliseconds >= _beatData[nextSwitchBeat]['ms']) {
           if (mounted) {
             setState(() {
-              // 🌟 修正：只在这里递增一次！
               _currentIndex++;
-              beatIndex += 8;
+              nextSwitchBeat += 8; // 🌟 安排下一次切图目标
 
-              // 2. 切词逻辑：利用取模让歌词循环
               if (_lyricQueue.isNotEmpty) {
                 int lyricIdx = _currentIndex % _lyricQueue.length;
                 _currentLyricText = _lyricQueue[lyricIdx];
@@ -178,7 +210,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         setState(() {
           _isPlaying = false;
           _currentIndex = 0;
-          _currentLyricIndex = 0; // 重置歌词索引
+          _currentLyricIndex = 0;
+          if (_lyricQueue.isNotEmpty)
+            _currentLyricText = _lyricQueue[0]; // 兜底重置
         });
       }
     });
@@ -210,8 +244,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   Widget build(BuildContext context) {
     if (widget.sections.isEmpty)
       return const Scaffold(body: Center(child: Text('无内容')));
+
     final currentSection = widget.sections[_currentIndex];
-    // 1. 先定义好字幕层，方便复用
     final subtitleLayer = SubtitleEffectLayer(
       text: _currentLyricText,
       effectType: _currentTextStyle,
@@ -222,30 +256,16 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       vfxController: _vfxController,
     );
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
+    // 🌟 1. 定义纯净的视频内容层（包含震动、闪光、图片和字幕，但不含背景）
+    // 🔪 核心修复：在这里套上 ClipRect，强行把所有溢出的放大和震动画面裁掉！
+    Widget videoContent = ClipRect(
+      child: Stack(
         fit: StackFit.expand,
         children: [
-          // 💥 1. 画面底层：带摄像机震动 (Camera Shake) 的图像层
+          // 💥 底层图片（带震动和放大动画）
           AnimatedBuilder(
             animation: _vfxController,
             builder: (context, child) {
-              // 正弦波衰减震动算法
-              // 随着 controller 从 0 到 1，震动幅度迅速衰减
-              /*final shakeOffset = _vfxController.isAnimating
-                  ? Offset(
-                      (_shakeIntensity *
-                          (1 - _vfxController.value) *
-                          (DateTime.now().millisecond % 2 == 0 ? 1 : -1)),
-                      (_shakeIntensity *
-                          (1 - _vfxController.value) *
-                          (DateTime.now().millisecond % 3 == 0 ? 1 : -1)),
-                    )
-                  : Offset.zero;*/
-              // 🌟 核心算法升级：加入 _shakeFrequency 控制正弦波的密集度
-              // _vfxController.value 在一个 BPM 周期内从 0 走到 1
-              // 乘以 _shakeFrequency 意味着在这个周期内，正弦波会完整往复震动这么多次！
               final shakeOffset = Offset(
                 _shakeIntensity *
                     math.sin(
@@ -256,35 +276,25 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                       _vfxController.value * math.pi * 1.5 * _shakeFrequency,
                     ),
               );
-
               return Transform.translate(offset: shakeOffset, child: child);
             },
             child: AnimatedSwitcher(
               duration: 800.ms,
-              child: _buildAdaptiveImageLayer(
+              child: _buildPureImageLayer(
                 currentSection.photo.path,
                 subtitleLayer,
-              ), // 你的自适应画幅层
+              ),
             ),
           ),
 
-          // 💥 2. 白场闪光层 (Flash Overlay)
-          // 只有在 _vfxController 触发时才瞬间变白，然后迅速隐去
+          // 💥 白场闪光层
           AnimatedBuilder(
             animation: _vfxController,
             builder: (context, child) {
-              /*final double flashAlpha =
-                  (_enableFlash && _vfxController.isAnimating)
-                  ? 0.8 * (1 - _vfxController.value)
-                  : 0.0;*/
-              // 刚打拍子时是 1.0 (最亮)，然后极其迅速地掉到 0 (透明)，不会一直糊在脸上
               final double decay = math
                   .pow(1 - _vfxController.value, 3)
                   .toDouble();
-
-              // 最高透明度设为 0.3 就够了，太白了费眼
               final double flashAlpha = _enableFlash ? 0.3 * decay : 0.0;
-
               return IgnorePointer(
                 child: Container(
                   color: Colors.white.withValues(alpha: flashAlpha),
@@ -292,16 +302,54 @@ class _StoryVideoPageState extends State<StoryVideoPage>
               );
             },
           ),
+        ],
+      ),
+    );
 
-  
+    // 🌟 2. 动态决定 取景器(RepaintBoundary) 放在哪
+    Widget screenBody;
+    if (widget.isHorizontal) {
+      if (_isExporting) {
+        // 🎬 导出模式：取景器被强行限制在 16:9 的尺寸里！导出的视频将是纯正的横屏，无黑边！
+        screenBody = Center(
+          child: AspectRatio(
+            aspectRatio: 16 / 9,
+            child: RepaintBoundary(key: _renderKey, child: videoContent),
+          ),
+        );
+      } else {
+        // 👀 预览模式：全屏显示，底下垫一层模糊背景好看一点
+        screenBody = Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.file(File(currentSection.photo.path), fit: BoxFit.cover),
+            BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+              child: Container(color: Colors.black.withValues(alpha: 0.6)),
+            ),
+            Center(
+              child: AspectRatio(aspectRatio: 16 / 9, child: videoContent),
+            ),
+          ],
+        );
+      }
+    } else {
+      // 📱 竖屏模式：全屏都是视频
+      screenBody = RepaintBoundary(key: _renderKey, child: videoContent);
+    }
 
-          // ⏯️ 5. 控制层
-          _buildControls(),
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          screenBody,
+          if (!_isExporting) _buildControls(),
+          if (_isExporting) _buildExportProgressOverlay(),
         ],
       ),
     );
   }
-
   // 🎥 核心特效：Ken Burns 运镜效应 (缓慢放大)
   /*Widget _buildKenBurnsImage(String imagePath) {
     final file = File(imagePath);
@@ -428,6 +476,16 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                 IconButton(
                   icon: const Icon(Icons.tune, color: Colors.white),
                   onPressed: _showVfxPanel,
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.movie_creation,
+                    color: Colors.pinkAccent,
+                  ),
+                  onPressed: () {
+                    // 点击后直接执行我们写的那个硬核导出循环
+                    _startExport();
+                  },
                 ),
               ],
             ),
@@ -683,6 +741,269 @@ class _StoryVideoPageState extends State<StoryVideoPage>
           },
         );
       },
+    );
+  }
+
+  // 📊 导出时的进度遮罩层
+  Widget _buildExportProgressOverlay() {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.8), // 调暗背景
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.pinkAccent),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              "正在渲染视频帧... ${(_exportProgress * 100).toInt()}%",
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              "请勿关闭页面，渲染完成后将自动合成 MP4",
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ⏱️ 时光机器：手动驱动 UI 状态
+  void _updateStateForFrame(int frameIndex) {
+    // 假设我们导出 30 帧/秒，计算当前帧对应的是第几毫秒
+    double currentTimeMs = (frameIndex / 24.0) * 1000.0;
+
+    // 1. 驱动震动/闪光控制器 _vfxController (0.0 到 1.0 循环)
+    double progressInBeat = (currentTimeMs % _beatIntervalMs) / _beatIntervalMs;
+    _vfxController.value = progressInBeat;
+
+    // 2. 寻找当前时间点对应的 节拍索引 (beatIndex)
+    int targetBeatIndex = 0;
+    for (int j = 0; j < _beatData.length; j++) {
+      if (currentTimeMs >= _beatData[j]['ms']) {
+        targetBeatIndex = j;
+      } else {
+        break; // 超过当前时间就停止寻找
+      }
+    }
+
+    // 🌟 修复 3：前摇补偿。如果你觉得离线导出的卡点还是稍微早了一点点，
+    // 可以把这个 beatOffset 设为 1 或 2，强行把算法识别的拍子往后推。
+    // 默认我们先设为 0，因为前面的逻辑修复大概率已经解决问题了。
+    int beatOffset = 0;
+    int adjustedBeat = math.max(0, targetBeatIndex - beatOffset);
+
+    // 3. 计算切图和切词（复刻你之前 beatIndex += 8 才切图的逻辑）
+    int targetImageIndex = targetBeatIndex ~/ 8;
+
+    // 防止超出照片总数
+    if (targetImageIndex >= widget.sections.length) {
+      targetImageIndex = widget.sections.length - 1;
+    }
+
+    // 4. 强制刷新页面状态
+    setState(() {
+      _currentIndex = targetImageIndex;
+      if (_lyricQueue.isNotEmpty) {
+        int lyricIdx = _currentIndex % _lyricQueue.length;
+        _currentLyricText = _lyricQueue[lyricIdx];
+      }
+
+      // 这里的 _exportProgress 就是传给 UI 遮罩的进度条！
+      // 它会在 _startExport 里被不断更新
+    });
+  }
+
+  Future<Uint8List?> _captureFrame() async {
+    try {
+      // 找到那根“虚拟取景器”的边界
+      RenderRepaintBoundary boundary =
+          _renderKey.currentContext!.findRenderObject()
+              as RenderRepaintBoundary;
+
+      // 🚀 提速点 1：把 pixelRatio 从 2.0 降回 1.0 (测试时甚至可改 0.5)
+      ui.Image image = await boundary.toImage(pixelRatio: 1.0);
+
+      // 洗出相片：转成 PNG 格式的字节流
+      ByteData? byteData = await image.toByteData(
+        format: ui.ImageByteFormat.png,
+      );
+      return byteData?.buffer.asUint8List();
+    } catch (e) {
+      debugPrint("❌ 抓拍当前帧失败: $e");
+      return null;
+    }
+  }
+
+  Future<void> _startExport() async {
+    if (_isPlaying) await _togglePlay();
+
+    // 🌟 1. 精准计算“视觉画面”需要的总时长
+    int totalBeatsNeeded = widget.sections.length * 8;
+    int visualDurationMs = totalBeatsNeeded * _beatIntervalMs;
+    // 如果 JSON 数据够长，直接从 JSON 里取那个节拍的真实毫秒数，更准！
+    if (_beatData.length > totalBeatsNeeded) {
+      visualDurationMs = (_beatData[totalBeatsNeeded]['ms'] as num).toInt();
+    } else if (_beatData.isNotEmpty) {
+      // ⚠️ 修复拖尾：如果图片太多，超过了歌曲总长度，强制以歌曲最后一个节拍为准！
+      visualDurationMs = (_beatData.last['ms'] as num).toInt();
+    }
+
+    // 2. 获取音频真实时长，防止用户选了1000张图但歌只有1分钟
+    Duration? duration = await _audioPlayer.getDuration();
+    int audioDurationMs = duration?.inMilliseconds ?? 15000;
+
+    // 🌟 2. 最终导出时长：决不许超过音乐时长，也决不许多等一张图！
+    int finalExportDurationMs = math.min(visualDurationMs, audioDurationMs);
+    // 把这精准的时长转换成秒
+    double exactExportSeconds = finalExportDurationMs / 1000.0;
+
+    final directory = await getTemporaryDirectory();
+    final frameDir = Directory('${directory.path}/story_frames');
+    if (frameDir.existsSync()) {
+      frameDir.deleteSync(recursive: true);
+    }
+    frameDir.createSync();
+
+    setState(() {
+      _isExporting = true;
+      _exportProgress = 0.0;
+    });
+
+    // 4. 按 24 FPS 算出到底需要截多少帧
+    int fps = 24;
+    int totalFrames = (finalExportDurationMs / 1000 * fps).floor();
+    // 🌟 新增：准备一个篮子，装所有的写入任务
+    List<Future> writeTasks = [];
+
+    for (int i = 0; i < totalFrames; i++) {
+      _updateStateForFrame(i); // ⚠️ 记得去把 _updateStateForFrame 里的 30.0 改成 24.0
+
+      setState(() => _exportProgress = i / totalFrames);
+
+      await Future.delayed(const Duration(milliseconds: 16));
+
+      final frameBytes = await _captureFrame();
+      if (frameBytes != null) {
+        final file = File(
+          '${frameDir.path}/frame_${i.toString().padLeft(5, '0')}.png',
+        );
+        // 🌟 把写入任务丢进篮子里，不要在这里死等
+        writeTasks.add(file.writeAsBytes(frameBytes));
+      }
+    }
+    setState(() => _exportProgress = 0.95); // 给用户一点心理安慰
+
+    // 🌟 修复：强行等篮子里的所有图片确确实实全都写进硬盘了，再往下走！
+    await Future.wait(writeTasks);
+
+    await _runFFmpegCombine(frameDir.path, exactExportSeconds);
+  }
+
+  Future<void> _runFFmpegCombine(
+    String frameDirPath,
+    double exactSeconds,
+  ) async {
+    setState(() {
+      // 进度条文字可以变一下（自己可以再去加个状态位，为了简便暂用这个进度）
+      _exportProgress = 0.99;
+    });
+
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+
+      // 1. 提取资产音乐到手机沙盒
+      final ByteData audioData = await rootBundle.load(
+        'assets/audio/sandal_leap.mp3',
+      );
+      final File tempAudioFile = File('${docDir.path}/temp_audio.mp3');
+      await tempAudioFile.writeAsBytes(audioData.buffer.asUint8List());
+
+      // 2. 定义最终导出的 MP4 路径
+      final String outputPath =
+          "${docDir.path}/FINAL_STORY_${DateTime.now().millisecondsSinceEpoch}.mp4";
+
+      // 3. 构造魔法咒语
+      // -y : 强制覆盖同名文件
+      // -framerate 30 : 以 30 帧速率读取图片
+      String command =
+          "-y -framerate 24 -start_number 0 -i $frameDirPath/frame_%05d.png -i ${tempAudioFile.path} -t $exactSeconds -vf scale=trunc(iw/2)*2:trunc(ih/2)*2 -c:v libx264 -pix_fmt yuv420p -c:a aac $outputPath";
+
+      debugPrint("🎬 FFmpeg 开始合成: $command");
+
+      // 4. 召唤神龙
+      await FFmpegKit.execute(command).then((session) async {
+        final returnCode = await session.getReturnCode();
+        if (ReturnCode.isSuccess(returnCode)) {
+          debugPrint("✅✅✅ 完美导出！视频保存在沙盒: $outputPath");
+
+          // 🌟 核心新增：拷贝进系统相册
+          try {
+            // gal 插件非常智能，如果没有权限它会自动弹窗问用户要
+            await Gal.putVideo(outputPath);
+            debugPrint("📸 视频已成功保存至手机系统相册！");
+
+            // 给用户一个极其舒适的视觉反馈
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('🎉 视频渲染完成，已保存至手机相册！快去图库看看吧！'),
+                  backgroundColor: Colors.pinkAccent,
+                  behavior: SnackBarBehavior.floating, // 悬浮样式更好看
+                  duration: Duration(seconds: 4),
+                ),
+              );
+            }
+          } catch (e) {
+            debugPrint("❌ 保存到相册失败: $e");
+          }
+        } else {
+          final logs = await session.getLogsAsString();
+          debugPrint("❌ FFmpeg 炸了，真正的原因是:\n$logs");
+        }
+      });
+    } finally {
+      // 6. 收工，撤掉黑布
+      setState(() {
+        _isExporting = false;
+        _exportProgress = 0.0;
+      });
+    }
+  }
+
+  // 🎬 专门给取景器提供纯净画面的层（无黑边）
+  Widget _buildPureImageLayer(String imagePath, Widget subtitle) {
+    final file = File(imagePath);
+    return Stack(
+      key: ValueKey<String>(imagePath),
+      fit: StackFit.expand,
+      children: [
+        TweenAnimationBuilder(
+          tween: Tween<double>(begin: 1.0, end: 1.15),
+          duration: const Duration(seconds: 5),
+          builder: (context, scale, child) {
+            return Transform.scale(
+              scale: scale,
+              child: file.existsSync()
+                  ? Image.file(
+                      file,
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: double.infinity,
+                    )
+                  : Container(color: Colors.grey[900]),
+            );
+          },
+        ),
+        subtitle, // 字幕层
+      ],
     );
   }
 }

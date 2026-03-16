@@ -55,8 +55,8 @@ dependencies:
   shared_preferences: ^2.5.3
   audioplayers: ^6.6.0
   flutter_animate: ^4.5.2
-  # ffmpeg_kit_flutter: ^6.0.3 # FFmpeg 核心
-  # path_provider: ^2.1.0      # 找临时文件夹用的
+  ffmpeg_kit_flutter_full_gpl: ^6.0.3
+  gal: ^2.3.0
 
 dev_dependencies:
   flutter_test:

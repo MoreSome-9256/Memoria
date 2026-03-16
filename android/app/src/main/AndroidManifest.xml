@@ -7,6 +7,7 @@
         android:maxSdkVersion="32"/> -->
 
     <!-- Android 13+: Read images and videos -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
 

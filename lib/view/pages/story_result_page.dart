@@ -15,7 +15,6 @@ class StoryResultPage extends StatefulWidget {
   final Photo heroImage;
   final List<StorySection> sections;
   final int? storyEntityId; // 新增：用于保存编辑
-  final bool isHorizontal;
 
   const StoryResultPage({
     super.key,
@@ -24,14 +23,12 @@ class StoryResultPage extends StatefulWidget {
     required this.heroImage,
     required this.sections,
     this.storyEntityId, // 新增
-    this.isHorizontal = false,
   });
 
   // 新增：从 StoryEntity 加载（ConfigPage 生成后）
   factory StoryResultPage.fromStoryEntity({
     required StoryEntity storyEntity,
     required List<PhotoEntity> photos,
-    bool isHorizontal = false,
   }) {
     final sectionMaps = storyEntity.parseToSections(photos);
     List<StorySection> sections = [];
@@ -100,7 +97,6 @@ class StoryResultPage extends StatefulWidget {
       heroImage: heroPhoto,
       sections: sections,
       storyEntityId: storyEntity.id, // 关键：保存 ID
-      isHorizontal: isHorizontal,
     );
   }
 
@@ -383,7 +379,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
               builder: (context) => StoryVideoPage(
                 title: widget.title,
                 sections: _sections, // 把排版好的图文数据传过去做视频
-                isHorizontal: widget.isHorizontal,
+                isHorizontal: true,
               ),
             ),
           );

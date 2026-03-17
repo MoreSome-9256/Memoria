@@ -15,6 +15,8 @@ class StoryResultPage extends StatefulWidget {
   final Photo heroImage;
   final List<StorySection> sections;
   final int? storyEntityId; // 新增：用于保存编辑
+  final String? customMusicPath;
+  final Map<String, dynamic>? dynamicBeatData;
 
   const StoryResultPage({
     super.key,
@@ -22,13 +24,17 @@ class StoryResultPage extends StatefulWidget {
     required this.subtitle,
     required this.heroImage,
     required this.sections,
-    this.storyEntityId, // 新增
+    this.storyEntityId, 
+    this.customMusicPath,
+    this.dynamicBeatData,
   });
 
   // 新增：从 StoryEntity 加载（ConfigPage 生成后）
   factory StoryResultPage.fromStoryEntity({
     required StoryEntity storyEntity,
     required List<PhotoEntity> photos,
+    String? customMusicPath,
+    Map<String, dynamic>? dynamicBeatData,
   }) {
     final sectionMaps = storyEntity.parseToSections(photos);
     List<StorySection> sections = [];
@@ -97,6 +103,8 @@ class StoryResultPage extends StatefulWidget {
       heroImage: heroPhoto,
       sections: sections,
       storyEntityId: storyEntity.id, // 关键：保存 ID
+      customMusicPath: customMusicPath,
+      dynamicBeatData: dynamicBeatData,
     );
   }
 
@@ -379,7 +387,10 @@ class _StoryResultPageState extends State<StoryResultPage> {
               builder: (context) => StoryVideoPage(
                 title: widget.title,
                 sections: _sections, // 把排版好的图文数据传过去做视频
+                // 🌟 传给视频引擎
+                customMusicPath: widget.customMusicPath,
                 isHorizontal: true,
+                dynamicBeatData: widget.dynamicBeatData,
               ),
             ),
           );

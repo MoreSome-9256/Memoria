@@ -21,12 +21,16 @@ class StoryVideoPage extends StatefulWidget {
   final String title;
   final List<StorySection> sections;
   final bool isHorizontal;
+  final String? customMusicPath;
+  final Map<String, dynamic>? dynamicBeatData; // 🌟 接收云端数据
 
   const StoryVideoPage({
     super.key,
     required this.title,
     required this.sections,
     this.isHorizontal = false,
+    this.customMusicPath,
+    this.dynamicBeatData,
   });
 
   @override
@@ -72,135 +76,100 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   @override
   void initState() {
     super.initState();
-    // 初始化特效控制器，时长很短，制造“爆发感”
-    // _vfxController = AnimationController(vsync: this, duration: 250.ms);
-    // 🌟 沙盒模式：让特效控制器无限极其快速地往复循环（模拟高频震动和闪烁）
-    _vfxController = AnimationController(vsync: this, duration: 50.ms)
-      ..repeat(reverse: true);
-    // 🌟 极简解析：按 / 分割，并去掉两边的空格
+    _vfxController = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: 500), // 先随便给个值，后面会被覆盖
+    );
+
+    // 🌟 解析歌词
     _lyricQueue = _rawUserInput
         .split('/')
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .toList();
+
+    // ==========================================
+    // 🚀 核心：解析 Librosa 云端传来的真实数据
+    // ==========================================
+    if (widget.dynamicBeatData != null &&
+        widget.dynamicBeatData!['data'] != null) {
+      _beatData = widget.dynamicBeatData!['data'];
+      double bpm = (widget.dynamicBeatData!['bpm'] as num).toDouble();
+      _beatIntervalMs = (60000 / bpm).round(); // 根据真实 BPM 算出每拍的毫秒数
+      debugPrint(
+        "🎵 成功加载真实节拍！BPM: $bpm, 间隔: ${_beatIntervalMs}ms, 共 ${_beatData.length} 拍",
+      );
+    } else {
+      // 如果没拿到数据，给个兜底防崩溃
+      debugPrint("⚠️ 未接收到真实节拍数据，使用默认沙盒模式");
+      _beatData = [
+        {"ms": 0, "energy": 0.1},
+        {"ms": 500, "energy": 0.8}, // 假装这是一记重鼓
+        {"ms": 1000, "energy": 0.2},
+      ];
+      _beatIntervalMs = 500;
+    }
+
     if (_lyricQueue.isNotEmpty) {
       _currentLyricText = _lyricQueue[0];
     }
-    // 🚀 加载 JSON
-    _loadBeatDataAndStart();
+
+    // 🌟 修复 1：挂上离合，踩下油门！
+    _initAudioAndListener(); // 启动音频实时监听
+    _togglePlay(); // 自动开始播放
   }
+  
+  int _currentBeatIndexForPreview = -1; // 记录当前演到第几拍了
 
-  // 🧠 核心逻辑：加载 Librosa 导出的数据
-  Future<void> _loadBeatDataAndStart() async {
-    try {
-      // 1. 加载包含能量信息的 JSON
-      final String jsonString = await rootBundle.loadString(
-        'assets/audio/sandal_leap_beats.json',
-      );
-      final Map<String, dynamic> data = json.decode(jsonString);
-      // 我们这次不仅需要时间，还需要随时查阅“当前节拍的能量”
-      _beatData = data['data'];
-
-      // 🌟 1. 从 JSON 提取真·BPM
-      double bpm = (data['bpm'] as num).toDouble();
-
-      // 🌟 2. 算出一拍到底有多少毫秒 (60000 / BPM)
-      _beatIntervalMs = (60000 / bpm).round(); // 保存到全局变量
-      debugPrint("🎵 当前曲目 BPM: $bpm, 每拍间隔: ${_beatIntervalMs}ms");
-
-      // 🌟 3. 让控制器的周期完美对齐一拍的长度，并无限循环！
-      // 注意：这里去掉了 reverse: true，因为我们需要的是心跳那种“砰...砰...”的单向衰减
-      _vfxController.duration = Duration(milliseconds: _beatIntervalMs);
-      _vfxController.repeat();
-
-      _initAudioAndListener();
-      _togglePlay();
-    } catch (e) {
-      debugPrint("❌ JSON加载失败，采用无特效保底模式");
-      _beatData = List.generate(
-        widget.sections.length,
-        (i) => {"ms": (i + 1) * 3500, "energy": 0.0},
-      );
-      _initAudioAndListener();
-      _togglePlay();
-    }
-  }
-
-  /*Future<void> _initAudioAndListener() async {
-    // 计算全曲平均能量，用于触发特效的阈值
-    double avgEnergy = _beatData.isEmpty
-        ? 0
-        : _beatData
-                  .map((e) => (e['energy'] as num).toDouble())
-                  .reduce((a, b) => a + b) /
-              _beatData.length;
-
-    int beatIndex = 0;
-
+  Future<void> _initAudioAndListener() async {
     _positionSubscription = _audioPlayer.onPositionChanged.listen((Duration p) {
-      if (beatIndex < _beatData.length &&
-          _currentIndex < widget.sections.length - 1) {
-        if (p.inMilliseconds >= _beatData[beatIndex]['ms']) {
-          double currentEnergy = (_beatData[beatIndex]['energy'] as num)
-              .toDouble();
+      if (_beatData.isEmpty || _isExporting) return; // 导出时不要干扰
 
-          // 🧠 核心导演逻辑：
-          if (currentEnergy > avgEnergy * 1.2) {
-            // 💥 高能爆发点！(比如重低音砸下)
-            // 1. 触发一次全屏爆震特效
-            _vfxController.forward(from: 0);
-            // 2. 快速切图 (跳跃步长变小)
-            beatIndex += 4;
-            if (mounted) setState(() => _currentIndex++);
-          } else {
-            // 🍃 平缓过渡段
-            beatIndex += 8;
-            if (mounted) setState(() => _currentIndex++);
-          }
+      double currentTimeMs = p.inMilliseconds.toDouble();
+
+      // 1. 找当前是第几拍
+      int targetBeatIndex = 0;
+      for (int j = 0; j < _beatData.length; j++) {
+        if (currentTimeMs >= _beatData[j]['ms']) {
+          targetBeatIndex = j;
+        } else {
+          break;
         }
       }
-    });
 
-    // ... 播完重置逻辑略 ...
-  }*/
-  Future<void> _initAudioAndListener() async {
-    // 🌟 修复 2：下一个要切图的节拍目标，直接设为第 8 拍！
-    int nextSwitchBeat = 8;
+      // 🌟 2. 只有当跨入“新的一拍”时，才触发导演逻辑！
+      if (targetBeatIndex != _currentBeatIndexForPreview) {
+        _currentBeatIndexForPreview = targetBeatIndex;
 
-    _positionSubscription = _audioPlayer.onPositionChanged.listen((Duration p) {
-      int totalBeatsNeeded = widget.sections.length * 8;
+        double currentEnergy =
+            (_beatData[targetBeatIndex]['energy'] as num?)?.toDouble() ?? 0.0;
 
-      // 检查是否结束
-      if (nextSwitchBeat >= totalBeatsNeeded) {
-        _audioPlayer.stop();
+        // 🎯 触发高能震动特效
+        if (currentEnergy > 0.15) {
+          _shakeIntensity = currentEnergy * 15.0 * (_shakeFrequency / 15.0);
+          _enableFlash = true;
+          // 🚀 核心魔法：从 0 开始播放特效动画，结合下方的 UI 构建，产生真实的物理衰减！
+          _vfxController.forward(from: 0.0);
+        } else {
+          _shakeIntensity = 0.0;
+          _enableFlash = false;
+        }
+
+        // 🖼️ 决定切图 (每 8 拍切一张)
+        int beatsPerImage = 8;
+        int targetImageIndex = targetBeatIndex ~/ beatsPerImage;
+        if (targetImageIndex >= widget.sections.length) {
+          targetImageIndex = widget.sections.length - 1;
+        }
+
         if (mounted) {
           setState(() {
-            _isPlaying = false;
-            _currentIndex = 0;
-            nextSwitchBeat = 8; // 🌟 播放完重置回第 8 拍
+            _currentIndex = targetImageIndex;
             if (_lyricQueue.isNotEmpty) {
-              _currentLyricText = _lyricQueue[0]; // 🌟 歌词也重置回第一句
+              _currentLyricText =
+                  _lyricQueue[_currentIndex % _lyricQueue.length];
             }
           });
-        }
-        return;
-      }
-
-      if (nextSwitchBeat < _beatData.length &&
-          _currentIndex < widget.sections.length - 1) {
-        // 🌟 只在到达我们设定的目标拍 (8, 16, 24...) 时才切图！
-        if (p.inMilliseconds >= _beatData[nextSwitchBeat]['ms']) {
-          if (mounted) {
-            setState(() {
-              _currentIndex++;
-              nextSwitchBeat += 8; // 🌟 安排下一次切图目标
-
-              if (_lyricQueue.isNotEmpty) {
-                int lyricIdx = _currentIndex % _lyricQueue.length;
-                _currentLyricText = _lyricQueue[lyricIdx];
-              }
-            });
-          }
         }
       }
     });
@@ -210,9 +179,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         setState(() {
           _isPlaying = false;
           _currentIndex = 0;
-          _currentLyricIndex = 0;
-          if (_lyricQueue.isNotEmpty)
-            _currentLyricText = _lyricQueue[0]; // 兜底重置
+          _currentBeatIndexForPreview = -1;
+          if (_lyricQueue.isNotEmpty) _currentLyricText = _lyricQueue[0];
         });
       }
     });
@@ -230,8 +198,14 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     if (_isPlaying) {
       await _audioPlayer.pause();
     } else {
-      // 这里的音乐路径要和 Python 脚本分析的那首一致
-      await _audioPlayer.play(AssetSource('audio/sandal_leap.mp3'));
+      // 🌟 核心改动：判断音乐来源
+      if (widget.customMusicPath != null) {
+        // 如果是用户手动导入的音乐，使用 DeviceFileSource
+        await _audioPlayer.play(DeviceFileSource(widget.customMusicPath!));
+      } else {
+        // 否则播放 assets 里的默认测试音乐
+        await _audioPlayer.play(AssetSource('audio/sandal_leap.mp3'));
+      }
     }
     if (mounted) {
       setState(() {
@@ -257,23 +231,31 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     );
 
     // 🌟 1. 定义纯净的视频内容层（包含震动、闪光、图片和字幕，但不含背景）
-    // 🔪 核心修复：在这里套上 ClipRect，强行把所有溢出的放大和震动画面裁掉！
+    // 🌟 1. 定义纯净的视频内容层
     Widget videoContent = ClipRect(
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // 💥 底层图片（带震动和放大动画）
+          // 💥 底层图片（带阻尼震动动画）
           AnimatedBuilder(
             animation: _vfxController,
             builder: (context, child) {
+              // 🌟 物理阻尼算法：动画从 0 走到 1，衰减系数从 1 降到 0
+              double decay = math.max(
+                0.0,
+                1.0 - (_vfxController.value * 2.5),
+              ); // 衰减得快一点，打击感更强
+
               final shakeOffset = Offset(
                 _shakeIntensity *
+                    decay *
                     math.sin(
-                      _vfxController.value * math.pi * 2 * _shakeFrequency,
+                      _vfxController.value * math.pi * 10 * _shakeFrequency,
                     ),
                 _shakeIntensity *
+                    decay *
                     math.cos(
-                      _vfxController.value * math.pi * 1.5 * _shakeFrequency,
+                      _vfxController.value * math.pi * 12 * _shakeFrequency,
                     ),
               );
               return Transform.translate(offset: shakeOffset, child: child);
@@ -291,9 +273,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
           AnimatedBuilder(
             animation: _vfxController,
             builder: (context, child) {
-              final double decay = math
-                  .pow(1 - _vfxController.value, 3)
-                  .toDouble();
+              double decay = math.pow(1.0 - _vfxController.value, 3).toDouble();
               final double flashAlpha = _enableFlash ? 0.3 * decay : 0.0;
               return IgnorePointer(
                 child: Container(
@@ -775,52 +755,50 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     );
   }
 
-  // ⏱️ 时光机器：手动驱动 UI 状态
   void _updateStateForFrame(int frameIndex) {
-    // 假设我们导出 30 帧/秒，计算当前帧对应的是第几毫秒
+    if (_beatData.isEmpty) return;
+
     double currentTimeMs = (frameIndex / 24.0) * 1000.0;
 
-    // 1. 驱动震动/闪光控制器 _vfxController (0.0 到 1.0 循环)
-    double progressInBeat = (currentTimeMs % _beatIntervalMs) / _beatIntervalMs;
-    _vfxController.value = progressInBeat;
-
-    // 2. 寻找当前时间点对应的 节拍索引 (beatIndex)
     int targetBeatIndex = 0;
     for (int j = 0; j < _beatData.length; j++) {
       if (currentTimeMs >= _beatData[j]['ms']) {
         targetBeatIndex = j;
       } else {
-        break; // 超过当前时间就停止寻找
+        break;
       }
     }
 
-    // 🌟 修复 3：前摇补偿。如果你觉得离线导出的卡点还是稍微早了一点点，
-    // 可以把这个 beatOffset 设为 1 或 2，强行把算法识别的拍子往后推。
-    // 默认我们先设为 0，因为前面的逻辑修复大概率已经解决问题了。
-    int beatOffset = 0;
-    int adjustedBeat = math.max(0, targetBeatIndex - beatOffset);
+    double currentEnergy =
+        (_beatData[targetBeatIndex]['energy'] as num?)?.toDouble() ?? 0.0;
+    double timeSinceBeat = currentTimeMs - _beatData[targetBeatIndex]['ms'];
 
-    // 3. 计算切图和切词（复刻你之前 beatIndex += 8 才切图的逻辑）
+    // 计算当前节拍度过了多少百分比 (0.0 到 1.0)
+    double beatProgress = (timeSinceBeat / _beatIntervalMs).clamp(0.0, 1.0);
+
+    // 🌟 手动拨动动画控制器的指针，让离线导出的每一帧和实时预览一模一样！
+    _vfxController.value = beatProgress;
+
+    if (currentEnergy > 0.15) {
+      _shakeIntensity = currentEnergy * 15.0 * (_shakeFrequency / 15.0);
+      _enableFlash = true;
+    } else {
+      _shakeIntensity = 0.0;
+      _enableFlash = false;
+    }
+
     int targetImageIndex = targetBeatIndex ~/ 8;
-
-    // 防止超出照片总数
     if (targetImageIndex >= widget.sections.length) {
       targetImageIndex = widget.sections.length - 1;
     }
 
-    // 4. 强制刷新页面状态
     setState(() {
       _currentIndex = targetImageIndex;
       if (_lyricQueue.isNotEmpty) {
-        int lyricIdx = _currentIndex % _lyricQueue.length;
-        _currentLyricText = _lyricQueue[lyricIdx];
+        _currentLyricText = _lyricQueue[_currentIndex % _lyricQueue.length];
       }
-
-      // 这里的 _exportProgress 就是传给 UI 遮罩的进度条！
-      // 它会在 _startExport 里被不断更新
     });
   }
-
   Future<Uint8List?> _captureFrame() async {
     try {
       // 找到那根“虚拟取景器”的边界
@@ -918,23 +896,38 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
     try {
       final docDir = await getApplicationDocumentsDirectory();
+      String audioPath;
 
-      // 1. 提取资产音乐到手机沙盒
-      final ByteData audioData = await rootBundle.load(
-        'assets/audio/sandal_leap.mp3',
-      );
-      final File tempAudioFile = File('${docDir.path}/temp_audio.mp3');
-      await tempAudioFile.writeAsBytes(audioData.buffer.asUint8List());
+      // 🌟 核心改动：确定导出时使用的音频路径
+      if (widget.customMusicPath != null) {
+        // 🚨 修复致命的“文件名包含空格/日文”断裂 Bug
+        // 我们不直接用原路径，而是把它拷贝成一个绝对安全的纯英文路径
+        File originalAudio = File(widget.customMusicPath!);
+        File safeAudioFile = File('${docDir.path}/safe_custom_audio.mp3');
+
+        // 如果之前有残留，先删掉
+        if (safeAudioFile.existsSync()) safeAudioFile.deleteSync();
+
+        // 复制一份过去
+        await originalAudio.copy(safeAudioFile.path);
+        audioPath = safeAudioFile.path;
+      } else {
+        // 如果是默认音乐，先从 assets 提取到沙盒
+        final ByteData audioData = await rootBundle.load(
+          'assets/audio/sandal_leap.mp3',
+        );
+        final File tempAudioFile = File('${docDir.path}/temp_audio.mp3');
+        await tempAudioFile.writeAsBytes(audioData.buffer.asUint8List());
+        audioPath = tempAudioFile.path;
+      }
 
       // 2. 定义最终导出的 MP4 路径
       final String outputPath =
           "${docDir.path}/FINAL_STORY_${DateTime.now().millisecondsSinceEpoch}.mp4";
 
-      // 3. 构造魔法咒语
-      // -y : 强制覆盖同名文件
-      // -framerate 30 : 以 30 帧速率读取图片
+      // 3. 构造魔法咒语 (🌟 为了极其安全，给路径都加上单引号)
       String command =
-          "-y -framerate 24 -start_number 0 -i $frameDirPath/frame_%05d.png -i ${tempAudioFile.path} -t $exactSeconds -vf scale=trunc(iw/2)*2:trunc(ih/2)*2 -c:v libx264 -pix_fmt yuv420p -c:a aac $outputPath";
+          "-y -framerate 24 -start_number 0 -i '$frameDirPath/frame_%05d.png' -i '$audioPath' -t $exactSeconds -vf scale=trunc(iw/2)*2:trunc(ih/2)*2 -c:v libx264 -pix_fmt yuv420p -c:a aac '$outputPath'";
 
       debugPrint("🎬 FFmpeg 开始合成: $command");
 

@@ -9,12 +9,17 @@ import '../../models/entity/story_entity.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_service.dart';
 import 'story_result_page.dart';
+import 'package:file_picker/file_picker.dart'; // 🌟 新增
+import 'package:path/path.dart' as p;
+import '../../service/music_service.dart';
 
 // 🌟 新增：视频长宽比枚举
 enum VideoAspectRatio { vertical, horizontal }
 
 // 🌟 新增：发布平台枚举
 enum PublishingPlatform { moments, xiaohongshu, bilibili, tiktok }
+
+enum MusicSource { aiGenerated, manualImport }
 
 class ConfigPage extends StatefulWidget {
   final Event event;
@@ -39,6 +44,10 @@ class _ConfigPageState extends State<ConfigPage> {
   // 🌟 替换掉原来的 StoryLength，改为新的配置项并给默认值
   VideoAspectRatio _selectedAspectRatio = VideoAspectRatio.vertical;
   PublishingPlatform _selectedPlatform = PublishingPlatform.xiaohongshu;
+  // 🌟 新增：音乐相关状态
+  MusicSource _selectedMusicSource = MusicSource.aiGenerated;
+  String? _customMusicPath;
+  String? _customMusicName;
 
   bool _isGenerating = false;
 
@@ -48,6 +57,21 @@ class _ConfigPageState extends State<ConfigPage> {
     _themeController = TextEditingController(text: widget.selectedTheme.title);
     _selectedSubtitle = widget.selectedTheme.subtitle;
   }
+  // 🌟 新增：拣选音乐的方法
+  Future<void> _pickMusic() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['mp3', 'wav', 'aac', 'm4a', 'flac','ogg'],
+      allowMultiple: false,
+    );
+
+    if (result != null && result.files.single.path != null) {
+      setState(() {
+        _customMusicPath = result.files.single.path;
+        _customMusicName = result.files.single.name;
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -56,6 +80,13 @@ class _ConfigPageState extends State<ConfigPage> {
   }
 
   Future<void> _generateStory() async {
+    // 校验：如果选择了手动导入但没选文件
+    if (_selectedMusicSource == MusicSource.manualImport && _customMusicPath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先选择一段本地音乐'))
+      );
+      return;
+    }
     if (_themeController.text.trim().isEmpty) {
       ScaffoldMessenger.of(
         context,
@@ -103,6 +134,21 @@ class _ConfigPageState extends State<ConfigPage> {
 
       if (photoEntities.isEmpty) {
         throw Exception('No photos found');
+      }
+      // ==========================================
+      // 🌟 核心：云端 Librosa 接入点
+      // ==========================================
+      Map<String, dynamic>? dynamicBeatData;
+
+      if (_selectedMusicSource == MusicSource.manualImport &&
+          _customMusicPath != null) {
+        // 调用 Dio 上传音频并获取 JSON
+        dynamicBeatData = await MusicService.analyzeAudio(_customMusicPath!);
+
+        // 如果后端报错或者网络断了，直接阻断生成流程
+        if (dynamicBeatData == null) {
+          throw Exception('云端音乐分析失败，请检查网络或 Python 后端是否启动');
+        }
       }
 
       // 3. 调用 StoryService 生成故事
@@ -161,6 +207,10 @@ Sandal Leap
             builder: (context) => StoryResultPage.fromStoryEntity(
               storyEntity: story,
               photos: photoEntities,
+              // 🌟 记得给 ResultPage 传过去音乐路径，让它知道播哪首歌
+              customMusicPath: _selectedMusicSource == MusicSource.manualImport ? _customMusicPath : null,
+              // 🌟 新增：把刚才拿到的云端节拍数据一起传过去！
+              dynamicBeatData: dynamicBeatData,
             ),
           ),
         );
@@ -185,7 +235,7 @@ Sandal Leap
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('配置故事')),
+      // appBar: AppBar(title: const Text('配置故事')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -367,6 +417,9 @@ Sandal Leap
               ),
             ],
           ),
+
+          const SizedBox(height: 24),
+          _buildMusicSection(),
           const SizedBox(height: 32),
 
           // Generate button
@@ -389,6 +442,75 @@ Sandal Leap
           const SizedBox(height: 16),
         ],
       ),
+    );
+  }
+  Widget _buildMusicSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '配乐方案',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        SegmentedButton<MusicSource>(
+          segments: const [
+            ButtonSegment(
+              value: MusicSource.aiGenerated,
+              label: Text('AI 智能配乐'),
+              icon: Icon(Icons.auto_awesome),
+            ),
+            ButtonSegment(
+              value: MusicSource.manualImport,
+              label: Text('手动导入'),
+              icon: Icon(Icons.library_music),
+            ),
+          ],
+          selected: {_selectedMusicSource},
+          onSelectionChanged: (Set<MusicSource> newSelection) {
+            setState(() => _selectedMusicSource = newSelection.first);
+          },
+        ),
+        if (_selectedMusicSource == MusicSource.manualImport) ...[
+          const SizedBox(height: 12),
+          InkWell(
+            onTap: _pickMusic,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey[300]!),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.audiotrack, color: Colors.pinkAccent),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _customMusicName ?? '点击选择本地 MP3 文件',
+                      style: TextStyle(
+                        color: _customMusicName == null
+                            ? Colors.grey
+                            : Colors.black87,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                  if (_customMusicName != null)
+                    const Icon(
+                      Icons.check_circle,
+                      color: Colors.green,
+                      size: 20,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

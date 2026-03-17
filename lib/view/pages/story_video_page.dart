@@ -9,6 +9,8 @@ import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:math' as math;
 import '../../effects/subtitle_effect.dart';
+import '../../effects/glitch_effect.dart';
+import '../../effects/static_filters.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'dart:typed_data';
@@ -53,6 +55,15 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   double _shakeIntensity = 0.0; // 震动幅度 (Amplitude)
   double _shakeFrequency = 1.0; // 🌟 新增：震动频率/马达转速 (Frequency)，默认15
 
+  // 🌟 新增 1：故障特效的独立强度 (0.0 到 1.0)
+  double _glitchIntensity = 0.0;
+  // 🌟 新增 2：给故障特效专用的“永动机”时间控制器
+  late AnimationController _continuousTimeController;
+
+  // 1. 定义状态
+  bool _useVignette = false;
+  bool _useGrain = false;
+
   bool _enableFlash = true;
   double _textBlurIntensity = 4.0;
   final GlobalKey _renderKey = GlobalKey();
@@ -80,6 +91,12 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       vsync: this,
       duration: Duration(milliseconds: 500), // 先随便给个值，后面会被覆盖
     );
+
+    // 🌟 新增：启动一个 2 秒一循环的永动机，专门驱动常驻特效
+    _continuousTimeController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(); // 无限重复！
 
     // 🌟 解析歌词
     _lyricQueue = _rawUserInput
@@ -147,7 +164,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         // 🎯 触发高能震动特效
         if (currentEnergy > 0.15) {
           _shakeIntensity = currentEnergy * 15.0 * (_shakeFrequency / 15.0);
-          _enableFlash = true;
+          // _enableFlash = true;
+          _shakeIntensity = (currentEnergy * 15.0 * (_shakeFrequency / 15.0))
+              .clamp(0.0, 10.0);
           // 🚀 核心魔法：从 0 开始播放特效动画，结合下方的 UI 构建，产生真实的物理衰减！
           _vfxController.forward(from: 0.0);
         } else {
@@ -189,6 +208,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   @override
   void dispose() {
     _vfxController.dispose(); // 别忘了释放内存
+    _continuousTimeController.dispose();
     _positionSubscription?.cancel();
     _audioPlayer.dispose();
     super.dispose();
@@ -231,59 +251,87 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     );
 
     // 🌟 1. 定义纯净的视频内容层（包含震动、闪光、图片和字幕，但不含背景）
-    // 🌟 1. 定义纯净的视频内容层
     Widget videoContent = ClipRect(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // 💥 底层图片（带阻尼震动动画）
-          AnimatedBuilder(
-            animation: _vfxController,
+      child: VignetteEffect(
+        enabled: _useVignette,
+        child: GrainEffect(
+          enabled: _useGrain,
+          time: _continuousTimeController.value,
+          child: AnimatedBuilder(
+            animation: _continuousTimeController,
             builder: (context, child) {
-              // 🌟 物理阻尼算法：动画从 0 走到 1，衰减系数从 1 降到 0
-              double decay = math.max(
-                0.0,
-                1.0 - (_vfxController.value * 2.5),
-              ); // 衰减得快一点，打击感更强
-
-              final shakeOffset = Offset(
-                _shakeIntensity *
-                    decay *
-                    math.sin(
-                      _vfxController.value * math.pi * 10 * _shakeFrequency,
-                    ),
-                _shakeIntensity *
-                    decay *
-                    math.cos(
-                      _vfxController.value * math.pi * 12 * _shakeFrequency,
-                    ),
+              return GlitchEffect(
+                intensity: _glitchIntensity, // 👈 现在它完全由你的滑块控制！
+                time: _continuousTimeController.value, // 👈 永远在流动的时间
+                child: child!,
               );
-              return Transform.translate(offset: shakeOffset, child: child);
             },
-            child: AnimatedSwitcher(
-              duration: 800.ms,
-              child: _buildPureImageLayer(
-                currentSection.photo.path,
-                subtitleLayer,
-              ),
-            ),
-          ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // 💥 底层图片（带阻尼震动动画）
+                AnimatedBuilder(
+                  animation: _vfxController,
+                  builder: (context, child) {
+                    // 🌟 物理阻尼算法：动画从 0 走到 1，衰减系数从 1 降到 0
+                    double decay = math.max(
+                      0.0,
+                      1.0 - (_vfxController.value * 2.5),
+                    ); // 衰减得快一点，打击感更强
 
-          // 💥 白场闪光层
-          AnimatedBuilder(
-            animation: _vfxController,
-            builder: (context, child) {
-              double decay = math.pow(1.0 - _vfxController.value, 3).toDouble();
-              final double flashAlpha = _enableFlash ? 0.3 * decay : 0.0;
-              return IgnorePointer(
-                child: Container(
-                  color: Colors.white.withValues(alpha: flashAlpha),
+                    final shakeOffset = Offset(
+                      _shakeIntensity *
+                          decay *
+                          math.sin(
+                            _vfxController.value *
+                                math.pi *
+                                10 *
+                                _shakeFrequency,
+                          ),
+                      _shakeIntensity *
+                          decay *
+                          math.cos(
+                            _vfxController.value *
+                                math.pi *
+                                12 *
+                                _shakeFrequency,
+                          ),
+                    );
+                    return Transform.translate(
+                      offset: shakeOffset,
+                      child: child,
+                    );
+                  },
+                  child: AnimatedSwitcher(
+                    duration: 800.ms,
+                    child: _buildPureImageLayer(
+                      currentSection.photo.path,
+                      subtitleLayer,
+                    ),
+                  ),
                 ),
-              );
-            },
-          ),
-        ],
-      ),
+
+                // 💥 白场闪光层
+                AnimatedBuilder(
+                  animation: _vfxController,
+                  builder: (context, child) {
+                    double decay = math
+                        .pow(1.0 - _vfxController.value, 3)
+                        .toDouble();
+                    final double flashAlpha = _enableFlash ? 0.3 * decay : 0.0;
+                    return IgnorePointer(
+                      child: Container(
+                        color: Colors.white.withValues(alpha: flashAlpha),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          )
+        )
+      )
+      
     );
 
     // 🌟 2. 动态决定 取景器(RepaintBoundary) 放在哪
@@ -538,7 +586,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                             child: Slider(
                               value: _shakeIntensity,
                               min: 0,
-                              max: 3.0,
+                              max: 10.0,
                               divisions: 30,
                               activeColor: Colors.pinkAccent,
                               onChanged: (val) {
@@ -566,6 +614,29 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                               activeColor: Colors.orangeAccent, // 换个颜色区分
                               onChanged: (val) {
                                 setModalState(() => _shakeFrequency = val);
+                                setState(() {});
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      // 🌟 新增：故障干扰 (Glitch) 滑块
+                      Row(
+                        children: [
+                          const Text(
+                            '故障干扰',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: _glitchIntensity,
+                              min: 0.0,
+                              max: 1.0,
+                              divisions: 20,
+                              activeColor: Colors.greenAccent, // 换个骚气的荧光绿
+                              onChanged: (val) {
+                                setModalState(() => _glitchIntensity = val);
+                                // 实时刷新外层 UI
                                 setState(() {});
                               },
                             ),
@@ -655,10 +726,10 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                                 value: 'outline',
                                 child: Text('Outline (大字描边)'),
                               ),
-                              DropdownMenuItem(
+                              /*DropdownMenuItem(
                                 value: 'strip',
                                 child: Text('Strip (文字条)'),
-                              ),
+                              ),*/
                             ],
                             onChanged: (val) {
                               if (val != null) {
@@ -712,6 +783,31 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                             ),
                           ),
                         ],
+                      ),
+                      const Divider(color: Colors.white24),
+                      CheckboxListTile(
+                        title: const Text(
+                          '复古暗角',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                        value: _useVignette,
+                        activeColor: Colors.pinkAccent,
+                        onChanged: (val) {
+                          setModalState(() => _useVignette = val!);
+                          setState(() {});
+                        },
+                      ),
+                      CheckboxListTile(
+                        title: const Text(
+                          '胶片噪点',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                        value: _useGrain,
+                        activeColor: Colors.pinkAccent,
+                        onChanged: (val) {
+                          setModalState(() => _useGrain = val!);
+                          setState(() {});
+                        },
                       ),
                     ],
                   ),
@@ -781,15 +877,20 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
     if (currentEnergy > 0.15) {
       _shakeIntensity = currentEnergy * 15.0 * (_shakeFrequency / 15.0);
-      _enableFlash = true;
+      // _enableFlash = true;
     } else {
       _shakeIntensity = 0.0;
-      _enableFlash = false;
+      // _enableFlash = false;
     }
 
     int targetImageIndex = targetBeatIndex ~/ 8;
     if (targetImageIndex >= widget.sections.length) {
       targetImageIndex = widget.sections.length - 1;
+    }
+    // 🌟 核心补偿：在离线导出时，手动驱动 Glitch 的时间轴！
+    // 假设它是 2000 毫秒一循环，我们算出当前进度
+    if (_isExporting) {
+      _continuousTimeController.value = (currentTimeMs % 2000.0) / 2000.0;
     }
 
     setState(() {

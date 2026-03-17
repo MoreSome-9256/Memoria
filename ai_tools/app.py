@@ -11,11 +11,24 @@ app = FastAPI()
 async def analyze_beats(audio: UploadFile = File(...)):
     print(f"🎵 收到音频文件: {audio.filename}")
     
-    # 1. 把上传的二进制流存成临时文件
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_audio:
+    # 🌟 1. 动态提取真实的后缀名 (比如 .m4a, .wav)
+    ext = os.path.splitext(audio.filename)[1]
+    # 兜底：如果有些手机没传后缀，默认给 mp3
+    if not ext:
+        ext = ".mp3"
+        
+    # 🌟 2. 存临时文件时，必须带着真实的后缀名
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_audio:
         content = await audio.read()
-        temp_audio.write(content)
         temp_path = temp_audio.name
+        temp_audio.write(content)
+        
+    # 🌟 3. 防护网：检查文件是不是空的
+    file_size = len(content)
+    print(f"📦 收到文件大小: {file_size} 字节")
+    if file_size < 1024:
+        os.remove(temp_path)
+        return JSONResponse(content={"error": "文件为空或已损坏"}, status_code=400)
 
     try:
         # 2. Librosa 登场：加载音频

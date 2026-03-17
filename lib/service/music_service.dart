@@ -10,11 +10,14 @@ class MusicService {
     try {
       final dio = Dio();
 
+      // 🌟 获取真实的带后缀的文件名 (比如 song.m4a)
+      String realFileName = filePath.split('/').last;
+
       // 1. 把本地文件打包成 multipart/form-data
       FormData formData = FormData.fromMap({
         "audio": await MultipartFile.fromFile(
           filePath,
-          filename: "upload_audio.mp3",
+          filename: realFileName, // 👈 核心修复：保留真实后缀名！
         ),
       });
 

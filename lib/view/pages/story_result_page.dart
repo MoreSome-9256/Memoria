@@ -35,16 +35,42 @@ class StoryResultPage extends StatefulWidget {
     required List<PhotoEntity> photos,
     String? customMusicPath,
     Map<String, dynamic>? dynamicBeatData,
+    List<String>? captions, // 🌟 新增参数：接收我们生成的视频台词数组
   }) {
+    // ========================================================
+    // 🌟 新增：建立【照片ID -> 视频台词】的精准映射
+    // 因为照片列表是按时间排序的，captions 也是按此顺序生成的。
+    // 我们用字典绑定，防止 VLM 剧本打乱照片顺序。
+    // ========================================================
+    final Map<String, String> captionMap = {};
+    if (captions != null && captions.isNotEmpty) {
+      for (int i = 0; i < photos.length; i++) {
+        // 防止数组越界报错的安全校验
+        if (i < captions.length) {
+          captionMap[photos[i].assetId] = captions[i];
+        }
+      }
+    }
+
     final sectionMaps = storyEntity.parseToSections(photos);
     List<StorySection> sections = [];
 
     // 1. 正常提取被 AI 选中的图文段落
     if (sectionMaps.isNotEmpty) {
       sections = sectionMaps.map((map) {
+        final photo = map['photo'] as Photo;
+
+        // 🌟 核心替换：优先使用 LLM 生成的短台词！
+        // 如果没有台词（比如用户关了开关），就降级使用 VLM 原本的长段落文本。
+        final String sectionText =
+            (captionMap.containsKey(photo.id) &&
+                captionMap[photo.id]!.isNotEmpty)
+            ? captionMap[photo.id]!
+            : map['text'] as String;
+
         return StorySection(
-          text: map['text'] as String,
-          photo: map['photo'] as Photo,
+          text: sectionText, // 👈 绑定替换
+          photo: photo,
         );
       }).toList();
     }
@@ -57,7 +83,8 @@ class StoryResultPage extends StatefulWidget {
       if (!usedPhotoIds.contains(p.assetId)) {
         sections.add(
           StorySection(
-            text: '', // AI没写词，我们就空着，在视频里当做“无字纯享版”画面
+            // 🌟 即使是漏掉的图，这里也能精准匹配上它的台词！如果还是没有就是空字符串。
+            text: captionMap[p.assetId] ?? '',
             photo: Photo(
               id: p.assetId,
               path: p.path,
@@ -80,7 +107,9 @@ class StoryResultPage extends StatefulWidget {
     if (sections.isEmpty && photos.isNotEmpty) {
       sections.add(
         StorySection(
-          text: storyEntity.content ?? '我的专属回忆',
+          text: (captions != null && captions.isNotEmpty)
+              ? captions.first
+              : (storyEntity.content ?? '我的专属回忆'),
           photo: Photo(
             id: photos.first.assetId,
             path: photos.first.path,
@@ -101,13 +130,12 @@ class StoryResultPage extends StatefulWidget {
       title: storyEntity.title,
       subtitle: storyEntity.subtitle,
       heroImage: heroPhoto,
-      sections: sections,
-      storyEntityId: storyEntity.id, // 关键：保存 ID
+      sections: sections, // 👈 此时 sections 里的 text 已经全部变成了你的短台词
+      storyEntityId: storyEntity.id,
       customMusicPath: customMusicPath,
       dynamicBeatData: dynamicBeatData,
     );
   }
-
   // 保留：从已保存的 Story 加载（Stories list -> Result）
   factory StoryResultPage.fromStory(Story story) {
     return StoryResultPage(

@@ -737,4 +737,79 @@ ${photoDetails ?? '总体画面元素：${tags.join(', ')}'}
       return null;
     }
   }
+  /// 🎬 提取视频台词 (进化版：结合真实的每一帧画面特征)
+  Future<List<String>> generateVideoCaptionsFromScript({
+    required String narrative,
+    required List<String> styleTags,
+    required List<String> photoDescriptions, // 🌟 核心：接收每张图的真实描述
+  }) async {
+    final int photoCount = photoDescriptions.length;
+
+    // 🌟 将传入的图片特征组装成带序号的清晰文本
+    final StringBuffer framesInfo = StringBuffer();
+    for (int i = 0; i < photoCount; i++) {
+      framesInfo.writeln('第 ${i + 1} 张图画面特征：${photoDescriptions[i]}');
+    }
+
+    final prompt =
+        '''
+你是一个精通小红书氛围感的短视频台词编剧。
+我现在有一段关于这组照片的整体故事背景，以及总共 $photoCount 张照片的【具体画面特征】。
+请你结合整体剧情和每一张图的实际画面，为这 $photoCount 张照片各写一句极简的视频字幕。
+
+【整体故事背景】
+$narrative
+风格参考：${styleTags.join(', ')}
+
+【各分镜实际画面】(请确保台词与这些画面强相关，贴脸输出！)
+$framesInfo
+
+【输出要求（生死攸关，必须遵守）】
+1. 必须输出纯 JSON，格式严格为：{"captions": ["第一句", "第二句", ...]}
+2. 句子要精炼有网感（单句不超过 15 个字）。
+3. captions 数组的长度必须【严格等于 $photoCount】！
+4. 🌟 拒绝假大空的抒情模板（如“时光荏苒、定格美好”等），台词必须有画面感，与传入的具体画面特征对应！
+5. 不要输出任何 Markdown 标记（如 ```json），直接输出花括号开头的 JSON。
+''';
+
+    try {
+      print("🎬 [DeepSeek] 正在结合具体画面特征，提炼 $photoCount 句贴脸视频台词...");
+      final text = await _chatCompletion(prompt);
+
+      if (text == null || text.trim().isEmpty) {
+        return _getFallbackCaptions(photoCount);
+      }
+
+      final cleanJson = text.replaceAll(RegExp(r'```json|```'), '').trim();
+      final Map<String, dynamic> result = jsonDecode(cleanJson);
+
+      if (result.containsKey('captions') && result['captions'] is List) {
+        final List<dynamic> rawCaptions = result['captions'];
+        List<String> finalCaptions = rawCaptions
+            .map((e) => e.toString())
+            .toList();
+
+        if (finalCaptions.length < photoCount) {
+          finalCaptions.addAll(
+            List.generate(photoCount - finalCaptions.length, (i) => ""),
+          );
+        } else if (finalCaptions.length > photoCount) {
+          finalCaptions = finalCaptions.sublist(0, photoCount);
+        }
+
+        print("✅ 贴脸台词提炼成功: $finalCaptions");
+        return finalCaptions;
+      } else {
+        throw const FormatException("JSON 中找不到 captions 数组");
+      }
+    } catch (e) {
+      print("❌ LLM 台词解析失败: $e");
+      return _getFallbackCaptions(photoCount);
+    }
+  }
+
+  /// 🛡️ 台词生成的兜底方案（返回等长的空白字符串列表）
+  List<String> _getFallbackCaptions(int count) {
+    return List.generate(count, (index) => "");
+  }
 }

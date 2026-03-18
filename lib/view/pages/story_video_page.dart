@@ -46,9 +46,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   int _currentIndex = 0;
   bool _isPlaying = false;
   StreamSubscription? _positionSubscription;
-  final String _rawUserInput =
-      "魅かれ離れ時が過ぎて / 揺れる揺れる夏を見てた / 心臓の暴走も止められないで / 永遠にそれを繰り返すんだろうな / 空然と有限の時が過ぎて / 君の存在も薄れゆけと / ぞんざいな感情にとらわれたまま / 消えない消えない消えない / 夏が遠く遠く未来で / また今に出会える頃 / 僕はどんなんだ? / 君を覚えてるかな? / 忘れたらそれでいいさ / あの日と君の全てを / 「んなわけないじゃん」って / 走り出しても / 明日はまだ来ない / 右の裸足散る三日月 / 知らない海辺をただ歩いて / 浮かぶ浮かぶ懐かしさが見えて / 駆け出す駆け出す駆け出したって / 時間には逆らえないな / 願ってもどうしようもないことさ / 「大嫌いだ」って / 君を全部そうやって / 忘れたらそれでいいんだ / 満たした感情が崩れていく / 途絶えた運命に / 行くあても無くなって / 夏が遠く遠く未来で / また今に出会える頃 / 僕はどんなんだ? / 君を覚えてるかな? / 忘れたらそれでいいさ / あの日と君の全てを / 「んなわけないじゃん」って / 走り出しても / 明日はまだ来ない";
-  List<String> _lyricQueue = [];
+  
   int _currentLyricIndex = 0;
   String _currentLyricText = "";
   // 🎛️ VFX 控制台参数
@@ -100,13 +98,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       duration: const Duration(seconds: 2),
     )..repeat(); // 无限重复！
 
-    // 🌟 解析歌词
-    _lyricQueue = _rawUserInput
-        .split('/')
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-
     // ==========================================
     // 🚀 核心：解析 Librosa 云端传来的真实数据
     // ==========================================
@@ -129,8 +120,10 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       _beatIntervalMs = 500;
     }
 
-    if (_lyricQueue.isNotEmpty) {
-      _currentLyricText = _lyricQueue[0];
+    if (widget.sections.isNotEmpty) {
+      _currentLyricText = widget.sections[0].text;
+    } else {
+      _currentLyricText = "";
     }
 
     // 🌟 修复 1：挂上离合，踩下油门！
@@ -186,10 +179,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         if (mounted) {
           setState(() {
             _currentIndex = targetImageIndex;
-            if (_lyricQueue.isNotEmpty) {
-              _currentLyricText =
-                  _lyricQueue[_currentIndex % _lyricQueue.length];
-            }
+            // 🌟 替换掉之前的 _lyricQueue 逻辑
+            _currentLyricText = widget.sections[_currentIndex].text;
           });
         }
       }
@@ -201,7 +192,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
           _isPlaying = false;
           _currentIndex = 0;
           _currentBeatIndexForPreview = -1;
-          if (_lyricQueue.isNotEmpty) _currentLyricText = _lyricQueue[0];
+          if (widget.sections.isNotEmpty) {
+            _currentLyricText = widget.sections[0].text;
+          }
         });
       }
     });
@@ -992,9 +985,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
     setState(() {
       _currentIndex = targetImageIndex;
-      if (_lyricQueue.isNotEmpty) {
-        _currentLyricText = _lyricQueue[_currentIndex % _lyricQueue.length];
-      }
+      // 🌟 替换掉之前的 _lyricQueue 逻辑
+      _currentLyricText = widget.sections[_currentIndex].text;
     });
   }
   Future<Uint8List?> _captureFrame() async {

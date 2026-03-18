@@ -56,6 +56,7 @@ async def analyze_beats(audio: UploadFile = File(...)):
                 "ms": int(ms),
                 "energy": round(energy, 4)
             })
+            
 
         print(f"✅ 分析完成! BPM: {tempo[0]:.2f}, 节拍数: {len(results)}")
         

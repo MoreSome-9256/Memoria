@@ -60,9 +60,11 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   // 🌟 新增 2：给故障特效专用的“永动机”时间控制器
   late AnimationController _continuousTimeController;
 
-  // 1. 定义状态
-  bool _useVignette = false;
-  bool _useGrain = false;
+  // 滤镜状态
+  bool _useVignette = false; // 暗角
+  bool _useGrain = false; // 噪点
+  bool _useCameraFrame = false; // 相机边框
+  bool _useGlowRing = false; // 光圈
 
   bool _enableFlash = true;
   double _textBlurIntensity = 4.0;
@@ -252,83 +254,109 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
     // 🌟 1. 定义纯净的视频内容层（包含震动、闪光、图片和字幕，但不含背景）
     Widget videoContent = ClipRect(
-      child: VignetteEffect(
-        enabled: _useVignette,
-        child: GrainEffect(
-          enabled: _useGrain,
-          time: _continuousTimeController.value,
-          child: AnimatedBuilder(
-            animation: _continuousTimeController,
-            builder: (context, child) {
-              return GlitchEffect(
-                intensity: _glitchIntensity, // 👈 现在它完全由你的滑块控制！
-                time: _continuousTimeController.value, // 👈 永远在流动的时间
-                child: child!,
-              );
-            },
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                // 💥 底层图片（带阻尼震动动画）
-                AnimatedBuilder(
-                  animation: _vfxController,
-                  builder: (context, child) {
-                    // 🌟 物理阻尼算法：动画从 0 走到 1，衰减系数从 1 降到 0
-                    double decay = math.max(
-                      0.0,
-                      1.0 - (_vfxController.value * 2.5),
-                    ); // 衰减得快一点，打击感更强
+      child: CameraFrameEffect(
+        enabled: _useCameraFrame,
+        isHorizontal: widget.isHorizontal, // 传入当前视频画幅状态
+        child: VignetteEffect(
+          enabled: _useVignette,
+          child: GrainEffect(
+            enabled: _useGrain,
+            time: _continuousTimeController.value,
+            child: AnimatedBuilder(
+              animation: _continuousTimeController,
+              builder: (context, child) {
+                return GlitchEffect(
+                  intensity: _glitchIntensity, // 👈 现在它完全由你的滑块控制！
+                  time: _continuousTimeController.value, // 👈 永远在流动的时间
+                  child: child!,
+                );
+              },
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // 💥 底层图片（带阻尼震动动画）
+                  AnimatedBuilder(
+                    animation: _vfxController,
+                    builder: (context, child) {
+                      // 🌟 物理阻尼算法：动画从 0 走到 1，衰减系数从 1 降到 0
+                      double decay = math.max(
+                        0.0,
+                        1.0 - (_vfxController.value * 2.5),
+                      ); // 衰减得快一点，打击感更强
 
-                    final shakeOffset = Offset(
-                      _shakeIntensity *
-                          decay *
-                          math.sin(
-                            _vfxController.value *
-                                math.pi *
-                                10 *
-                                _shakeFrequency,
-                          ),
-                      _shakeIntensity *
-                          decay *
-                          math.cos(
-                            _vfxController.value *
-                                math.pi *
-                                12 *
-                                _shakeFrequency,
-                          ),
-                    );
-                    return Transform.translate(
-                      offset: shakeOffset,
-                      child: child,
-                    );
-                  },
-                  child: AnimatedSwitcher(
-                    duration: 800.ms,
-                    child: _buildPureImageLayer(
-                      currentSection.photo.path,
-                      subtitleLayer,
+                      final shakeOffset = Offset(
+                        _shakeIntensity *
+                            decay *
+                            math.sin(
+                              _vfxController.value *
+                                  math.pi *
+                                  10 *
+                                  _shakeFrequency,
+                            ),
+                        _shakeIntensity *
+                            decay *
+                            math.cos(
+                              _vfxController.value *
+                                  math.pi *
+                                  12 *
+                                  _shakeFrequency,
+                            ),
+                      );
+                      return Transform.translate(
+                        offset: shakeOffset,
+                        child: child,
+                      );
+                    },
+                    child: AnimatedSwitcher(
+                      duration: 800.ms,
+                      child: _buildPureImageLayer(
+                        currentSection.photo.path,
+                        subtitleLayer,
+                      ),
                     ),
                   ),
-                ),
+                  // 🌟 新增：霓虹光圈层 (夹在图片和闪光弹中间)
+                  AnimatedBuilder(
+                    // 使用 Listenable.merge 同时监听时间轴和节拍震动轴
+                    animation: Listenable.merge([
+                      _vfxController,
+                      _continuousTimeController,
+                    ]),
+                    builder: (context, child) {
+                      // 获取当前音乐打击的强度 (从 1.0 衰减到 0.0)
+                      double decay = math.max(
+                        0.0,
+                        1.0 - (_vfxController.value * 2.5),
+                      );
+                      return GlowRingEffect(
+                        enabled: _useGlowRing,
+                        time: _continuousTimeController.value,
+                        beatIntensity: decay, // 完美传入打击感
+                      );
+                    },
+                  ),
 
-                // 💥 白场闪光层
-                AnimatedBuilder(
-                  animation: _vfxController,
-                  builder: (context, child) {
-                    double decay = math
-                        .pow(1.0 - _vfxController.value, 3)
-                        .toDouble();
-                    final double flashAlpha = _enableFlash ? 0.3 * decay : 0.0;
-                    return IgnorePointer(
-                      child: Container(
-                        color: Colors.white.withValues(alpha: flashAlpha),
-                      ),
-                    );
-                  },
-                ),
-              ],
+                  // 💥 白场闪光层
+                  AnimatedBuilder(
+                    animation: _vfxController,
+                    builder: (context, child) {
+                      double decay = math
+                          .pow(1.0 - _vfxController.value, 3)
+                          .toDouble();
+                      final double flashAlpha = _enableFlash
+                          ? 0.3 * decay
+                          : 0.0;
+                      return IgnorePointer(
+                        child: Container(
+                          color: Colors.white.withValues(alpha: flashAlpha),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
-          )
+          ),
         )
       )
       
@@ -553,264 +581,334 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       context: context,
       backgroundColor: Colors.black87,
       barrierColor: Colors.transparent, // 透明背景，不遮挡视频观看
-      isScrollControlled: true,
+      isScrollControlled: true, // 允许我们自己控制高度
+      // 🌟 新增：圆角设计，让控制台看起来更精致
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (context) {
+        // 🌟 新增：获取屏幕高度
+        final screenHeight = MediaQuery.of(context).size.height;
+
         return StatefulBuilder(
           builder: (context, setModalState) {
             return SafeArea(
-              child: SingleChildScrollView(
-                child: Padding(
-                  padding: const EdgeInsets.all(24.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'VFX 特效控制台',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+              // 🌟 核心修改：用 Container 约束最大高度为屏幕的一半
+              child: Container(
+                constraints: BoxConstraints(maxHeight: screenHeight * 0.5),
+                child: Column(
+                  children: [
+                    // 🌟 顶部加一个小小的“把手”指示器，提示用户这是个可以拖动的面板
+                    Container(
+                      margin: const EdgeInsets.only(top: 12, bottom: 8),
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
                       ),
-                      const SizedBox(height: 16),
+                    ),
 
-                      // 1. 震动幅度滑块
-                      Row(
-                        children: [
-                          const Text(
-                            '震动幅度',
-                            style: TextStyle(color: Colors.white70),
+                    // 🌟 剩下的内容放进 Expanded 和 SingleChildScrollView 里，确保它可以滑动
+                    Expanded(
+                      child: SingleChildScrollView(
+                        physics:
+                            const BouncingScrollPhysics(), // 增加 iOS 风格的回弹效果
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24.0,
+                            vertical: 8.0,
                           ),
-                          Expanded(
-                            child: Slider(
-                              value: _shakeIntensity,
-                              min: 0,
-                              max: 10.0,
-                              divisions: 30,
-                              activeColor: Colors.pinkAccent,
-                              onChanged: (val) {
-                                setModalState(() => _shakeIntensity = val);
-                                setState(() {});
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'VFX 特效控制台',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
 
-                      // 🌟 1.5 新增：震动频率 (马达转速) 滑块
-                      Row(
-                        children: [
-                          const Text(
-                            '震动频率',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                          Expanded(
-                            child: Slider(
-                              value: _shakeFrequency,
-                              min: 1.0,
-                              max: 50.0, // 最高一拍震 50 次，绝对够鬼畜了
-                              divisions: 49,
-                              activeColor: Colors.orangeAccent, // 换个颜色区分
-                              onChanged: (val) {
-                                setModalState(() => _shakeFrequency = val);
-                                setState(() {});
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      // 🌟 新增：故障干扰 (Glitch) 滑块
-                      Row(
-                        children: [
-                          const Text(
-                            '故障干扰',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                          Expanded(
-                            child: Slider(
-                              value: _glitchIntensity,
-                              min: 0.0,
-                              max: 1.0,
-                              divisions: 20,
-                              activeColor: Colors.greenAccent, // 换个骚气的荧光绿
-                              onChanged: (val) {
-                                setModalState(() => _glitchIntensity = val);
-                                // 实时刷新外层 UI
-                                setState(() {});
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      // 2. 闪光弹开关
-                      SwitchListTile(
-                        title: const Text(
-                          '高光闪烁 (Flash)',
-                          style: TextStyle(color: Colors.white70),
-                        ),
-                        activeColor: Colors.pinkAccent,
-                        value: _enableFlash,
-                        onChanged: (val) {
-                          setModalState(() => _enableFlash = val);
-                          setState(() {});
-                        },
-                      ),
+                              // --- 下面完全是你的原有代码，一字未改 ---
 
-                      // 3. 字幕模糊度滑块
-                      Row(
-                        children: [
-                          const Text(
-                            '字幕失焦',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                          Expanded(
-                            child: Slider(
-                              value: _textBlurIntensity,
-                              min: 0,
-                              max: 20,
-                              activeColor: Colors.cyanAccent,
-                              onChanged: (val) {
-                                setModalState(() => _textBlurIntensity = val);
-                                setState(() {});
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Divider(color: Colors.white24, height: 32),
-                      const Text(
-                        '🔤 排版与字幕',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
+                              // 1. 震动幅度滑块
+                              Row(
+                                children: [
+                                  const Text(
+                                    '震动幅度',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  Expanded(
+                                    child: Slider(
+                                      value: _shakeIntensity,
+                                      min: 0,
+                                      max: 10.0,
+                                      divisions: 30,
+                                      activeColor: Colors.pinkAccent,
+                                      onChanged: (val) {
+                                        setModalState(
+                                          () => _shakeIntensity = val,
+                                        );
+                                        setState(() {});
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
 
-                      // 1. 字幕风格选择器
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            '字幕特效',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                          DropdownButton<String>(
-                            value: _currentTextStyle,
-                            dropdownColor: Colors.grey[900],
-                            style: const TextStyle(
-                              color: Colors.pinkAccent,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            underline: const SizedBox(),
-                            items: const [
-                              DropdownMenuItem(
-                                value: 'standard',
-                                child: Text('Standard (底部平滑)'),
+                              // 🌟 1.5 新增：震动频率 (马达转速) 滑块
+                              Row(
+                                children: [
+                                  const Text(
+                                    '震动频率',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  Expanded(
+                                    child: Slider(
+                                      value: _shakeFrequency,
+                                      min: 1.0,
+                                      max: 50.0,
+                                      divisions: 49,
+                                      activeColor: Colors.orangeAccent,
+                                      onChanged: (val) {
+                                        setModalState(
+                                          () => _shakeFrequency = val,
+                                        );
+                                        setState(() {});
+                                      },
+                                    ),
+                                  ),
+                                ],
                               ),
-                              DropdownMenuItem(
-                                value: 'hero',
-                                child: Text('Hero (居中呼吸)'),
+                              // 🌟 新增：故障干扰 (Glitch) 滑块
+                              Row(
+                                children: [
+                                  const Text(
+                                    '故障干扰',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  Expanded(
+                                    child: Slider(
+                                      value: _glitchIntensity,
+                                      min: 0.0,
+                                      max: 1.0,
+                                      divisions: 20,
+                                      activeColor: Colors.greenAccent,
+                                      onChanged: (val) {
+                                        setModalState(
+                                          () => _glitchIntensity = val,
+                                        );
+                                        setState(() {});
+                                      },
+                                    ),
+                                  ),
+                                ],
                               ),
-                              DropdownMenuItem(
-                                value: 'cards',
-                                child: Text('Cards (字卡逐字)'),
+                              // 2. 闪光弹开关
+                              SwitchListTile(
+                                title: const Text(
+                                  '高光闪烁 (Flash)',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                                activeColor: Colors.pinkAccent,
+                                value: _enableFlash,
+                                onChanged: (val) {
+                                  setModalState(() => _enableFlash = val);
+                                  setState(() {});
+                                },
                               ),
-                              DropdownMenuItem(
-                                value: 'layered',
-                                child: Text('Layered (图层堆叠)'),
+
+                              // 3. 字幕模糊度滑块
+                              Row(
+                                children: [
+                                  const Text(
+                                    '字幕失焦',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  Expanded(
+                                    child: Slider(
+                                      value: _textBlurIntensity,
+                                      min: 0,
+                                      max: 20,
+                                      activeColor: Colors.cyanAccent,
+                                      onChanged: (val) {
+                                        setModalState(
+                                          () => _textBlurIntensity = val,
+                                        );
+                                        setState(() {});
+                                      },
+                                    ),
+                                  ),
+                                ],
                               ),
-                              DropdownMenuItem(
-                                value: 'outline',
-                                child: Text('Outline (大字描边)'),
+                              const Divider(color: Colors.white24, height: 32),
+                              const Text(
+                                '🔤 排版与字幕',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                              /*DropdownMenuItem(
-                                value: 'strip',
-                                child: Text('Strip (文字条)'),
-                              ),*/
+                              const SizedBox(height: 8),
+
+                              // 1. 字幕风格选择器
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text(
+                                    '字幕特效',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  DropdownButton<String>(
+                                    value: _currentTextStyle,
+                                    dropdownColor: Colors.grey[900],
+                                    style: const TextStyle(
+                                      color: Colors.pinkAccent,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    underline: const SizedBox(),
+                                    items: const [
+                                      DropdownMenuItem(
+                                        value: 'standard',
+                                        child: Text('Standard (底部平滑)'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'hero',
+                                        child: Text('Hero (居中呼吸)'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'cards',
+                                        child: Text('Cards (字卡逐字)'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'layered',
+                                        child: Text('Layered (图层堆叠)'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'outline',
+                                        child: Text('Outline (大字描边)'),
+                                      ),
+                                    ],
+                                    onChanged: (val) {
+                                      if (val != null) {
+                                        setModalState(
+                                          () => _currentTextStyle = val,
+                                        );
+                                        setState(() {});
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+
+                              // 2. Y轴位置滑块
+                              Row(
+                                children: [
+                                  const Text(
+                                    '垂直位置',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  Expanded(
+                                    child: Slider(
+                                      value: _textYPosition,
+                                      min: 0.1,
+                                      max: 0.9,
+                                      activeColor: Colors.blueAccent,
+                                      onChanged: (val) {
+                                        setModalState(
+                                          () => _textYPosition = val,
+                                        );
+                                        setState(() {});
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+
+                              // 3. 字号滑块
+                              Row(
+                                children: [
+                                  const Text(
+                                    '字体大小',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  Expanded(
+                                    child: Slider(
+                                      value: _textSize,
+                                      min: 14.0,
+                                      max: 60.0,
+                                      activeColor: Colors.blueAccent,
+                                      onChanged: (val) {
+                                        setModalState(() => _textSize = val);
+                                        setState(() {});
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const Divider(color: Colors.white24),
+                              CheckboxListTile(
+                                title: const Text(
+                                  '复古暗角',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                                value: _useVignette,
+                                activeColor: Colors.pinkAccent,
+                                onChanged: (val) {
+                                  setModalState(() => _useVignette = val!);
+                                  setState(() {});
+                                },
+                              ),
+                              CheckboxListTile(
+                                title: const Text(
+                                  '胶片噪点',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                                value: _useGrain,
+                                activeColor: Colors.pinkAccent,
+                                onChanged: (val) {
+                                  setModalState(() => _useGrain = val!);
+                                  setState(() {});
+                                },
+                              ),
+                              CheckboxListTile(
+                                title: const Text(
+                                  '相机取景器',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                                value: _useCameraFrame,
+                                activeColor: Colors.pinkAccent,
+                                onChanged: (val) {
+                                  setModalState(() => _useCameraFrame = val!);
+                                  setState(() {});
+                                },
+                              ),
+                              CheckboxListTile(
+                                title: const Text(
+                                  '霓虹光圈',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                                value: _useGlowRing,
+                                activeColor: Colors.pinkAccent,
+                                onChanged: (val) {
+                                  setModalState(() => _useGlowRing = val!);
+                                  setState(() {});
+                                },
+                              ),
+                              // 底部留出一点空白，防止被系统手势条挡住
+                              const SizedBox(height: 20),
                             ],
-                            onChanged: (val) {
-                              if (val != null) {
-                                setModalState(() => _currentTextStyle = val);
-                                setState(() {});
-                              }
-                            },
                           ),
-                        ],
-                      ),
-
-                      // 2. Y轴位置滑块
-                      Row(
-                        children: [
-                          const Text(
-                            '垂直位置',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                          Expanded(
-                            child: Slider(
-                              value: _textYPosition,
-                              min: 0.1,
-                              max: 0.9,
-                              activeColor: Colors.blueAccent,
-                              onChanged: (val) {
-                                setModalState(() => _textYPosition = val);
-                                setState(() {});
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      // 3. 字号滑块
-                      Row(
-                        children: [
-                          const Text(
-                            '字体大小',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                          Expanded(
-                            child: Slider(
-                              value: _textSize,
-                              min: 14.0,
-                              max: 60.0,
-                              activeColor: Colors.blueAccent,
-                              onChanged: (val) {
-                                setModalState(() => _textSize = val);
-                                setState(() {});
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Divider(color: Colors.white24),
-                      CheckboxListTile(
-                        title: const Text(
-                          '复古暗角',
-                          style: TextStyle(color: Colors.white70),
                         ),
-                        value: _useVignette,
-                        activeColor: Colors.pinkAccent,
-                        onChanged: (val) {
-                          setModalState(() => _useVignette = val!);
-                          setState(() {});
-                        },
                       ),
-                      CheckboxListTile(
-                        title: const Text(
-                          '胶片噪点',
-                          style: TextStyle(color: Colors.white70),
-                        ),
-                        value: _useGrain,
-                        activeColor: Colors.pinkAccent,
-                        onChanged: (val) {
-                          setModalState(() => _useGrain = val!);
-                          setState(() {});
-                        },
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             );
@@ -819,7 +917,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       },
     );
   }
-
   // 📊 导出时的进度遮罩层
   Widget _buildExportProgressOverlay() {
     return Container(

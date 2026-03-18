@@ -109,6 +109,8 @@ flutter:
     - assets/audio/Hachimi.mp3
     - assets/audio/Hachimi_beats.json
     - assets/images/noise.png
+    - assets/images/frame_horizontal.png
+    - assets/images/frame_vertical.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

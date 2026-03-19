@@ -213,10 +213,11 @@ class _StoryResultPageState extends State<StoryResultPage> {
         context,
       ).showSnackBar(const SnackBar(content: Text('故事已保存，可在故事页回查')));
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('保存失败: $e')));
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }

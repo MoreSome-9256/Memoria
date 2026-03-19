@@ -240,9 +240,15 @@ class ClipTokenizerService {
   static Map<int, String> _buildByteEncoder() {
     // "Nice" byte ranges that map to themselves.
     final bs = <int>[];
-    for (var i = 33; i <= 126; i++) bs.add(i); // '!' .. '~'
-    for (var i = 161; i <= 172; i++) bs.add(i); // '¡' .. '¬'
-    for (var i = 174; i <= 255; i++) bs.add(i); // '®' .. 'ÿ'
+    for (var i = 33; i <= 126; i++) {
+      bs.add(i); // '!' .. '~'
+    }
+    for (var i = 161; i <= 172; i++) {
+      bs.add(i); // '¡' .. '¬'
+    }
+    for (var i = 174; i <= 255; i++) {
+      bs.add(i); // '®' .. 'ÿ'
+    }
 
     // Code-point counterparts start as a copy, then extend for non-nice bytes.
     final cs = List<int>.from(bs);

@@ -289,28 +289,22 @@ Sandal Leap
         _loadingText = '开始生成';
       });
 
-      if (story != null) {
-        // 4. 导航到 StoryResultPage.fromStoryEntity
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => StoryResultPage.fromStoryEntity(
-              storyEntity: story,
-              photos: photoEntities,
-              // 🌟 记得给 ResultPage 传过去音乐路径，让它知道播哪首歌
-              customMusicPath: _selectedMusicSource == MusicSource.manualImport ? _customMusicPath : null,
-              // 🌟 新增：把刚才拿到的云端节拍数据一起传过去！
-              dynamicBeatData: dynamicBeatData,
-              captions: finalCaptions,
-            ),
+      // 4. 导航到 StoryResultPage.fromStoryEntity
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => StoryResultPage.fromStoryEntity(
+            storyEntity: story,
+            photos: photoEntities,
+            // 🌟 记得给 ResultPage 传过去音乐路径，让它知道播哪首歌
+            customMusicPath: _selectedMusicSource == MusicSource.manualImport ? _customMusicPath : null,
+            // 🌟 新增：把刚才拿到的云端节拍数据一起传过去！
+            dynamicBeatData: dynamicBeatData,
+            captions: finalCaptions,
           ),
-        );
-      } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('故事生成失败，请重试')));
-      }
-    } catch (e) {
+        ),
+      );
+        } catch (e) {
       setState(() {
         _isGenerating = false;
         _loadingText = '开始生成';
@@ -471,40 +465,44 @@ Sandal Leap
                 label: const Text('✨ 小红书'),
                 selected: _selectedPlatform == PublishingPlatform.xiaohongshu,
                 onSelected: (selected) {
-                  if (selected)
+                  if (selected) {
                     setState(
                       () => _selectedPlatform = PublishingPlatform.xiaohongshu,
                     );
+                  }
                 },
               ),
               ChoiceChip(
                 label: const Text('💬 朋友圈'),
                 selected: _selectedPlatform == PublishingPlatform.moments,
                 onSelected: (selected) {
-                  if (selected)
+                  if (selected) {
                     setState(
                       () => _selectedPlatform = PublishingPlatform.moments,
                     );
+                  }
                 },
               ),
               ChoiceChip(
                 label: const Text('📺 B站'),
                 selected: _selectedPlatform == PublishingPlatform.bilibili,
                 onSelected: (selected) {
-                  if (selected)
+                  if (selected) {
                     setState(
                       () => _selectedPlatform = PublishingPlatform.bilibili,
                     );
+                  }
                 },
               ),
               ChoiceChip(
                 label: const Text('🔥 短视频'),
                 selected: _selectedPlatform == PublishingPlatform.tiktok,
                 onSelected: (selected) {
-                  if (selected)
+                  if (selected) {
                     setState(
                       () => _selectedPlatform = PublishingPlatform.tiktok,
                     );
+                  }
                 },
               ),
             ],
@@ -523,7 +521,7 @@ Sandal Leap
             ),
             subtitle: const Text('AI将根据剧本为每张照片提炼一句专属短字幕'),
             value: _enableAutoCaptions,
-            activeColor: Colors.pinkAccent,
+            activeThumbColor: Colors.pinkAccent,
             onChanged: (val) {
               setState(() {
                 _enableAutoCaptions = val;

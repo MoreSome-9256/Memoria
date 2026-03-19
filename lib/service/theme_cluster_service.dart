@@ -449,7 +449,7 @@ class ThemeClusterService {
 
   Future<List<PhotoEntity>> _loadPhotos() async {
     if (_photosLoader != null) {
-      return _photosLoader!();
+      return _photosLoader();
     }
     return PhotoService().isar.collection<PhotoEntity>().where().findAll();
   }
@@ -467,7 +467,7 @@ class ThemeClusterService {
   }
   ) async {
     if (_embeddingPreparer != null) {
-      return _embeddingPreparer!(photos);
+      return _embeddingPreparer(photos);
     }
 
     final cached = <int, List<double>>{};
@@ -636,7 +636,7 @@ class ThemeClusterService {
 
   Future<Map<String, List<double>>> _buildThemePrototypeVectors() async {
     if (_prototypeBuilder != null) {
-      return _prototypeBuilder!();
+      return _prototypeBuilder();
     }
 
     await _semanticService.warmUp();

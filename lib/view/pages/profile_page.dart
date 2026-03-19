@@ -62,7 +62,7 @@ class _ProfilePageState extends State<ProfilePage> {
               return Column(
                 children: [
                   Text(
-                    username == null ? '未登录用户' : username,
+                    username ?? '未登录用户',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   const SizedBox(height: 6),

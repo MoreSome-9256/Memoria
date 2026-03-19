@@ -49,7 +49,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   bool _isPlaying = false;
   StreamSubscription? _positionSubscription;
   
-  int _currentLyricIndex = 0;
   String _currentLyricText = "";
   // 🎛️ VFX 控制台参数
   double _shakeIntensity = 0.0; // 震动幅度 (Amplitude)
@@ -76,7 +75,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       'hero'; // 'standard' (普通底栏), 'hero' (居中大字), 'cards' (字卡散落)
   double _textYPosition = 0.8; // 0.0 为顶部，0.5 为屏幕正中，1.0 为贴底
   double _textSize = 24.0;
-  String _fontFamily = 'sans-serif'; // 以后可以接入 Google Fonts
+  final String _fontFamily = 'sans-serif'; // 以后可以接入 Google Fonts
 
   bool _isExporting = false; // 🌟 控制是否处于导出模式
   double _exportProgress = 0.0; // 🌟 导出百分比 (0.0 到 1.0)
@@ -233,8 +232,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
   @override
   Widget build(BuildContext context) {
-    if (widget.sections.isEmpty)
+    if (widget.sections.isEmpty) {
       return const Scaffold(body: Center(child: Text('无内容')));
+    }
 
     final currentSection = widget.sections[_currentIndex];
 
@@ -385,7 +385,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         screenBody = Stack(
           fit: StackFit.expand,
           children: [
-            Image.file(File(currentSection.photo.path!), fit: BoxFit.cover),
+            Image.file(File(currentSection.photo.path), fit: BoxFit.cover),
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
               child: Container(color: Colors.black.withValues(alpha: 0.6)),
@@ -720,7 +720,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                                   '高光闪烁 (Flash)',
                                   style: TextStyle(color: Colors.white70),
                                 ),
-                                activeColor: Colors.pinkAccent,
+                                activeThumbColor: Colors.pinkAccent,
                                 value: _enableFlash,
                                 onChanged: (val) {
                                   setModalState(() => _enableFlash = val);

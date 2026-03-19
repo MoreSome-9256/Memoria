@@ -239,7 +239,7 @@ class _HomePageState extends State<HomePage> {
           .timestampBetween(start, end)
           .findAll();
 
-      if (photos.length >= 10)
+      if (photos.length >= 10) {
         return _createCard(
           '我的 $targetYear 年度总结',
           '回眸这一年的 ${photos.length} 个瞬间',
@@ -249,6 +249,7 @@ class _HomePageState extends State<HomePage> {
           Icons.auto_awesome,
           photos.take(20).toList(),
         );
+      }
     }
 
     // 2. 月度总结 (每月 25 号之后)
@@ -267,7 +268,7 @@ class _HomePageState extends State<HomePage> {
           .timestampBetween(start, end)
           .findAll();
 
-      if (photos.length >= 8)
+      if (photos.length >= 8) {
         return _createCard(
           '${now.month}月碎片',
           '把 ${now.month} 月的温柔收集成册',
@@ -277,6 +278,7 @@ class _HomePageState extends State<HomePage> {
           Icons.calendar_month,
           photos.take(20).toList(),
         );
+      }
     }
 
     // 3. 往年今日
@@ -305,7 +307,7 @@ class _HomePageState extends State<HomePage> {
         if (historyYear == now.year) historyYear = now.year - i;
       }
     }
-    if (historyPhotos.length >= 3)
+    if (historyPhotos.length >= 3) {
       return _createCard(
         '那年今日',
         '梦回 $historyYear 年的今天',
@@ -315,6 +317,7 @@ class _HomePageState extends State<HomePage> {
         Icons.history,
         historyPhotos.take(20).toList(),
       );
+    }
 
     return null;
   }
@@ -332,9 +335,9 @@ class _HomePageState extends State<HomePage> {
       if (tagsStr.contains('猫') ||
           tagsStr.contains('狗') ||
           tagsStr.contains('宠物') ||
-          tagsStr.contains('cat'))
+          tagsStr.contains('cat')) {
         pets.add(p);
-      else if (tagsStr.contains('风景') ||
+      } else if (tagsStr.contains('风景') ||
           tagsStr.contains('山') ||
           tagsStr.contains('海') ||
           tagsStr.contains('自然') ||
@@ -350,7 +353,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     List<Map<String, dynamic>> candidates = [];
-    if (pets.length >= 5)
+    if (pets.length >= 5) {
       candidates.add(
         _createCard(
           '萌宠心动瞬间',
@@ -362,7 +365,8 @@ class _HomePageState extends State<HomePage> {
           pets.take(20).toList(),
         ),
       );
-    if (scenery.length >= 8)
+    }
+    if (scenery.length >= 8) {
       candidates.add(
         _createCard(
           '出游回忆',
@@ -374,7 +378,8 @@ class _HomePageState extends State<HomePage> {
           scenery.take(20).toList(),
         ),
       );
-    if (foods.length >= 6)
+    }
+    if (foods.length >= 6) {
       candidates.add(
         _createCard(
           '我的美食日记',
@@ -386,7 +391,8 @@ class _HomePageState extends State<HomePage> {
           foods.take(20).toList(),
         ),
       );
-    if (happy.length >= 5)
+    }
+    if (happy.length >= 5) {
       candidates.add(
         _createCard(
           '愉快回忆',
@@ -398,6 +404,7 @@ class _HomePageState extends State<HomePage> {
           happy.take(20).toList(),
         ),
       );
+    }
 
     candidates.sort(
       (a, b) =>
@@ -415,13 +422,14 @@ class _HomePageState extends State<HomePage> {
     Map<String, List<PhotoEntity>> locationGroups = {};
     for (var p in recentPhotos) {
       final loc = p.city ?? p.province;
-      if (loc != null && loc.isNotEmpty)
+      if (loc != null && loc.isNotEmpty) {
         locationGroups.putIfAbsent(loc, () => []).add(p);
+      }
     }
 
     List<Map<String, dynamic>> candidates = [];
     locationGroups.forEach((loc, photos) {
-      if (photos.length >= 10)
+      if (photos.length >= 10) {
         candidates.add(
           _createCard(
             '$loc·漫游记',
@@ -433,6 +441,7 @@ class _HomePageState extends State<HomePage> {
             photos.take(20).toList(),
           ),
         );
+      }
     });
     candidates.sort(
       (a, b) =>

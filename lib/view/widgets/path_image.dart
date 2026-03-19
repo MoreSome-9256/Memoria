@@ -27,7 +27,7 @@ class PathImage extends StatelessWidget {
         fit: fit,
         width: width,
         height: height,
-        errorBuilder: (_, __, ___) => _fallback(),
+        errorBuilder: (_, _, _) => _fallback(),
       );
     }
 
@@ -37,7 +37,7 @@ class PathImage extends StatelessWidget {
       fit: fit,
       width: width,
       height: height,
-      errorBuilder: (_, __, ___) => _fallback(),
+      errorBuilder: (_, _, _) => _fallback(),
     );
   }
 

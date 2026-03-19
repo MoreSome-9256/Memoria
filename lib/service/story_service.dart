@@ -7,7 +7,7 @@ import '../models/entity/photo_entity.dart';
 import '../utils/tag_sanitizer.dart';
 import 'photo_service.dart';
 import 'llm_service.dart';
-import '../view/pages/config_page.dart'; // for StoryLength enum
+// for StoryLength enum
 import 'event_service.dart';
 
 /// 故事服务 - 管理故事的生成和存储

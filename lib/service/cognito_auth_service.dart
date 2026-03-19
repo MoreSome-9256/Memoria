@@ -51,4 +51,22 @@ class CognitoAuthService {
       confirmationCode: confirmationCode,
     );
   }
+
+  Future<ResetPasswordResult> resetPassword({
+    required String username,
+  }) async {
+    return Amplify.Auth.resetPassword(username: username);
+  }
+
+  Future<void> confirmResetPassword({
+    required String username,
+    required String confirmationCode,
+    required String newPassword,
+  }) async {
+    await Amplify.Auth.confirmResetPassword(
+      username: username,
+      newPassword: newPassword,
+      confirmationCode: confirmationCode,
+    );
+  }
 }

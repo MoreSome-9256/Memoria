@@ -1,6 +1,7 @@
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
+import 'package:photo_album/view/pages/forgot_password_page.dart';
 import 'package:photo_album/view/pages/sign_up_page.dart';
 import 'package:photo_album/view/widget_tree.dart';
 
@@ -131,6 +132,18 @@ class _SignInPageState extends State<SignInPage> {
                           )
                         : const Text('登录'),
                   ),
+                ),
+                TextButton(
+                  onPressed: _submitting
+                      ? null
+                      : () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const ForgotPasswordPage(),
+                            ),
+                          );
+                        },
+                  child: const Text('忘记密码？'),
                 ),
                 TextButton(
                   onPressed: _submitting

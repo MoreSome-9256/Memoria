@@ -14,6 +14,7 @@ class _SignUpPageState extends State<SignUpPage> {
   final _formKey = GlobalKey<FormState>();
 
   final _usernameController = TextEditingController();
+  final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _codeController = TextEditingController();
@@ -26,6 +27,7 @@ class _SignUpPageState extends State<SignUpPage> {
   @override
   void dispose() {
     _usernameController.dispose();
+    _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _codeController.dispose();
@@ -47,6 +49,7 @@ class _SignUpPageState extends State<SignUpPage> {
         username: _usernameController.text.trim(),
         password: _passwordController.text,
         email: _emailController.text.trim(),
+        name: _nameController.text.trim(),
       );
 
       if (!mounted) {
@@ -150,6 +153,17 @@ class _SignUpPageState extends State<SignUpPage> {
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
                       return '请输入用户名';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(labelText: '姓名'),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return '请输入姓名';
                     }
                     return null;
                   },

@@ -28,6 +28,7 @@ class CognitoAuthService {
     required String username,
     required String password,
     required String email,
+    required String name,
   }) async {
     return Amplify.Auth.signUp(
       username: username,
@@ -35,6 +36,7 @@ class CognitoAuthService {
       options: SignUpOptions(
         userAttributes: {
           AuthUserAttributeKey.email: email,
+          AuthUserAttributeKey.name: name,
         },
       ),
     );

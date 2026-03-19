@@ -146,6 +146,20 @@ class _ConfigPageState extends State<ConfigPage> {
         throw Exception('No photos found');
       }
       // ==========================================
+      // 🛡️ 核心修复：路径恢复逻辑
+      // 防止数据库里的 PhotoEntity.path 为空，强行用选择器里的最新路径覆盖它
+      // ==========================================
+      final Map<String, String> idToPathMap = {
+        for (var p in widget.selectedPhotos) p.id: p.path ?? "",
+      };
+
+      for (var entity in photoEntities) {
+        final freshPath = idToPathMap[entity.assetId];
+        if (freshPath != null && freshPath.isNotEmpty) {
+          entity.path = freshPath; // 🌟 强行缝合路径，保证图片能显示
+        }
+      }
+      // ==========================================
       // 🌟 核心：云端 Librosa 接入点
       // ==========================================
       Map<String, dynamic>? dynamicBeatData;

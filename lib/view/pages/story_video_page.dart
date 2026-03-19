@@ -25,6 +25,7 @@ class StoryVideoPage extends StatefulWidget {
   final bool isHorizontal;
   final String? customMusicPath;
   final Map<String, dynamic>? dynamicBeatData; // 🌟 接收云端数据
+  final String subtitle;
 
   const StoryVideoPage({
     super.key,
@@ -33,6 +34,7 @@ class StoryVideoPage extends StatefulWidget {
     this.isHorizontal = false,
     this.customMusicPath,
     this.dynamicBeatData,
+    required this.subtitle,
   });
 
   @override
@@ -235,8 +237,13 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       return const Scaffold(body: Center(child: Text('无内容')));
 
     final currentSection = widget.sections[_currentIndex];
+
+    // 🌟 核心判断：当前是不是第 0 帧（片头帧）
+    final bool isIntro = _currentIndex == 0;
+
     final subtitleLayer = SubtitleEffectLayer(
-      text: _currentLyricText,
+      // 🌟 修改：如果是片头，强行把字幕抽空，给片头大字让路！
+      text: isIntro ? "" : _currentLyricText,
       effectType: _currentTextStyle,
       yPosition: _textYPosition,
       fontSize: _textSize,
@@ -259,23 +266,22 @@ class _StoryVideoPageState extends State<StoryVideoPage>
               animation: _continuousTimeController,
               builder: (context, child) {
                 return GlitchEffect(
-                  intensity: _glitchIntensity, // 👈 现在它完全由你的滑块控制！
-                  time: _continuousTimeController.value, // 👈 永远在流动的时间
+                  intensity: _glitchIntensity,
+                  time: _continuousTimeController.value,
                   child: child!,
                 );
               },
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // 💥 底层图片（带阻尼震动动画）
+                  // 💥 底层图片（带阻尼震动动画，且内部包含了单句小字幕）
                   AnimatedBuilder(
                     animation: _vfxController,
                     builder: (context, child) {
-                      // 🌟 物理阻尼算法：动画从 0 走到 1，衰减系数从 1 降到 0
                       double decay = math.max(
                         0.0,
                         1.0 - (_vfxController.value * 2.5),
-                      ); // 衰减得快一点，打击感更强
+                      );
 
                       final shakeOffset = Offset(
                         _shakeIntensity *
@@ -304,19 +310,18 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                       duration: 800.ms,
                       child: _buildPureImageLayer(
                         currentSection.photo.path,
-                        subtitleLayer,
+                        subtitleLayer, // 👆 刚才被抽空的字幕层在这里被渲染
                       ),
                     ),
                   ),
-                  // 🌟 新增：霓虹光圈层 (夹在图片和闪光弹中间)
+
+                  // 🌟 霓虹光圈层
                   AnimatedBuilder(
-                    // 使用 Listenable.merge 同时监听时间轴和节拍震动轴
                     animation: Listenable.merge([
                       _vfxController,
                       _continuousTimeController,
                     ]),
                     builder: (context, child) {
-                      // 获取当前音乐打击的强度 (从 1.0 衰减到 0.0)
                       double decay = math.max(
                         0.0,
                         1.0 - (_vfxController.value * 2.5),
@@ -324,7 +329,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                       return GlowRingEffect(
                         enabled: _useGlowRing,
                         time: _continuousTimeController.value,
-                        beatIntensity: decay, // 完美传入打击感
+                        beatIntensity: decay,
                       );
                     },
                   ),
@@ -346,20 +351,30 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                       );
                     },
                   ),
+
+                  // ==========================================
+                  // 🎬 核心新增：电影感片头层！
+                  // 放在所有图层的最顶端（闪光层之上），保证片头文字清晰无比
+                  // ==========================================
+                  if (isIntro)
+                    Positioned.fill(
+                      child: CinematicTitleIntro(
+                        title: widget.title, // 使用上一个页面传来的标题
+                        subtitle: widget.subtitle, // 使用上一个页面传来的副标题
+                      ),
+                    ),
                 ],
               ),
             ),
           ),
-        )
-      )
-      
+        ),
+      ),
     );
 
     // 🌟 2. 动态决定 取景器(RepaintBoundary) 放在哪
     Widget screenBody;
     if (widget.isHorizontal) {
       if (_isExporting) {
-        // 🎬 导出模式：取景器被强行限制在 16:9 的尺寸里！导出的视频将是纯正的横屏，无黑边！
         screenBody = Center(
           child: AspectRatio(
             aspectRatio: 16 / 9,
@@ -367,11 +382,10 @@ class _StoryVideoPageState extends State<StoryVideoPage>
           ),
         );
       } else {
-        // 👀 预览模式：全屏显示，底下垫一层模糊背景好看一点
         screenBody = Stack(
           fit: StackFit.expand,
           children: [
-            Image.file(File(currentSection.photo.path), fit: BoxFit.cover),
+            Image.file(File(currentSection.photo.path!), fit: BoxFit.cover),
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
               child: Container(color: Colors.black.withValues(alpha: 0.6)),
@@ -383,7 +397,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         );
       }
     } else {
-      // 📱 竖屏模式：全屏都是视频
       screenBody = RepaintBoundary(key: _renderKey, child: videoContent);
     }
 
@@ -1187,6 +1200,85 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         ),
         subtitle, // 字幕层
       ],
+    );
+  }
+}
+class CinematicTitleIntro extends StatelessWidget {
+  final String title;
+  final String subtitle;
+
+  const CinematicTitleIntro({
+    super.key,
+    required this.title,
+    required this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0.0, end: 1.0),
+      duration: const Duration(seconds: 4),
+      curve: Curves.easeOutQuart,
+      builder: (context, value, child) {
+        return Opacity(
+          opacity: (value * 2).clamp(0.0, 1.0),
+          child: Transform.scale(
+            scale: 1.0 + (value * 0.05),
+            child: Container(
+              alignment: Alignment.center,
+              color: Colors.black.withValues(alpha: 0.35),
+              padding: const EdgeInsets.symmetric(horizontal: 24), // 两边留点安全边距
+              // 🌟 核心防溢出神器：FittedBox
+              child: FittedBox(
+                fit: BoxFit.scaleDown, // 太长了就缩小，绝对不换行不溢出
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ShaderMask(
+                      shaderCallback: (bounds) => LinearGradient(
+                        colors: [
+                          Colors.white,
+                          Colors.pinkAccent.shade100,
+                          Colors.white70,
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ).createShader(bounds),
+                      child: Text(
+                        title.isEmpty ? '专属回忆' : title,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 48, // 就算你设 100 只要有 FittedBox 也不会报错
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 12.0,
+                          color: Colors.white,
+                          shadows: [
+                            Shadow(
+                              color: Colors.black54,
+                              blurRadius: 10,
+                              offset: Offset(2, 2),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      subtitle.isEmpty ? '美好的时光' : subtitle,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        letterSpacing: 6.0,
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w300,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

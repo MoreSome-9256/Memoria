@@ -12,7 +12,6 @@ class MobileClipTagService {
 
   factory MobileClipTagService() => _instance;
 
-  static const String _vectorsAssetPath = 'checkpoints/expanded_tags_taxonomy.json';
   static const int _defaultTopK = 5;
   static const double _minimumScore = 0.16;
   static const double _displayScoreGap = 0.04;

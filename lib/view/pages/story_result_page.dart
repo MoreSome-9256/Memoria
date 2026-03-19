@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:math' as math;
 
 import '../../models/vo/photo.dart';
 import '../../models/story.dart';
@@ -14,8 +15,9 @@ class StoryResultPage extends StatefulWidget {
   final String subtitle;
   final Photo heroImage;
   final List<StorySection> sections;
-  final int? storyEntityId; // 新增：用于保存编辑
-  final bool isHorizontal;
+  final int? storyEntityId;
+  final String? customMusicPath;
+  final Map<String, dynamic>? dynamicBeatData;
 
   const StoryResultPage({
     super.key,
@@ -23,38 +25,49 @@ class StoryResultPage extends StatefulWidget {
     required this.subtitle,
     required this.heroImage,
     required this.sections,
-    this.storyEntityId, // 新增
-    this.isHorizontal = false,
+    this.storyEntityId,
+    this.customMusicPath,
+    this.dynamicBeatData,
   });
 
-  // 新增：从 StoryEntity 加载（ConfigPage 生成后）
   factory StoryResultPage.fromStoryEntity({
     required StoryEntity storyEntity,
     required List<PhotoEntity> photos,
-    bool isHorizontal = false,
+    String? customMusicPath,
+    Map<String, dynamic>? dynamicBeatData,
+    List<String>? captions,
   }) {
+    final Map<String, String> captionMap = {};
+    if (captions != null && captions.isNotEmpty) {
+      for (int i = 0; i < photos.length; i++) {
+        if (i < captions.length) {
+          captionMap[photos[i].assetId] = captions[i];
+        }
+      }
+    }
+
     final sectionMaps = storyEntity.parseToSections(photos);
     List<StorySection> sections = [];
 
-    // 1. 正常提取被 AI 选中的图文段落
     if (sectionMaps.isNotEmpty) {
       sections = sectionMaps.map((map) {
-        return StorySection(
-          text: map['text'] as String,
-          photo: map['photo'] as Photo,
-        );
+        final photo = map['photo'] as Photo;
+        final String sectionText =
+            (captionMap.containsKey(photo.id) &&
+                captionMap[photo.id]!.isNotEmpty)
+            ? captionMap[photo.id]!
+            : map['text'] as String;
+
+        return StorySection(text: sectionText, photo: photo);
       }).toList();
     }
 
-    // ========================================================
-    // 🚀 核心防漏补丁：AI 漏掉的照片，我们全部强行拉回播放列表！
-    // ========================================================
     final usedPhotoIds = sections.map((s) => s.photo.id).toSet();
     for (var p in photos) {
       if (!usedPhotoIds.contains(p.assetId)) {
         sections.add(
           StorySection(
-            text: '', // AI没写词，我们就空着，在视频里当做“无字纯享版”画面
+            text: captionMap[p.assetId] ?? '',
             photo: Photo(
               id: p.assetId,
               path: p.path,
@@ -71,13 +84,12 @@ class StoryResultPage extends StatefulWidget {
       }
     }
 
-    // ========================================================
-    // 💡 万一上面一顿操作后发现没图，给个终极安全气囊
-    // ========================================================
     if (sections.isEmpty && photos.isNotEmpty) {
       sections.add(
         StorySection(
-          text: storyEntity.content ?? '我的专属回忆',
+          text: (captions != null && captions.isNotEmpty)
+              ? captions.first
+              : (storyEntity.content ?? '我的专属回忆'),
           photo: Photo(
             id: photos.first.assetId,
             path: photos.first.path,
@@ -91,7 +103,8 @@ class StoryResultPage extends StatefulWidget {
       );
     }
 
-    // 2. 使用第一张照片作为 hero 图
+    // 🌟 这里已经去掉了那个会导致页面图片消失的假片头数据！页面恢复纯净！
+
     final heroPhoto = sections.first.photo;
 
     return StoryResultPage(
@@ -99,12 +112,12 @@ class StoryResultPage extends StatefulWidget {
       subtitle: storyEntity.subtitle,
       heroImage: heroPhoto,
       sections: sections,
-      storyEntityId: storyEntity.id, // 关键：保存 ID
-      isHorizontal: isHorizontal,
+      storyEntityId: storyEntity.id,
+      customMusicPath: customMusicPath,
+      dynamicBeatData: dynamicBeatData,
     );
   }
 
-  // 保留：从已保存的 Story 加载（Stories list -> Result）
   factory StoryResultPage.fromStory(Story story) {
     return StoryResultPage(
       title: story.title,
@@ -169,10 +182,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
   }
 
   Future<void> _saveStory() async {
-    if (_isSaving) {
-      return;
-    }
-
+    if (_isSaving) return;
     if (widget.storyEntityId == null) {
       ScaffoldMessenger.of(
         context,
@@ -180,59 +190,35 @@ class _StoryResultPageState extends State<StoryResultPage> {
       return;
     }
 
-    setState(() {
-      _isSaving = true;
-    });
+    setState(() => _isSaving = true);
 
     try {
-      // 1. 加载原始 StoryEntity
       final isar = PhotoService().isar;
       final story = await isar.collection<StoryEntity>().get(
         widget.storyEntityId!,
       );
+      if (story == null) throw Exception('Story not found');
 
-      if (story == null) {
-        throw Exception('Story not found');
-      }
-
-      // 2. 将编辑后的 sections 转回 Markdown
       final sectionMaps = _sections.map((section) {
         return {'text': section.text, 'photo': section.photo};
       }).toList();
 
       final updatedContent = StoryEntity.sectionsToMarkdown(sectionMaps);
-
-      // 3. 更新 content
       story.content = updatedContent;
-
-      // 4. 保存到数据库
       await StoryService().updateStory(story);
 
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _hasSaved = true;
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('故事已保存，可在故事页回查')));
-      }
+      if (!mounted) return;
+      setState(() => _hasSaved = true);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('故事已保存，可在故事页回查')));
     } catch (e) {
-      if (mounted) {
+      if (mounted)
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('保存失败: $e')));
-      }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
-      }
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -241,7 +227,6 @@ class _StoryResultPageState extends State<StoryResultPage> {
       Navigator.pop(context, _hasSaved);
       return;
     }
-
     Navigator.popUntil(context, (route) => route.isFirst);
   }
 
@@ -256,7 +241,6 @@ class _StoryResultPageState extends State<StoryResultPage> {
     return Scaffold(
       body: CustomScrollView(
         slivers: [
-          // Hero image with title
           SliverAppBar(
             expandedHeight: 300,
             pinned: true,
@@ -295,8 +279,6 @@ class _StoryResultPageState extends State<StoryResultPage> {
               ),
             ),
           ),
-
-          // Subtitle
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -310,8 +292,6 @@ class _StoryResultPageState extends State<StoryResultPage> {
               ),
             ),
           ),
-
-          // Story sections
           SliverList(
             delegate: SliverChildBuilderDelegate((context, index) {
               final section = _sections[index];
@@ -323,7 +303,6 @@ class _StoryResultPageState extends State<StoryResultPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Text block
                     GestureDetector(
                       onTap: () => _editText(index),
                       child: Container(
@@ -349,7 +328,6 @@ class _StoryResultPageState extends State<StoryResultPage> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    // Photo
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child: PathImage(
@@ -369,21 +347,38 @@ class _StoryResultPageState extends State<StoryResultPage> {
               );
             }, childCount: _sections.length),
           ),
-
-          // Bottom spacing
           const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
       ),
-      // 🌟 新增：右下角极其显眼的视频生成入口
+      // ==========================================
+      // 🚀 核心修复：把片头逻辑转移到了“播放”按钮里，且不污染原数据！
+      // ==========================================
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () {
+          List<StorySection> finalVideoSections = [];
+          if (_sections.isNotEmpty) {
+            final random = math.Random();
+            final introPhoto =
+                _sections[random.nextInt(_sections.length)].photo;
+
+            final introSection = StorySection(
+              text: '__INTRO__',
+              photo: introPhoto,
+            );
+            // 在传给视频引擎前，临时拼装片头
+            finalVideoSections = [introSection, ..._sections];
+          }
+
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (context) => StoryVideoPage(
                 title: widget.title,
-                sections: _sections, // 把排版好的图文数据传过去做视频
-                isHorizontal: widget.isHorizontal,
+                subtitle: widget.subtitle,
+                sections: finalVideoSections, // 👈 把带有片头的数据安全地传过去
+                customMusicPath: widget.customMusicPath,
+                isHorizontal: true,
+                dynamicBeatData: widget.dynamicBeatData,
               ),
             ),
           );
@@ -396,7 +391,6 @@ class _StoryResultPageState extends State<StoryResultPage> {
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
         ),
       ),
-      // 保证悬浮按钮不会挡住底部的 AppBar
       floatingActionButtonLocation: FloatingActionButtonLocation.endContained,
       bottomNavigationBar: BottomAppBar(
         child: Row(

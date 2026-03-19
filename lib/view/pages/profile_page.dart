@@ -3,12 +3,7 @@ import 'package:flutter/material.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
 
-import 'mobileclip_benchmark_page.dart';
-import 'mobileclip_vector_probe_page.dart';
-
-import 'internvl_lab_page.dart';
-
-class ProfilePage extends StatefulWidget {
+class ProfilePage extends StatelessWidget {
   const ProfilePage({super.key});
 
   @override
@@ -86,38 +81,7 @@ class _ProfilePageState extends State<ProfilePage> {
               );
             },
           ),
-          CheckboxListTile(
-            value: _showInternvlLab,
-            title: const Text('显示 VLM 推理入口'),
-            subtitle: const Text('仅用于手机本地多模态推理，避免与正式功能冲突'),
-            controlAffinity: ListTileControlAffinity.trailing,
-            onChanged: (bool? value) {
-              setState(() {
-                _showInternvlLab = value ?? false;
-              });
-            },
-          ),
-          if (_showInternvlLab)
-            _buildSettingsTile(
-              context,
-              Icons.memory_outlined,
-              'VLM 推理',
-              '选择图片并自由提问，直接在手机上完成多模态推理',
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (BuildContext context) => const InternvlLabPage(),
-                  ),
-                );
-              },
-            ),
-          _buildSettingsTile(
-            context,
-            Icons.info_outline,
-            '关于',
-            '版本 1.0.0',
-          ),
+          _buildSettingsTile(context, Icons.info_outline, '关于', '版本 1.0.0'),
         ],
       ),
     );
@@ -127,11 +91,10 @@ class _ProfilePageState extends State<ProfilePage> {
     BuildContext context,
     IconData icon,
     String title,
-    String subtitle, {
-    VoidCallback? onTap,
+    String subtitle,
     {VoidCallback? onTap,
     }
-  }) {
+  ) {
     return ListTile(
       leading: Icon(icon),
       title: Text(title),

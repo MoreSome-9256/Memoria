@@ -1,10 +1,19 @@
 import 'dart:async';
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:photo_album/service/photo_service.dart';
 import 'package:photo_album/service/ncnn_mobileclip_native_service.dart';
 import 'package:photo_album/view/pages/mobileclip_vector_probe_page.dart';
+import 'package:photo_album/service/ncnn_mobileclip_native_service.dart';
+import 'package:photo_album/view/pages/mobileclip_vector_probe_page.dart';
 import 'view/pages/welcome_page.dart';
+
+const bool _mobileClipVectorProbeMode = bool.fromEnvironment(
+  'MOBILECLIP_VECTOR_PROBE',
+  defaultValue: false,
+);
 
 const bool _mobileClipVectorProbeMode = bool.fromEnvironment(
   'MOBILECLIP_VECTOR_PROBE',
@@ -17,6 +26,12 @@ void main() async {
 
   // 2. 初始化 PhotoService (打开数据库)
   await PhotoService().init();
+
+  unawaited(
+    NcnnMobileClipNativeService().ensureModelInitialized().catchError((error) {
+      debugPrint('NCNN init skipped at startup: $error');
+    }),
+  );
 
   unawaited(
     NcnnMobileClipNativeService().ensureModelInitialized().catchError((error) {
@@ -49,11 +64,15 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color.fromARGB(255, 255, 64, 129),
+          seedColor: const Color.fromARGB(255, 255, 64, 129),
           brightness: Brightness.light,
         ),
         useMaterial3: true,
         appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
       ),
+      home: _mobileClipVectorProbeMode
+          ? const MobileClipVectorProbePage()
+          : const WelcomePage(),
       home: _mobileClipVectorProbeMode
           ? const MobileClipVectorProbePage()
           : const WelcomePage(),

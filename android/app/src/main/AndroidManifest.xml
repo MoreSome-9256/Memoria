@@ -7,8 +7,11 @@
         android:maxSdkVersion="32"/> -->
 
     <!-- Android 13+: Read images and videos -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
     <!-- Access photo GPS location data (required for clustering) -->
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION"/>
@@ -17,7 +20,8 @@
     <application
         android:label="photo_album"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true">
 
         <meta-data
             android:name="com.amap.api.v2.apikey"

@@ -103,3 +103,4 @@ CLAUDE.md
 /third_party/ncnn_mobileclip/
 /third_party/*.zip
 /third_party/*.exe
+/third_party/mobileclip2-onnx/open_clip/

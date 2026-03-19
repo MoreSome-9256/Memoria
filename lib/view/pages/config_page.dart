@@ -5,15 +5,22 @@ import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import '../../models/entity/event_entity.dart';
 import '../../models/entity/photo_entity.dart';
+import '../../models/entity/story_entity.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_service.dart';
+import '../../service/llm_service.dart';
 import 'story_result_page.dart';
+import 'package:file_picker/file_picker.dart'; // 🌟 新增
+import 'package:path/path.dart' as p;
+import '../../service/music_service.dart';
 
 // 🌟 新增：视频长宽比枚举
 enum VideoAspectRatio { vertical, horizontal }
 
 // 🌟 新增：发布平台枚举
 enum PublishingPlatform { moments, xiaohongshu, bilibili, tiktok }
+
+enum MusicSource { aiGenerated, manualImport }
 
 class ConfigPage extends StatefulWidget {
   final Event event;
@@ -38,23 +45,57 @@ class _ConfigPageState extends State<ConfigPage> {
   // 🌟 替换掉原来的 StoryLength，改为新的配置项并给默认值
   VideoAspectRatio _selectedAspectRatio = VideoAspectRatio.vertical;
   PublishingPlatform _selectedPlatform = PublishingPlatform.xiaohongshu;
+  // 🌟 新增：音乐相关状态
+  MusicSource _selectedMusicSource = MusicSource.aiGenerated;
+  String? _customMusicPath;
+  String? _customMusicName;
 
   bool _isGenerating = false;
+
+  // 🌟 新增：动态加载提示文本
+  String _loadingText = '开始生成';
+  // 🌟 新增：是否自动生成台词开关
+  bool _enableAutoCaptions = true;
+  late TextEditingController _manualCaptionsController; // 🌟 新增：手动字幕控制器
 
   @override
   void initState() {
     super.initState();
     _themeController = TextEditingController(text: widget.selectedTheme.title);
     _selectedSubtitle = widget.selectedTheme.subtitle;
+    _manualCaptionsController = TextEditingController();
+  }
+  // 🌟 新增：拣选音乐的方法
+  Future<void> _pickMusic() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['mp3', 'wav', 'aac', 'm4a', 'flac','ogg'],
+      allowMultiple: false,
+    );
+
+    if (result != null && result.files.single.path != null) {
+      setState(() {
+        _customMusicPath = result.files.single.path;
+        _customMusicName = result.files.single.name;
+      });
+    }
   }
 
   @override
   void dispose() {
     _themeController.dispose();
+    _manualCaptionsController.dispose();
     super.dispose();
   }
 
   Future<void> _generateStory() async {
+    // 校验：如果选择了手动导入但没选文件
+    if (_selectedMusicSource == MusicSource.manualImport && _customMusicPath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先选择一段本地音乐'))
+      );
+      return;
+    }
     if (_themeController.text.trim().isEmpty) {
       ScaffoldMessenger.of(
         context,
@@ -64,6 +105,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
     setState(() {
       _isGenerating = true;
+      _loadingText = '🎵 正在分析音乐节拍...'; // 🌟 更新状态
     });
 
     try {
@@ -103,21 +145,148 @@ class _ConfigPageState extends State<ConfigPage> {
       if (photoEntities.isEmpty) {
         throw Exception('No photos found');
       }
+      // ==========================================
+      // 🛡️ 核心修复：路径恢复逻辑
+      // 防止数据库里的 PhotoEntity.path 为空，强行用选择器里的最新路径覆盖它
+      // ==========================================
+      final Map<String, String> idToPathMap = {
+        for (var p in widget.selectedPhotos) p.id: p.path ?? "",
+      };
+
+      for (var entity in photoEntities) {
+        final freshPath = idToPathMap[entity.assetId];
+        if (freshPath != null && freshPath.isNotEmpty) {
+          entity.path = freshPath; // 🌟 强行缝合路径，保证图片能显示
+        }
+      }
+      // ==========================================
+      // 🌟 核心：云端 Librosa 接入点
+      // ==========================================
+      Map<String, dynamic>? dynamicBeatData;
+
+      if (_selectedMusicSource == MusicSource.manualImport &&
+          _customMusicPath != null) {
+        // 调用 Dio 上传音频并获取 JSON
+        dynamicBeatData = await MusicService.analyzeAudio(_customMusicPath!);
+
+        // 如果后端报错或者网络断了，直接阻断生成流程
+        if (dynamicBeatData == null) {
+          throw Exception('云端音乐分析失败，请检查网络或 Python 后端是否启动');
+        }
+      }
+      // ==========================================
+      // 🌟 第一步：呼叫 VLM 接口生成剧本大纲
+      // ==========================================
+      setState(() {
+        _loadingText = '🧠 正在构思回忆剧本...';
+      });
 
       // 3. 调用 StoryService 生成故事
-      final story = await StoryService().generateStory(
+      // ⚠️ 注意：你需要去 StoryService 里把原来的 length 参数改成接收 aspectRatio 和 platform！
+      /*final story = await StoryService().generateStory(
         event: eventEntity,
         selectedPhotos: photoEntities,
         title: _themeController.text.trim(),
         subtitle: _selectedSubtitle ?? '',
+        // 🌟 传入新增的两个配置项 (传字符串给后端/AI更方便解析)
         aspectRatio: _selectedAspectRatio.name,
         platform: _selectedPlatform.name,
-      );
+      );*/ // 暂时注释掉！后期一定记得改回来！
+
+      // 🌟 【测试专用】手动捏一个极其逼真的假 StoryEntity
+      // 🌟 修复点：从 photoEntities (List<PhotoEntity>) 里提取 int 类型的 id
+      final databaseIds = photoEntities.map((e) => e.id).toList();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final story = StoryEntity()
+        ..title = _themeController.text.trim().isEmpty
+            ? '测试视频生成'
+            : _themeController.text.trim()
+        ..subtitle = _selectedSubtitle ?? '沙盒测试'
+        ..createdAt = now
+        ..updatedAt = now
+        ..eventId = eventEntity
+            .id // 👈 必须传：否则存数据库时会报错
+        ..photoIds =
+            databaseIds // 👈 必须传：绑定的照片ID列表
+        ..photoCount = selectedAssetIds.length
+        ..isLlmGenerated = false
+        // ⚠️ 最最最关键的 content：必须带有 ![img](x) 占位符，否则 UI 无法切图！
+        ..content =
+            '''
+测试
+
+![img](0)
+
+Sandal Leap
+
+![img](1)
+'''
+                .trim();
+      
+      // ==========================================
+      // 🌟 第二步：根据剧本，提炼视频台词 (Captions)
+      // ==========================================
+      List<String> finalCaptions = [];
+
+      if (_enableAutoCaptions) {
+        setState(() {
+          _loadingText = '✨ 正在提炼视频台词...';
+        });
+
+        // 提取 VLM 的剧本正文（这里用 story.content 替代，实际接入时用 VLM JSON里的 narrative）
+        String scriptNarrative = story.content ?? _themeController.text.trim();
+        List<String> styleTags = [_selectedSubtitle ?? '治愈风', '小红书感'];
+
+        // ==========================================
+        // 🌟 核心提取：把你队友打好的 Tag 揉成一句话送给 LLM
+        // ==========================================
+        List<String> photoDescriptions = photoEntities.map((p) {
+          // 提取图片描述
+          String desc = p.aiCaption?.trim() ?? "未知画面元素";
+
+          // 如果有 OCR 文本线索，也一并塞进去
+          if (p.ocrTags != null && p.ocrTags!.isNotEmpty) {
+            desc += " (画面包含文字: ${p.ocrTags!.take(3).join('，')})";
+          } else if (p.ocrText != null && p.ocrText!.trim().isNotEmpty) {
+            desc += " (画面包含文字: ${p.ocrText!.trim()})";
+          }
+          return desc;
+        }).toList();
+
+        // 呼叫进化版的台词生成方法
+        finalCaptions = await LLMService().generateVideoCaptionsFromScript(
+          narrative: scriptNarrative,
+          styleTags: styleTags,
+          photoDescriptions: photoDescriptions, // 👈 传过去！
+        );
+      } else {
+        // 🌟 核心修改：用户选择手动输入
+        // 1. 获取输入框的文字并根据换行符打散
+        String rawManualText = _manualCaptionsController.text.trim();
+        List<String> userLines = [];
+        if (rawManualText.isNotEmpty) {
+          userLines = rawManualText.split('\n').map((e) => e.trim()).toList();
+        }
+
+        // 2. 将输入的句子与照片数量进行“拉平”匹配
+        for (int i = 0; i < photoEntities.length; i++) {
+          if (i < userLines.length) {
+            // 如果用户写了这行的台词，就用它
+            finalCaptions.add(userLines[i]);
+          } else {
+            // 如果用户少写了，剩下的照片就给空字符串（无字纯享版）
+            finalCaptions.add("");
+          }
+        }
+        // 注意：如果 userLines.length 大于 photoEntities.length，
+        // 多出来的句子根本不会进循环，自然就被丢弃了，完美符合你的要求！
+      }
 
       if (!mounted) return;
 
       setState(() {
         _isGenerating = false;
+        _loadingText = '开始生成';
       });
 
       if (story != null) {
@@ -128,8 +297,11 @@ class _ConfigPageState extends State<ConfigPage> {
             builder: (context) => StoryResultPage.fromStoryEntity(
               storyEntity: story,
               photos: photoEntities,
-              isHorizontal:
-                  _selectedAspectRatio == VideoAspectRatio.horizontal,
+              // 🌟 记得给 ResultPage 传过去音乐路径，让它知道播哪首歌
+              customMusicPath: _selectedMusicSource == MusicSource.manualImport ? _customMusicPath : null,
+              // 🌟 新增：把刚才拿到的云端节拍数据一起传过去！
+              dynamicBeatData: dynamicBeatData,
+              captions: finalCaptions,
             ),
           ),
         );
@@ -141,6 +313,7 @@ class _ConfigPageState extends State<ConfigPage> {
     } catch (e) {
       setState(() {
         _isGenerating = false;
+        _loadingText = '开始生成';
       });
 
       if (mounted) {
@@ -154,7 +327,7 @@ class _ConfigPageState extends State<ConfigPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('配置故事')),
+      // appBar: AppBar(title: const Text('配置故事')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -336,7 +509,48 @@ class _ConfigPageState extends State<ConfigPage> {
               ),
             ],
           ),
-          const SizedBox(height: 32),
+
+          const SizedBox(height: 24),
+          _buildMusicSection(),
+          const Divider(height: 48),
+
+          // 🌟 AI 台词生成开关
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text(
+              '自动生成视频台词',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            subtitle: const Text('AI将根据剧本为每张照片提炼一句专属短字幕'),
+            value: _enableAutoCaptions,
+            activeColor: Colors.pinkAccent,
+            onChanged: (val) {
+              setState(() {
+                _enableAutoCaptions = val;
+              });
+            },
+          ),
+
+          // 🌟 新增：手动输入框 (当关掉自动生成时才显示)
+          if (!_enableAutoCaptions) ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _manualCaptionsController,
+              maxLines: 5, // 允许多行输入
+              decoration: InputDecoration(
+                hintText:
+                    '手动输入字幕，每行代表一张照片的文案（选填）...\n例如：\n这是第一张图的字幕\n这是第二张图的字幕\n...',
+                hintStyle: TextStyle(color: Colors.grey[500], height: 1.5),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                filled: true,
+                fillColor: Colors.grey[50], // 给一点点底色区分
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 24),
 
           // Generate button
           FilledButton(
@@ -345,19 +559,96 @@ class _ConfigPageState extends State<ConfigPage> {
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
             child: _isGenerating
-                ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // 🌟 按钮内显示当前的动态进度
+                      Text(_loadingText, style: const TextStyle(fontSize: 16)),
+                    ],
                   )
-                : const Text('开始生成'),
+                : Text(_loadingText, style: const TextStyle(fontSize: 16)),
           ),
           const SizedBox(height: 16),
         ],
       ),
+    );
+  }
+  Widget _buildMusicSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '配乐方案',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        SegmentedButton<MusicSource>(
+          segments: const [
+            ButtonSegment(
+              value: MusicSource.aiGenerated,
+              label: Text('AI 智能配乐'),
+              icon: Icon(Icons.auto_awesome),
+            ),
+            ButtonSegment(
+              value: MusicSource.manualImport,
+              label: Text('手动导入'),
+              icon: Icon(Icons.library_music),
+            ),
+          ],
+          selected: {_selectedMusicSource},
+          onSelectionChanged: (Set<MusicSource> newSelection) {
+            setState(() => _selectedMusicSource = newSelection.first);
+          },
+        ),
+        if (_selectedMusicSource == MusicSource.manualImport) ...[
+          const SizedBox(height: 12),
+          InkWell(
+            onTap: _pickMusic,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey[300]!),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.audiotrack, color: Colors.pinkAccent),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _customMusicName ?? '点击选择本地 MP3 文件',
+                      style: TextStyle(
+                        color: _customMusicName == null
+                            ? Colors.grey
+                            : Colors.black87,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                  if (_customMusicName != null)
+                    const Icon(
+                      Icons.check_circle,
+                      color: Colors.green,
+                      size: 20,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

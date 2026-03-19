@@ -85,40 +85,9 @@ class LLMService {
   final String _modelName;
   final Dio _dio;
 
-  /// 是否是“本地或环回地址”的无鉴权模型服务。
-  ///
-  /// 这么判断的原因是：
-  /// - 远端云服务通常需要 API Key
-  /// - 同机本地服务（未来的手机本地 InternVL，或 adb reverse 到电脑的本地服务）
-  ///   往往不需要真正的鉴权
-  ///
-  /// 这样可以避免把本地服务误判成“未配置”，从而直接走到 mock 分支。
-  bool get _isLoopbackOrLanEndpoint {
-    final normalized = _baseUrl.trim();
-    if (normalized.isEmpty) {
-      return false;
-    }
-
-    final uri = Uri.tryParse(normalized);
-    final host = (uri?.host ?? '').toLowerCase();
-    if (host.isEmpty) {
-      return false;
-    }
-
-    if (host == '127.0.0.1' || host == 'localhost' || host == '10.0.2.2') {
-      return true;
-    }
-
-    return host.startsWith('192.168.') ||
-        host.startsWith('10.') ||
-        host.startsWith('172.16.') ||
-        host.startsWith('172.17.') ||
-        host.startsWith('172.18.') ||
-        host.startsWith('172.19.') ||
-        host.startsWith('172.2') ||
-        host.startsWith('172.30.') ||
-        host.startsWith('172.31.');
-  }
+  String get _visionModelName => _defaultVisionModelName.trim().isEmpty
+      ? _modelName
+      : _defaultVisionModelName.trim();
 
   /// 🎨 核心方法：生成创意标题
   ///
@@ -304,9 +273,7 @@ class LLMService {
 
   /// 📊 检查 API Key 是否已配置
   bool get isApiKeyConfigured =>
-      _baseUrl.trim().isNotEmpty &&
-      _modelName.trim().isNotEmpty &&
-      (_apiKey.trim().isNotEmpty || _isLoopbackOrLanEndpoint);
+      _apiKey.trim().isNotEmpty && _baseUrl.trim().isNotEmpty;
 
   bool get isVisionApiConfigured => isApiKeyConfigured;
 
@@ -774,5 +741,80 @@ ${photoDetails ?? '总体画面元素：${tags.join(', ')}'}
       print("❌ DeepSeek 调用崩溃: $e");
       return null;
     }
+  }
+  /// 🎬 提取视频台词 (进化版：结合真实的每一帧画面特征)
+  Future<List<String>> generateVideoCaptionsFromScript({
+    required String narrative,
+    required List<String> styleTags,
+    required List<String> photoDescriptions, // 🌟 核心：接收每张图的真实描述
+  }) async {
+    final int photoCount = photoDescriptions.length;
+
+    // 🌟 将传入的图片特征组装成带序号的清晰文本
+    final StringBuffer framesInfo = StringBuffer();
+    for (int i = 0; i < photoCount; i++) {
+      framesInfo.writeln('第 ${i + 1} 张图画面特征：${photoDescriptions[i]}');
+    }
+
+    final prompt =
+        '''
+你是一个精通小红书氛围感的短视频台词编剧。
+我现在有一段关于这组照片的整体故事背景，以及总共 $photoCount 张照片的【具体画面特征】。
+请你结合整体剧情和每一张图的实际画面，为这 $photoCount 张照片各写一句极简的视频字幕。
+
+【整体故事背景】
+$narrative
+风格参考：${styleTags.join(', ')}
+
+【各分镜实际画面】(请确保台词与这些画面强相关，贴脸输出！)
+$framesInfo
+
+【输出要求（生死攸关，必须遵守）】
+1. 必须输出纯 JSON，格式严格为：{"captions": ["第一句", "第二句", ...]}
+2. 句子要精炼有网感（单句不超过 15 个字）。
+3. captions 数组的长度必须【严格等于 $photoCount】！
+4. 🌟 拒绝假大空的抒情模板（如“时光荏苒、定格美好”等），台词必须有画面感，与传入的具体画面特征对应！
+5. 不要输出任何 Markdown 标记（如 ```json），直接输出花括号开头的 JSON。
+''';
+
+    try {
+      print("🎬 [DeepSeek] 正在结合具体画面特征，提炼 $photoCount 句贴脸视频台词...");
+      final text = await _chatCompletion(prompt);
+
+      if (text == null || text.trim().isEmpty) {
+        return _getFallbackCaptions(photoCount);
+      }
+
+      final cleanJson = text.replaceAll(RegExp(r'```json|```'), '').trim();
+      final Map<String, dynamic> result = jsonDecode(cleanJson);
+
+      if (result.containsKey('captions') && result['captions'] is List) {
+        final List<dynamic> rawCaptions = result['captions'];
+        List<String> finalCaptions = rawCaptions
+            .map((e) => e.toString())
+            .toList();
+
+        if (finalCaptions.length < photoCount) {
+          finalCaptions.addAll(
+            List.generate(photoCount - finalCaptions.length, (i) => ""),
+          );
+        } else if (finalCaptions.length > photoCount) {
+          finalCaptions = finalCaptions.sublist(0, photoCount);
+        }
+
+        print("✅ 贴脸台词提炼成功: $finalCaptions");
+        return finalCaptions;
+      } else {
+        throw const FormatException("JSON 中找不到 captions 数组");
+      }
+    } catch (e) {
+      print("❌ LLM 台词解析失败: $e");
+      return _getFallbackCaptions(photoCount);
+    }
+  }
+
+  /// 🛡️ 台词生成的兜底方案（返回等长的空白字符串列表）
+  List<String> _getFallbackCaptions(int count) {
+    return List.generate(count, (index) => "");
   }
 }

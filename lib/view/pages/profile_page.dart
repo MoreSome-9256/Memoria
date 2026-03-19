@@ -1,10 +1,42 @@
 import 'package:flutter/material.dart';
+import 'package:photo_album/service/cognito_auth_service.dart';
+import 'package:photo_album/view/pages/sign_in_page.dart';
 
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
 
-class ProfilePage extends StatelessWidget {
+class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  final _auth = const CognitoAuthService();
+
+  Future<String?> _loadUsername() async {
+    try {
+      final signedIn = await _auth.isSignedIn();
+      if (!signedIn) {
+        return null;
+      }
+      return _auth.currentUsername();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _signOut() async {
+    await _auth.signOut();
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const SignInPage()),
+      (_) => false,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -23,13 +55,47 @@ class ProfilePage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          Center(
-            child: Text(
-              '智能故事相册',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+          FutureBuilder<String?>(
+            future: _loadUsername(),
+            builder: (context, snapshot) {
+              final username = snapshot.data;
+              return Column(
+                children: [
+                  Text(
+                    username == null ? '未登录用户' : username,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    username == null ? '智能故事相册' : 'Cognito 账号',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 32),
+          ListTile(
+            leading: const Icon(Icons.logout),
+            title: const Text('退出登录'),
+            subtitle: const Text('从当前设备登出 Cognito'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _signOut,
+          ),
+          const Divider(height: 1),
+          const SizedBox(height: 8),
+          _buildSettingsTile(
+            context,
+            Icons.lock_outline,
+            '账号认证',
+            'AWS Cognito 已接入',
+          ),
+          _buildSettingsTile(
+            context,
+            Icons.person_outline,
+            '账号信息',
+            '查看当前登录状态',
+          ),
           _buildSettingsTile(
             context,
             Icons.photo_library_outlined,
@@ -84,10 +150,9 @@ class ProfilePage extends StatelessWidget {
     BuildContext context,
     IconData icon,
     String title,
-    String subtitle,
-    {VoidCallback? onTap,
-    }
-  ) {
+    String subtitle, {
+    VoidCallback? onTap,
+  }) {
     return ListTile(
       leading: Icon(icon),
       title: Text(title),

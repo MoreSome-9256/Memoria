@@ -9,7 +9,11 @@ import '../../service/photo_service.dart';
 import '../../service/story_service.dart';
 import 'story_result_page.dart';
 
-enum StoryLength { short, medium }
+// 🌟 新增：视频长宽比枚举
+enum VideoAspectRatio { vertical, horizontal }
+
+// 🌟 新增：发布平台枚举
+enum PublishingPlatform { moments, xiaohongshu, bilibili, tiktok }
 
 class ConfigPage extends StatefulWidget {
   final Event event;
@@ -30,7 +34,11 @@ class ConfigPage extends StatefulWidget {
 class _ConfigPageState extends State<ConfigPage> {
   late TextEditingController _themeController;
   String? _selectedSubtitle;
-  StoryLength _selectedLength = StoryLength.medium;
+
+  // 🌟 替换掉原来的 StoryLength，改为新的配置项并给默认值
+  VideoAspectRatio _selectedAspectRatio = VideoAspectRatio.vertical;
+  PublishingPlatform _selectedPlatform = PublishingPlatform.xiaohongshu;
+
   bool _isGenerating = false;
 
   @override
@@ -64,18 +72,13 @@ class _ConfigPageState extends State<ConfigPage> {
       EventEntity? eventEntity;
 
       if (widget.event.id == '-1') {
-        // 🕵️‍♂️ 拦截到虚拟 Event！直接在内存中捏一个对象，【绝对不要】存进数据库！
+        // 🕵️‍♂️ 拦截到虚拟 Event！直接在内存中捏一个对象
         eventEntity = EventEntity()
-          ..id =
-              -1 // 强制给个负数 ID，作为内存幽灵的标识
+          ..id = -1
           ..title = widget.event.title
           ..startTime = widget.event.startDate.millisecondsSinceEpoch
           ..endTime = widget.event.endDate.millisecondsSinceEpoch
-        // 如果你的实体里有 photoCount，可以加上：
-         ..photoCount = widget.selectedPhotos.length;
-
-        // ❌ 之前这里有一段 await isar.writeTxn(...) 存入数据库的代码，全删掉！
-        // 因为一旦落盘，它就会出现在你的相册列表里疯狂吸入照片！
+          ..photoCount = widget.selectedPhotos.length;
       } else {
         // 正常走系统自动聚类的相册逻辑
         final eventEntityId = int.parse(widget.event.id);
@@ -85,6 +88,7 @@ class _ConfigPageState extends State<ConfigPage> {
       if (eventEntity == null) {
         throw Exception('未找到或创建事件档案失败');
       }
+
       // 2. 严格按用户选择的照片生成故事
       final selectedAssetIds = widget.selectedPhotos
           .map((photo) => photo.id)
@@ -106,7 +110,8 @@ class _ConfigPageState extends State<ConfigPage> {
         selectedPhotos: photoEntities,
         title: _themeController.text.trim(),
         subtitle: _selectedSubtitle ?? '',
-        length: _selectedLength,
+        aspectRatio: _selectedAspectRatio.name,
+        platform: _selectedPlatform.name,
       );
 
       if (!mounted) return;
@@ -123,6 +128,8 @@ class _ConfigPageState extends State<ConfigPage> {
             builder: (context) => StoryResultPage.fromStoryEntity(
               storyEntity: story,
               photos: photoEntities,
+              isHorizontal:
+                  _selectedAspectRatio == VideoAspectRatio.horizontal,
             ),
           ),
         );
@@ -236,40 +243,98 @@ class _ConfigPageState extends State<ConfigPage> {
           ),
           const SizedBox(height: 24),
 
-          // Story length selection
+          // 🎬 删除了原来的“篇幅选择”，换成“视频长宽比”
           Text(
-            '篇幅选择',
+            '画面比例',
             style: Theme.of(
               context,
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
-          SegmentedButton<StoryLength>(
+          SegmentedButton<VideoAspectRatio>(
             segments: const [
               ButtonSegment(
-                value: StoryLength.short,
-                label: Text('短篇'),
-                icon: Icon(Icons.short_text),
+                value: VideoAspectRatio.vertical,
+                label: Text('竖屏 9:16'),
+                icon: Icon(Icons.phone_android),
               ),
               ButtonSegment(
-                value: StoryLength.medium,
-                label: Text('中篇'),
-                icon: Icon(Icons.notes),
+                value: VideoAspectRatio.horizontal,
+                label: Text('横屏 16:9'),
+                icon: Icon(Icons.stay_current_landscape),
               ),
             ],
-            selected: {_selectedLength},
-            onSelectionChanged: (Set<StoryLength> newSelection) {
+            selected: {_selectedAspectRatio},
+            onSelectionChanged: (Set<VideoAspectRatio> newSelection) {
               setState(() {
-                _selectedLength = newSelection.first;
+                _selectedAspectRatio = newSelection.first;
               });
             },
           ),
           const SizedBox(height: 8),
           Text(
-            _selectedLength == StoryLength.short ? '约 150 字' : '约 300 字',
+            _selectedAspectRatio == VideoAspectRatio.vertical
+                ? '适合抖音、朋友圈、小红书等移动端观看'
+                : '适合 B站、大屏沉浸式观看',
             style: Theme.of(
               context,
             ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 24),
+
+          // 📱 新增：发布平台选择
+          Text(
+            '发布平台 (影响生成风格)',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ChoiceChip(
+                label: const Text('✨ 小红书'),
+                selected: _selectedPlatform == PublishingPlatform.xiaohongshu,
+                onSelected: (selected) {
+                  if (selected)
+                    setState(
+                      () => _selectedPlatform = PublishingPlatform.xiaohongshu,
+                    );
+                },
+              ),
+              ChoiceChip(
+                label: const Text('💬 朋友圈'),
+                selected: _selectedPlatform == PublishingPlatform.moments,
+                onSelected: (selected) {
+                  if (selected)
+                    setState(
+                      () => _selectedPlatform = PublishingPlatform.moments,
+                    );
+                },
+              ),
+              ChoiceChip(
+                label: const Text('📺 B站'),
+                selected: _selectedPlatform == PublishingPlatform.bilibili,
+                onSelected: (selected) {
+                  if (selected)
+                    setState(
+                      () => _selectedPlatform = PublishingPlatform.bilibili,
+                    );
+                },
+              ),
+              ChoiceChip(
+                label: const Text('🔥 短视频'),
+                selected: _selectedPlatform == PublishingPlatform.tiktok,
+                onSelected: (selected) {
+                  if (selected)
+                    setState(
+                      () => _selectedPlatform = PublishingPlatform.tiktok,
+                    );
+                },
+              ),
+            ],
           ),
           const SizedBox(height: 32),
 

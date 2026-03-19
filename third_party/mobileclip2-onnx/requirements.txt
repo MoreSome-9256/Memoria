@@ -1,0 +1,11 @@
+torch
+torchvision
+timm
+pillow
+huggingface_hub
+ftfy
+regex
+tqdm
+onnx
+onnxscript
+onnxruntime

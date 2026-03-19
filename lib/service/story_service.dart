@@ -4,6 +4,7 @@ import 'package:photo_manager/photo_manager.dart';
 import '../models/entity/story_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
+import '../utils/tag_sanitizer.dart';
 import 'photo_service.dart';
 import 'llm_service.dart';
 import '../view/pages/config_page.dart'; // for StoryLength enum
@@ -50,7 +51,9 @@ class StoryService {
     required List<PhotoEntity> selectedPhotos,
     required String title,
     required String subtitle,
-    required StoryLength length,
+    // required StoryLength length,
+    required String aspectRatio,
+    required String platform
   }) async {
     try {
       if (event.photoCount < EventService.minPhotosForDisplay) {
@@ -68,20 +71,16 @@ class StoryService {
       // 1. 按时间顺序排序照片（确保故事的连贯性）
       final sortedPhotos = List<PhotoEntity>.from(selectedPhotos)
         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-        final promptTagsByPhoto = sortedPhotos
+      final promptTagsByPhoto = sortedPhotos
           .map(_buildPromptTagsForPhoto)
           .toList(growable: false);
 
       // 🌟 2. 提取用于给后端生成故事的核心特征
-        final allTags = promptTagsByPhoto
-          .expand((tags) => tags)
-          .toSet()
-          .toList();
-      final allOcrTags = sortedPhotos
+      final allTags = promptTagsByPhoto.expand((tags) => tags).toSet().toList();
+      final rawOcrTags = sortedPhotos
           .expand((p) => p.ocrTags ?? <String>[])
-          .where((tag) => tag.trim().isNotEmpty)
-          .toSet()
-          .toList();
+          .toList(growable: false);
+      final allOcrTags = TagSanitizer.sanitizeOcrTags(rawOcrTags);
       final ocrHighlights = sortedPhotos
           .asMap()
           .entries
@@ -119,10 +118,14 @@ class StoryService {
       for (int i = 0; i < sortedPhotos.length; i++) {
         final p = sortedPhotos[i];
 
-        final tags = promptTagsByPhoto[i].isNotEmpty
+        final fallbackTags = promptTagsByPhoto[i].isNotEmpty
             ? promptTagsByPhoto[i].join("、")
             : "日常画面";
-        print("🕵️‍♂️ [抓内鬼] 传给 AI 的第 $i 张照片真实标签是: $tags");
+        final visualSummary = _buildPhotoPromptSummary(
+          p,
+          fallbackTags: fallbackTags,
+        );
+        print("🕵️‍♂️ [抓内鬼] 传给 AI 的第 $i 张照片画面摘要是: $visualSummary");
         final loc = [
           p.locationName,
           p.district,
@@ -137,7 +140,7 @@ class StoryService {
             : '';
 
         photoContext.writeln(
-          "【镜头 $i】拍摄于 $timeStr ${loc.isNotEmpty ? '($loc)' : ''}，画面真实元素有：$tags$textHint",
+          "【镜头 $i】拍摄于 $timeStr ${loc.isNotEmpty ? '($loc)' : ''}，画面内容：$visualSummary$textHint",
         );
       }
       // ==========================================
@@ -153,8 +156,15 @@ class StoryService {
         ocrTags: allOcrTags.take(20).toList(),
         ocrHighlights: ocrHighlights,
         joyScore: avgJoyScore,
-        photoCount: event.photoCount > 0 ? event.photoCount : sortedPhotos.length,
-        location: event.locationName ?? event.district ?? event.city ?? event.province ?? '未知地点',
+        photoCount: event.photoCount > 0
+            ? event.photoCount
+            : sortedPhotos.length,
+        location:
+            event.locationName ??
+            event.district ??
+            event.city ??
+            event.province ??
+            '未知地点',
         date: event.dateRangeText,
         stylePreference: subtitle.isNotEmpty ? subtitle : "治愈风",
         // 👇 重点：把刚才在 llm_service 里加的三个参数传进去！
@@ -177,7 +187,7 @@ class StoryService {
       final story = StoryEntity.create(
         title: finalTitle,
         subtitle: subtitle, // 保留用户的输入偏好
-        content: scriptContent, 
+        content: scriptContent,
         eventId: event.id,
         photoIds: sortedPhotos.map((p) => p.id).toList(),
       );
@@ -202,14 +212,12 @@ class StoryService {
   }
 
   List<String> _buildPromptTagsForPhoto(PhotoEntity photo) {
-    final aiTags = (photo.aiTags ?? const <String>[])
-        .map((tag) => tag.trim())
-        .where((tag) => tag.isNotEmpty)
-        .toList(growable: false);
-    final ocrTags = (photo.ocrTags ?? const <String>[])
-        .map((tag) => tag.trim())
-        .where((tag) => tag.isNotEmpty && !_looksLikeAsciiNoise(tag))
-        .toList(growable: false);
+    final aiTags = TagSanitizer.sanitizeVisualTags(
+      photo.aiTags ?? const <String>[],
+    );
+    final ocrTags = TagSanitizer.sanitizeOcrTags(
+      photo.ocrTags ?? const <String>[],
+    ).where((tag) => !_looksLikeAsciiNoise(tag)).toList(growable: false);
 
     if (_isTextHeavyPhoto(photo, aiTags: aiTags, ocrTags: ocrTags)) {
       final result = <String>[];
@@ -253,7 +261,9 @@ class StoryService {
     final effectiveAiTags = aiTags ?? photo.aiTags ?? const <String>[];
     final effectiveOcrTags = ocrTags ?? photo.ocrTags ?? const <String>[];
     final ocrText = photo.ocrText?.trim() ?? '';
-    final textLikeAiCount = effectiveAiTags.where(_textSceneTags.contains).length;
+    final textLikeAiCount = effectiveAiTags
+        .where(_textSceneTags.contains)
+        .length;
 
     return photo.isProbablyScreenshot ||
         effectiveOcrTags.length >= 2 ||
@@ -263,6 +273,43 @@ class StoryService {
 
   bool _looksLikeAsciiNoise(String value) {
     return RegExp(r'^[A-Za-z0-9_./-]+$').hasMatch(value);
+  }
+
+  String _buildPhotoPromptSummary(
+    PhotoEntity photo, {
+    required String fallbackTags,
+  }) {
+    final caption = photo.aiCaption?.trim();
+    if (caption != null && caption.isNotEmpty) {
+      final ocrSummary = _buildPromptOcrSummary(photo);
+      if (ocrSummary != null) {
+        return '$caption；补充文字线索：$ocrSummary';
+      }
+      return caption;
+    }
+
+    final ocrSummary = _buildPromptOcrSummary(photo);
+    if (ocrSummary != null) {
+      return '$fallbackTags；补充文字线索：$ocrSummary';
+    }
+
+    return fallbackTags;
+  }
+
+  String? _buildPromptOcrSummary(PhotoEntity photo) {
+    final ocrTags = TagSanitizer.sanitizeOcrTags(
+      photo.ocrTags ?? const <String>[],
+    ).where((tag) => !_looksLikeAsciiNoise(tag)).toList(growable: false);
+    if (ocrTags.isNotEmpty) {
+      return ocrTags.take(3).join('、');
+    }
+
+    final ocrText = photo.ocrText?.trim();
+    if (ocrText == null || ocrText.isEmpty) {
+      return null;
+    }
+
+    return ocrText.length > 36 ? '${ocrText.substring(0, 36)}...' : ocrText;
   }
 
   /// 🤖 调用 LLM 生成故事内容

@@ -2,16 +2,17 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
-
+import 'dart:ui';
 import '../../service/photo_service.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import 'create_page.dart';
-import 'config_page.dart'; // 🌟 引入配置页用于跳转
 import 'package:photo_manager/photo_manager.dart';
 import 'event_detail_page.dart';
+import '../../service/mobileclip_backend_preference_service.dart';
+import '../../service/mobileclip_embedding_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -28,10 +29,17 @@ class _HomePageState extends State<HomePage> {
 
   // 💡 用于动态发现模块的卡片数据
   List<Map<String, dynamic>> _discoverCards = [];
+  final MobileClipBackendPreferenceService _backendPreferenceService =
+      MobileClipBackendPreferenceService();
+  final MobileClipEmbeddingService _embeddingService =
+      MobileClipEmbeddingService();
+  MobileClipBackend _selectedBackend = MobileClipBackend.mobileclip2Onnx;
+  bool _isSwitchingBackend = false;
 
   @override
   void initState() {
     super.initState();
+    _loadBackendPreference();
     // 启动时加载照片数据
     _loadRecentPhotos();
     // 🌟 启动本地推荐引擎
@@ -43,6 +51,59 @@ class _HomePageState extends State<HomePage> {
     // ⚠️ 极其重要：销毁页面时必须关闭定时器，防止后台内存泄露
     _timer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadBackendPreference() async {
+    await _backendPreferenceService.initialize();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _selectedBackend =
+          _backendPreferenceService.backendListenable.value;
+    });
+  }
+
+  Future<void> _switchBackend(MobileClipBackend backend) async {
+    if (_isSwitchingBackend || backend == _selectedBackend) {
+      return;
+    }
+
+    setState(() {
+      _isSwitchingBackend = true;
+    });
+
+    try {
+      await _embeddingService.switchBackendAndPersist(backend);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _selectedBackend = backend;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('AI 打标后端已切换为 ${backend.label}'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('切换到 ${backend.label} 失败: $error'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSwitchingBackend = false;
+        });
+      }
+    }
   }
 
   // ==========================================
@@ -58,10 +119,8 @@ class _HomePageState extends State<HomePage> {
         .findAll();
 
     var filtered = recentCandidates.where((p) {
-      if (p.width != null && p.height != null) {
-        double ratio = p.width! / p.height!;
-        if (ratio < 0.6 || ratio > 1.8) return false;
-      }
+      final ratio = p.width / p.height;
+      if (ratio < 0.6 || ratio > 1.8) return false;
       final forbiddenTags = {'Screen', 'Text', 'Document', '屏幕', '文字', '截图'};
       if (p.aiTags != null &&
           p.aiTags!.any((tag) => forbiddenTags.contains(tag))) {
@@ -403,66 +462,207 @@ class _HomePageState extends State<HomePage> {
   }
 
   // ==========================================
-  // 🎨 页面主 UI 结构
+  // 🎨 页面主 UI 结构 (完美复刻极光晕染与装饰 Logo)
   // ==========================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.purple.shade50, Colors.white],
-            stops: const [0.0, 0.3],
-          ),
-        ),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeader(),
-                const SizedBox(height: 24),
-                _buildHeroCard(context),
-                const SizedBox(height: 32),
-                _buildSectionTitle('发现'),
-                const SizedBox(height: 16),
-                _buildDiscoverList(), // 🌟 动态渲染推荐列表
-                const SizedBox(height: 32),
-                _buildSectionTitle('我的作品'),
-                const SizedBox(height: 16),
-                _buildWorksGrid(),
-              ],
+      backgroundColor: const Color(0xFFFAFAFA), // 极浅的灰白色打底
+      body: Stack(
+        children: [
+          // 1. 🌌 极光晕染背景层 (固定在底部)
+          _buildAmbientBackground(),
+
+          // 2. 📜 滚动内容层
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              child: Stack(
+                clipBehavior: Clip.none, // 允许装饰元素稍微溢出边界
+                children: [
+                  // 🌟 3. 装饰 Logo 层 (定位在 Hero 卡片后方偏右)
+                  // 它被放在 Column 前面，所以会被 Hero 卡片遮挡一半
+                  Positioned(
+                    top: 20, // 调整到刚好在欢迎语下方、卡片后方
+                    right: -20, // 稍微偏出屏幕右侧一点，更有设计感
+                    child: Opacity(
+                      opacity: 0.6, // 透明度，别让它抢了卡片的风头
+                    ),
+                  ),
+
+                  // 4. 实际的 UI 内容层
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeader(),
+                      const SizedBox(height: 24),
+                      _buildHeroCard(context),
+                      const SizedBox(height: 32),
+                      _buildSectionTitle('发现'),
+                      const SizedBox(height: 16),
+                      _buildDiscoverList(),
+                      const SizedBox(height: 32),
+                      _buildSectionTitle('我的作品'),
+                      const SizedBox(height: 16),
+                      _buildWorksGrid(),
+                      const SizedBox(height: 40), // 底部留点白
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  // 🌌 极光晕染背景生成器
+  Widget _buildAmbientBackground() {
+    return Container(
+      color: const Color(0xFFFAFAFA), // 浅灰白底色
+      child: ImageFiltered(
+        // 🌟 换成绝对安全的 ImageFiltered
+        imageFilter: ImageFilter.blur(sigmaX: 80, sigmaY: 80),
+        child: Stack(
+          children: [
+            Positioned(
+              top: -80,
+              left: -50,
+              child: Container(
+                width: 250,
+                height: 250,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0x88E0B0FF), // 稍微加深一点透明度
+                ),
+              ),
+            ),
+            Positioned(
+              top: -20,
+              right: -80,
+              child: Container(
+                width: 300,
+                height: 300,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0x7787CEEB), // 稍微加深一点天蓝色
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
   Widget _buildHeader() {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const CircleAvatar(
-          radius: 24,
-          backgroundColor: Colors.pinkAccent,
-          child: Icon(Icons.person, color: Colors.white),
-        ),
-        const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            Text(
-              'User_MoreSome,',
-              style: TextStyle(fontSize: 14, color: Colors.black54),
+        Row(
+          children: [
+            const CircleAvatar(
+              radius: 24,
+              backgroundColor: Colors.pinkAccent,
+              child: Icon(Icons.person, color: Colors.white),
             ),
-            Text(
-              '欢迎使用智能影记！',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Text(
+                  'User_MoreSome,',
+                  style: TextStyle(fontSize: 14, color: Colors.black54),
+                ),
+                Text(
+                  '欢迎使用智能影记！',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ],
             ),
           ],
+        ),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.85),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.purple.shade100),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '相册扫描后端',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '新的相册扫描和 AI 打标将使用当前后端',
+                style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+              ),
+              const SizedBox(height: 10),
+              SegmentedButton<MobileClipBackend>(
+                segments: const <ButtonSegment<MobileClipBackend>>[
+                  ButtonSegment<MobileClipBackend>(
+                    value: MobileClipBackend.mobileclip2Onnx,
+                    label: Text('MobileCLIP2 ONNX'),
+                    icon: Icon(Icons.auto_awesome_outlined),
+                  ),
+                  ButtonSegment<MobileClipBackend>(
+                    value: MobileClipBackend.onnx,
+                    label: Text('ONNX(旧)'),
+                    icon: Icon(Icons.verified_outlined),
+                  ),
+                  ButtonSegment<MobileClipBackend>(
+                    value: MobileClipBackend.ncnn,
+                    label: Text('NCNN(旧)'),
+                    icon: Icon(Icons.flash_on_outlined),
+                  ),
+                ],
+                selected: <MobileClipBackend>{_selectedBackend},
+                onSelectionChanged: _isSwitchingBackend
+                    ? null
+                    : (selection) {
+                        final backend = selection.first;
+                        _switchBackend(backend);
+                      },
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  if (_isSwitchingBackend)
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    Icon(
+                      _selectedBackend == MobileClipBackend.ncnn
+                          ? Icons.flash_on
+                          : _selectedBackend == MobileClipBackend.onnx
+                          ? Icons.verified
+                          : Icons.auto_awesome,
+                      size: 16,
+                      color: Colors.purple.shade700,
+                    ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '当前: ${_selectedBackend.label} · ${_selectedBackend.description}',
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ],
     );

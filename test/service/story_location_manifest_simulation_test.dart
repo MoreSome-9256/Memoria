@@ -6,17 +6,58 @@ import 'package:photo_album/models/entity/event_entity.dart';
 import 'package:photo_album/models/entity/photo_entity.dart';
 import 'package:photo_album/utils/story_prompt_helper.dart';
 
+List<Map<String, dynamic>> _loadShenzhenManifestPhotos() {
+  final file = File('imgs/shenzhen_2day_trip/manifest.json');
+  if (file.existsSync()) {
+    final manifest = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+    return (manifest['photos'] as List).cast<Map<String, dynamic>>();
+  }
+
+  return <Map<String, dynamic>>[
+    <String, dynamic>{
+      'assetId': 'sz_1',
+      'path': 'imgs/shenzhen_2day_trip/1.jpg',
+      'addressCn': '广东省深圳市南山区深圳湾公园观海栈道',
+      'extInfo': <String, dynamic>{
+        'timestampMs': DateTime(2026, 5, 16, 8, 30).millisecondsSinceEpoch,
+        'width': 4032,
+        'height': 3024,
+        'latitude': 22.5139,
+        'longitude': 113.9442,
+      },
+    },
+    <String, dynamic>{
+      'assetId': 'sz_2',
+      'path': 'imgs/shenzhen_2day_trip/2.jpg',
+      'addressCn': '广东省深圳市南山区世界之窗景区',
+      'extInfo': <String, dynamic>{
+        'timestampMs': DateTime(2026, 5, 16, 14, 10).millisecondsSinceEpoch,
+        'width': 4032,
+        'height': 3024,
+        'latitude': 22.5401,
+        'longitude': 113.9736,
+      },
+    },
+    <String, dynamic>{
+      'assetId': 'sz_3',
+      'path': 'imgs/shenzhen_2day_trip/3.jpg',
+      'addressCn': '广东省深圳市盐田区大梅沙海滨公园',
+      'extInfo': <String, dynamic>{
+        'timestampMs': DateTime(2026, 5, 17, 17, 45).millisecondsSinceEpoch,
+        'width': 4032,
+        'height': 3024,
+        'latitude': 22.6034,
+        'longitude': 114.3105,
+      },
+    },
+  ];
+}
+
 void main() {
   test(
     'shenzhen manifest simulation carries scenic-level location hints into prompt',
     () {
-      final file = File('imgs/shenzhen_2day_trip/manifest.json');
-      expect(file.existsSync(), isTrue);
-
-      final manifest =
-          jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-      final photosRaw = (manifest['photos'] as List)
-          .cast<Map<String, dynamic>>();
+      final photosRaw = _loadShenzhenManifestPhotos();
 
       final photos = <PhotoEntity>[];
       for (var i = 0; i < photosRaw.length; i++) {

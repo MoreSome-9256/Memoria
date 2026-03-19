@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
 
+import 'mobileclip_benchmark_page.dart';
+import 'mobileclip_vector_probe_page.dart';
+
+import 'mobileclip_benchmark_page.dart';
+import 'mobileclip_vector_probe_page.dart';
+
 import 'internvl_lab_page.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -54,6 +60,32 @@ class _ProfilePageState extends State<ProfilePage> {
             '隐私设置',
             '本地优先，保护隐私',
           ),
+          _buildSettingsTile(
+            context,
+            Icons.science_outlined,
+            'MobileCLIP Benchmark',
+            '对比 ONNX 基线与未来 ncnn 接入',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const MobileClipBenchmarkPage(),
+                ),
+              );
+            },
+          ),
+          _buildSettingsTile(
+            context,
+            Icons.analytics_outlined,
+            'MobileCLIP Vector Probe',
+            '检查指定图片在手机端 ONNX / NCNN 的向量',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const MobileClipVectorProbePage(),
+                ),
+              );
+            },
+          ),
           CheckboxListTile(
             value: _showInternvlLab,
             title: const Text('显示 VLM 推理入口'),
@@ -97,6 +129,8 @@ class _ProfilePageState extends State<ProfilePage> {
     String title,
     String subtitle, {
     VoidCallback? onTap,
+    {VoidCallback? onTap,
+    }
   }) {
     return ListTile(
       leading: Icon(icon),

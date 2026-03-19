@@ -7,6 +7,7 @@ import '../../models/entity/photo_entity.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_service.dart';
 import '../widgets/path_image.dart';
+import 'story_video_page.dart';
 
 class StoryResultPage extends StatefulWidget {
   final String title;
@@ -14,6 +15,7 @@ class StoryResultPage extends StatefulWidget {
   final Photo heroImage;
   final List<StorySection> sections;
   final int? storyEntityId; // 新增：用于保存编辑
+  final bool isHorizontal;
 
   const StoryResultPage({
     super.key,
@@ -22,39 +24,20 @@ class StoryResultPage extends StatefulWidget {
     required this.heroImage,
     required this.sections,
     this.storyEntityId, // 新增
+    this.isHorizontal = false,
   });
 
   // 新增：从 StoryEntity 加载（ConfigPage 生成后）
   factory StoryResultPage.fromStoryEntity({
     required StoryEntity storyEntity,
     required List<PhotoEntity> photos,
+    bool isHorizontal = false,
   }) {
     final sectionMaps = storyEntity.parseToSections(photos);
     List<StorySection> sections = [];
 
-    // 🌟 核心修复：大模型“不听话”时的 UI 兜底保护逻辑
-    if (sectionMaps.isEmpty &&
-        (storyEntity.content != null && storyEntity.content.isNotEmpty)) {
-      print("⚠️ 警告：未检测到图片占位符，触发 UI 兜底保护！");
-      // 强行把所有文字变成一个段落，配上第一张照片
-      if (photos.isNotEmpty) {
-        sections.add(
-          StorySection(
-            text: storyEntity.content,
-            photo: Photo(
-              id: photos.first.assetId,
-              path: photos.first.path,
-              dateTaken: DateTime.fromMillisecondsSinceEpoch(
-                photos.first.timestamp,
-              ),
-              tags: photos.first.aiTags ?? [],
-              location: photos.first.city ?? photos.first.province,
-            ),
-          ),
-        );
-      }
-    } else {
-      // 正常解析成功的情况
+    // 1. 正常提取被 AI 选中的图文段落
+    if (sectionMaps.isNotEmpty) {
       sections = sectionMaps.map((map) {
         return StorySection(
           text: map['text'] as String,
@@ -62,20 +45,54 @@ class StoryResultPage extends StatefulWidget {
         );
       }).toList();
     }
-    // 使用第一张照片作为 hero 图
-    final heroPhoto = photos.isNotEmpty
-        ? Photo(
+
+    // ========================================================
+    // 🚀 核心防漏补丁：AI 漏掉的照片，我们全部强行拉回播放列表！
+    // ========================================================
+    final usedPhotoIds = sections.map((s) => s.photo.id).toSet();
+    for (var p in photos) {
+      if (!usedPhotoIds.contains(p.assetId)) {
+        sections.add(
+          StorySection(
+            text: '', // AI没写词，我们就空着，在视频里当做“无字纯享版”画面
+            photo: Photo(
+              id: p.assetId,
+              path: p.path,
+              dateTaken: DateTime.fromMillisecondsSinceEpoch(p.timestamp),
+              tags: p.aiTags ?? [],
+              caption: p.aiCaption?.trim(),
+              ocrSummary: (p.ocrTags != null && p.ocrTags!.isNotEmpty)
+                  ? p.ocrTags!.take(3).join(' · ')
+                  : p.ocrText?.trim(),
+              location: p.city ?? p.province ?? '未知地点',
+            ),
+          ),
+        );
+      }
+    }
+
+    // ========================================================
+    // 💡 万一上面一顿操作后发现没图，给个终极安全气囊
+    // ========================================================
+    if (sections.isEmpty && photos.isNotEmpty) {
+      sections.add(
+        StorySection(
+          text: storyEntity.content ?? '我的专属回忆',
+          photo: Photo(
             id: photos.first.assetId,
             path: photos.first.path,
             dateTaken: DateTime.fromMillisecondsSinceEpoch(
               photos.first.timestamp,
             ),
             tags: photos.first.aiTags ?? [],
-            location: photos.first.city ?? photos.first.province,
-          )
-        : (sectionMaps.isNotEmpty
-              ? sectionMaps.first['photo'] as Photo
-              : throw Exception('No photos'));
+            location: photos.first.city ?? photos.first.province ?? '未知地点',
+          ),
+        ),
+      );
+    }
+
+    // 2. 使用第一张照片作为 hero 图
+    final heroPhoto = sections.first.photo;
 
     return StoryResultPage(
       title: storyEntity.title,
@@ -83,6 +100,7 @@ class StoryResultPage extends StatefulWidget {
       heroImage: heroPhoto,
       sections: sections,
       storyEntityId: storyEntity.id, // 关键：保存 ID
+      isHorizontal: isHorizontal,
     );
   }
 
@@ -340,6 +358,12 @@ class _StoryResultPageState extends State<StoryResultPage> {
                         fit: BoxFit.cover,
                       ),
                     ),
+                    if ((section.photo.caption?.trim().isNotEmpty ?? false) ||
+                        (section.photo.ocrSummary?.trim().isNotEmpty ??
+                            false)) ...[
+                      const SizedBox(height: 10),
+                      _PhotoContextCard(photo: section.photo),
+                    ],
                   ],
                 ),
               );
@@ -350,6 +374,30 @@ class _StoryResultPageState extends State<StoryResultPage> {
           const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
       ),
+      // 🌟 新增：右下角极其显眼的视频生成入口
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => StoryVideoPage(
+                title: widget.title,
+                sections: _sections, // 把排版好的图文数据传过去做视频
+                isHorizontal: widget.isHorizontal,
+              ),
+            ),
+          );
+        },
+        backgroundColor: const Color(0xFFD17EAD),
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.play_circle_fill, size: 28),
+        label: const Text(
+          '播放回忆',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+      ),
+      // 保证悬浮按钮不会挡住底部的 AppBar
+      floatingActionButtonLocation: FloatingActionButtonLocation.endContained,
       bottomNavigationBar: BottomAppBar(
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -381,4 +429,77 @@ class StorySection {
   final Photo photo;
 
   StorySection({required this.text, required this.photo});
+}
+
+class _PhotoContextCard extends StatelessWidget {
+  const _PhotoContextCard({required this.photo});
+
+  final Photo photo;
+
+  @override
+  Widget build(BuildContext context) {
+    final caption = photo.caption?.trim();
+    final ocrSummary = photo.ocrSummary?.trim();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '照片线索',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: Colors.grey[700],
+            ),
+          ),
+          if (caption != null && caption.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _PhotoContextRow(label: 'AI Caption', value: caption),
+          ],
+          if (ocrSummary != null && ocrSummary.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _PhotoContextRow(label: 'OCR 线索', value: ocrSummary),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PhotoContextRow extends StatelessWidget {
+  const _PhotoContextRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: Colors.grey[600],
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            height: 1.45,
+            color: Colors.grey[800],
+          ),
+        ),
+      ],
+    );
+  }
 }

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import '../models/entity/event_entity.dart';
 
@@ -70,6 +73,10 @@ class LLMService {
   static const String _defaultModelName = String.fromEnvironment(
     'LLM_MODEL',
     defaultValue: 'deepseek-ai/DeepSeek-V3.2',
+  );
+  static const String _defaultVisionModelName = String.fromEnvironment(
+    'LLM_VISION_MODEL',
+    defaultValue: '',
   );
 
   final String _apiKey;
@@ -160,7 +167,12 @@ class LLMService {
     final dateStr =
         '${date.year}年${date.month}月${date.day}日 - ${DateTime.fromMillisecondsSinceEpoch(event.endTime).month}月${DateTime.fromMillisecondsSinceEpoch(event.endTime).day}日';
 
-    final location = event.locationName ?? event.district ?? event.city ?? event.province ?? '未知地点';
+    final location =
+        event.locationName ??
+        event.district ??
+        event.city ??
+        event.province ??
+        '未知地点';
     final season = event.season;
     final tagsStr = topTags.isNotEmpty ? topTags.join(', ') : '无';
     final joyScore = event.joyScore != null
@@ -242,7 +254,12 @@ class LLMService {
 
   /// 🛡️ 兜底标题生成（当 LLM 失败时）
   List<String> _getFallbackTitles(EventEntity event) {
-    final location = event.locationName ?? event.district ?? event.city ?? event.province ?? '未知地点';
+    final location =
+        event.locationName ??
+        event.district ??
+        event.city ??
+        event.province ??
+        '未知地点';
     final dateRange = event.dateRangeText;
 
     return ['$location · $dateRange', '$location 的记忆', '时光印记 · $location'];
@@ -256,7 +273,12 @@ class LLMService {
     // 模拟网络延迟
     await Future.delayed(const Duration(seconds: 1));
 
-    final location = event.locationName ?? event.district ?? event.city ?? event.province ?? '未知地点';
+    final location =
+        event.locationName ??
+        event.district ??
+        event.city ??
+        event.province ??
+        '未知地点';
 
     // 根据标签生成模拟标题
     if (topTags.contains('美食')) {
@@ -285,6 +307,40 @@ class LLMService {
       _baseUrl.trim().isNotEmpty &&
       _modelName.trim().isNotEmpty &&
       (_apiKey.trim().isNotEmpty || _isLoopbackOrLanEndpoint);
+
+  bool get isVisionApiConfigured => isApiKeyConfigured;
+
+  Future<String?> generatePhotoCaption({
+    required Uint8List imageBytes,
+    required String mimeType,
+    required List<String> tags,
+    required List<String> ocrTags,
+    required String ocrText,
+    required String? location,
+    required DateTime takenAt,
+    required bool isTextHeavy,
+    required int faceCount,
+  }) async {
+    final prompt = _buildPhotoCaptionPrompt(
+      tags: tags,
+      ocrTags: ocrTags,
+      ocrText: ocrText,
+      location: location,
+      takenAt: takenAt,
+      isTextHeavy: isTextHeavy,
+      faceCount: faceCount,
+    );
+
+    final text = await _multimodalChatCompletion(
+      prompt: prompt,
+      imageBytes: imageBytes,
+      mimeType: mimeType,
+    );
+    if (text == null || text.trim().isEmpty) {
+      return null;
+    }
+    return text.trim();
+  }
 
   /// 📝 生成博客文本内容
   ///
@@ -380,6 +436,72 @@ class LLMService {
     return null;
   }
 
+  Future<String?> _multimodalChatCompletion({
+    required String prompt,
+    required Uint8List imageBytes,
+    required String mimeType,
+  }) async {
+    final baseUrl = _baseUrl.endsWith('/')
+        ? _baseUrl.substring(0, _baseUrl.length - 1)
+        : _baseUrl;
+    final apiPath = _apiPath.startsWith('/') ? _apiPath : '/$_apiPath';
+    final isChatCompletions = apiPath.contains('/chat/completions');
+    final requestBody = _buildVisionRequestBody(
+      prompt: prompt,
+      imageBytes: imageBytes,
+      mimeType: mimeType,
+      useChatCompletions: isChatCompletions,
+    );
+
+    final response = await _dio.post(
+      '$baseUrl$apiPath',
+      options: Options(headers: {'Authorization': 'Bearer $_apiKey'}),
+      data: requestBody,
+    );
+
+    final data = response.data;
+    print('📥 [LLM VISION RESPONSE STATUS] ${response.statusCode}');
+    if (data is! Map<String, dynamic>) {
+      return null;
+    }
+
+    final outputText = _extractResponseText(data);
+    if (outputText != null && outputText.isNotEmpty) {
+      return outputText;
+    }
+
+    final choices = data['choices'];
+    if (choices is! List || choices.isEmpty) {
+      return null;
+    }
+
+    final first = choices.first;
+    if (first is! Map<String, dynamic>) {
+      return null;
+    }
+
+    final message = first['message'];
+    if (message is! Map<String, dynamic>) {
+      return null;
+    }
+
+    final content = message['content'];
+    if (content is String) {
+      return content;
+    }
+    if (content is List) {
+      final buffer = StringBuffer();
+      for (final item in content) {
+        if (item is Map<String, dynamic> && item['text'] is String) {
+          buffer.write(item['text'] as String);
+        }
+      }
+      return buffer.toString();
+    }
+
+    return null;
+  }
+
   Map<String, dynamic> _buildRequestBody({
     required String prompt,
     required bool useChatCompletions,
@@ -410,6 +532,92 @@ class LLMService {
         },
       ],
     };
+  }
+
+  Map<String, dynamic> _buildVisionRequestBody({
+    required String prompt,
+    required Uint8List imageBytes,
+    required String mimeType,
+    required bool useChatCompletions,
+  }) {
+    const systemText = '你是一个谨慎的中文图片描述助手。只能描述图中可见事实，不要脑补职业、关系、剧情和身份。';
+    final imageDataUrl = 'data:$mimeType;base64,${base64Encode(imageBytes)}';
+
+    if (useChatCompletions) {
+      return {
+        'model': _visionModelName,
+        'messages': [
+          {'role': 'system', 'content': systemText},
+          {
+            'role': 'user',
+            'content': [
+              {'type': 'text', 'text': prompt},
+              {
+                'type': 'image_url',
+                'image_url': {'url': imageDataUrl},
+              },
+            ],
+          },
+        ],
+      };
+    }
+
+    return {
+      'model': _visionModelName,
+      'input': [
+        {
+          'role': 'user',
+          'content': [
+            {'type': 'input_text', 'text': systemText},
+            {'type': 'input_text', 'text': prompt},
+            {'type': 'input_image', 'image_url': imageDataUrl},
+          ],
+        },
+      ],
+    };
+  }
+
+  String _buildPhotoCaptionPrompt({
+    required List<String> tags,
+    required List<String> ocrTags,
+    required String ocrText,
+    required String? location,
+    required DateTime takenAt,
+    required bool isTextHeavy,
+    required int faceCount,
+  }) {
+    final dateText =
+        '${takenAt.month}月${takenAt.day}日 ${takenAt.hour.toString().padLeft(2, '0')}:${takenAt.minute.toString().padLeft(2, '0')}';
+    final tagsText = tags.isEmpty ? '无' : tags.join('、');
+    final ocrTagsText = ocrTags.isEmpty ? '无' : ocrTags.join('、');
+    final trimmedOcr = ocrText.trim();
+    final ocrSnippet = trimmedOcr.isEmpty
+        ? '无'
+        : trimmedOcr.substring(
+            0,
+            trimmedOcr.length > 80 ? 80 : trimmedOcr.length,
+          );
+
+    return '''
+请为这张照片写 1 句中文 caption。
+
+已知辅助信息：
+- 拍摄时间：$dateText
+- 地点：${location ?? '未知地点'}
+- 本地视觉标签：$tagsText
+- OCR 标签：$ocrTagsText
+- OCR 文本片段：$ocrSnippet
+- 人脸数量：$faceCount
+- 是否疑似文字/截图主导：${isTextHeavy ? '是' : '否'}
+
+硬性要求：
+1. 只输出一句中文，不要编号，不要引号，不要解释。
+2. 长度控制在 12 到 28 个汉字，最多不超过 36 个字。
+3. 只描述图中可以确认的内容，不要猜职业、关系、剧情、身份。
+4. 如果画面是截图、文档、票据、课件、屏幕或文字材料，caption 必须按“资料/文档/屏幕内容”来写，禁止把 OCR 词语写成人物设定。
+5. 禁止出现“采购员、房主、未婚妻、未婚夫、套路、学生、小伙子、学者、残疾人、同学”等脑补标签词。
+6. 如果地点不确定，不要补地名。
+''';
   }
 
   String? _extractResponseText(Map<String, dynamic> data) {
@@ -466,7 +674,9 @@ class LLMService {
     String? themeTitle, // 🌟 新增：接收用户输入的主题
     String? themeSubtitle, // 🌟 新增：接收用户选择的副标题
   }) async {
-    print("☁️ [DeepSeek] 创作中... 地点: $location, 标签: $tags, OCR标签: $ocrTags, OCR线索数: ${ocrHighlights.length}, 欢乐值: $joyScore, 图片数: $photoCount");
+    print(
+      "☁️ [DeepSeek] 创作中... 地点: $location, 标签: $tags, OCR标签: $ocrTags, OCR线索数: ${ocrHighlights.length}, 欢乐值: $joyScore, 图片数: $photoCount",
+    );
     print("🧭 [DeepSeek] 主题: $themeTitle, 副标题: $themeSubtitle");
     print("🚀 [请求发送] 正在携带具体帧画面特征呼叫大模型...");
 
@@ -490,6 +700,11 @@ class LLMService {
 
 【🎬 真实镜头分镜表（绝对不许篡改或推测，必须作为客观事实使用）】
 ${photoDetails ?? '总体画面元素：${tags.join(', ')}'}
+
+补充理解规则：
+- 每条“镜头”里如果已经给出一句自然语言画面描述，那一句就是该照片最优先的事实依据；你应该先吃透这句描述，再参考后面的 OCR 与标签补充。
+- 只有当镜头描述比较简略时，才使用标签和 OCR 去补足细节，绝不能让离散标签覆盖掉更完整的画面描述。
+- 你的任务不是把标签机械拼句子，而是把这些单图描述像珍珠一样串起来，写成时空连续、情绪连贯的回忆片段。
 
 请严格按照以下三个部分，输出结构化的纯文本内容（禁止使用 ** 加粗等 Markdown 语法）：
 

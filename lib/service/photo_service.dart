@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../models/entity/story_entity.dart';
+import '../data/tag_dictionary.dart';
 import '../utils/photo_filter_helper.dart';
 
 class _PreparedScanData {
@@ -68,9 +69,7 @@ class PhotoService {
     print("🗑️ 已清空 Isar 缓存数据（照片/事件/故事）");
   }
 
-  Future<PhotoScanSummary> rebuildAllCachedData({
-    int? maxAssets,
-  }) async {
+  Future<PhotoScanSummary> rebuildAllCachedData({int? maxAssets}) async {
     final totalBefore = await _isar.collection<PhotoEntity>().count();
     final prepared = await _prepareScan(maxAssets: maxAssets);
 
@@ -116,9 +115,7 @@ class PhotoService {
   }
 
   // 1️⃣ 扫描相册 (快速入库，带截图过滤)
-  Future<PhotoScanSummary> scanAndSyncPhotos({
-    int? maxAssets,
-  }) async {
+  Future<PhotoScanSummary> scanAndSyncPhotos({int? maxAssets}) async {
     final totalBefore = await _isar.collection<PhotoEntity>().count();
     final prepared = await _prepareScan(maxAssets: maxAssets);
 
@@ -130,7 +127,10 @@ class PhotoService {
           ? "🚀 开始扫描相册（全量）..."
           : "🚀 开始扫描相册（最近 ${prepared.fetchCount} / ${prepared.totalCount} 张）...",
     );
-    final built = await _buildPhotoEntities(prepared.assets, skipExisting: true);
+    final built = await _buildPhotoEntities(
+      prepared.assets,
+      skipExisting: true,
+    );
 
     if (built.photos.isNotEmpty) {
       await _isar.writeTxn(() async {
@@ -163,10 +163,11 @@ class PhotoService {
     );
   }
 
-  Future<_PreparedScanData> _prepareScan({
-    int? maxAssets,
-  }) async {
+  Future<_PreparedScanData> _prepareScan({int? maxAssets}) async {
     if (Platform.isAndroid) {
+      final photosStatus = await Permission.photos.request();
+      print('📸 Android photos 权限请求结果: $photosStatus');
+
       final locationStatus = await Permission.accessMediaLocation.request();
       if (locationStatus.isGranted) {
         print("✅ 成功获得读取照片真实 GPS 的特权");
@@ -176,6 +177,10 @@ class PhotoService {
     }
 
     final permissionState = await PhotoManager.requestPermissionExtend();
+    final isLimited = permissionState == PermissionState.limited;
+    print(
+      '📸 相册权限状态: $permissionState isAuth=${permissionState.isAuth} hasAccess=${permissionState.hasAccess}',
+    );
     if (!permissionState.isAuth && !permissionState.hasAccess) {
       throw const PhotoScanException(
         PhotoScanError.permissionDenied,
@@ -183,24 +188,112 @@ class PhotoService {
       );
     }
 
-    final albums = await PhotoManager.getAssetPathList(
+    final preferredAlbums = await PhotoManager.getAssetPathList(
       type: RequestType.image,
       onlyAll: true,
     );
+    var albums = preferredAlbums;
+    // onlyAll=true 在部分 ROM / 授权模式下可能返回空或空壳相册，降级到全量列表取图片最多的相册
     if (albums.isEmpty) {
-      throw const PhotoScanException(PhotoScanError.noAlbum, '未找到可读取的相册。');
+      albums = await PhotoManager.getAssetPathList(
+        type: RequestType.image,
+        onlyAll: false,
+      );
     }
 
-    final totalCount = await albums[0].assetCountAsync;
+    AssetPathEntity? selectedAlbum;
+    var selectedCount = -1;
+    for (final album in albums) {
+      final count = await album.assetCountAsync;
+      print('📂 相册 [${album.name}] 内有 $count 张图片');
+      if (count > selectedCount) {
+        selectedAlbum = album;
+        selectedCount = count;
+      }
+    }
+
+    if ((selectedAlbum == null || selectedCount <= 0) && preferredAlbums.isNotEmpty) {
+      final fallbackAlbums = await PhotoManager.getAssetPathList(
+        type: RequestType.image,
+        onlyAll: false,
+      );
+      for (final album in fallbackAlbums) {
+        final count = await album.assetCountAsync;
+        print('📂 兜底相册 [${album.name}] 内有 $count 张图片');
+        if (count > selectedCount) {
+          selectedAlbum = album;
+          selectedCount = count;
+        }
+      }
+    }
+
+    if (albums.isEmpty || selectedAlbum == null || selectedCount <= 0) {
+      print('⚠️ 相册列表为空或全部为空壳，切换到全局媒体库扫描兜底');
+      final fallback = await _prepareGlobalScan(maxAssets: maxAssets);
+      if (fallback.assets.isNotEmpty) {
+        return fallback;
+      }
+
+      if (isLimited) {
+        throw const PhotoScanException(
+          PhotoScanError.permissionDenied,
+          '当前系统仅授予了“部分照片”权限，且已授权列表为空。请到系统设置将照片权限改为「允许所有照片」，或先在系统权限面板中勾选至少一张照片后重试。',
+        );
+      }
+
+      throw const PhotoScanException(
+        PhotoScanError.noAlbum,
+        '未找到可读取的相册。请确认系统照片权限已授予，并检查系统相册中是否存在图片。',
+      );
+    }
+
+    print('✅ 本次扫描选中相册: ${selectedAlbum.name} ($selectedCount 张)');
+    final totalCount = selectedCount;
     final fetchCount = maxAssets == null
         ? totalCount
         : (maxAssets < totalCount ? maxAssets : totalCount);
-    final assets = await albums[0].getAssetListRange(start: 0, end: fetchCount);
+    final assets = await selectedAlbum.getAssetListRange(start: 0, end: fetchCount);
 
     return _PreparedScanData(
       assets: assets,
       totalCount: totalCount,
       fetchCount: fetchCount,
+    );
+  }
+
+  Future<_PreparedScanData> _prepareGlobalScan({int? maxAssets}) async {
+    const pageSize = 200;
+    final assets = <AssetEntity>[];
+    var page = 0;
+
+    while (true) {
+      final remaining = maxAssets == null ? pageSize : maxAssets - assets.length;
+      if (remaining <= 0) {
+        break;
+      }
+
+      final batch = await PhotoManager.getAssetListPaged(
+        page: page,
+        pageCount: remaining < pageSize ? remaining : pageSize,
+        type: RequestType.image,
+      );
+      print('🧰 全局媒体库第 ${page + 1} 页返回 ${batch.length} 张图片');
+      if (batch.isEmpty) {
+        break;
+      }
+
+      assets.addAll(batch);
+      if (batch.length < pageSize) {
+        break;
+      }
+      page++;
+    }
+
+    print('✅ 全局媒体库兜底共拿到 ${assets.length} 张图片');
+    return _PreparedScanData(
+      assets: assets,
+      totalCount: assets.length,
+      fetchCount: assets.length,
     );
   }
 
@@ -226,8 +319,9 @@ class PhotoService {
         }
       }
 
-      final file = await asset.file;
+      final file = await _resolveReadableFile(asset);
       if (file == null) {
+        print('⚠️ 资源无法解析为本地文件: assetId=${asset.id} title=${asset.title}');
         skippedNonCamera++;
         continue;
       }
@@ -243,14 +337,16 @@ class PhotoService {
         width,
         height,
       );
-      final likelyCameraPhoto = PhotoFilterHelper.isLikelyCameraPhoto(file.path);
+      final likelyCameraPhoto = PhotoFilterHelper.isLikelyCameraPhoto(
+        file.path,
+      );
       if (screenshotByRatio) {
         skippedScreenshot++;
-        continue;
+        // continue;
       }
       if (!likelyCameraPhoto) {
         skippedNonCamera++;
-        continue;
+        // continue;
       }
 
       final latLong = await asset.latlngAsync();
@@ -290,6 +386,21 @@ class PhotoService {
       skippedNonCamera: skippedNonCamera,
       skippedScreenshot: skippedScreenshot,
     );
+  }
+
+  Future<File?> _resolveReadableFile(AssetEntity asset) async {
+    final directFile = await asset.file;
+    if (directFile != null && directFile.path.isNotEmpty) {
+      return directFile;
+    }
+
+    final originFile = await asset.originFile;
+    if (originFile != null && originFile.path.isNotEmpty) {
+      print('ℹ️ 资源使用 originFile 兜底: assetId=${asset.id} path=${originFile.path}');
+      return originFile;
+    }
+
+    return null;
   }
 
   void _logAssetExtInfo({
@@ -358,9 +469,7 @@ class PhotoService {
     return {'total': total, 'withGPS': withGPS, 'aiAnalyzed': aiAnalyzed};
   }
 
-  Future<int> requeueLatestPhotosForAi({
-    int? maxPhotos,
-  }) async {
+  Future<int> requeueLatestPhotosForAi({int? maxPhotos}) async {
     final query = _isar.collection<PhotoEntity>().where().sortByTimestampDesc();
     final photos = maxPhotos == null
         ? await query.findAll()
@@ -370,17 +479,33 @@ class PhotoService {
       return 0;
     }
 
+    final taxonomyLabels = memoriaMasterLabels.toSet();
+    const passthroughLabels = <String>{'截图'};
+
     var updatedCount = 0;
     for (final photo in photos) {
+      final aiTags = photo.aiTags ?? const <String>[];
       final needsReset =
-          photo.isAiAnalyzed ||
-          (photo.aiTags != null && photo.aiTags!.isNotEmpty);
-      if (!needsReset) {
+          photo.isAiAnalyzed &&
+          (aiTags.isEmpty ||
+              (photo.imageEmbedding == null || photo.imageEmbedding!.isEmpty));
+      final hasOutdatedTags =
+          photo.isAiAnalyzed &&
+          aiTags.isNotEmpty &&
+          aiTags.any(
+            (tag) =>
+                !taxonomyLabels.contains(tag.trim()) &&
+                !passthroughLabels.contains(tag.trim()),
+          );
+
+      if (!needsReset && !hasOutdatedTags) {
         continue;
       }
 
       photo.isAiAnalyzed = false;
       photo.aiTags = <String>[];
+      photo.aiCaption = null;
+      photo.imageEmbedding = null;
       photo.ocrText = null;
       photo.ocrTags = <String>[];
       photo.faceCount = 0;
@@ -397,7 +522,9 @@ class PhotoService {
       await _isar.collection<PhotoEntity>().putAll(photos);
     });
 
-    final scopeText = maxPhotos == null ? '${photos.length} 张照片' : '最近 $maxPhotos 张照片';
+    final scopeText = maxPhotos == null
+        ? '${photos.length} 张照片'
+        : '最近 $maxPhotos 张照片';
     print('🔁 已将 $scopeText 中的 $updatedCount 张重新加入 AI 打标队列');
     return updatedCount;
   }
@@ -429,10 +556,9 @@ class PhotoService {
       photo.isAiAnalyzed = false;
 
       photo.aiTags = []; // 清空 ML Kit 时代干瘪的标签
+      photo.imageEmbedding = null;
       photo.ocrText = null;
       photo.ocrTags = [];
-
-      // photo.vector = null; // 如果你未来加了向量字段，也在这里清空
     }
 
     // 3. 批量写回数据库

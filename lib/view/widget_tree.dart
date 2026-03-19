@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'pages/home_page.dart'; // 🌟 导入刚才新写的首页
 import 'pages/album_page.dart';
-import 'pages/stories_page.dart';
 import 'pages/create_page.dart';
 import 'pages/profile_page.dart';
+import 'pages/theme_clusters_page.dart';
 
 class WidgetTree extends StatefulWidget {
   const WidgetTree({super.key});
@@ -15,12 +15,12 @@ class WidgetTree extends StatefulWidget {
 class _WidgetTreeState extends State<WidgetTree> {
   int _currentIndex = 0; // 默认一打开显示 0（首页）
 
-  // 🌟 重新排布页面顺序，总共 5 个坑位（中间那个是加号对应的页面）
+  // 🌟 去掉 CreatePage 这个“伪占位符”，因为现在它是被 push 出来的
   final List<Widget> _pages = const [
     HomePage(), // 0: 首页
     AlbumPage(), // 1: 相册
-    CreatePage(), // 2: 创建 (悬浮按钮触发)
-    StoriesPage(), // 3: 故事/设置
+    SizedBox(), // 2: 占位用的空盒子，永远不会被渲染，因为我们拦截了 2 的点击
+    ThemeClustersPage(), // 3: 主题聚类
     ProfilePage(), // 4: 我的
   ];
 
@@ -48,7 +48,7 @@ class _WidgetTreeState extends State<WidgetTree> {
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.purple.withOpacity(0.3),
+              color: Colors.purple.withValues(alpha: 0.3),
               blurRadius: 8,
               offset: const Offset(0, 4),
             ),
@@ -56,9 +56,16 @@ class _WidgetTreeState extends State<WidgetTree> {
         ),
         child: FloatingActionButton(
           onPressed: () {
-            setState(() {
-              _currentIndex = 2; // 点击加号切换到“创建页”
-            });
+            // ====================================================
+            // 🚀 神级修改点：不要 setState 切频道了，直接全屏盖上去！
+            // ====================================================
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const CreatePage(),
+                fullscreenDialog: true, // 可选：让它像模态框一样从底部往上弹，更有仪式感
+              ),
+            );
           },
           backgroundColor: Colors.transparent, // 背景透明，露出外层的渐变色
           elevation: 0,
@@ -84,8 +91,8 @@ class _WidgetTreeState extends State<WidgetTree> {
               _buildNavItem(Icons.image_outlined, Icons.image, '相册', 1),
 
               const SizedBox(width: 48), // ⚠️ 关键：给中间的巨大加号留出空位
-              // 注意：设计图里写的是“设置”，但我这里依然为你绑定了 StoriesPage 防止报错
-              _buildNavItem(Icons.settings_outlined, Icons.settings, '设置', 3),
+
+              _buildNavItem(Icons.category_outlined, Icons.category, '主题', 3),
               _buildNavItem(Icons.person_outline, Icons.person, '我的', 4),
             ],
           ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:photo_manager/photo_manager.dart';
 import '../../models/entity/event_entity.dart';
 import '../../models/event.dart';
 import '../../service/ai_service.dart';
@@ -121,9 +122,9 @@ class _AlbumPageState extends State<AlbumPage> {
             behavior: SnackBarBehavior.floating,
             content: Text(
               clearCacheFirst
-                ? recentPhotoLimit == null
-                  ? '✅ 已安全重建缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
-                  : '✅ 已安全重建最近$recentPhotoLimit张照片缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
+                  ? recentPhotoLimit == null
+                        ? '✅ 已安全重建缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
+                        : '✅ 已安全重建最近$recentPhotoLimit张照片缓存，恢复${scanSummary.totalAfter}张照片。AI正在后台悄悄打标...'
                   : requeuedCount > 0
                   ? recentPhotoLimit == null
                         ? '✅ 相册已更新，已将$requeuedCount张旧照片重新加入中文打标队列。'
@@ -142,14 +143,25 @@ class _AlbumPageState extends State<AlbumPage> {
       AIService()
           .analyzePhotosInBackground(maxPhotos: recentPhotoLimit)
           .then((_) {
-            debugPrint("🎉 [后台任务] 所有照片的 AI 标签已静默添加完毕！");
+            return AIService().backfillMissingCaptionsInBackground(
+              maxPhotos: recentPhotoLimit,
+            );
+          })
+          .then((_) {
+            debugPrint("🎉 [后台任务] 照片 AI 标签与 caption 已静默补齐完毕！");
             // 你可以随时在这里发送广播，或者静默更新部分特定 UI
           })
           .catchError((e) {
             debugPrint("❌ [后台任务] AI 分析出错: $e");
           });
     } on PhotoScanException catch (e) {
-      if (mounted) {
+      if (!mounted) {
+        return;
+      }
+
+      if (e.code == PhotoScanError.permissionDenied) {
+        await _showPhotoPermissionGuide(e.message);
+      } else {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('⚠️ ${e.message}')));
@@ -166,6 +178,33 @@ class _AlbumPageState extends State<AlbumPage> {
         setState(() => _isRefreshing = false);
       }
     }
+  }
+
+  Future<void> _showPhotoPermissionGuide(String message) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('需要完整照片权限'),
+          content: Text(
+            '$message\n\n当前系统不会再次弹出照片选择器，请手动进入系统设置，将“照片与视频”权限改为“允许所有照片”。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('稍后处理'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await PhotoManager.openSetting();
+              },
+              child: const Text('去系统设置'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _resetCacheAndRescan() async {
@@ -204,30 +243,37 @@ class _AlbumPageState extends State<AlbumPage> {
     final selected = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (context) {
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const ListTile(
-                title: Text('选择刷新范围'),
-                subtitle: Text('先只跑最近一部分照片，或者全量运行'),
-              ),
-              ..._refreshPhotoOptions.map((option) {
-                final isFull = option == _fullRefreshOption;
-                final label = isFull ? '全部运行' : '先跑最近 $option 张';
-                final subtitle = isFull
-                    ? '扫描全部照片并对全部待处理照片后台打标'
-                    : '仅扫描最近照片，并只重排这部分照片的 AI 打标';
-                return ListTile(
-                  leading: Icon(isFull ? Icons.all_inclusive : Icons.flash_on),
-                  title: Text(label),
-                  subtitle: Text(subtitle),
-                  onTap: () => Navigator.pop(context, option),
-                );
-              }),
-              const SizedBox(height: 8),
-            ],
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const ListTile(
+                  title: Text('选择刷新范围'),
+                  subtitle: Text('先只跑最近一部分照片，或者全量运行'),
+                ),
+                ..._refreshPhotoOptions.map((option) {
+                  // 这里假设你的代码里定义了 _fullRefreshOption，如果没有请替换为你实际的值
+                  final isFull = option == -1; // 假设 -1 代表全部，请根据你的代码调整
+                  final label = isFull ? '全部运行' : '先跑最近 $option 张';
+                  final subtitle = isFull
+                      ? '扫描全部照片并对全部待处理照片后台打标'
+                      : '仅扫描最近照片，并只重排这部分照片的 AI 打标';
+                  return ListTile(
+                    leading: Icon(
+                      isFull ? Icons.all_inclusive : Icons.flash_on,
+                    ),
+                    title: Text(label),
+                    subtitle: Text(subtitle),
+                    onTap: () => Navigator.pop(context, option),
+                  );
+                }),
+                // 留出底部安全距离
+                const SizedBox(height: 24),
+              ],
+            ),
           ),
         );
       },

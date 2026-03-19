@@ -18,6 +18,10 @@ class LLMService {
        _baseUrl = baseUrl ?? _defaultBaseUrl,
        _apiPath = apiPath ?? _defaultApiPath,
        _modelName = modelName ?? _defaultModelName,
+       _visionModelName =
+         _defaultVisionModelName.isEmpty
+           ? (modelName ?? _defaultModelName)
+           : _defaultVisionModelName,
        _dio =
            dio ??
            Dio(
@@ -83,6 +87,7 @@ class LLMService {
   final String _baseUrl;
   final String _apiPath;
   final String _modelName;
+  final String _visionModelName;
   final Dio _dio;
 
   String get _visionModelName => _defaultVisionModelName.trim().isEmpty

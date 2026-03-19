@@ -13,6 +13,36 @@ int _mapValueToInt(Object? value) {
   return 0;
 }
 
+class OnDeviceInternvlImagePayload {
+  const OnDeviceInternvlImagePayload({
+    required this.path,
+    required this.capturedAtIso,
+    required this.locationName,
+    this.latitude,
+    this.longitude,
+  });
+
+  final String path;
+  final String capturedAtIso;
+  final String locationName;
+  final double? latitude;
+  final double? longitude;
+
+  Map<String, Object> toMap() {
+    final map = <String, Object>{
+      'path': path,
+      'capturedAtIso': capturedAtIso,
+      'locationName': locationName,
+    };
+    if (latitude != null) {
+      map['latitude'] = latitude!;
+    }
+    if (longitude != null) {
+      map['longitude'] = longitude!;
+    }
+    return map;
+  }
+}
 /// 手机本地 InternVL 设备画像。
 ///
 /// 这不是“已经集成成功”的运行状态，而是“当前手机硬件适不适合承载 InternVL-3-1B Q4”
@@ -169,6 +199,113 @@ class OnDeviceInternvlCliDeploymentStatus {
   }
 }
 
+class OnDeviceInternvlServerDeploymentStatus {
+  const OnDeviceInternvlServerDeploymentStatus({
+    required this.deployedRoot,
+    required this.installRoot,
+    required this.serverPath,
+    required this.modelPath,
+    required this.mmprojPath,
+    required this.serverExists,
+    required this.libDirExists,
+    required this.modelExists,
+    required this.mmprojExists,
+    required this.isRunnable,
+    required this.port,
+    required this.serverUrl,
+    required this.summary,
+    required this.missingItems,
+  });
+
+  final String deployedRoot;
+  final String installRoot;
+  final String serverPath;
+  final String modelPath;
+  final String mmprojPath;
+  final bool serverExists;
+  final bool libDirExists;
+  final bool modelExists;
+  final bool mmprojExists;
+  final bool isRunnable;
+  final int port;
+  final String serverUrl;
+  final String summary;
+  final List<String> missingItems;
+
+  factory OnDeviceInternvlServerDeploymentStatus.fromMap(
+    Map<Object?, Object?> map,
+  ) {
+    final missingItemsRaw = map['missingItems'];
+    final missingItems = missingItemsRaw is List
+        ? missingItemsRaw.map((item) => item.toString()).toList(growable: false)
+        : const <String>[];
+
+    return OnDeviceInternvlServerDeploymentStatus(
+      deployedRoot: map['deployedRoot']?.toString() ?? '',
+      installRoot: map['installRoot']?.toString() ?? '',
+      serverPath: map['serverPath']?.toString() ?? '',
+      modelPath: map['modelPath']?.toString() ?? '',
+      mmprojPath: map['mmprojPath']?.toString() ?? '',
+      serverExists: map['serverExists'] == true,
+      libDirExists: map['libDirExists'] == true,
+      modelExists: map['modelExists'] == true,
+      mmprojExists: map['mmprojExists'] == true,
+      isRunnable: map['isRunnable'] == true,
+      port: _mapValueToInt(map['port']),
+      serverUrl: map['serverUrl']?.toString() ?? '',
+      summary: map['summary']?.toString() ?? 'unknown',
+      missingItems: missingItems,
+    );
+  }
+}
+
+class OnDeviceInternvlServerStatus {
+  const OnDeviceInternvlServerStatus({
+    required this.running,
+    required this.reachable,
+    required this.ready,
+    required this.port,
+    required this.host,
+    required this.modelAlias,
+    required this.serverUrl,
+    required this.chatCompletionsUrl,
+    required this.pid,
+    required this.runtimeServerPath,
+    required this.error,
+    required this.summary,
+  });
+
+  final bool running;
+  final bool reachable;
+  final bool ready;
+  final int port;
+  final String host;
+  final String modelAlias;
+  final String serverUrl;
+  final String chatCompletionsUrl;
+  final int pid;
+  final String runtimeServerPath;
+  final String error;
+  final String summary;
+
+  factory OnDeviceInternvlServerStatus.fromMap(Map<Object?, Object?> map) {
+    return OnDeviceInternvlServerStatus(
+      running: map['running'] == true,
+      reachable: map['reachable'] == true,
+      ready: map['ready'] == true,
+      port: _mapValueToInt(map['port']),
+      host: map['host']?.toString() ?? '127.0.0.1',
+      modelAlias: map['modelAlias']?.toString() ?? 'local-internvl',
+      serverUrl: map['serverUrl']?.toString() ?? '',
+      chatCompletionsUrl: map['chatCompletionsUrl']?.toString() ?? '',
+      pid: _mapValueToInt(map['pid']),
+      runtimeServerPath: map['runtimeServerPath']?.toString() ?? '',
+      error: map['error']?.toString() ?? '',
+      summary: map['summary']?.toString() ?? 'unknown',
+    );
+  }
+}
+
 /// 直接执行手机本地 llama-mtmd-cli 后返回的结果。
 class OnDeviceInternvlCliResult {
   const OnDeviceInternvlCliResult({
@@ -246,6 +383,69 @@ class OnDeviceInternvlService {
     return OnDeviceInternvlBackendStatus.fromMap(raw);
   }
 
+  Future<OnDeviceInternvlServerDeploymentStatus?> getServerDeploymentStatus() async {
+    if (!Platform.isAndroid) {
+      return null;
+    }
+
+    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
+      'getServerDeploymentStatus',
+    );
+    if (raw == null) {
+      return null;
+    }
+    return OnDeviceInternvlServerDeploymentStatus.fromMap(raw);
+  }
+
+  Future<OnDeviceInternvlServerStatus?> getServerStatus() async {
+    if (!Platform.isAndroid) {
+      return null;
+    }
+
+    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
+      'getServerStatus',
+    );
+    if (raw == null) {
+      return null;
+    }
+    return OnDeviceInternvlServerStatus.fromMap(raw);
+  }
+
+  Future<OnDeviceInternvlServerStatus?> ensureServerStarted({
+    required int threads,
+    required int contextSize,
+  }) async {
+    if (!Platform.isAndroid) {
+      return null;
+    }
+
+    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
+      'ensureServerStarted',
+      <String, Object>{
+        'threads': threads,
+        'contextSize': contextSize,
+      },
+    );
+    if (raw == null) {
+      return null;
+    }
+    return OnDeviceInternvlServerStatus.fromMap(raw);
+  }
+
+  Future<OnDeviceInternvlServerStatus?> stopServer() async {
+    if (!Platform.isAndroid) {
+      return null;
+    }
+
+    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
+      'stopServer',
+    );
+    if (raw == null) {
+      return null;
+    }
+    return OnDeviceInternvlServerStatus.fromMap(raw);
+  }
+
   Future<OnDeviceInternvlCliDeploymentStatus?> getCliDeploymentStatus() async {
     if (!Platform.isAndroid) {
       return null;
@@ -261,7 +461,7 @@ class OnDeviceInternvlService {
   }
 
   Future<OnDeviceInternvlCliResult?> runCliExperiment({
-    required String imagePath,
+    required List<OnDeviceInternvlImagePayload> images,
     required String prompt,
     required int threads,
     required int contextSize,
@@ -272,10 +472,30 @@ class OnDeviceInternvlService {
       return null;
     }
 
+    final imagePaths = images
+        .map((item) => item.path.trim())
+        .where((path) => path.isNotEmpty)
+        .toList(growable: false);
+    final imageMetadatas = images
+        .map((item) => item.toMap())
+        .toList(growable: false);
+    if (imagePaths.isEmpty) {
+      return const OnDeviceInternvlCliResult(
+        success: false,
+        answer: '',
+        rawOutput: '',
+        error: '没有可用的图片路径，无法发起推理',
+        exitCode: -1,
+        durationMs: 0,
+      );
+    }
+
     final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
       'runCliExperiment',
       <String, Object>{
-        'imagePath': imagePath,
+        'imagePath': imagePaths.isEmpty ? '' : imagePaths.first,
+        'imagePaths': imagePaths,
+        'imageMetadatas': imageMetadatas,
         'prompt': prompt,
         'threads': threads,
         'contextSize': contextSize,
@@ -301,7 +521,8 @@ class OnDeviceInternvlService {
     try {
       final profile = await probeDeviceProfile();
       final backend = await getBackendStatus();
-      final cliDeployment = await getCliDeploymentStatus();
+      final serverDeployment = await getServerDeploymentStatus();
+      final serverStatus = await getServerStatus();
 
       if (profile != null) {
         debugPrint('📱 [InternVL 设备画像] ${profile.summary}');
@@ -325,14 +546,26 @@ class OnDeviceInternvlService {
         debugPrint('📱 [InternVL 后端状态] 下一步：${backend.nextStep}');
       }
 
-      if (cliDeployment != null) {
+      if (serverDeployment != null) {
         debugPrint(
-          '📱 [InternVL CLI 部署] runnable=${cliDeployment.isRunnable} '
-          'cli=${cliDeployment.cliExists} '
-          'model=${cliDeployment.modelExists} '
-          'mmproj=${cliDeployment.mmprojExists}',
+          '📱 [InternVL Server 部署] runnable=${serverDeployment.isRunnable} '
+          'server=${serverDeployment.serverExists} '
+          'model=${serverDeployment.modelExists} '
+          'mmproj=${serverDeployment.mmprojExists} '
+          'port=${serverDeployment.port}',
         );
-        debugPrint('📱 [InternVL CLI 部署] ${cliDeployment.summary}');
+        debugPrint('📱 [InternVL Server 部署] ${serverDeployment.summary}');
+      }
+
+      if (serverStatus != null) {
+        debugPrint(
+          '📱 [InternVL Server 状态] running=${serverStatus.running} '
+          'reachable=${serverStatus.reachable} pid=${serverStatus.pid}',
+        );
+        debugPrint('📱 [InternVL Server 状态] ${serverStatus.summary}');
+        if (serverStatus.error.isNotEmpty) {
+          debugPrint('📱 [InternVL Server 状态] error=${serverStatus.error}');
+        }
       }
     } on MissingPluginException {
       debugPrint('⚠️ [InternVL 设备画像] 当前平台未注册 Android 探测通道');

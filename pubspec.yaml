@@ -59,16 +59,6 @@ dependencies:
   gal: ^2.3.0
   file_picker: ^8.0.0
   path: ^1.9.0
-  ffi: ^2.1.3
-  shared_preferences: ^2.5.3
-  audioplayers: ^6.6.0
-  flutter_animate: ^4.5.2
-  # ffmpeg_kit_flutter: ^6.0.3 # FFmpeg 核心
-  # path_provider: ^2.1.0      # 找临时文件夹用的
-
-dependency_overrides:
-  amap_flutter_location:
-    path: third_party/amap_flutter_location
 
 dev_dependencies:
   flutter_test:
@@ -148,9 +138,6 @@ flutter:
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
 flutter_icons:
-  android: true
-  ios: true
-  image_path: "assets/images/app_icon.png"flutter_icons:
   android: true
   ios: true
   image_path: "assets/images/app_icon.png"

@@ -25,8 +25,11 @@ class VlmPhotoPickerPage extends StatefulWidget {
 
 class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
   static const int _pageSize = 80;
+  static const int _maxSelection = 9;
 
   final List<AssetEntity> _assets = <AssetEntity>[];
+  final Map<String, VlmPhotoPickerResult> _selectedResults =
+      <String, VlmPhotoPickerResult>{};
 
   AssetPathEntity? _album;
   bool _isLoading = true;
@@ -131,7 +134,25 @@ class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
     }
   }
 
-  Future<void> _selectAsset(AssetEntity asset) async {
+  Future<void> _toggleSelectAsset(AssetEntity asset) async {
+    final alreadySelected = _selectedResults.containsKey(asset.id);
+    if (alreadySelected) {
+      setState(() {
+        _selectedResults.remove(asset.id);
+      });
+      return;
+    }
+
+    if (_selectedResults.length >= _maxSelection) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('一次最多选择 $_maxSelection 张图片')),
+      );
+      return;
+    }
+
     final file = await asset.file;
     if (file == null || file.path.isEmpty || !File(file.path).existsSync()) {
       if (!mounted) {
@@ -147,13 +168,26 @@ class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
       return;
     }
 
-    Navigator.pop(
-      context,
-      VlmPhotoPickerResult(
+    setState(() {
+      _selectedResults[asset.id] = VlmPhotoPickerResult(
         assetId: asset.id,
         path: file.path,
         createdAt: asset.createDateTime,
-      ),
+      );
+    });
+  }
+
+  void _confirmSelection() {
+    if (_selectedResults.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先选择至少一张图片')),
+      );
+      return;
+    }
+
+    Navigator.pop(
+      context,
+      _selectedResults.values.toList(growable: false),
     );
   }
 
@@ -163,6 +197,10 @@ class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
       appBar: AppBar(
         title: const Text('选择图片'),
         actions: [
+          TextButton(
+            onPressed: _selectedResults.isEmpty ? null : _confirmSelection,
+            child: Text('完成(${_selectedResults.length})'),
+          ),
           IconButton(
             onPressed: _isLoading ? null : _loadInitialAssets,
             icon: const Icon(Icons.refresh),
@@ -230,14 +268,25 @@ class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
         }
 
         final asset = _assets[index];
+        final isSelected = _selectedResults.containsKey(asset.id);
+        final selectedIndex = isSelected
+            ? _selectedResults.keys.toList(growable: false).indexOf(asset.id) + 1
+            : null;
+
         return GestureDetector(
-          onTap: () => _selectAsset(asset),
+          onTap: () => _toggleSelectAsset(asset),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: Stack(
               fit: StackFit.expand,
               children: [
                 _buildThumbnail(asset),
+                if (isSelected)
+                  Positioned.fill(
+                    child: Container(
+                      color: Colors.black26,
+                    ),
+                  ),
                 Positioned(
                   right: 8,
                   bottom: 8,
@@ -247,13 +296,20 @@ class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.black54,
+                      color: isSelected
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.black54,
                       borderRadius: BorderRadius.circular(999),
                     ),
-                    child: const Icon(
-                      Icons.check_circle_outline,
-                      color: Colors.white,
-                      size: 16,
+                    child: Text(
+                      isSelected
+                          ? '#$selectedIndex'
+                          : '+',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                 ),

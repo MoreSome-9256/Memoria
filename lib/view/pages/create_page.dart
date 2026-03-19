@@ -23,6 +23,8 @@ class _CreatePageState extends State<CreatePage> {
   final TextEditingController _searchController = TextEditingController();
   final SemanticMatchingService _semanticService = SemanticMatchingService();
   bool _isSearching = false;
+  static const double _minSemanticSimilarity = 0.22;
+  static const int _maxSemanticResults = 300;
 
   // 搜索结果
   List<PhotoEntity> _searchResults = [];
@@ -144,6 +146,10 @@ class _CreatePageState extends State<CreatePage> {
     final List<PhotoEntity> candidates = [];
 
     for (var photo in allAnalyzedPhotos) {
+      if (photo.isProbablyScreenshot) {
+        continue;
+      }
+
       bool isMatch = true; // 采取 AND 淘汰制：必须同时满足被提取出的条件
 
       // 判定 A: 时间拦截
@@ -188,6 +194,7 @@ class _CreatePageState extends State<CreatePage> {
     // 💡 阶段四：文本向量检索（语义排序）
     // ==========================================
     final semanticQuery = remainingQuery.isNotEmpty ? remainingQuery : query.trim();
+    final semanticPrompt = _resolveSemanticPrompt(semanticQuery);
     List<PhotoEntity> matchedPhotos;
 
     // 纯时空查询：直接返回候选集合（已是时间倒序）
@@ -196,7 +203,7 @@ class _CreatePageState extends State<CreatePage> {
     } else {
       try {
         await _semanticService.warmUp();
-        final textVector = await _semanticService.embedText(semanticQuery);
+        final textVector = await _semanticService.embedText(semanticPrompt);
 
         final scored = <MapEntry<PhotoEntity, double>>[];
         for (final photo in candidates) {
@@ -215,15 +222,33 @@ class _CreatePageState extends State<CreatePage> {
         }
 
         if (scored.isEmpty) {
-          matchedPhotos = List<PhotoEntity>.from(candidates);
+          print('⚠️ [语义检索] 候选集中没有可用图像向量，返回 0 条');
+          matchedPhotos = const <PhotoEntity>[];
         } else {
           scored.sort((a, b) => b.value.compareTo(a.value));
-          matchedPhotos = scored.map((e) => e.key).toList(growable: false);
+
+          final filtered = scored
+              .where((entry) => entry.value >= _minSemanticSimilarity)
+              .take(_maxSemanticResults)
+              .toList(growable: false);
+
+          matchedPhotos = filtered.map((e) => e.key).toList(growable: false);
+
+          if (filtered.isEmpty) {
+            print(
+              '⚠️ [语义检索] 全部低于阈值 $_minSemanticSimilarity，返回 0 条，避免弱相关噪声',
+            );
+          }
+
           final preview = scored
               .take(5)
               .map((e) => '${e.value.toStringAsFixed(4)}#${e.key.id}')
               .join(', ');
-          print('🧠 [语义检索] query="$semanticQuery" top5=[$preview]');
+          print(
+            '🧠 [语义检索] raw="$semanticQuery" prompt="$semanticPrompt" '
+            'top5=[$preview] threshold=$_minSemanticSimilarity '
+            'filtered=${filtered.length}/${scored.length}',
+          );
         }
       } catch (e) {
         print('⚠️ 语义检索失败，降级为时空过滤结果: $e');
@@ -239,6 +264,27 @@ class _CreatePageState extends State<CreatePage> {
         _isSearching = false;
       });
     }
+  }
+
+  String _resolveSemanticPrompt(String query) {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) {
+      return trimmed;
+    }
+
+    final mapped = memoriaMasterTaxonomy[trimmed];
+    if (mapped != null && mapped.isNotEmpty) {
+      return mapped;
+    }
+
+    // 优先匹配推荐词，避免把中文短语直接喂给英文主训练的 Text Encoder。
+    for (final entry in memoriaMasterTaxonomy.entries) {
+      if (trimmed.contains(entry.key) || entry.key.contains(trimmed)) {
+        return entry.value;
+      }
+    }
+
+    return trimmed;
   }
 
   // 👆 勾选/取消勾选照片

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/entity/photo_entity.dart';
+import '../../models/theme_cluster_models.dart';
 import '../../service/theme_cluster_service.dart';
 import '../widgets/path_image.dart';
 import 'stories_page.dart';
@@ -14,6 +15,7 @@ class ThemeClustersPage extends StatefulWidget {
 
 class _ThemeClustersPageState extends State<ThemeClustersPage> {
   late Future<List<ThemeCluster>> _clustersFuture;
+  bool _pureEmbeddingOnly = false;
 
   static const Map<String, IconData> _themeIcons = <String, IconData>{
     'people': Icons.people_alt_outlined,
@@ -36,13 +38,40 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
   @override
   void initState() {
     super.initState();
-    _clustersFuture = ThemeClusterService().loadClusters();
+    _clustersFuture = ThemeClusterService().loadClusters(
+      pureEmbeddingOnly: _pureEmbeddingOnly,
+      maxNewEmbeddingsPerRun: 300,
+    );
   }
 
   Future<void> _reload() async {
     setState(() {
-      _clustersFuture = ThemeClusterService().loadClusters();
+      _clustersFuture = ThemeClusterService().loadClusters(
+        pureEmbeddingOnly: _pureEmbeddingOnly,
+        maxNewEmbeddingsPerRun: 300,
+      );
     });
+  }
+
+  void _toggleClusteringMode() {
+    setState(() {
+      _pureEmbeddingOnly = !_pureEmbeddingOnly;
+      _clustersFuture = ThemeClusterService().loadClusters(
+        pureEmbeddingOnly: _pureEmbeddingOnly,
+        maxNewEmbeddingsPerRun: 300,
+      );
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          _pureEmbeddingOnly
+              ? '已切换为纯 embedding 模式（仅 512 维向量）'
+              : '已切换为混合模式（向量 + 规则）',
+        ),
+      ),
+    );
   }
 
   @override
@@ -52,6 +81,17 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
         title: const Text('主题聚类'),
         elevation: 0,
         actions: [
+          IconButton(
+            onPressed: _toggleClusteringMode,
+            icon: Icon(
+              _pureEmbeddingOnly
+                  ? Icons.scatter_plot_outlined
+                  : Icons.tune_outlined,
+            ),
+            tooltip: _pureEmbeddingOnly
+                ? '当前：纯 embedding（点击切回混合）'
+                : '当前：混合模式（点击切到纯 embedding）',
+          ),
           IconButton(
             onPressed: _reload,
             icon: const Icon(Icons.refresh),
@@ -75,7 +115,39 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
         future: _clustersFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return ValueListenableBuilder<ThemeClusteringProgress>(
+              valueListenable: ThemeClusterService().progressListenable,
+              builder: (context, progress, _) {
+                final isDeterminate = progress.total > 0;
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(
+                          value: isDeterminate ? progress.ratio : null,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          progress.message ?? '正在计算主题聚类...',
+                          textAlign: TextAlign.center,
+                        ),
+                        if (progress.stage ==
+                            ThemeClusteringStage.preparingEmbeddings)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              '复用向量 ${progress.cachedEmbeddings} · 新算 ${progress.newEmbeddings}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
           }
 
           if (snapshot.hasError) {
@@ -518,7 +590,7 @@ class _IntroCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '先用 MobileCLIP 标签做一层主题聚类',
+            '先用 MobileCLIP2 512维向量做一层主题聚类',
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w700,
             ),

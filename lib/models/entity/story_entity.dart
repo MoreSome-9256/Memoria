@@ -15,6 +15,8 @@ class StoryEntity {
   late String content; // Markdown 格式内容（含图片占位符）
   late int createdAt; // 创建时间戳
   late int updatedAt; // 更新时间戳
+  late bool isHorizontal;
+  String? targetPlatform;
 
   // 🔗 关联信息
   late int eventId; // 来源事件 ID

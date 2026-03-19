@@ -41,8 +41,13 @@ class _StoriesPageState extends State<StoriesPage> {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            StoryResultPage.fromStoryEntity(storyEntity: story, photos: photos),
+        builder: (context) => StoryResultPage.fromStoryEntity(
+          storyEntity: story,
+          photos: photos,
+          // 🌟 核心修复：从数据库实体中读取保存的状态
+          isHorizontal: story.isHorizontal ?? false,
+          targetPlatform: story.targetPlatform ?? '小红书',
+        ),
       ),
     );
 

@@ -175,6 +175,24 @@ class _ConfigPageState extends State<ConfigPage> {
         }
       }
       // ==========================================
+      // 🌟 平台名称转换 (供最终发布页文案生成使用)
+      // ==========================================
+      String platformName = '小红书'; // 默认值
+      switch (_selectedPlatform) {
+        case PublishingPlatform.xiaohongshu:
+          platformName = '小红书';
+          break;
+        case PublishingPlatform.moments:
+          platformName = '朋友圈';
+          break;
+        case PublishingPlatform.bilibili:
+          platformName = 'B站';
+          break;
+        case PublishingPlatform.tiktok:
+          platformName = '抖音';
+          break;
+      }
+      // ==========================================
       // 🌟 第一步：呼叫 VLM 接口生成剧本大纲
       // ==========================================
       setState(() {
@@ -211,6 +229,8 @@ class _ConfigPageState extends State<ConfigPage> {
         ..photoCount = selectedAssetIds.length
         ..isLlmGenerated = false
         // ⚠️ 最最最关键的 content：必须带有 ![img](x) 占位符，否则 UI 无法切图！
+        ..targetPlatform =
+            platformName // 👈 🌟 核心新增：把平台写进数据库！
         ..content =
             '''
 测试
@@ -238,7 +258,7 @@ Sandal Leap
         List<String> styleTags = [_selectedSubtitle ?? '治愈风', '小红书感'];
 
         // ==========================================
-        // 🌟 核心提取：把你队友打好的 Tag 揉成一句话送给 LLM
+        // 🌟 核心提取：把打好的 Tag 揉成一句话送给 LLM
         // ==========================================
         List<String> photoDescriptions = photoEntities.map((p) {
           // 提取图片描述
@@ -302,6 +322,8 @@ Sandal Leap
               // 🌟 新增：把刚才拿到的云端节拍数据一起传过去！
               dynamicBeatData: dynamicBeatData,
               captions: finalCaptions,
+              isHorizontal: _selectedAspectRatio == VideoAspectRatio.horizontal,
+              targetPlatform: platformName,
             ),
           ),
         );

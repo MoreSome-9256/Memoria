@@ -18,6 +18,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:ffmpeg_kit_flutter_full_gpl/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_full_gpl/return_code.dart';
 import 'package:gal/gal.dart';
+import 'publish_page.dart';
 
 class StoryVideoPage extends StatefulWidget {
   final String title;
@@ -26,6 +27,7 @@ class StoryVideoPage extends StatefulWidget {
   final String? customMusicPath;
   final Map<String, dynamic>? dynamicBeatData; // 🌟 接收云端数据
   final String subtitle;
+  final String targetPlatform;
 
   const StoryVideoPage({
     super.key,
@@ -35,6 +37,7 @@ class StoryVideoPage extends StatefulWidget {
     this.customMusicPath,
     this.dynamicBeatData,
     required this.subtitle,
+    required this.targetPlatform,
   });
 
   @override
@@ -48,7 +51,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   int _currentIndex = 0;
   bool _isPlaying = false;
   StreamSubscription? _positionSubscription;
-  
+
   int _currentLyricIndex = 0;
   String _currentLyricText = "";
   // 🎛️ VFX 控制台参数
@@ -132,7 +135,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     _initAudioAndListener(); // 启动音频实时监听
     _togglePlay(); // 自动开始播放
   }
-  
+
   int _currentBeatIndexForPreview = -1; // 记录当前演到第几拍了
 
   Future<void> _initAudioAndListener() async {
@@ -923,6 +926,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       },
     );
   }
+
   // 📊 导出时的进度遮罩层
   Widget _buildExportProgressOverlay() {
     return Container(
@@ -1002,6 +1006,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       _currentLyricText = widget.sections[_currentIndex].text;
     });
   }
+
   Future<Uint8List?> _captureFrame() async {
     try {
       // 找到那根“虚拟取景器”的边界
@@ -1146,14 +1151,23 @@ class _StoryVideoPageState extends State<StoryVideoPage>
             await Gal.putVideo(outputPath);
             debugPrint("📸 视频已成功保存至手机系统相册！");
 
-            // 给用户一个极其舒适的视觉反馈
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('🎉 视频渲染完成，已保存至手机相册！快去图库看看吧！'),
-                  backgroundColor: Colors.pinkAccent,
-                  behavior: SnackBarBehavior.floating, // 悬浮样式更好看
-                  duration: Duration(seconds: 4),
+              // 🌟 1. 提取当前视频里所有的台词送给发布页
+              List<String> currentCaptions = widget.sections
+                  .map((s) => s.text)
+                  .toList();
+
+              // 🌟 2. 彻底关掉当前的视频渲染页，进入充满成就感的发布页！
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => PublishPage(
+                    title: widget.title,
+                    subtitle: widget.subtitle,
+                    captions: currentCaptions,
+                    targetPlatform: widget.targetPlatform, // 完美交接平台数据
+                    exportedVideoPath: outputPath,
+                  ),
                 ),
               );
             }
@@ -1167,10 +1181,12 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       });
     } finally {
       // 6. 收工，撤掉黑布
-      setState(() {
-        _isExporting = false;
-        _exportProgress = 0.0;
-      });
+      if (mounted) {
+        setState(() {
+          _isExporting = false;
+          _exportProgress = 0.0;
+        });
+      }
     }
   }
 
@@ -1203,6 +1219,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     );
   }
 }
+
 class CinematicTitleIntro extends StatelessWidget {
   final String title;
   final String subtitle;

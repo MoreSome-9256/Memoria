@@ -8,7 +8,6 @@ plugins {
 android {
     namespace = "com.example.photo_album"
     compileSdk = 34
-    // compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     externalNativeBuild {
@@ -26,7 +25,6 @@ android {
         jvmTarget = "17"
     }
 
-    // 🌟 替换为合规的 Kotlin DSL 语法
     androidResources {
         noCompress += listOf("tflite", "pt", "bin", "onnx", "mp3")
     }
@@ -36,11 +34,11 @@ android {
         applicationId = "com.example.photo_album"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion 
+        minSdk = flutter.minSdkVersion
         targetSdk = 34
         // minSdk = flutter.minSdkVersion  // Required for photo_manager
         // targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
+        versionCode = flutter.versionCode.toInt()
         versionName = flutter.versionName
 
         externalNativeBuild {

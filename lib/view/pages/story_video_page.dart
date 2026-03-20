@@ -19,6 +19,7 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:gal/gal.dart';
 import 'publish_page.dart';
+import '../../service/llm_service.dart';
 
 class StoryVideoPage extends StatefulWidget {
   final String title;
@@ -1029,8 +1030,23 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     }
   }
 
+  // 🌟 新增一个变量，用来装这个“未来的文案”
+  Future<String>? _aiCopyFuture;
+
   Future<void> _startExport() async {
     if (_isPlaying) await _togglePlay();
+
+    // ==========================================
+    // 🚀 核心优化：提前呼叫 AI，让它在后台默默写小作文
+    // 注意这里千万别加 await，我们不要等它，让它自己跑！
+    // ==========================================
+    List<String> currentCaptions = widget.sections.map((s) => s.text).toList();
+    _aiCopyFuture = LLMService().generateSocialMediaCopy(
+      platform: widget.targetPlatform,
+      title: widget.title,
+      subtitle: widget.subtitle,
+      captions: currentCaptions,
+    );
 
     // 🌟 1. 精准计算“视觉画面”需要的总时长
     int totalBeatsNeeded = widget.sections.length * 8;
@@ -1168,6 +1184,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                     captions: currentCaptions,
                     targetPlatform: widget.targetPlatform, // 完美交接平台数据
                     exportedVideoPath: outputPath,
+                    generatedCopyFuture: _aiCopyFuture,
                   ),
                 ),
               );

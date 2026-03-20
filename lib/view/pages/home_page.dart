@@ -13,6 +13,8 @@ import 'package:photo_manager/photo_manager.dart';
 import 'event_detail_page.dart';
 import '../../service/mobileclip_backend_preference_service.dart';
 import '../../service/mobileclip_embedding_service.dart';
+import '../../service/cognito_auth_service.dart';
+import 'package:amplify_flutter/amplify_flutter.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -413,6 +415,20 @@ class _HomePageState extends State<HomePage> {
     return candidates;
   }
 
+  Future<AuthUser?> _loadUser() async {
+    try {
+      // 🌟 直接呼叫底层的 AuthSession，不需要管队友的 _auth 变量叫啥
+      final session = await Amplify.Auth.fetchAuthSession();
+      if (!session.isSignedIn) {
+        return null;
+      }
+      return await Amplify.Auth.getCurrentUser();
+    } catch (_) {
+      // 如果没登录或者没配好网络，安静地返回 null
+      return null;
+    }
+  }
+
   Future<List<Map<String, dynamic>>> _buildLocationRuleCards(Isar isar) async {
     final recentPhotos = await isar.photoEntitys
         .where()
@@ -579,12 +595,24 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(width: 12),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Text(
-                  'User_MoreSome,',
-                  style: TextStyle(fontSize: 14, color: Colors.black54),
+              children: [
+                // 🌟 核心修改：用 FutureBuilder 替换写死的用户名
+                FutureBuilder<AuthUser?>(
+                  future: _loadUser(), // 调用获取用户的方法
+                  builder: (context, snapshot) {
+                    // 提取用户名，如果还没加载出来或者没登录，就用个默认称呼兜底
+                    final userName = snapshot.data?.username ?? '探索者';
+
+                    return Text(
+                      '$userName,',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.black54,
+                      ),
+                    );
+                  },
                 ),
-                Text(
+                const Text(
                   '欢迎使用智能影记！',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),

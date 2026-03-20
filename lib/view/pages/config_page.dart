@@ -65,11 +65,12 @@ class _ConfigPageState extends State<ConfigPage> {
     _selectedSubtitle = widget.selectedTheme.subtitle;
     _manualCaptionsController = TextEditingController();
   }
+
   // 🌟 新增：拣选音乐的方法
   Future<void> _pickMusic() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['mp3', 'wav', 'aac', 'm4a', 'flac','ogg'],
+      allowedExtensions: ['mp3', 'wav', 'aac', 'm4a', 'flac', 'ogg'],
       allowMultiple: false,
     );
 
@@ -90,10 +91,11 @@ class _ConfigPageState extends State<ConfigPage> {
 
   Future<void> _generateStory() async {
     // 校验：如果选择了手动导入但没选文件
-    if (_selectedMusicSource == MusicSource.manualImport && _customMusicPath == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先选择一段本地音乐'))
-      );
+    if (_selectedMusicSource == MusicSource.manualImport &&
+        _customMusicPath == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先选择一段本地音乐')));
       return;
     }
     if (_themeController.text.trim().isEmpty) {
@@ -242,7 +244,7 @@ Sandal Leap
 ![img](1)
 '''
                 .trim();
-      
+
       // ==========================================
       // 🌟 第二步：根据剧本，提炼视频台词 (Captions)
       // ==========================================
@@ -318,7 +320,9 @@ Sandal Leap
               storyEntity: story,
               photos: photoEntities,
               // 🌟 记得给 ResultPage 传过去音乐路径，让它知道播哪首歌
-              customMusicPath: _selectedMusicSource == MusicSource.manualImport ? _customMusicPath : null,
+              customMusicPath: _selectedMusicSource == MusicSource.manualImport
+                  ? _customMusicPath
+                  : null,
               // 🌟 新增：把刚才拿到的云端节拍数据一起传过去！
               dynamicBeatData: dynamicBeatData,
               captions: finalCaptions,
@@ -326,9 +330,14 @@ Sandal Leap
               targetPlatform: platformName,
             ),
           ),
-        ),
-      );
-        } catch (e) {
+        );
+      } else {
+        // 🌟 修复点 2：补回被不小心删掉的失败提示兜底
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('故事生成失败，请重试')));
+      }
+    } catch (e) {
       setState(() {
         _isGenerating = false;
         _loadingText = '开始生成';
@@ -604,6 +613,7 @@ Sandal Leap
       ),
     );
   }
+
   Widget _buildMusicSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

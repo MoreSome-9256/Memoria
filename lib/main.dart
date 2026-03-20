@@ -7,6 +7,7 @@ import 'package:photo_album/service/amplify_cognito_config.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/photo_service.dart';
 import 'package:photo_album/service/ncnn_mobileclip_native_service.dart';
+import 'package:photo_album/utils/ocr_policy.dart';
 import 'package:photo_album/view/pages/mobileclip_vector_probe_page.dart';
 import 'view/pages/welcome_page.dart';
 import 'view/widget_tree.dart';
@@ -24,6 +25,11 @@ void main() async {
 
   // 2. 初始化 PhotoService (打开数据库)
   await PhotoService().init();
+
+  debugPrint(
+    '🔎 OCR policy: ml_kit_enabled=${OcrPolicy.mlKitEnabled} '
+    '(use --dart-define=ENABLE_ML_KIT_OCR=true to enable)',
+  );
 
   unawaited(
     NcnnMobileClipNativeService().ensureModelInitialized().catchError((error) {

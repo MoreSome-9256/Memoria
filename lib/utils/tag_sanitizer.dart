@@ -12,7 +12,9 @@ class TagSanitizer {
 
   static String? sanitizeVisualTag(String? value) {
     final normalized = _normalize(value);
-    if (normalized == null || _blockedExactTags.contains(normalized)) {
+    if (normalized == null ||
+        _blockedExactTags.contains(normalized) ||
+        _looksLikeOcrNoise(normalized)) {
       return null;
     }
     return normalized;
@@ -20,7 +22,9 @@ class TagSanitizer {
 
   static String? sanitizeOcrTag(String? value) {
     final normalized = _normalize(value);
-    if (normalized == null || _blockedExactTags.contains(normalized)) {
+    if (normalized == null ||
+        _blockedExactTags.contains(normalized) ||
+        _looksLikeOcrNoise(normalized)) {
       return null;
     }
     return normalized;
@@ -28,7 +32,9 @@ class TagSanitizer {
 
   static String? sanitizeDisplayTag(String? value) {
     final normalized = _normalize(value);
-    if (normalized == null || _blockedExactTags.contains(normalized)) {
+    if (normalized == null ||
+        _blockedExactTags.contains(normalized) ||
+        _looksLikeOcrNoise(normalized)) {
       return null;
     }
     return normalized;
@@ -75,5 +81,33 @@ class TagSanitizer {
       return null;
     }
     return normalized;
+  }
+
+  static bool _looksLikeOcrNoise(String value) {
+    if (RegExp(r'\d{1,2}:\d{2}').hasMatch(value)) {
+      return true;
+    }
+
+    if (RegExp(r'^\d+$').hasMatch(value)) {
+      return true;
+    }
+
+    if (RegExp(r'^\d+[张页个条分秒月日号]$').hasMatch(value)) {
+      return true;
+    }
+
+    if (value.length <= 4) {
+      final chineseCount = RegExp(r'[\u4e00-\u9fff]')
+          .allMatches(value)
+          .length;
+      final asciiCount = RegExp(r'[A-Za-z]').allMatches(value).length;
+      final digitCount = RegExp(r'\d').allMatches(value).length;
+
+      if (chineseCount > 0 && (asciiCount > 0 || digitCount > 0)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }

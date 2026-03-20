@@ -7,6 +7,7 @@ import '../../models/entity/story_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_service.dart';
+import '../../utils/ocr_policy.dart';
 import '../widgets/path_image.dart';
 import 'story_video_page.dart';
 
@@ -80,9 +81,10 @@ class StoryResultPage extends StatefulWidget {
               dateTaken: DateTime.fromMillisecondsSinceEpoch(p.timestamp),
               tags: p.aiTags ?? [],
               caption: p.aiCaption?.trim(),
-              ocrSummary: (p.ocrTags != null && p.ocrTags!.isNotEmpty)
-                  ? p.ocrTags!.take(3).join(' · ')
-                  : p.ocrText?.trim(),
+              ocrSummary: OcrPolicy.effectiveSummary(
+                tags: p.ocrTags ?? const <String>[],
+                text: p.ocrText,
+              ),
               location: p.city ?? p.province ?? '未知地点',
             ),
           ),

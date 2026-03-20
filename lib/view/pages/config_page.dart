@@ -7,11 +7,10 @@ import '../../models/entity/event_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/entity/story_entity.dart';
 import '../../service/photo_service.dart';
-import '../../service/story_service.dart';
 import '../../service/llm_service.dart';
+import '../../utils/ocr_policy.dart';
 import 'story_result_page.dart';
 import 'package:file_picker/file_picker.dart'; // 🌟 新增
-import 'package:path/path.dart' as p;
 import '../../service/music_service.dart';
 
 // 🌟 新增：视频长宽比枚举
@@ -267,10 +266,15 @@ Sandal Leap
           String desc = p.aiCaption?.trim() ?? "未知画面元素";
 
           // 如果有 OCR 文本线索，也一并塞进去
-          if (p.ocrTags != null && p.ocrTags!.isNotEmpty) {
-            desc += " (画面包含文字: ${p.ocrTags!.take(3).join('，')})";
-          } else if (p.ocrText != null && p.ocrText!.trim().isNotEmpty) {
-            desc += " (画面包含文字: ${p.ocrText!.trim()})";
+          final ocrTags = OcrPolicy.effectiveTags(
+            p.ocrTags ?? const <String>[],
+            maxTags: 3,
+          );
+          final ocrText = OcrPolicy.effectiveText(p.ocrText);
+          if (ocrTags.isNotEmpty) {
+            desc += " (画面包含文字: ${ocrTags.join('，')})";
+          } else if (ocrText.isNotEmpty) {
+            desc += " (画面包含文字: $ocrText)";
           }
           return desc;
         }).toList();

@@ -1,16 +1,19 @@
+import 'dart:io';
+import 'dart:ui';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'dart:io'; // 🌟 加上这行，File 类就活过来了！
 import 'package:isar/isar.dart';
 import '../../data/tag_dictionary.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/photo_service.dart';
 import '../../service/semantic_matching_service.dart';
+import '../../utils/ocr_policy.dart';
+import '../../utils/tag_sanitizer.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import 'config_page.dart';
-import 'dart:ui';
-// 如果有封装好的图片显示组件可以替换这里的 Image.file
 
 class CreatePage extends StatefulWidget {
   const CreatePage({super.key});
@@ -23,13 +26,34 @@ class _CreatePageState extends State<CreatePage> {
   final TextEditingController _searchController = TextEditingController();
   final SemanticMatchingService _semanticService = SemanticMatchingService();
   bool _isSearching = false;
-  static const double _minSemanticSimilarity = 0.22;
+  static const double _minSemanticSimilarity = 0.18;
   static const int _maxSemanticResults = 300;
+  static const double _strictTaxonomySemanticThreshold = 0.22;
+  static const Set<String> _semanticStopWords = <String>{
+    '照片',
+    '图片',
+    '相片',
+    '相册',
+    '回忆',
+    '那次',
+    '那年',
+    '那天',
+    '时候',
+    '一下',
+    '看看',
+    '想看',
+    '一下子',
+    '一下下',
+    '给我',
+    '帮我',
+  };
 
   // 搜索结果
   List<PhotoEntity> _searchResults = [];
   // 用户勾选的照片集合（存 ID）
   final Set<int> _selectedPhotoIds = {};
+  List<PhotoEntity>? _cachedAnalyzedPhotos;
+  Set<String>? _cachedLocations;
 
   List<String> get _candidateLabels {
     final input = _searchController.text.trim();
@@ -59,53 +83,118 @@ class _CreatePageState extends State<CreatePage> {
     super.dispose();
   }
 
-  // 🧠 语义检索版：本地实体截流 (时间/地点) + Text Embedding 余弦排序
-  Future<void> _performSearch(String query) async {
-    if (query.trim().isEmpty) return;
+  void _logDebug(String message) {
+    if (kDebugMode) {
+      debugPrint(message);
+    }
+  }
 
+  void _resetSearchState() {
     setState(() {
-      _isSearching = true;
-      _searchResults.clear();
+      _isSearching = false;
+      _searchResults = <PhotoEntity>[];
       _selectedPhotoIds.clear();
     });
+  }
 
-    final isar = PhotoService().isar;
+  Future<List<PhotoEntity>> _loadAnalyzedPhotos() async {
+    if (_cachedAnalyzedPhotos != null && _cachedLocations != null) {
+      return _cachedAnalyzedPhotos!;
+    }
 
-    // 1. 获取所有已分析的照片
-    final allAnalyzedPhotos = await isar
+    final photos = await PhotoService().isar
         .collection<PhotoEntity>()
         .filter()
         .isAiAnalyzedEqualTo(true)
         .sortByTimestampDesc()
         .findAll();
 
-    if (allAnalyzedPhotos.isEmpty) {
-      setState(() => _isSearching = false);
-      return;
-    }
+    _cachedAnalyzedPhotos = photos;
+    _cachedLocations = _buildLocationDictionary(photos);
+    return photos;
+  }
 
-    // ==========================================
-    // 💡 阶段一：建立地点知识库（用于 NER）
-    // ==========================================
-    final Set<String> allLocations = {};
-
-    for (var photo in allAnalyzedPhotos) {
-      final rawLocs = [photo.province, photo.city, photo.district];
-      for (var loc in rawLocs) {
-        if (loc == null || loc.trim().isEmpty) continue;
+  Set<String> _buildLocationDictionary(List<PhotoEntity> photos) {
+    final allLocations = <String>{};
+    for (final photo in photos) {
+      final rawLocs = [
+        photo.locationName,
+        photo.district,
+        photo.city,
+        photo.province,
+      ];
+      for (final loc in rawLocs) {
+        if (loc == null || loc.trim().isEmpty) {
+          continue;
+        }
 
         final cleanLoc = loc.trim();
-        allLocations.add(cleanLoc); // 保留完整版，例如 "济南市"
+        allLocations.add(cleanLoc);
 
-        // 🌟 终极暴力脱水：无视位置，只要带有这些字，全部剔除！
         final strippedLoc = cleanLoc
             .replaceAll(RegExp(r'[省市自治区县盟旗]'), '')
             .trim();
         if (strippedLoc.length >= 2) {
-          allLocations.add(strippedLoc); // 将 "济南" 也加入字典
+          allLocations.add(strippedLoc);
         }
       }
     }
+    return allLocations;
+  }
+
+  String _stripSemanticStopWords(String value) {
+    var cleaned = value;
+    for (final stopWord in _semanticStopWords) {
+      cleaned = cleaned.replaceAll(stopWord, '');
+    }
+    cleaned = cleaned.replaceAll(RegExp(r'[的在]'), '');
+    cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return cleaned;
+  }
+
+  Photo _mapPhotoEntityToPhoto(PhotoEntity photo) {
+    return Photo(
+      id: photo.assetId,
+      location:
+          photo.locationName ??
+          photo.district ??
+          photo.city ??
+          photo.province ??
+          '未知地点',
+      path: photo.path,
+      dateTaken: DateTime.fromMillisecondsSinceEpoch(photo.timestamp),
+      tags: TagSanitizer.sanitizeVisualTags(photo.aiTags ?? const <String>[]),
+      caption: photo.aiCaption?.trim(),
+      ocrSummary: OcrPolicy.effectiveSummary(
+        tags: photo.ocrTags ?? const <String>[],
+        text: photo.ocrText,
+      ),
+      ocrTags: OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]),
+      isSelected: true,
+    );
+  }
+
+  // 🧠 语义检索版：本地实体截流 (时间/地点) + Text Embedding 余弦排序
+  Future<void> _performSearch(String query) async {
+    if (query.trim().isEmpty) {
+      _resetSearchState();
+      return;
+    }
+
+    setState(() {
+      _isSearching = true;
+      _searchResults = <PhotoEntity>[];
+      _selectedPhotoIds.clear();
+    });
+
+    final allAnalyzedPhotos = await _loadAnalyzedPhotos();
+
+    if (allAnalyzedPhotos.isEmpty) {
+      _resetSearchState();
+      return;
+    }
+
+    final allLocations = _cachedLocations ?? const <String>{};
 
     // ==========================================
     // 💡 阶段二：本地命名实体识别 (NER)
@@ -128,15 +217,15 @@ class _CreatePageState extends State<CreatePage> {
     for (var loc in sortedLocations) {
       if (remainingQuery.contains(loc)) {
         matchedLocsInQuery.add(loc);
-        // 🌟 从查询词中精准抠掉地点
         remainingQuery = remainingQuery.replaceAll(loc, '');
       }
     }
+    matchedLocsInQuery = matchedLocsInQuery.toSet().toList(growable: false);
 
-    // 3. 擦除无意义的停止词（Stop Words），防止残留“的”、“在”导致 AI 疑惑
-    remainingQuery = remainingQuery.replaceAll(RegExp(r'[的在]'), '').trim();
+    // 3. 擦除无意义的结构词，避免“照片/回忆/那次”这类词继续干扰语义检索。
+    remainingQuery = _stripSemanticStopWords(remainingQuery);
 
-    print(
+    _logDebug(
       "🔍 [意图分析] 提取年份: ${targetYear ?? '无'}, 提取地点: $matchedLocsInQuery, 剩余需AI解析的语义词: '${remainingQuery.isEmpty ? '无' : remainingQuery}'",
     );
 
@@ -150,7 +239,7 @@ class _CreatePageState extends State<CreatePage> {
         continue;
       }
 
-      bool isMatch = true; // 采取 AND 淘汰制：必须同时满足被提取出的条件
+      bool isMatch = true; // 时间条件按 AND，多个地点关键字按 OR 命中。
 
       // 判定 A: 时间拦截
       if (targetYear != null) {
@@ -163,14 +252,8 @@ class _CreatePageState extends State<CreatePage> {
       // 判定 B: 地点拦截
       if (isMatch && matchedLocsInQuery.isNotEmpty) {
         final locationText =
-            '${photo.province ?? ''} ${photo.city ?? ''} ${photo.district ?? ''}';
-        bool hitLoc = false;
-        for (var loc in matchedLocsInQuery) {
-          if (locationText.contains(loc)) {
-            hitLoc = true;
-            break;
-          }
-        }
+            '${photo.locationName ?? ''} ${photo.province ?? ''} ${photo.city ?? ''} ${photo.district ?? ''}';
+        final hitLoc = matchedLocsInQuery.any(locationText.contains);
         if (!hitLoc) isMatch = false;
       }
 
@@ -180,10 +263,10 @@ class _CreatePageState extends State<CreatePage> {
     }
 
     if (candidates.isEmpty) {
-      print('🎯 [综合过滤] 时空过滤后候选为 0');
+      _logDebug('🎯 [综合过滤] 时空过滤后候选为 0');
       if (mounted) {
         setState(() {
-          _searchResults = const <PhotoEntity>[];
+          _searchResults = <PhotoEntity>[];
           _isSearching = false;
         });
       }
@@ -195,6 +278,7 @@ class _CreatePageState extends State<CreatePage> {
     // ==========================================
     final semanticQuery = remainingQuery.isNotEmpty ? remainingQuery : query.trim();
     final semanticPrompt = _resolveSemanticPrompt(semanticQuery);
+    final taxonomyLabel = _resolveTaxonomyLabel(query.trim());
     List<PhotoEntity> matchedPhotos;
 
     // 纯时空查询：直接返回候选集合（已是时间倒序）
@@ -218,12 +302,22 @@ class _CreatePageState extends State<CreatePage> {
             textVector,
             imageEmbedding,
           );
-          scored.add(MapEntry<PhotoEntity, double>(photo, score));
+          final boostedScore = _boostSemanticScore(
+            photo: photo,
+            query: semanticQuery,
+            taxonomyLabel: taxonomyLabel,
+            semanticScore: score,
+          );
+          scored.add(MapEntry<PhotoEntity, double>(photo, boostedScore));
         }
 
         if (scored.isEmpty) {
-          print('⚠️ [语义检索] 候选集中没有可用图像向量，返回 0 条');
-          matchedPhotos = const <PhotoEntity>[];
+          _logDebug('⚠️ [语义检索] 候选集中没有可用图像向量，返回 0 条');
+          matchedPhotos = _fallbackByVisualTags(
+            candidates: candidates,
+            query: semanticQuery,
+            taxonomyLabel: taxonomyLabel,
+          );
         } else {
           scored.sort((a, b) => b.value.compareTo(a.value));
 
@@ -232,11 +326,20 @@ class _CreatePageState extends State<CreatePage> {
               .take(_maxSemanticResults)
               .toList(growable: false);
 
-          matchedPhotos = filtered.map((e) => e.key).toList(growable: false);
+          matchedPhotos = _rankFilteredMatches(
+            filtered: filtered,
+            taxonomyLabel: taxonomyLabel,
+          );
 
           if (filtered.isEmpty) {
-            print(
-              '⚠️ [语义检索] 全部低于阈值 $_minSemanticSimilarity，返回 0 条，避免弱相关噪声',
+            matchedPhotos = _fallbackByVisualTags(
+              candidates: candidates,
+              query: semanticQuery,
+              taxonomyLabel: taxonomyLabel,
+            );
+            _logDebug(
+              '⚠️ [语义检索] 全部低于阈值 $_minSemanticSimilarity，'
+              '回退到 AI 标签过滤 ${matchedPhotos.length} 条',
             );
           }
 
@@ -244,19 +347,19 @@ class _CreatePageState extends State<CreatePage> {
               .take(5)
               .map((e) => '${e.value.toStringAsFixed(4)}#${e.key.id}')
               .join(', ');
-          print(
+          _logDebug(
             '🧠 [语义检索] raw="$semanticQuery" prompt="$semanticPrompt" '
             'top5=[$preview] threshold=$_minSemanticSimilarity '
             'filtered=${filtered.length}/${scored.length}',
           );
         }
       } catch (e) {
-        print('⚠️ 语义检索失败，降级为时空过滤结果: $e');
+        _logDebug('⚠️ 语义检索失败，降级为时空过滤结果: $e');
         matchedPhotos = List<PhotoEntity>.from(candidates);
       }
     }
 
-    print("🎯 [综合过滤] 最终命中照片数: ${matchedPhotos.length}");
+    _logDebug("🎯 [综合过滤] 最终命中照片数: ${matchedPhotos.length}");
 
     if (mounted) {
       setState(() {
@@ -285,6 +388,107 @@ class _CreatePageState extends State<CreatePage> {
     }
 
     return trimmed;
+  }
+
+  String? _resolveTaxonomyLabel(String query) {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+
+    if (memoriaMasterTaxonomy.containsKey(trimmed)) {
+      return trimmed;
+    }
+
+    for (final label in memoriaMasterTaxonomy.keys) {
+      if (trimmed.contains(label) || label.contains(trimmed)) {
+        return label;
+      }
+    }
+
+    return null;
+  }
+
+  double _boostSemanticScore({
+    required PhotoEntity photo,
+    required String query,
+    required String? taxonomyLabel,
+    required double semanticScore,
+  }) {
+    final sanitizedTags = TagSanitizer.sanitizeVisualTags(
+      photo.aiTags ?? const <String>[],
+    );
+
+    var boosted = semanticScore;
+    if (taxonomyLabel != null && sanitizedTags.contains(taxonomyLabel)) {
+      boosted += 0.10;
+    } else if (query.trim().length >= 2 && sanitizedTags.contains(query.trim())) {
+      boosted += 0.05;
+    }
+
+    return boosted;
+  }
+
+  List<PhotoEntity> _fallbackByVisualTags({
+    required List<PhotoEntity> candidates,
+    required String query,
+    required String? taxonomyLabel,
+  }) {
+    final fallback = candidates.where((photo) {
+      final sanitizedTags = TagSanitizer.sanitizeVisualTags(
+        photo.aiTags ?? const <String>[],
+      );
+      if (taxonomyLabel != null && sanitizedTags.contains(taxonomyLabel)) {
+        return true;
+      }
+      return query.trim().length >= 2 && sanitizedTags.contains(query.trim());
+    }).toList();
+
+    if (fallback.length > _maxSemanticResults) {
+      return fallback.take(_maxSemanticResults).toList();
+    }
+    return fallback;
+  }
+
+  List<PhotoEntity> _rankFilteredMatches({
+    required List<MapEntry<PhotoEntity, double>> filtered,
+    required String? taxonomyLabel,
+  }) {
+    if (filtered.isEmpty) {
+      return <PhotoEntity>[];
+    }
+
+    if (taxonomyLabel == null) {
+      return filtered.map((entry) => entry.key).toList(growable: false);
+    }
+
+    final exactTagMatches = <PhotoEntity>[];
+    final semanticOnlyMatches = <PhotoEntity>[];
+
+    for (final entry in filtered) {
+      final sanitizedTags = TagSanitizer.sanitizeVisualTags(
+        entry.key.aiTags ?? const <String>[],
+      );
+      if (sanitizedTags.contains(taxonomyLabel)) {
+        exactTagMatches.add(entry.key);
+        continue;
+      }
+
+      if (entry.value >= _strictTaxonomySemanticThreshold) {
+        semanticOnlyMatches.add(entry.key);
+      }
+    }
+
+    final merged = <PhotoEntity>[
+      ...exactTagMatches,
+      ...semanticOnlyMatches,
+    ];
+
+    if (merged.isNotEmpty) {
+      return merged;
+    }
+
+    return filtered.map((entry) => entry.key).toList(growable: false);
   }
 
   // 👆 勾选/取消勾选照片
@@ -326,16 +530,9 @@ class _CreatePageState extends State<CreatePage> {
         .toList();
 
     // 🌟 1. 组装 Photo 列表 (严格适配你的 Photo 类)
-    final mappedPhotos = selectedEntities.map((p) {
-      return Photo(
-        id: p.assetId, // 使用 assetId 确保和底层对应
-        location: p.city ?? p.province ?? '未知地点',
-        path: p.path,
-        dateTaken: DateTime.fromMillisecondsSinceEpoch(p.timestamp),
-        tags: p.aiTags ?? [],
-        isSelected: true,
-      );
-    }).toList();
+    final mappedPhotos = selectedEntities
+        .map(_mapPhotoEntityToPhoto)
+        .toList(growable: false);
 
     // 🌟 2. 动态计算时间范围 (提取选出照片的最早和最晚时间)
     DateTime startDate = DateTime.now();
@@ -627,12 +824,14 @@ class _CreatePageState extends State<CreatePage> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // 1. 照片本身 (大圆角)
               ClipRRect(
                 borderRadius: BorderRadius.circular(18),
-                child: file.existsSync()
-                    ? Image.file(file, fit: BoxFit.cover)
-                    : Container(color: Colors.grey.shade300),
+                child: Image.file(
+                  file,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) =>
+                      Container(color: Colors.grey.shade300),
+                ),
               ),
 
               // 2. 右上角的选择指示器 (无黑罩，还原设计图的清爽感)
@@ -727,7 +926,13 @@ class _CreatePageState extends State<CreatePage> {
                 minLines: 1,
                 textInputAction: TextInputAction.search,
                 onSubmitted: _performSearch,
-                onChanged: (_) => setState(() {}),
+                onChanged: (value) {
+                  setState(() {});
+                  if (value.trim().isEmpty &&
+                      (_searchResults.isNotEmpty || _selectedPhotoIds.isNotEmpty)) {
+                    _resetSearchState();
+                  }
+                },
                 decoration: const InputDecoration(
                   hintText: '想看什么？比如 "去年的日本之旅"...',
                   hintStyle: TextStyle(color: Colors.grey),

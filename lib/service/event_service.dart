@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:isar/isar.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/entity/event_entity.dart';
+import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 import '../utils/event_cluster_helper.dart';
 import '../utils/smart_title_generator.dart';
@@ -815,7 +816,7 @@ class EventService {
     ).where((tag) => !_blockedSmartTitleTags.contains(tag)).toList(
       growable: false,
     );
-    final ocrTags = TagSanitizer.sanitizeOcrTags(
+    final ocrTags = OcrPolicy.effectiveTags(
       photo.ocrTags ?? const <String>[],
     ).where((tag) => !_blockedSmartTitleTags.contains(tag)).toList(
       growable: false,
@@ -862,7 +863,7 @@ class EventService {
     required List<String> aiTags,
     required List<String> ocrTags,
   }) {
-    final ocrText = photo.ocrText?.trim() ?? '';
+    final ocrText = OcrPolicy.effectiveText(photo.ocrText);
     final textLikeAiCount = aiTags.where(_textSceneTags.contains).length;
 
     return photo.isProbablyScreenshot ||

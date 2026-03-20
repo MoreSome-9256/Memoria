@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 
 class OcrService {
@@ -80,12 +81,19 @@ class OcrService {
     List<String> tags, {
     double? aspectRatio,
   }) {
+    if (!OcrPolicy.mlKitEnabled) {
+      return false;
+    }
     final hasHintTag = tags.any(_textHintTags.contains);
-    final screenshotLike = aspectRatio != null && (aspectRatio < 0.6 || aspectRatio > 1.8);
+    final screenshotLike =
+        aspectRatio != null && (aspectRatio < 0.6 || aspectRatio > 1.8);
     return hasHintTag || screenshotLike;
   }
 
   Future<OcrResult> analyzeImageFile(File imageFile) async {
+    if (!OcrPolicy.mlKitEnabled) {
+      return OcrResult.empty();
+    }
     try {
       final inputImage = InputImage.fromFile(imageFile);
       var recognized = await _chineseRecognizer.processImage(inputImage);

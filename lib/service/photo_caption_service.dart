@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math' as math;
 
+import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 import 'llm_service.dart';
 
@@ -50,8 +51,8 @@ class PhotoCaptionService {
     required int faceCount,
   }) async {
     final sanitizedVisualTags = _sanitizeCaptionTags(visualTags);
-    final sanitizedOcrTags = TagSanitizer.sanitizeOcrTags(ocrTags, maxTags: 6);
-    final trimmedOcrText = ocrText.trim();
+    final sanitizedOcrTags = OcrPolicy.effectiveTags(ocrTags, maxTags: 6);
+    final trimmedOcrText = OcrPolicy.effectiveText(ocrText);
 
     if (_llmService.isVisionApiConfigured) {
       try {

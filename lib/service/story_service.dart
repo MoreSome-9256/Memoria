@@ -4,10 +4,10 @@ import 'package:photo_manager/photo_manager.dart';
 import '../models/entity/story_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
+import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 import 'photo_service.dart';
 import 'llm_service.dart';
-// for StoryLength enum
 import 'event_service.dart';
 
 /// 故事服务 - 管理故事的生成和存储
@@ -80,19 +80,19 @@ class StoryService {
       final rawOcrTags = sortedPhotos
           .expand((p) => p.ocrTags ?? <String>[])
           .toList(growable: false);
-      final allOcrTags = TagSanitizer.sanitizeOcrTags(rawOcrTags);
+      final allOcrTags = OcrPolicy.effectiveTags(rawOcrTags);
       final ocrHighlights = sortedPhotos
           .asMap()
           .entries
           .map((entry) {
-            final text = entry.value.ocrText?.trim();
-            if (text == null || text.isEmpty) {
+            final text = OcrPolicy.effectiveText(
+              entry.value.ocrText,
+              maxLength: 80,
+            );
+            if (text.isEmpty) {
               return null;
             }
-            final shortText = text.length > 80
-                ? '${text.substring(0, 80)}...'
-                : text;
-            return '第${entry.key + 1}张：$shortText';
+            return '第${entry.key + 1}张：$text';
           })
           .whereType<String>()
           .take(8)
@@ -215,7 +215,7 @@ class StoryService {
     final aiTags = TagSanitizer.sanitizeVisualTags(
       photo.aiTags ?? const <String>[],
     );
-    final ocrTags = TagSanitizer.sanitizeOcrTags(
+    final ocrTags = OcrPolicy.effectiveTags(
       photo.ocrTags ?? const <String>[],
     ).where((tag) => !_looksLikeAsciiNoise(tag)).toList(growable: false);
 
@@ -259,8 +259,9 @@ class StoryService {
     List<String>? ocrTags,
   }) {
     final effectiveAiTags = aiTags ?? photo.aiTags ?? const <String>[];
-    final effectiveOcrTags = ocrTags ?? photo.ocrTags ?? const <String>[];
-    final ocrText = photo.ocrText?.trim() ?? '';
+    final effectiveOcrTags = ocrTags ??
+        OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]);
+    final ocrText = OcrPolicy.effectiveText(photo.ocrText);
     final textLikeAiCount = effectiveAiTags
         .where(_textSceneTags.contains)
         .length;
@@ -297,15 +298,15 @@ class StoryService {
   }
 
   String? _buildPromptOcrSummary(PhotoEntity photo) {
-    final ocrTags = TagSanitizer.sanitizeOcrTags(
+    final ocrTags = OcrPolicy.effectiveTags(
       photo.ocrTags ?? const <String>[],
     ).where((tag) => !_looksLikeAsciiNoise(tag)).toList(growable: false);
     if (ocrTags.isNotEmpty) {
       return ocrTags.take(3).join('、');
     }
 
-    final ocrText = photo.ocrText?.trim();
-    if (ocrText == null || ocrText.isEmpty) {
+    final ocrText = OcrPolicy.effectiveText(photo.ocrText);
+    if (ocrText.isEmpty) {
       return null;
     }
 

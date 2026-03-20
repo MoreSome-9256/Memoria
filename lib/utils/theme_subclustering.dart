@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import '../models/entity/photo_entity.dart';
 import '../models/theme_cluster_models.dart';
+import 'ocr_policy.dart';
 import 'dbscan_algorithm.dart';
 
 abstract class ThemeSubclusterer {
@@ -18,6 +19,10 @@ abstract class ThemeSubclusterer {
 
 class PeopleThemeSubclusterer extends ThemeSubclusterer {
   const PeopleThemeSubclusterer();
+
+  static const double _identitySeedEpsilon = 0.12;
+  static const double _identityMergeDistance = 0.16;
+  static const double _identityAttachDistance = 0.18;
 
   @override
   List<ThemeSubcluster> buildSubclusters({
@@ -37,22 +42,263 @@ class PeopleThemeSubclusterer extends ThemeSubclusterer {
       );
     }
 
-    final base = const HeuristicThemeSubclusterer().buildSubclusters(
-      definition: definition,
-      scoredPhotos: scoredPhotos,
-      maxPreviewPerGroup: maxPreviewPerGroup,
-      minPhotosPerSubcluster: minPhotosPerSubcluster,
-      pureEmbeddingOnly: false,
+    final soloPhotos = scoredPhotos
+        .where((item) => item.photo.faceCount == 1)
+        .toList(growable: false);
+    final groupPhotos = scoredPhotos
+        .where((item) => item.photo.faceCount >= 2)
+        .toList(growable: false);
+    final effectiveMinPhotosPerCluster = math.max(2, minPhotosPerSubcluster);
+
+    final identityResult = soloPhotos.length >= effectiveMinPhotosPerCluster
+        ? DbscanAlgorithm.clusterScoredPhotos(
+            scoredPhotos: soloPhotos,
+            minPhotosPerSubcluster: effectiveMinPhotosPerCluster,
+            epsilon: _identitySeedEpsilon,
+          )
+        : const DbscanClusterResult(
+            clusters: <List<ScoredThemePhoto>>[],
+            leftovers: <ScoredThemePhoto>[],
+          );
+    final identityClusters = _mergeIdentityClusters(identityResult.clusters);
+    final soloLeftovers = _attachLeftoversToNearestIdentityCluster(
+      leftovers: identityResult.leftovers,
+      identityClusters: identityClusters,
     );
 
-    const algorithm = ThemeSubclusterAlgorithm(
-      currentLabel: '当前：MobileCLIP2(512) 主题召回 + 人脸规则细分',
+    final algorithm = ThemeSubclusterAlgorithm(
+      currentLabel:
+          '当前：稳定人物簇 + 近邻合并 + 零散样本回吸附（${identityClusters.length} 个身份簇）',
       nextLabel: '后续：人脸向量/HDBSCAN 细分身份簇',
     );
 
-    return base
-        .map((item) => item.copyWith(algorithm: algorithm))
+    final subclusters = <ThemeSubcluster>[];
+
+    for (var index = 0; index < identityClusters.length; index++) {
+      subclusters.add(
+        _buildPeopleSubcluster(
+          id: '${definition.id}_identity_$index',
+          title: '人物簇 ${index + 1}',
+          subtitle: '推测为同一人物的单人照片集合',
+          algorithm: algorithm,
+          scoredPhotos: identityClusters[index],
+          maxPreviewPerGroup: maxPreviewPerGroup,
+        ),
+      );
+    }
+
+    if (soloLeftovers.isNotEmpty && identityClusters.isNotEmpty) {
+      subclusters.add(
+        _buildPeopleSubcluster(
+          id: '${definition.id}_identity_leftovers',
+          title: '其他人物',
+          subtitle: '零散单人照，暂未形成稳定人物簇',
+          algorithm: algorithm,
+          scoredPhotos: soloLeftovers,
+          maxPreviewPerGroup: maxPreviewPerGroup,
+        ),
+      );
+    } else if (subclusters.isEmpty && soloPhotos.isNotEmpty) {
+      subclusters.add(
+        _buildPeopleSubcluster(
+          id: '${definition.id}_solo_all',
+          title: '单人照片',
+          subtitle: '当前主题下的单人人像照片，暂不细分身份',
+          algorithm: algorithm,
+          scoredPhotos: soloPhotos,
+          maxPreviewPerGroup: maxPreviewPerGroup,
+        ),
+      );
+    }
+
+    if (groupPhotos.isNotEmpty) {
+      subclusters.add(
+        _buildPeopleSubcluster(
+          id: '${definition.id}_group',
+          title: '多人合影',
+          subtitle: '包含两人及以上的合影与群像画面',
+          algorithm: algorithm,
+          scoredPhotos: groupPhotos,
+          maxPreviewPerGroup: maxPreviewPerGroup,
+        ),
+      );
+    }
+
+    if (subclusters.isEmpty) {
+      return const HeuristicThemeSubclusterer().buildSubclusters(
+        definition: definition,
+        scoredPhotos: scoredPhotos,
+        maxPreviewPerGroup: maxPreviewPerGroup,
+        minPhotosPerSubcluster: minPhotosPerSubcluster,
+        pureEmbeddingOnly: false,
+      ).map((item) => item.copyWith(algorithm: algorithm)).toList(growable: false);
+    }
+
+    subclusters.sort((a, b) => b.totalPhotos.compareTo(a.totalPhotos));
+    return subclusters;
+  }
+
+  List<List<ScoredThemePhoto>> _mergeIdentityClusters(
+    List<List<ScoredThemePhoto>> rawClusters,
+  ) {
+    final merged = rawClusters
+        .map((cluster) => List<ScoredThemePhoto>.from(cluster))
+        .toList(growable: true);
+
+    if (merged.length < 2) {
+      return merged;
+    }
+
+    while (true) {
+      var bestLeft = -1;
+      var bestRight = -1;
+      var bestDistance = double.infinity;
+
+      for (var i = 0; i < merged.length; i++) {
+        for (var j = i + 1; j < merged.length; j++) {
+          final distance = _clusterCentroidDistance(merged[i], merged[j]);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            bestLeft = i;
+            bestRight = j;
+          }
+        }
+      }
+
+      if (bestLeft < 0 ||
+          bestRight < 0 ||
+          bestDistance > _identityMergeDistance) {
+        break;
+      }
+
+      merged[bestLeft].addAll(merged[bestRight]);
+      merged.removeAt(bestRight);
+    }
+
+    return merged;
+  }
+
+  List<ScoredThemePhoto> _attachLeftoversToNearestIdentityCluster({
+    required List<ScoredThemePhoto> leftovers,
+    required List<List<ScoredThemePhoto>> identityClusters,
+  }) {
+    if (leftovers.isEmpty || identityClusters.isEmpty) {
+      return leftovers;
+    }
+
+    final remaining = <ScoredThemePhoto>[];
+    for (final item in leftovers) {
+      var bestIndex = -1;
+      var bestDistance = double.infinity;
+
+      for (var index = 0; index < identityClusters.length; index++) {
+        final distance = _distanceToClusterCentroid(item, identityClusters[index]);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = index;
+        }
+      }
+
+      if (bestIndex >= 0 && bestDistance <= _identityAttachDistance) {
+        identityClusters[bestIndex].add(item);
+      } else {
+        remaining.add(item);
+      }
+    }
+
+    return remaining;
+  }
+
+  double _clusterCentroidDistance(
+    List<ScoredThemePhoto> left,
+    List<ScoredThemePhoto> right,
+  ) {
+    final leftCentroid = _clusterCentroid(left);
+    final rightCentroid = _clusterCentroid(right);
+    if (leftCentroid.isEmpty || rightCentroid.isEmpty) {
+      return double.infinity;
+    }
+    return 1 - _cosineSimilarity(leftCentroid, rightCentroid);
+  }
+
+  double _distanceToClusterCentroid(
+    ScoredThemePhoto item,
+    List<ScoredThemePhoto> cluster,
+  ) {
+    if (item.embedding.isEmpty) {
+      return double.infinity;
+    }
+    final centroid = _clusterCentroid(cluster);
+    if (centroid.isEmpty || centroid.length != item.embedding.length) {
+      return double.infinity;
+    }
+    return 1 - _cosineSimilarity(item.embedding, centroid);
+  }
+
+  List<double> _clusterCentroid(List<ScoredThemePhoto> cluster) {
+    final embeddings = cluster
+        .map((item) => item.embedding)
+        .where((embedding) => embedding.isNotEmpty)
         .toList(growable: false);
+    if (embeddings.isEmpty) {
+      return const <double>[];
+    }
+
+    final dimension = embeddings.first.length;
+    if (embeddings.any((embedding) => embedding.length != dimension)) {
+      return const <double>[];
+    }
+
+    final centroid = List<double>.filled(dimension, 0.0);
+    for (final embedding in embeddings) {
+      for (var index = 0; index < dimension; index++) {
+        centroid[index] += embedding[index];
+      }
+    }
+    for (var index = 0; index < dimension; index++) {
+      centroid[index] /= embeddings.length;
+    }
+
+    final norm = math.sqrt(
+      centroid.fold<double>(0.0, (sum, value) => sum + value * value),
+    );
+    if (norm <= 0) {
+      return centroid;
+    }
+    return centroid.map((value) => value / norm).toList(growable: false);
+  }
+
+  ThemeSubcluster _buildPeopleSubcluster({
+    required String id,
+    required String title,
+    required String subtitle,
+    required ThemeSubclusterAlgorithm algorithm,
+    required List<ScoredThemePhoto> scoredPhotos,
+    required int maxPreviewPerGroup,
+  }) {
+    final sorted = List<ScoredThemePhoto>.from(scoredPhotos)
+      ..sort((a, b) {
+        final scoreCompare = b.score.compareTo(a.score);
+        if (scoreCompare != 0) {
+          return scoreCompare;
+        }
+        return b.photo.timestamp.compareTo(a.photo.timestamp);
+      });
+    final photos = sorted.map((item) => item.photo).toList(growable: false);
+
+    return ThemeSubcluster(
+      id: id,
+      title: title,
+      subtitle: subtitle,
+      algorithm: algorithm,
+      cohesion: _computeSubclusterCohesion(scoredPhotos),
+      totalPhotos: photos.length,
+      coverPhotos: photos.take(4).toList(growable: false),
+      groups: buildTimelineGroups(
+        photos,
+        maxPreviewPerGroup: maxPreviewPerGroup,
+      ),
+    );
   }
 }
 
@@ -190,7 +436,7 @@ class GenericThemeSubclusterer extends ThemeSubclusterer {
       title: title,
       subtitle: subtitle,
       algorithm: algorithm,
-      cohesion: _computeCohesion(scoredPhotos),
+      cohesion: _computeSubclusterCohesion(scoredPhotos),
       totalPhotos: photos.length,
       coverPhotos: photos.take(4).toList(growable: false),
       groups: buildTimelineGroups(
@@ -272,7 +518,7 @@ class GenericThemeSubclusterer extends ThemeSubclusterer {
       for (final tag in photo.aiTags ?? const <String>[]) {
         addToken(tag);
       }
-      for (final tag in photo.ocrTags ?? const <String>[]) {
+      for (final tag in OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[])) {
         addToken(tag);
       }
     }
@@ -305,66 +551,6 @@ class GenericThemeSubclusterer extends ThemeSubclusterer {
       default:
         return 0.15;
     }
-  }
-
-  ThemeSubclusterCohesion? _computeCohesion(
-    List<ScoredThemePhoto> scoredPhotos,
-  ) {
-    final embeddings = <List<double>>[];
-    var dimension = 0;
-    for (final item in scoredPhotos) {
-      final embedding = item.embedding;
-      if (embedding.isEmpty) {
-        continue;
-      }
-      if (dimension == 0) {
-        dimension = embedding.length;
-      }
-      if (embedding.length != dimension) {
-        continue;
-      }
-      embeddings.add(embedding);
-    }
-
-    if (embeddings.length < 2) {
-      return null;
-    }
-
-    var pairCount = 0;
-    var totalDistance = 0.0;
-    for (var i = 0; i < embeddings.length; i++) {
-      for (var j = i + 1; j < embeddings.length; j++) {
-        totalDistance += 1 - _cosineSimilarity(embeddings[i], embeddings[j]);
-        pairCount++;
-      }
-    }
-
-    if (pairCount == 0) {
-      return null;
-    }
-
-    return ThemeSubclusterCohesion(
-      meanDistance: totalDistance / pairCount,
-      sampleCount: embeddings.length,
-    );
-  }
-
-  double _cosineSimilarity(List<double> left, List<double> right) {
-    var dot = 0.0;
-    var leftNorm = 0.0;
-    var rightNorm = 0.0;
-
-    for (var index = 0; index < left.length; index++) {
-      dot += left[index] * right[index];
-      leftNorm += left[index] * left[index];
-      rightNorm += right[index] * right[index];
-    }
-
-    if (leftNorm <= 0 || rightNorm <= 0) {
-      return 0;
-    }
-
-    return dot / (math.sqrt(leftNorm) * math.sqrt(rightNorm));
   }
 
   static const Set<String> _genericStopTokens = <String>{
@@ -579,7 +765,7 @@ class HeuristicThemeSubclusterer extends ThemeSubclusterer {
   }
 
   static bool looksLikeDocumentPhoto(PhotoEntity photo) {
-    if (photo.ocrTags?.isNotEmpty ?? false) {
+    if (OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]).isNotEmpty) {
       return true;
     }
     final bag = _tokenBag(photo);
@@ -618,10 +804,10 @@ class HeuristicThemeSubclusterer extends ThemeSubclusterer {
     for (final tag in photo.aiTags ?? const <String>[]) {
       addText(tag);
     }
-    for (final tag in photo.ocrTags ?? const <String>[]) {
+    for (final tag in OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[])) {
       addText(tag);
     }
-    addText(photo.ocrText);
+    addText(OcrPolicy.effectiveText(photo.ocrText));
     return tokens;
   }
 }
@@ -669,4 +855,64 @@ List<ThemeTimelineGroup> buildTimelineGroups(
     ..sort((a, b) => b.monthStart.compareTo(a.monthStart));
 
   return groups;
+}
+
+ThemeSubclusterCohesion? _computeSubclusterCohesion(
+  List<ScoredThemePhoto> scoredPhotos,
+) {
+  final embeddings = <List<double>>[];
+  var dimension = 0;
+  for (final item in scoredPhotos) {
+    final embedding = item.embedding;
+    if (embedding.isEmpty) {
+      continue;
+    }
+    if (dimension == 0) {
+      dimension = embedding.length;
+    }
+    if (embedding.length != dimension) {
+      continue;
+    }
+    embeddings.add(embedding);
+  }
+
+  if (embeddings.length < 2) {
+    return null;
+  }
+
+  var pairCount = 0;
+  var totalDistance = 0.0;
+  for (var i = 0; i < embeddings.length; i++) {
+    for (var j = i + 1; j < embeddings.length; j++) {
+      totalDistance += 1 - _cosineSimilarity(embeddings[i], embeddings[j]);
+      pairCount++;
+    }
+  }
+
+  if (pairCount == 0) {
+    return null;
+  }
+
+  return ThemeSubclusterCohesion(
+    meanDistance: totalDistance / pairCount,
+    sampleCount: embeddings.length,
+  );
+}
+
+double _cosineSimilarity(List<double> left, List<double> right) {
+  var dot = 0.0;
+  var leftNorm = 0.0;
+  var rightNorm = 0.0;
+
+  for (var index = 0; index < left.length; index++) {
+    dot += left[index] * right[index];
+    leftNorm += left[index] * left[index];
+    rightNorm += right[index] * right[index];
+  }
+
+  if (leftNorm <= 0 || rightNorm <= 0) {
+    return 0;
+  }
+
+  return dot / (math.sqrt(leftNorm) * math.sqrt(rightNorm));
 }

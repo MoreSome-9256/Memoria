@@ -18,6 +18,8 @@ class StoryResultPage extends StatefulWidget {
   final int? storyEntityId;
   final String? customMusicPath;
   final Map<String, dynamic>? dynamicBeatData;
+  final bool isHorizontal;
+  final String targetPlatform;
 
   const StoryResultPage({
     super.key,
@@ -28,6 +30,8 @@ class StoryResultPage extends StatefulWidget {
     this.storyEntityId,
     this.customMusicPath,
     this.dynamicBeatData,
+    required this.isHorizontal,
+    required this.targetPlatform,
   });
 
   factory StoryResultPage.fromStoryEntity({
@@ -36,6 +40,8 @@ class StoryResultPage extends StatefulWidget {
     String? customMusicPath,
     Map<String, dynamic>? dynamicBeatData,
     List<String>? captions,
+    required bool isHorizontal,
+    required String targetPlatform,
   }) {
     final Map<String, String> captionMap = {};
     if (captions != null && captions.isNotEmpty) {
@@ -115,6 +121,8 @@ class StoryResultPage extends StatefulWidget {
       storyEntityId: storyEntity.id,
       customMusicPath: customMusicPath,
       dynamicBeatData: dynamicBeatData,
+      isHorizontal: isHorizontal,
+      targetPlatform: targetPlatform,
     );
   }
 
@@ -127,6 +135,8 @@ class StoryResultPage extends StatefulWidget {
           .where((block) => block.photo != null)
           .map((block) => StorySection(text: block.text, photo: block.photo!))
           .toList(),
+      isHorizontal: story.isHorizontal,
+      targetPlatform: '小红书',
     );
   }
 
@@ -378,8 +388,9 @@ class _StoryResultPageState extends State<StoryResultPage> {
                 subtitle: widget.subtitle,
                 sections: finalVideoSections, // 👈 把带有片头的数据安全地传过去
                 customMusicPath: widget.customMusicPath,
-                isHorizontal: true,
+                isHorizontal: widget.isHorizontal,
                 dynamicBeatData: widget.dynamicBeatData,
+                targetPlatform: widget.targetPlatform,
               ),
             ),
           );

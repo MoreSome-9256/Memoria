@@ -812,4 +812,45 @@ $framesInfo
   List<String> _getFallbackCaptions(int count) {
     return List.generate(count, (index) => "");
   }
+  /// 📝 生成各平台专属发帖文案
+  Future<String> generateSocialMediaCopy({
+    required String platform,
+    required String title,
+    required String subtitle,
+    required List<String> captions,
+  }) async {
+    // 把所有台词拼接起来，让大模型知道视频到底演了啥
+    final scriptContent = captions
+        .where((e) => e.isNotEmpty && e != '__INTRO__')
+        .join('；');
+
+    final prompt =
+        '''
+你是一个精通各大社交平台爆款逻辑的资深新媒体运营。
+用户刚刚通过视频相册工具生成了一支回忆视频，请根据以下视频信息，为【$platform】生成一份专属发帖文案。
+
+【视频信息】
+标题：$title
+副标题/情感切入点：$subtitle
+视频核心台词：$scriptContent
+
+【各平台风格硬性要求】
+- 朋友圈：走心、私人化、简短，像对老朋友说话，不要太营销，偶尔加个emoji。
+- 小红书：必须有吸睛的标题，大量使用Emoji，注重氛围感、美学和生活方式，结尾带上3-5个相关的Hashtag（如 #日常碎片）。
+- 抖音：开篇第一句必须抓人，口语化，情绪饱满，带一点剧情感，带上热门标签。
+- B站：带点二次元、整活或Vlog网感，标题有梗，文案互动性强（可以暗示观众一键三连或弹幕互动）。
+
+请直接输出文案内容，不要解释，不要包含 Markdown 的 ``` 标记。
+''';
+
+    try {
+      print("🚀 [DeepSeek] 正在生成 $platform 发帖文案...");
+      // 复用你已经写好的文本生成底层方法
+      final text = await generateBlogText(prompt);
+      return text ?? '生成文案失败，请手动编辑。';
+    } catch (e) {
+      print("❌ 文案生成失败: $e");
+      return '生成失败，请自己写点什么吧~';
+    }
+  }
 }

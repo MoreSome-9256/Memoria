@@ -15,6 +15,7 @@ class Story {
   final List<StoryBlock> blocks;
   final DateTime createdAt;
   final String eventId;
+  final bool isHorizontal;
 
   Story({
     required this.id,
@@ -24,5 +25,6 @@ class Story {
     required this.blocks,
     required this.createdAt,
     required this.eventId,
+    this.isHorizontal = false,
   });
 }

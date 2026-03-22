@@ -130,6 +130,8 @@ flutter:
     - assets/images/noise.png
     - assets/images/frame_horizontal.png
     - assets/images/frame_vertical.png
+    - assets/transitions/intro_transition.mov
+    - assets/transitions/intro_transition.webp
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

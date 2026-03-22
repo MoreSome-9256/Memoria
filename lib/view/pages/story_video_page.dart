@@ -11,6 +11,7 @@ import 'dart:math' as math;
 import '../../effects/subtitle_effect.dart';
 import '../../effects/glitch_effect.dart';
 import '../../effects/static_filters.dart';
+import '../../effects/cloud_border_effect.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'dart:typed_data';
@@ -69,6 +70,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   bool _useGrain = false; // 噪点
   bool _useCameraFrame = false; // 相机边框
   bool _useGlowRing = false; // 光圈
+  bool _useCloudBorder = false; // 云朵边框
+
+  bool _showPreviewTransition = false;
 
   bool _enableFlash = true;
   double _textBlurIntensity = 4.0;
@@ -145,6 +149,26 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
       double currentTimeMs = p.inMilliseconds.toDouble();
 
+      // ==========================================
+      // 🌟 核心升级：根据 BPM 动态计算片头结束的确切时间！
+      // ==========================================
+      // 第一张图（片头）固定在第 8 拍时切换到正片
+      double firstCutTimeMs = 8 * _beatIntervalMs.toDouble();
+
+      // 设定转场素材的播放区间：在切图前 0.8 秒出现，切图后 0.7 秒消失 (总长 1.5 秒)
+      double transitionStartMs = firstCutTimeMs - 800;
+      double transitionEndMs = firstCutTimeMs + 700;
+
+      bool shouldShow =
+          currentTimeMs >= transitionStartMs &&
+          currentTimeMs <= transitionEndMs;
+
+      if (_showPreviewTransition != shouldShow) {
+        setState(() {
+          _showPreviewTransition = shouldShow;
+        });
+      }
+
       // 1. 找当前是第几拍
       int targetBeatIndex = 0;
       for (int j = 0; j < _beatData.length; j++) {
@@ -172,7 +196,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
           _vfxController.forward(from: 0.0);
         } else {
           _shakeIntensity = 0.0;
-          _enableFlash = false;
+          // _enableFlash = false;
         }
 
         // 🖼️ 决定切图 (每 8 拍切一张)
@@ -366,6 +390,29 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                       child: CinematicTitleIntro(
                         title: widget.title, // 使用上一个页面传来的标题
                         subtitle: widget.subtitle, // 使用上一个页面传来的副标题
+                      ),
+                    ),
+                    // ==========================================
+                  // 🎭 核心新增：预览专属的转场替身！
+                  // ⚠️ 注意条件：只在规定的时间显示，并且导出时绝对不显示！
+                  // ==========================================
+                  if (_showPreviewTransition && !_isExporting)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        // 用 BoxFit.cover 撑满整个屏幕
+                        child: Image.asset(
+                          'assets/transitions/intro_transition.webp',
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                    if (_useCloudBorder)
+                    const Positioned.fill(
+                      child: IgnorePointer(
+                        child: CloudBorderEffect(
+                          cloudColor: Colors.white,
+                          shadowColor: Color(0x80EAD9EC),
+                        ),
                       ),
                     ),
                 ],
@@ -805,6 +852,10 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                                         value: 'outline',
                                         child: Text('Outline (大字描边)'),
                                       ),
+                                      DropdownMenuItem(
+                                        value: 'typewriter',
+                                        child: Text('Typewriter (打字机)'),
+                                      ),
                                     ],
                                     onChanged: (val) {
                                       if (val != null) {
@@ -909,6 +960,20 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                                 activeColor: Colors.pinkAccent,
                                 onChanged: (val) {
                                   setModalState(() => _useGlowRing = val!);
+                                  setState(() {});
+                                },
+                              ),
+                              CheckboxListTile(
+                                title: const Text(
+                                  '云朵边框',
+                                  style: TextStyle(color: Colors.white70),
+                                ),
+                                value: _useCloudBorder,
+                                activeColor: Colors.pinkAccent,
+                                onChanged: (val) {
+                                  // 这里极其重要：必须同时调用 setModalState 和 setState
+                                  // 这样才能让面板上的勾选框和背后的视频画面同时刷新！
+                                  setModalState(() => _useCloudBorder = val!);
                                   setState(() {});
                                 },
                               ),
@@ -1115,7 +1180,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     double exactSeconds,
   ) async {
     setState(() {
-      // 进度条文字可以变一下（自己可以再去加个状态位，为了简便暂用这个进度）
       _exportProgress = 0.99;
     });
 
@@ -1123,21 +1187,14 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       final docDir = await getApplicationDocumentsDirectory();
       String audioPath;
 
-      // 🌟 核心改动：确定导出时使用的音频路径
+      // 1. 准备音频路径 (保持你原有的逻辑)
       if (widget.customMusicPath != null) {
-        // 🚨 修复致命的“文件名包含空格/日文”断裂 Bug
-        // 我们不直接用原路径，而是把它拷贝成一个绝对安全的纯英文路径
         File originalAudio = File(widget.customMusicPath!);
         File safeAudioFile = File('${docDir.path}/safe_custom_audio.mp3');
-
-        // 如果之前有残留，先删掉
         if (safeAudioFile.existsSync()) safeAudioFile.deleteSync();
-
-        // 复制一份过去
         await originalAudio.copy(safeAudioFile.path);
         audioPath = safeAudioFile.path;
       } else {
-        // 如果是默认音乐，先从 assets 提取到沙盒
         final ByteData audioData = await rootBundle.load(
           'assets/audio/sandal_leap.mp3',
         );
@@ -1146,65 +1203,97 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         audioPath = tempAudioFile.path;
       }
 
-      // 2. 定义最终导出的 MP4 路径
+      // 🌟 核心新增：提取转场素材路径
+      String transitionPath = await _extractAssetForFFmpeg(
+        'assets/transitions/intro_transition.mov', // 确认为你 assets 里的路径
+        'intro_transition.mov',
+      );
+
+      // 2. 定义最终输出路径
       final String outputPath =
           "${docDir.path}/FINAL_STORY_${DateTime.now().millisecondsSinceEpoch}.mp4";
 
-      // 3. 构造魔法咒语 (🌟 为了极其安全，给路径都加上单引号)
-      String command =
-          "-y -framerate 24 -start_number 0 -i '$frameDirPath/frame_%05d.png' -i '$audioPath' -t $exactSeconds -vf scale=trunc(iw/2)*2:trunc(ih/2)*2 -c:v libx264 -pix_fmt yuv420p -c:a aac '$outputPath'";
+      // 🌟 核心计算：转场开始的时间 (与预览完全同步！)
+      double firstCutTimeMs = 8 * _beatIntervalMs.toDouble();
+      // 在切片前 0.8 秒准时让 .mov 开始播放
+      double transitionStartTime = (firstCutTimeMs - 800) / 1000.0;
 
-      debugPrint("🎬 FFmpeg 开始合成: $command");
+      // 确保转场时间不会变成负数（防崩兜底）
+      if (transitionStartTime < 0) transitionStartTime = 0;
 
-      // 4. 召唤神龙
+      // 3. 构造增强版 FFmpeg 魔法咒语
+      // [0:v] 是照片帧序列, [1:v] 是转场视频
+      // setpts=PTS-STARTPTS+... 是让转场视频延迟到指定秒数开始
+      // overlay 滤镜执行图层叠加
+      String command = [
+        "-y",
+        "-framerate", "24",
+        "-start_number", "0",
+        "-i", "'$frameDirPath/frame_%05d.png'", // 输入 0：帧序列
+        "-i", "'$transitionPath'", // 输入 1：转场 MOV
+        "-i", "'$audioPath'", // 输入 2：音频
+        "-t", "$exactSeconds",
+        "-filter_complex",
+        "[1:v]setpts=PTS-STARTPTS+($transitionStartTime/TB)[trans];" + // 延迟转场视频
+            "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg];" + // 确保对齐
+            "[bg][trans]overlay=eof_action=pass[outv]", // 叠加图层
+        "-map", "[outv]",
+        "-map", "2:a", // 使用输入 2 (音频) 的音频轨
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "'$outputPath'",
+      ].join(" ");
+
+      debugPrint("🎬 FFmpeg 带转场合成开始: $command");
+
+      // 4. 执行命令 (保持你原有的逻辑)
       await FFmpegKit.execute(command).then((session) async {
         final returnCode = await session.getReturnCode();
         if (ReturnCode.isSuccess(returnCode)) {
-          debugPrint("✅✅✅ 完美导出！视频保存在沙盒: $outputPath");
-
-          // 🌟 核心新增：拷贝进系统相册
-          try {
-            // gal 插件非常智能，如果没有权限它会自动弹窗问用户要
-            await Gal.putVideo(outputPath);
-            debugPrint("📸 视频已成功保存至手机系统相册！");
-
-            if (mounted) {
-              // 🌟 1. 提取当前视频里所有的台词送给发布页
-              List<String> currentCaptions = widget.sections
-                  .map((s) => s.text)
-                  .toList();
-
-              // 🌟 2. 彻底关掉当前的视频渲染页，进入充满成就感的发布页！
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => PublishPage(
-                    title: widget.title,
-                    subtitle: widget.subtitle,
-                    captions: currentCaptions,
-                    targetPlatform: widget.targetPlatform, // 完美交接平台数据
-                    exportedVideoPath: outputPath,
-                    generatedCopyFuture: _aiCopyFuture,
-                  ),
-                ),
-              );
-            }
-          } catch (e) {
-            debugPrint("❌ 保存到相册失败: $e");
-          }
+          // ... 原有的保存相册和跳转逻辑 ...
+          debugPrint("✅✅✅ 完美导出！");
+          // (以下省略你原有的 Gal.putVideo 和 Navigator 逻辑)
+          _handleExportSuccess(outputPath);
         } else {
           final logs = await session.getLogsAsString();
-          debugPrint("❌ FFmpeg 炸了，真正的原因是:\n$logs");
+          debugPrint("❌ FFmpeg 失败原因:\n$logs");
         }
       });
     } finally {
-      // 6. 收工，撤掉黑布
       if (mounted) {
         setState(() {
           _isExporting = false;
           _exportProgress = 0.0;
         });
       }
+    }
+  }
+
+  // 辅助方法：处理成功后的跳转（提取出你原有的逻辑）
+  void _handleExportSuccess(String outputPath) async {
+    try {
+      await Gal.putVideo(outputPath);
+      if (mounted) {
+        List<String> currentCaptions = widget.sections
+            .map((s) => s.text)
+            .toList();
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => PublishPage(
+              title: widget.title,
+              subtitle: widget.subtitle,
+              captions: currentCaptions,
+              targetPlatform: widget.targetPlatform,
+              exportedVideoPath: outputPath,
+              generatedCopyFuture: _aiCopyFuture,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("❌ 保存到相册失败: $e");
     }
   }
 
@@ -1235,6 +1324,32 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         subtitle, // 字幕层
       ],
     );
+  }
+  // 🌟 核心工具：把 asset 里的文件释放到手机真实的临时目录中
+  Future<String> _extractAssetForFFmpeg(
+    String assetPath,
+    String fileName,
+  ) async {
+    // 获取手机的临时文件夹
+    final directory = await getTemporaryDirectory();
+    final filePath = '${directory.path}/$fileName';
+    final file = File(filePath);
+
+    // 如果已经提取过了，就直接返回路径，省得每次都复制（节约性能）
+    if (await file.exists()) {
+      return filePath;
+    }
+
+    // 第一次运行：从 Flutter 的包裹里读取，并写入物理文件
+    final byteData = await rootBundle.load(assetPath);
+    await file.writeAsBytes(
+      byteData.buffer.asUint8List(
+        byteData.offsetInBytes,
+        byteData.lengthInBytes,
+      ),
+    );
+
+    return filePath; // 返回这个绝对路径给 FFmpeg
   }
 }
 

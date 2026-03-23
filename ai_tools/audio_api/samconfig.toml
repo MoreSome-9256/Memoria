@@ -1,0 +1,22 @@
+# SAM Configuration for Memoria Librosa Function
+# Region: ap-northeast-2 (Seoul)
+
+version = 0.1
+
+[default]
+[default.deploy]
+region = "ap-northeast-2"
+stack_name = "memoria-librosa-function"
+confirm_changeset = true
+
+[default.deploy.parameters]
+stack_name = "memoria-librosa-function"
+resolve_s3 = true
+s3_prefix = "memoria-librosa-function"
+region = "ap-northeast-2"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+image_repositories = []
+
+[default.global.parameters]
+region = "ap-northeast-2"

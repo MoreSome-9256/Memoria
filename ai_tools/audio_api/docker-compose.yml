@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  librosa-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: memoria-librosa-api
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    # 本地开发使用本地路径挂载以实现热重载
+    volumes:
+      - ./example:/app
+      - /app/__pycache__
+    # 内存限制
+    mem_limit: 2g
+    # CPU限制
+    cpus: '1.5'
+    # 自动重启
+    restart: unless-stopped
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 可选：Prometheus监控（用于生产环境）
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: memoria-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    restart: unless-stopped
+    depends_on:
+      - librosa-api
+
+volumes:
+  prometheus_data:

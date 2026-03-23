@@ -1,61 +1,14 @@
 import librosa
 import numpy as np
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 import tempfile
 import os
 from mangum import Mangum
-from datetime import datetime
-from typing import Dict, Any
+app = FastAPI()
 
-app = FastAPI(
-    title="Memoria Audio Analysis API",
-    description="FastAPI service for audio beat analysis using librosa",
-    version="1.0.0"
-)
-
-# 简单的计数器用于监控
-request_counter: Dict[str, int] = {
-    "total_requests": 0,
-    "successful": 0,
-    "failed": 0
-}
-
-# ===== 健康检查 endpoint =====
-@app.get("/health")
-@app.get("/healthz")
-async def health_check():
-    """健康检查端点"""
-    return JSONResponse(
-        content={
-            "status": "healthy",
-            "timestamp": datetime.now().isoformat(),
-            "service": "memoria-librosa-api"
-        }
-    )
-
-# ===== Prometheus metrics endpoint =====
-@app.get("/metrics")
-async def metrics():
-    """Prometheus metrics endpoint"""
-    metrics_text = f"""# HELP request_total Total API requests
-# TYPE request_total counter
-request_total{{endpoint="analyze_beats"}} {request_counter['total_requests']}
-
-# HELP request_successful Successful requests
-# TYPE request_successful counter
-request_successful{{endpoint="analyze_beats"}} {request_counter['successful']}
-
-# HELP request_failed Failed requests
-# TYPE request_failed counter
-request_failed{{endpoint="analyze_beats"}} {request_counter['failed']}
-"""
-    return PlainTextResponse(metrics_text)
-
-# ===== 音频分析 endpoint =====
 @app.post("/api/analyze_beats")
 async def analyze_beats(audio: UploadFile = File(...)):
-    request_counter["total_requests"] += 1
     print(f"🎵 收到音频文件: {audio.filename}")
     
     # 🌟 1. 动态提取真实的后缀名 (比如 .m4a, .wav)
@@ -75,7 +28,6 @@ async def analyze_beats(audio: UploadFile = File(...)):
     print(f"📦 收到文件大小: {file_size} 字节")
     if file_size < 1024:
         os.remove(temp_path)
-        request_counter["failed"] += 1
         return JSONResponse(content={"error": "文件为空或已损坏"}, status_code=400)
 
     try:
@@ -107,7 +59,6 @@ async def analyze_beats(audio: UploadFile = File(...)):
             
 
         print(f"✅ 分析完成! BPM: {tempo[0]:.2f}, 节拍数: {len(results)}")
-        request_counter["successful"] += 1
         
         return JSONResponse(content={
             "bpm": float(tempo[0]),
@@ -115,8 +66,6 @@ async def analyze_beats(audio: UploadFile = File(...)):
         })
 
     except Exception as e:
-        print(f"❌ 错误: {str(e)}")
-        request_counter["failed"] += 1
         return JSONResponse(content={"error": str(e)}, status_code=500)
     finally:
         # 扫地僧：用完记得把临时文件删了

@@ -1,36 +1,59 @@
 import librosa
 import numpy as np
-from fastapi import FastAPI, UploadFile, File, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, status, Security, Query
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import tempfile
 import os
-import json
-from datetime import datetime
-from typing import Optional
+import time
+import base64
+from typing import Optional, Any, Dict
 import requests
 from jose import jwt, JWTError
 import logging
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 # 🔐 日志配置
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+def _env_bool(name: str, default: bool) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.strip().lower() in {"1", "true", "yes", "on"}
 
-# 🔐 CORS 配置（使得 Cognito 鉴权跨域请求正确处理）
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应该限制为具体的客户端域名
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+
+ENABLE_DOCS = _env_bool("AUDIO_API_ENABLE_DOCS", False)
+
+app = FastAPI(
+    docs_url="/docs" if ENABLE_DOCS else None,
+    redoc_url="/redoc" if ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if ENABLE_DOCS else None,
 )
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
+# 🔐 CORS 配置：默认关闭跨域，仅在配置了来源时启用。
+allowed_origins_raw = os.getenv("AUDIO_API_ALLOWED_ORIGINS", "")
+allowed_origins = [x.strip() for x in allowed_origins_raw.split(",") if x.strip()]
+if allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=False,
+        allow_methods=["POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
 
 # 🔐 从环境变量或配置文件读取 Cognito 配置
 COGNITO_REGION = os.getenv("AWS_REGION", "ap-southeast-2")
 COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID", "")
+COGNITO_APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID", "")
 COGNITO_DOMAIN = f"cognito-idp.{COGNITO_REGION}.amazonaws.com"
+COGNITO_ISSUER = f"https://{COGNITO_DOMAIN}/{COGNITO_USER_POOL_ID}"
 
 # 🔐 Cognito JWKS 端点（用于验证 JWT 签名）
 COGNITO_JWKS_URL = f"https://{COGNITO_DOMAIN}/{COGNITO_USER_POOL_ID}/.well-known/jwks.json"
@@ -44,8 +67,8 @@ JWKS_CACHE_TTL = 3600  # 1小时
 async def get_jwks():
     """获取 Cognito JWKS 用于验证 JWT"""
     global _jwks_cache, _jwks_cache_time
-    
-    now = datetime.now().timestamp()
+
+    now = time.time()
     # 如果缓存有效，直接返回
     if _jwks_cache and _jwks_cache_time and (now - _jwks_cache_time) < JWKS_CACHE_TTL:
         return _jwks_cache
@@ -64,96 +87,97 @@ async def get_jwks():
         )
 
 
-def get_public_key(token: str) -> str:
-    """从 Cognito JWKS 获取对应的公钥用于验证 JWT"""
+def _b64url_to_int(value: str) -> int:
+    padded = value + "=" * (-len(value) % 4)
+    return int.from_bytes(base64.urlsafe_b64decode(padded), "big")
+
+
+def build_public_key_pem(jwk_key: Dict[str, Any]) -> bytes:
+    """将 JWKS 的 RSA key 转换成 PEM 公钥。"""
+    n = _b64url_to_int(jwk_key["n"])
+    e = _b64url_to_int(jwk_key["e"])
+    public_numbers = rsa.RSAPublicNumbers(e, n)
+    public_key_obj = public_numbers.public_key()
+    return public_key_obj.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+
+async def get_public_key_pem_from_token(token: str) -> bytes:
+    """从 Cognito JWKS 获取对应的公钥用于验证 JWT。"""
     try:
         # 解码 JWT header 获取 kid（密钥 ID）
         unverified_header = jwt.get_unverified_header(token)
         kid = unverified_header.get("kid")
-        
+
         if not kid:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="无效的 Token"
             )
-        
-        # 这里需要同步调用 JWKS，实际应该改为异步
-        # 简单起见，这里直接访问
-        import asyncio
-        loop = asyncio.get_event_loop()
-        jwks = loop.run_until_complete(get_jwks())
-        
+
+        jwks = await get_jwks()
+
         for key in jwks.get("keys", []):
             if key.get("kid") == kid:
-                return json.dumps(key)
-        
+                return build_public_key_pem(key)
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="无法找到有效的签名密钥"
         )
-    except JWTError as e:
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="无效的 Token 格式"
         )
 
 
-async def verify_cognito_token(authorization: Optional[str] = None) -> dict:
-    """验证 Cognito JWT Token"""
-    
-    # 从 Authorization header 中提取 token
-    if not authorization:
+async def verify_cognito_token(token: str) -> dict:
+    """验证 Cognito JWT Token（只接受 Access Token）。"""
+    if not COGNITO_USER_POOL_ID:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="缺少鉴权凭证"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="服务端未配置 COGNITO_USER_POOL_ID",
         )
-    
-    # 提取 Bearer token
-    try:
-        scheme, token = authorization.split()
-        if scheme.lower() != "bearer":
-            raise ValueError()
-    except (ValueError, IndexError):
+
+    if not COGNITO_APP_CLIENT_ID:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="无效的 Authorization header 格式，应为: Bearer <token>"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="服务端未配置 COGNITO_APP_CLIENT_ID",
         )
-    
+
     try:
-        # 获取公钥
-        public_key_data = get_public_key(token)
-        public_key = json.loads(public_key_data)
-        
-        # 从 JWKS 中构建 PEM 格式的公钥
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.hazmat.primitives.asymmetric import rsa
-        import base64
-        
-        # 解码 RSA 公钥参数
-        n = int.from_bytes(base64.urlsafe_b64decode(public_key['n'] + '=='), 'big')
-        e = int.from_bytes(base64.urlsafe_b64decode(public_key['e'] + '=='), 'big')
-        
-        # 创建 RSA 公钥对象
-        public_numbers = rsa.RSAPublicNumbers(e, n)
-        public_key_obj = public_numbers.public_key()
-        
-        # 转换为 PEM 格式
-        pem = public_key_obj.public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        )
-        
-        # 验证 JWT
+        pem = await get_public_key_pem_from_token(token)
+
         decoded = jwt.decode(
             token,
             pem,
             algorithms=["RS256"],
-            audience=None  # 如需检查 aud claim，可在此设置
+            options={"verify_aud": False},
+            issuer=COGNITO_ISSUER,
         )
-        
-        logger.info(f"✅ Token 验证通过，用户: {decoded.get('username')}")
+
+        token_use = decoded.get("token_use")
+        if token_use != "access":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="仅允许 access token",
+            )
+
+        client_id = decoded.get("client_id")
+        if client_id != COGNITO_APP_CLIENT_ID:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="token client_id 不匹配",
+            )
+
+        logger.info(f"✅ Token 验证通过，sub: {decoded.get('sub')}")
         return decoded
-        
+
+    except HTTPException:
+        raise
     except JWTError as e:
         logger.warning(f"❌ Token 验证失败: {e}")
         raise HTTPException(
@@ -167,19 +191,39 @@ async def verify_cognito_token(authorization: Optional[str] = None) -> dict:
             detail="Token 验证失败"
         )
 
+
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+) -> dict:
+    """只从 Authorization: Bearer <token> 读取鉴权。"""
+    if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="缺少或无效的 Authorization Bearer Token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await verify_cognito_token(credentials.credentials)
+
 @app.post("/api/analyze_beats")
 async def analyze_beats(
     audio: UploadFile = File(...),
-    authorization: Optional[str] = None
+    user_info: dict = Security(get_current_user),
+    authorization: Optional[str] = Query(default=None),
 ):
     """分析音频节拍（需要 Cognito JWT 鉴权）"""
-    
-    # 🔐 验证 JWT Token
-    user_info = await verify_cognito_token(authorization)
-    print(f"🎵 收到音频文件: {audio.filename} (用户: {user_info.get('username')})")
+
+    # 不再允许通过 query 参数传 token，避免日志/代理泄漏。
+    if authorization is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="禁止通过 query 参数传递 authorization，请使用 Authorization Bearer 头",
+        )
+
+    filename = audio.filename or ""
+    print(f"🎵 收到音频文件: {filename or 'unknown'} (用户: {user_info.get('username')})")
     
     # 🌟 1. 动态提取真实的后缀名 (比如 .m4a, .wav)
-    ext = os.path.splitext(audio.filename)[1]
+    ext = os.path.splitext(filename)[1]
     # 兜底：如果有些手机没传后缀，默认给 mp3
     if not ext:
         ext = ".mp3"

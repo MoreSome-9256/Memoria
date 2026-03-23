@@ -82,8 +82,6 @@ CLAUDE.md
 /ai_tools/expanded_tags_vectors.json
 /ai_tools/expanded_tags_taxonomy.json
 /ai_tools/expanded_tags_taxonomy_checkpoint.json
-/assets/expanded_tags_vectors.json
-/assets/expanded_tags_taxonomy.json
 
 # 忽略 TensorFlow 的中间导出目录
 /saved_model/

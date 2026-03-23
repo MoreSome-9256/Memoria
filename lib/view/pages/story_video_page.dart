@@ -21,6 +21,7 @@ import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:gal/gal.dart';
 import 'publish_page.dart';
 import '../../service/llm_service.dart';
+import '../../service/music_service.dart';
 
 class StoryVideoPage extends StatefulWidget {
   final String title;
@@ -108,27 +109,14 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       duration: const Duration(seconds: 2),
     )..repeat(); // 无限重复！
 
-    // ==========================================
-    // 🚀 核心：解析 Librosa 云端传来的真实数据
-    // ==========================================
-    if (widget.dynamicBeatData != null &&
-        widget.dynamicBeatData!['data'] != null) {
-      _beatData = widget.dynamicBeatData!['data'];
-      double bpm = (widget.dynamicBeatData!['bpm'] as num).toDouble();
-      _beatIntervalMs = (60000 / bpm).round(); // 根据真实 BPM 算出每拍的毫秒数
-      debugPrint(
-        "🎵 成功加载真实节拍！BPM: $bpm, 间隔: ${_beatIntervalMs}ms, 共 ${_beatData.length} 拍",
-      );
-    } else {
-      // 如果没拿到数据，给个兜底防崩溃
-      debugPrint("⚠️ 未接收到真实节拍数据，使用默认沙盒模式");
-      _beatData = [
-        {"ms": 0, "energy": 0.1},
-        {"ms": 500, "energy": 0.8}, // 假装这是一记重鼓
-        {"ms": 1000, "energy": 0.2},
-      ];
-      _beatIntervalMs = 500;
-    }
+    // 先给一个最小可播放节拍，随后异步替换为后端分析结果。
+    _beatData = [
+      {"ms": 0, "energy": 0.1},
+      {"ms": 500, "energy": 0.6},
+      {"ms": 1000, "energy": 0.2},
+    ];
+    _beatIntervalMs = 500;
+    unawaited(_loadBeatDataFromBackend());
 
     if (widget.sections.isNotEmpty) {
       _currentLyricText = widget.sections[0].text;
@@ -139,6 +127,55 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     // 🌟 修复 1：挂上离合，踩下油门！
     _initAudioAndListener(); // 启动音频实时监听
     _togglePlay(); // 自动开始播放
+  }
+
+  void _applyBeatData(Map<String, dynamic> beatResponse) {
+    final data = beatResponse['data'];
+    final bpmRaw = beatResponse['bpm'];
+    if (data is! List || data.isEmpty || bpmRaw is! num || bpmRaw <= 0) {
+      return;
+    }
+
+    setState(() {
+      _beatData = data;
+      _beatIntervalMs = (60000 / bpmRaw.toDouble()).round();
+      _currentBeatIndexForPreview = -1;
+    });
+
+    debugPrint(
+      "🎵 成功加载真实节拍！BPM: ${bpmRaw.toDouble()}, 间隔: ${_beatIntervalMs}ms, 共 ${_beatData.length} 拍",
+    );
+  }
+
+  Future<void> _loadBeatDataFromBackend() async {
+    // 优先使用上一个页面已经分析好的数据。
+    if (widget.dynamicBeatData != null && widget.dynamicBeatData!['data'] != null) {
+      _applyBeatData(widget.dynamicBeatData!);
+      return;
+    }
+
+    try {
+      // fallback 也走云端分析：上传当前实际要播放的音频文件。
+      String audioPath;
+      if (widget.customMusicPath != null && widget.customMusicPath!.isNotEmpty) {
+        audioPath = widget.customMusicPath!;
+      } else {
+        audioPath = await _extractAssetForFFmpeg(
+          'assets/audio/sandal_leap.mp3',
+          'sandal_leap_for_analysis.mp3',
+        );
+      }
+
+      final beatResponse = await MusicService.analyzeAudio(audioPath);
+      if (beatResponse != null && mounted) {
+        _applyBeatData(beatResponse);
+        return;
+      }
+
+      debugPrint("⚠️ fallback 云端节拍分析失败，保留最小兜底节拍");
+    } catch (e) {
+      debugPrint("❌ fallback 云端节拍分析异常: $e");
+    }
   }
 
   int _currentBeatIndexForPreview = -1; // 记录当前演到第几拍了

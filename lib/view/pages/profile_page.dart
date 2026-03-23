@@ -105,7 +105,7 @@ class _ProfilePageState extends State<ProfilePage> {
       case 'name':
         return '姓名';
       case 'sub':
-        return '用户唯一标识';
+        return 'UUID';
       case 'email_verified':
         return '邮箱已验证';
       default:

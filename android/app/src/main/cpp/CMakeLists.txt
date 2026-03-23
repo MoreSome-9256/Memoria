@@ -27,8 +27,7 @@ if(NOT MEMORIA_NCNN_SDK_DIR)
 endif()
 
 add_library(memoria_ncnn SHARED
-    memoria_ncnn_bridge.cpp
-    vendored_mobileclip_image_encoder.cpp)
+    memoria_ncnn_bridge.cpp)
 
 target_compile_features(memoria_ncnn PRIVATE cxx_std_17)
 
@@ -69,6 +68,8 @@ endif()
 
 if (MEMORIA_NCNN_INCLUDE_DIR AND MEMORIA_NCNN_LIBRARY)
     message(STATUS "Memoria NCNN SDK found for ${MEMORIA_ANDROID_ABI}: ${MEMORIA_NCNN_LIBRARY}")
+    target_sources(memoria_ncnn PRIVATE
+        vendored_mobileclip_image_encoder.cpp)
     target_compile_definitions(memoria_ncnn PRIVATE MEMORIA_NCNN_RUNTIME_ENABLED=1)
     target_include_directories(memoria_ncnn PRIVATE
         "${MEMORIA_NCNN_INCLUDE_DIR}"

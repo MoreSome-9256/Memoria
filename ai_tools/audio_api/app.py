@@ -4,7 +4,7 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
 import tempfile
 import os
-from mangum import Mangum
+# from mangum import Mangum
 app = FastAPI()
 
 @app.post("/api/analyze_beats")
@@ -72,9 +72,9 @@ async def analyze_beats(audio: UploadFile = File(...)):
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
-handler = Mangum(app)
+# handler = Mangum(app)
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(app, host="0.0.0.0", port=8000)
 # 启动命令: uvicorn app:app --host 0.0.0.0 --port 8000

@@ -4,6 +4,11 @@ import 'package:path/path.dart' as p;
 import 'package:photo_album/service/auth_token_service.dart';
 
 class MusicService {
+  static const String _tokenHeaderName = 'X-Memoria-Token';
+  static const Duration _connectTimeout = Duration(seconds: 300);
+  static const Duration _sendTimeout = Duration(minutes: 60);
+  static const Duration _receiveTimeout = Duration(minutes: 1500);
+
   static const String _apiBaseUrl = String.fromEnvironment(
     'AUDIO_API_BASE_URL',
     defaultValue: 'http://127.0.0.1:8000',
@@ -29,11 +34,13 @@ class MusicService {
 
       final dio = Dio(
         BaseOptions(
-          validateStatus: (_) => true,
-          connectTimeout: const Duration(seconds: 15),
-          receiveTimeout: const Duration(seconds: 30),
-        ),
+          connectTimeout: _connectTimeout,
+          sendTimeout: _sendTimeout,
+          receiveTimeout: _receiveTimeout
+        )
       );
+
+      debugPrint(dio.options.listFormat.toString());
 
       // 🌟 获取真实的带后缀的文件名 (比如 song.m4a)
       final realFileName = p.basename(filePath);
@@ -48,17 +55,23 @@ class MusicService {
 
       debugPrint("🚀 上传音频分析: POST $requestUri");
 
-      // 2. 发送 POST 请求，并在 header 中添加 Authorization
+      // 2. 发送 POST 请求，并在 header 中添加自定义 token 头
       Response response = await dio.post(
         requestUri.toString(),
         data: formData,
         
         options: Options(
-          headers: headers,
+          headers: {
+            _tokenHeaderName: accessToken,
+          },
         ),
 
         onSendProgress: (int sent, int total) {
-          debugPrint("上传进度: ${(sent / total * 100).toStringAsFixed(0)}%");
+          if (total > 0) {
+            debugPrint("上传进度: ${(sent / total * 100).toStringAsFixed(0)}%");
+          } else {
+            debugPrint("上传进度: $sent bytes");
+          }
         },
       );
 
@@ -77,6 +90,16 @@ class MusicService {
         return null;
       }
     } on DioException catch (e) {
+      if (e.type == DioExceptionType.connectionTimeout) {
+        debugPrint(
+          "❌ 连接超时：在 ${_connectTimeout.inSeconds}s 内无法连上服务。"
+          "请检查 API 地址、网络连通性、DNS 和服务端可用性。",
+        );
+      } else if (e.type == DioExceptionType.sendTimeout) {
+        debugPrint("❌ 上传超时：在 ${_sendTimeout.inSeconds}s 内未完成请求发送");
+      } else if (e.type == DioExceptionType.receiveTimeout) {
+        debugPrint("❌ 响应超时：在 ${_receiveTimeout.inMinutes} 分钟内未收到完整响应");
+      }
       debugPrint(
         "❌ DioException: method=${e.requestOptions.method}, url=${e.requestOptions.uri}, "
         "status=${e.response?.statusCode}, data=${e.response?.data}, msg=${e.message}",

@@ -1,13 +1,13 @@
 import librosa
 import numpy as np
-from fastapi import FastAPI, UploadFile, File, HTTPException, status, Security, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, status, Security, Header, Cookie, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import tempfile
 import os
 import time
 import base64
+import uuid
 from typing import Optional, Any, Dict
 import requests
 from jose import jwt, JWTError
@@ -34,7 +34,83 @@ app = FastAPI(
     openapi_url="/openapi.json" if ENABLE_DOCS else None,
 )
 
-bearer_scheme = HTTPBearer(auto_error=False)
+
+@app.middleware("http")
+async def request_trace_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    started = time.time()
+    client_host = request.client.host if request.client else "unknown"
+
+    logger.info(
+        "[REQ_START] id=%s method=%s path=%s query=%s client=%s ua=%s",
+        request_id,
+        request.method,
+        request.url.path,
+        request.url.query,
+        client_host,
+        request.headers.get("user-agent", ""),
+    )
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        cost_ms = int((time.time() - started) * 1000)
+        logger.exception(
+            "[REQ_CRASH] id=%s method=%s path=%s cost_ms=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            cost_ms,
+        )
+        raise
+
+    cost_ms = int((time.time() - started) * 1000)
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "[REQ_END] id=%s method=%s path=%s status=%s cost_ms=%s",
+        request_id,
+        request.method,
+        request.url.path,
+        response.status_code,
+        cost_ms,
+    )
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    request_id = getattr(request.state, "request_id", "unknown")
+    logger.warning(
+        "[HTTP_ERROR] id=%s status=%s path=%s detail=%s",
+        request_id,
+        exc.status_code,
+        request.url.path,
+        exc.detail,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "request_id": request_id},
+        headers=exc.headers,
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = getattr(request.state, "request_id", "unknown")
+    logger.exception(
+        "[UNHANDLED_ERROR] id=%s path=%s msg=%s",
+        request_id,
+        request.url.path,
+        str(exc),
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "服务器内部错误", "request_id": request_id},
+    )
+
+MEMORIA_TOKEN_HEADER = "X-Memoria-Token"
+MEMORIA_TOKEN_COOKIE = "memoria_token"
 
 # 🔐 CORS 配置：默认关闭跨域，仅在配置了来源时启用。
 allowed_origins_raw = os.getenv("AUDIO_API_ALLOWED_ORIGINS", "")
@@ -45,7 +121,7 @@ if allowed_origins:
         allow_origins=allowed_origins,
         allow_credentials=False,
         allow_methods=["POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=[MEMORIA_TOKEN_HEADER, "Content-Type"],
     )
 
 # 🔐 从环境变量或配置文件读取 Cognito 配置
@@ -74,13 +150,15 @@ async def get_jwks():
         return _jwks_cache
     
     try:
+        logger.info("[JWKS_FETCH] url=%s", COGNITO_JWKS_URL)
         response = requests.get(COGNITO_JWKS_URL, timeout=5)
         response.raise_for_status()
         _jwks_cache = response.json()
         _jwks_cache_time = now
+        logger.info("[JWKS_FETCH_OK] keys=%s", len(_jwks_cache.get("keys", [])))
         return _jwks_cache
     except Exception as e:
-        logger.error(f"❌ 无法获取 Cognito JWKS: {e}")
+        logger.exception("❌ 无法获取 Cognito JWKS: %s", e)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="鉴权服务暂时不可用"
@@ -132,6 +210,9 @@ async def get_public_key_pem_from_token(token: str) -> bytes:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="无效的 Token 格式"
         )
+    except Exception as e:
+        logger.exception("❌ 从 Token 提取公钥失败: %s", e)
+        raise
 
 
 async def verify_cognito_token(token: str) -> dict:
@@ -161,6 +242,7 @@ async def verify_cognito_token(token: str) -> dict:
 
         token_use = decoded.get("token_use")
         if token_use != "access":
+            logger.warning("❌ token_use 非 access: token_use=%s", token_use)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="仅允许 access token",
@@ -168,6 +250,7 @@ async def verify_cognito_token(token: str) -> dict:
 
         client_id = decoded.get("client_id")
         if client_id != COGNITO_APP_CLIENT_ID:
+            logger.warning("❌ token client_id 不匹配: got=%s", client_id)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="token client_id 不匹配",
@@ -193,34 +276,41 @@ async def verify_cognito_token(token: str) -> dict:
 
 
 async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    x_memoria_token: Optional[str] = Header(default=None, alias=MEMORIA_TOKEN_HEADER),
+    memoria_token: Optional[str] = Cookie(default=None, alias=MEMORIA_TOKEN_COOKIE),
 ) -> dict:
-    """只从 Authorization: Bearer <token> 读取鉴权。"""
-    if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials:
+    """优先从自定义 Header 读取鉴权，Cookie 作为兜底。"""
+    token = (x_memoria_token or "").strip() or (memoria_token or "").strip()
+    logger.info(
+        "[AUTH_INPUT] header_present=%s cookie_present=%s token_len=%s",
+        bool(x_memoria_token),
+        bool(memoria_token),
+        len(token),
+    )
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="缺少或无效的 Authorization Bearer Token",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail=f"缺少鉴权凭证，请通过 {MEMORIA_TOKEN_HEADER} header 或 {MEMORIA_TOKEN_COOKIE} cookie 传入 token",
         )
-    return await verify_cognito_token(credentials.credentials)
+    return await verify_cognito_token(token)
 
 @app.post("/api/analyze_beats")
 async def analyze_beats(
+    request: Request,
     audio: UploadFile = File(...),
     user_info: dict = Security(get_current_user),
-    authorization: Optional[str] = Query(default=None),
 ):
     """分析音频节拍（需要 Cognito JWT 鉴权）"""
 
-    # 不再允许通过 query 参数传 token，避免日志/代理泄漏。
-    if authorization is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="禁止通过 query 参数传递 authorization，请使用 Authorization Bearer 头",
-        )
+    request_id = getattr(request.state, "request_id", "unknown")
 
     filename = audio.filename or ""
-    print(f"🎵 收到音频文件: {filename or 'unknown'} (用户: {user_info.get('username')})")
+    logger.info(
+        "🎵 收到音频文件: request_id=%s filename=%s user=%s",
+        request_id,
+        filename or "unknown",
+        user_info.get("username"),
+    )
     
     # 🌟 1. 动态提取真实的后缀名 (比如 .m4a, .wav)
     ext = os.path.splitext(filename)[1]
@@ -236,18 +326,36 @@ async def analyze_beats(
         
     # 🌟 3. 防护网：检查文件是不是空的
     file_size = len(content)
-    print(f"📦 收到文件大小: {file_size} 字节")
-    if file_size < 1024:
+    logger.info("📦 收到文件大小: request_id=%s size=%s", request_id, file_size)
+    if file_size < 512:
         os.remove(temp_path)
-        return JSONResponse(content={"error": "文件为空或已损坏"}, status_code=400)
+        return JSONResponse(
+            content={"error": "文件为空或已损坏", "request_id": request_id},
+            status_code=400,
+        )
 
     try:
+        started = time.time()
         # 2. Librosa 登场：加载音频
         # sr=22050 是 librosa 默认采样率，足够算节拍了，设低点跑得快
         y, sr = librosa.load(temp_path, sr=22050)
+        logger.info(
+            "[AUDIO_LOAD_OK] request_id=%s sr=%s samples=%s cost_ms=%s",
+            request_id,
+            sr,
+            len(y),
+            int((time.time() - started) * 1000),
+        )
 
         # 3. 提取 BPM 和 节拍帧
         tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+        tempo_value = float(tempo[0]) if isinstance(tempo, np.ndarray) else float(tempo)
+        logger.info(
+            "[BEAT_TRACK_OK] request_id=%s beat_frames=%s tempo=%s",
+            request_id,
+            len(beat_frames),
+            tempo_value,
+        )
         
         # 4. 把帧转换成具体的毫秒时间戳
         beat_times = librosa.frames_to_time(beat_frames, sr=sr)
@@ -269,19 +377,30 @@ async def analyze_beats(
             })
             
 
-        print(f"✅ 分析完成! BPM: {tempo[0]:.2f}, 节拍数: {len(results)}")
+        logger.info(
+            "✅ 分析完成! request_id=%s bpm=%s beats=%s",
+            request_id,
+            tempo_value,
+            len(results),
+        )
         
         return JSONResponse(content={
-            "bpm": float(tempo[0]),
-            "data": results
+            "bpm": tempo_value,
+            "data": results,
+            "request_id": request_id,
         })
 
     except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        logger.exception("❌ 音频分析失败 request_id=%s err=%s", request_id, e)
+        return JSONResponse(
+            content={"error": str(e), "request_id": request_id},
+            status_code=500,
+        )
     finally:
         # 扫地僧：用完记得把临时文件删了
         if os.path.exists(temp_path):
             os.remove(temp_path)
+            logger.info("🧹 已删除临时文件 request_id=%s path=%s", request_id, temp_path)
 
 # handler = Mangum(app)
 

@@ -36,7 +36,9 @@ class AIService {
     '截图',
     '自拍',
   };
-  static const ThumbnailSize _mobileClipThumbnailSize = ThumbnailSize.square(384);
+  static const ThumbnailSize _mobileClipThumbnailSize = ThumbnailSize.square(
+    384,
+  );
 
   final ValueNotifier<AIAnalysisProgress> _progressNotifier =
       ValueNotifier<AIAnalysisProgress>(AIAnalysisProgress.idle());
@@ -175,7 +177,8 @@ class AIService {
       return;
     }
 
-    final selectedBackend = await mobileClipEmbeddingService.getSelectedBackend();
+    final selectedBackend = await mobileClipEmbeddingService
+        .getSelectedBackend();
     _progressNotifier.value = AIAnalysisProgress.running(
       total: targetTotal,
       completed: 0,
@@ -188,11 +191,8 @@ class AIService {
       total: targetTotal,
       completed: 0,
       failed: 0,
-      currentStep: '正在预热 MobileCLIP 与标签向量缓存',
+      currentStep: '即将开始按需加载模型并分析图片',
     );
-    await mobileClipEmbeddingService.warmUpBackend(selectedBackend);
-    await mobileClipTagService.warmUp();
-    await _junkPhotoFilterService.warmUp();
 
     // 2. 初始化 ML Kit 人脸检测（视觉标签改由 MobileCLIP 统一生成）
     final FaceDetectorOptions faceOptions = FaceDetectorOptions(
@@ -283,8 +283,8 @@ class AIService {
               continue;
             }
 
-            final embedding =
-                await mobileClipEmbeddingService.embedImageBytesWithBackend(
+            final embedding = await mobileClipEmbeddingService
+                .embedImageBytesWithBackend(
                   prepared.mobileClipBytes,
                   selectedBackend,
                 );
@@ -332,11 +332,12 @@ class AIService {
             final mobileClipTags = await mobileClipTagService.retrieveTags(
               embedding,
             );
-            final visualTags = _sanitizeVisualTags(
-              mobileClipTags,
-            );
+            final visualTags = _sanitizeVisualTags(mobileClipTags);
 
-            analysisFile = await _createAuxiliaryAnalysisFile(prepared.file, photo.id);
+            analysisFile = await _createAuxiliaryAnalysisFile(
+              prepared.file,
+              photo.id,
+            );
             final inputImage = InputImage.fromFile(analysisFile);
 
             OcrResult ocrResult = OcrResult.empty();
@@ -453,7 +454,9 @@ class AIService {
             }
 
             // 🧹 清理辅助分析用的临时文件
-            if (analysisFile != null && analysisFile.path != photo.path && analysisFile.existsSync()) {
+            if (analysisFile != null &&
+                analysisFile.path != photo.path &&
+                analysisFile.existsSync()) {
               try {
                 await analysisFile.delete();
               } catch (error) {
@@ -474,9 +477,7 @@ class AIService {
 
       if (junkCandidates.isNotEmpty) {
         replacePendingJunkCleanupReport(
-          JunkPhotoCleanupReport.fromCandidates(
-            junkCandidates,
-          ),
+          JunkPhotoCleanupReport.fromCandidates(junkCandidates),
         );
       }
 
@@ -701,7 +702,9 @@ class AIService {
     return TagSanitizer.sanitizeVisualTags(sanitized, maxTags: maxTags);
   }
 
-  Future<_PreparedAnalysisInput?> _prepareAnalysisInput(PhotoEntity photo) async {
+  Future<_PreparedAnalysisInput?> _prepareAnalysisInput(
+    PhotoEntity photo,
+  ) async {
     final file = File(photo.path);
     if (!file.existsSync()) {
       return null;
@@ -710,7 +713,9 @@ class AIService {
     Uint8List? mobileClipBytes;
     try {
       final asset = await AssetEntity.fromId(photo.assetId);
-      mobileClipBytes = await asset?.thumbnailDataWithSize(_mobileClipThumbnailSize);
+      mobileClipBytes = await asset?.thumbnailDataWithSize(
+        _mobileClipThumbnailSize,
+      );
     } catch (error) {
       debugPrint('⚠️ 读取系统缩略图失败 photoId=${photo.id}: $error');
     }
@@ -728,7 +733,10 @@ class AIService {
     );
   }
 
-  Future<File> _createAuxiliaryAnalysisFile(File sourceFile, int photoId) async {
+  Future<File> _createAuxiliaryAnalysisFile(
+    File sourceFile,
+    int photoId,
+  ) async {
     final tempDir = await getTemporaryDirectory();
     final targetPath = '${tempDir.path}/temp_mlkit_$photoId.jpg';
     final result = await FlutterImageCompress.compressAndGetFile(

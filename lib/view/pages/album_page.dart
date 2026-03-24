@@ -105,15 +105,14 @@ class _AlbumPageState extends State<AlbumPage> {
       setState(() => _isRefreshing = false);
     }
   }*/
-  void _startRefresh({
-    bool clearCacheFirst = false,
-    int? recentPhotoLimit,
-  }) {
+  void _startRefresh({bool clearCacheFirst = false, int? recentPhotoLimit}) {
     if (_isClearingCache || AlbumRefreshService().isRunning) {
       return;
     }
 
-    final scopeLabel = recentPhotoLimit == null ? '全部照片' : '最近 $recentPhotoLimit 张';
+    final scopeLabel = recentPhotoLimit == null
+        ? '全部照片'
+        : '最近 $recentPhotoLimit 张';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
@@ -341,10 +340,7 @@ class _AlbumPageState extends State<AlbumPage> {
     if (!mounted) {
       return;
     }
-    await _deleteSelectedJunkRecords(
-      report,
-      selectedPhotoIds ?? const <int>[],
-    );
+    await _deleteSelectedJunkRecords(report, selectedPhotoIds ?? const <int>[]);
   }
 
   Future<void> _deleteSelectedJunkRecords(
@@ -382,10 +378,7 @@ class _AlbumPageState extends State<AlbumPage> {
           ? '已删除 $removedCount 张低质量图片记录，其余 $retriedCount 张已重新尝试正常打标。'
           : '已从本地数据库删除 $removedCount 张低质量图片记录，系统相册原图未受影响。';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text(message),
-        ),
+        SnackBar(behavior: SnackBarBehavior.floating, content: Text(message)),
       );
     } catch (error) {
       if (!mounted) {
@@ -416,43 +409,46 @@ class _AlbumPageState extends State<AlbumPage> {
       candidates.map((candidate) => candidate.photoId),
     );
     if (retriedCount > 0 && !AIService().isAnalyzing) {
-      unawaited(
-        AIService().analyzePhotosInBackground(maxPhotos: retriedCount),
-      );
+      unawaited(AIService().analyzePhotosInBackground(maxPhotos: retriedCount));
     }
   }
 
   @override
   void initState() {
     super.initState();
-    AIService().junkCleanupReportListenable.addListener(_onJunkCleanupReportChanged);
+    AIService().junkCleanupReportListenable.addListener(
+      _onJunkCleanupReportChanged,
+    );
     // 🌟 2. 使用 asyncMap 把异步处理逻辑直接塞进数据流的管道里
     // 这样 UI 层只负责接收完全处理好的数据，彻底消灭 FutureBuilder 嵌套！
     _uiEventsStream = EventService().watchEvents().asyncMap((eventEntities) {
       return _groupEvents(eventEntities);
     }).asBroadcastStream();
-    _albumTagBrowserStream = PhotoService()
-        .isar
+    _albumTagBrowserStream = PhotoService().isar
         .collection<PhotoEntity>()
         .watchLazy(fireImmediately: true)
         .asyncMap((_) => _loadAllPhotosForTagBrowser())
         .map((photos) {
-          final taggedPhotos = photos
-              .where(_albumTagBrowserService.hasClassifiableTag)
-              .toList(growable: false)
-            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          final taggedPhotos =
+              photos
+                  .where(_albumTagBrowserService.hasClassifiableTag)
+                  .toList(growable: false)
+                ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
           final clusters = _albumTagBrowserService.buildCoarseClusters(
             taggedPhotos,
             fineTopK: memoriaFineTopK,
           );
           return _AlbumTagBrowserData(
             totalPhotoCount: photos.length,
-            analyzedPhotoCount: photos.where((photo) => photo.isAiAnalyzed).length,
+            analyzedPhotoCount: photos
+                .where((photo) => photo.isAiAnalyzed)
+                .length,
             taggedPhotoCount: taggedPhotos.length,
             photos: taggedPhotos,
             clusters: clusters,
           );
-        }).asBroadcastStream();
+        })
+        .asBroadcastStream();
     _uiEventsCacheSubscription = _uiEventsStream.listen((value) {
       _latestGroupedEvents = value;
     });
@@ -490,17 +486,13 @@ class _AlbumPageState extends State<AlbumPage> {
       return;
     }
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => AlbumSearchPage(initialQuery: query),
-      ),
+      MaterialPageRoute(builder: (_) => AlbumSearchPage(initialQuery: query)),
     );
   }
 
   Future<List<PhotoEntity>> _loadAllPhotosForTagBrowser() async {
     // 仅加载最近一段数据，避免大图库每次变更都触发全量排序。
-    return PhotoService()
-        .isar
-        .photoEntitys
+    return PhotoService().isar.photoEntitys
         .where()
         .sortByTimestampDesc()
         .limit(_tagBrowserPhotoSoftLimit)
@@ -517,10 +509,7 @@ class _AlbumPageState extends State<AlbumPage> {
       useSafeArea: true,
       showDragHandle: true,
       builder: (context) {
-        return _AlbumTagClusterSheet(
-          cluster: cluster,
-          allPhotos: allPhotos,
-        );
+        return _AlbumTagClusterSheet(cluster: cluster, allPhotos: allPhotos);
       },
     );
   }
@@ -585,7 +574,9 @@ class _AlbumPageState extends State<AlbumPage> {
                       tooltip: '开始搜索',
                     ),
                     filled: true,
-                    fillColor: Theme.of(context).colorScheme.surfaceContainerHighest
+                    fillColor: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest
                         .withValues(alpha: 0.45),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(18),
@@ -778,7 +769,8 @@ class _AlbumPageState extends State<AlbumPage> {
         }
 
         final browserData = snapshot.data;
-        final clusters = browserData?.clusters ?? const <AlbumCoarseTagCluster>[];
+        final clusters =
+            browserData?.clusters ?? const <AlbumCoarseTagCluster>[];
         if (clusters.isEmpty) {
           return _buildTagBrowserEmptyState();
         }
@@ -803,10 +795,8 @@ class _AlbumPageState extends State<AlbumPage> {
                   final cluster = clusters[index];
                   return _AlbumTagClusterTile(
                     cluster: cluster,
-                    onTap: () => _openTagClusterBrowser(
-                      cluster,
-                      browserData!.photos,
-                    ),
+                    onTap: () =>
+                        _openTagClusterBrowser(cluster, browserData!.photos),
                   );
                 }, childCount: clusters.length),
               ),
@@ -916,10 +906,15 @@ class _AlbumPageState extends State<AlbumPage> {
     final grouped = <String, List<Event>>{};
     final isar = PhotoService().isar;
 
-    // 1. 🚀 关键改动：使用 Future.wait 并行处理所有事件转换，不再一个一个等
-    final List<Event> allEvents = await Future.wait(
-      eventEntities.map((entity) => entity.toUIModel(isar)),
-    );
+    // 逐条异步转换，避免大批量并发导致主线程瞬时压力过高。
+    final allEvents = <Event>[];
+    for (var i = 0; i < eventEntities.length; i++) {
+      final event = await eventEntities[i].toUIModel(isar);
+      allEvents.add(event);
+      if (i % 8 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
 
     // 2. 快速分组
     for (final event in allEvents) {
@@ -951,10 +946,7 @@ class _AlbumTagBrowserData {
 }
 
 class _AlbumTagClusterTile extends StatelessWidget {
-  const _AlbumTagClusterTile({
-    required this.cluster,
-    required this.onTap,
-  });
+  const _AlbumTagClusterTile({required this.cluster, required this.onTap});
 
   final AlbumCoarseTagCluster cluster;
   final VoidCallback onTap;
@@ -977,9 +969,9 @@ class _AlbumTagClusterTile extends StatelessWidget {
             cluster.label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 2),
           Text(
@@ -1007,10 +999,7 @@ class _AlbumTagClusterCoverMosaic extends StatelessWidget {
     }
 
     if (photos.length <= 2) {
-      return PathImage(
-        path: photos.first.path,
-        fit: BoxFit.cover,
-      );
+      return PathImage(path: photos.first.path, fit: BoxFit.cover);
     }
 
     final visible = photos.take(4).toList(growable: false);
@@ -1024,20 +1013,14 @@ class _AlbumTagClusterCoverMosaic extends StatelessWidget {
         crossAxisSpacing: 2,
       ),
       itemBuilder: (context, index) {
-        return PathImage(
-          path: visible[index].path,
-          fit: BoxFit.cover,
-        );
+        return PathImage(path: visible[index].path, fit: BoxFit.cover);
       },
     );
   }
 }
 
 class _AlbumTagClusterSheet extends StatefulWidget {
-  const _AlbumTagClusterSheet({
-    required this.cluster,
-    required this.allPhotos,
-  });
+  const _AlbumTagClusterSheet({required this.cluster, required this.allPhotos});
 
   final AlbumCoarseTagCluster cluster;
   final List<PhotoEntity> allPhotos;
@@ -1056,8 +1039,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
   @override
   void initState() {
     super.initState();
-    _photosStream = PhotoService()
-        .isar
+    _photosStream = PhotoService().isar
         .collection<PhotoEntity>()
         .watchLazy(fireImmediately: true)
         .asyncMap((_) => _loadCurrentPhotos());
@@ -1099,9 +1081,8 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                   children: [
                     Text(
                       widget.cluster.label,
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 6),
                     Text(
@@ -1161,7 +1142,12 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                           for (final group in monthGroups) ...[
                             SliverToBoxAdapter(
                               child: Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  0,
+                                  16,
+                                  12,
+                                ),
                                 child: Text(
                                   group.title,
                                   style: Theme.of(context).textTheme.titleMedium
@@ -1192,7 +1178,8 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                           ],
                           SliverToBoxAdapter(
                             child: SizedBox(
-                              height: _sheetBottomInset +
+                              height:
+                                  _sheetBottomInset +
                                   MediaQuery.of(context).padding.bottom,
                             ),
                           ),
@@ -1207,9 +1194,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
   }
 
   Future<List<PhotoEntity>> _loadCurrentPhotos() async {
-    return PhotoService()
-        .isar
-        .photoEntitys
+    return PhotoService().isar.photoEntitys
         .where()
         .sortByTimestampDesc()
         .limit(_AlbumPageState._tagBrowserPhotoSoftLimit)
@@ -1223,13 +1208,13 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
       final key = '${date.year}-${date.month.toString().padLeft(2, '0')}';
       grouped.putIfAbsent(key, () => <PhotoEntity>[]).add(photo);
     }
-    final keys = grouped.keys.toList()
-      ..sort((a, b) => b.compareTo(a));
+    final keys = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
     return keys
         .map(
           (key) => _AlbumPhotoMonthGroup(
             title: _formatMonthTitle(key),
-            photos: grouped[key]!..sort((a, b) => b.timestamp.compareTo(a.timestamp)),
+            photos: grouped[key]!
+              ..sort((a, b) => b.timestamp.compareTo(a.timestamp)),
           ),
         )
         .toList(growable: false);
@@ -1245,10 +1230,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
 }
 
 class _AlbumPhotoMonthGroup {
-  const _AlbumPhotoMonthGroup({
-    required this.title,
-    required this.photos,
-  });
+  const _AlbumPhotoMonthGroup({required this.title, required this.photos});
 
   final String title;
   final List<PhotoEntity> photos;

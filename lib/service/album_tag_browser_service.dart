@@ -1,14 +1,9 @@
-import 'dart:io';
-
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
 import '../utils/tag_sanitizer.dart';
 
 class AlbumFineTagSummary {
-  const AlbumFineTagSummary({
-    required this.label,
-    required this.count,
-  });
+  const AlbumFineTagSummary({required this.label, required this.count});
 
   final String label;
   final int count;
@@ -89,8 +84,10 @@ class AlbumTagBrowserService {
       }
       photosInCluster.sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
-      final fineCounts = fineCountsByCoarse[definition.id] ?? const <String, int>{};
-      final fineScores = fineScoresByCoarse[definition.id] ?? const <String, double>{};
+      final fineCounts =
+          fineCountsByCoarse[definition.id] ?? const <String, int>{};
+      final fineScores =
+          fineScoresByCoarse[definition.id] ?? const <String, double>{};
       final topFineTags = fineCounts.entries.toList(growable: false)
         ..sort((a, b) {
           final scoreCompare = (fineScores[b.key] ?? 0).compareTo(
@@ -111,10 +108,8 @@ class AlbumTagBrowserService {
           topFineTags: topFineTags
               .take(fineTopK)
               .map(
-                (entry) => AlbumFineTagSummary(
-                  label: entry.key,
-                  count: entry.value,
-                ),
+                (entry) =>
+                    AlbumFineTagSummary(label: entry.key, count: entry.value),
               )
               .toList(growable: false),
         ),
@@ -133,20 +128,25 @@ class AlbumTagBrowserService {
   }
 
   bool hasClassifiableTag(PhotoEntity photo) {
-    return _hasRenderableFile(photo) && clusterableTagsForPhoto(photo).isNotEmpty;
+    return _hasRenderableFile(photo) &&
+        clusterableTagsForPhoto(photo).isNotEmpty;
   }
 
   List<PhotoEntity> photosForCoarseCluster(
     List<PhotoEntity> photos,
     String coarseId,
   ) {
-    final filtered = photos.where((photo) {
-      if (!_hasRenderableFile(photo)) {
-        return false;
-      }
-      final tags = clusterableTagsForPhoto(photo);
-      return tags.any((tag) => memoriaAlbumTagLabelToCoarseId[tag] == coarseId);
-    }).toList(growable: false);
+    final filtered = photos
+        .where((photo) {
+          if (!_hasRenderableFile(photo)) {
+            return false;
+          }
+          final tags = clusterableTagsForPhoto(photo);
+          return tags.any(
+            (tag) => memoriaAlbumTagLabelToCoarseId[tag] == coarseId,
+          );
+        })
+        .toList(growable: false);
     filtered.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     return filtered;
   }
@@ -168,7 +168,8 @@ class AlbumTagBrowserService {
           continue;
         }
         counts[tag] = (counts[tag] ?? 0) + 1;
-        final score = _weightForRank(i) * (tagCoarseId == coarseId ? 1.15 : 1.0);
+        final score =
+            _weightForRank(i) * (tagCoarseId == coarseId ? 1.15 : 1.0);
         scores[tag] = (scores[tag] ?? 0) + score;
       }
     }
@@ -182,7 +183,9 @@ class AlbumTagBrowserService {
       });
     return sorted
         .take(topK)
-        .map((entry) => AlbumFineTagSummary(label: entry.key, count: entry.value))
+        .map(
+          (entry) => AlbumFineTagSummary(label: entry.key, count: entry.value),
+        )
         .toList(growable: false);
   }
 
@@ -191,22 +194,24 @@ class AlbumTagBrowserService {
     required String coarseId,
     String? fineTag,
   }) {
-    final filtered = photos.where((photo) {
-      if (!_hasRenderableFile(photo)) {
-        return false;
-      }
-      final tags = clusterableTagsForPhoto(photo);
-      final inCoarse = tags.any(
-        (tag) => memoriaAlbumTagLabelToCoarseId[tag] == coarseId,
-      );
-      if (!inCoarse) {
-        return false;
-      }
-      if (fineTag == null || fineTag.trim().isEmpty) {
-        return true;
-      }
-      return tags.contains(fineTag);
-    }).toList(growable: false);
+    final filtered = photos
+        .where((photo) {
+          if (!_hasRenderableFile(photo)) {
+            return false;
+          }
+          final tags = clusterableTagsForPhoto(photo);
+          final inCoarse = tags.any(
+            (tag) => memoriaAlbumTagLabelToCoarseId[tag] == coarseId,
+          );
+          if (!inCoarse) {
+            return false;
+          }
+          if (fineTag == null || fineTag.trim().isEmpty) {
+            return true;
+          }
+          return tags.contains(fineTag);
+        })
+        .toList(growable: false);
     filtered.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     return filtered;
   }
@@ -227,11 +232,13 @@ class AlbumTagBrowserService {
     if (path.isEmpty) {
       return false;
     }
-    return File(path).existsSync();
+    return true;
   }
 
   List<String> clusterableTagsForPhoto(PhotoEntity photo) {
-    final raw = TagSanitizer.sanitizeVisualTags(photo.aiTags ?? const <String>[]);
+    final raw = TagSanitizer.sanitizeVisualTags(
+      photo.aiTags ?? const <String>[],
+    );
     return raw
         .where((tag) => memoriaAlbumTagLabelToCoarseId.containsKey(tag))
         .toList(growable: false);

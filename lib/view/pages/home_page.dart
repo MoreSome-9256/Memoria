@@ -11,8 +11,6 @@ import '../../models/ai_theme.dart';
 import 'create_page.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'event_detail_page.dart';
-import '../../service/mobileclip_backend_preference_service.dart';
-import '../../service/mobileclip_embedding_service.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 
 class HomePage extends StatefulWidget {
@@ -30,17 +28,10 @@ class _HomePageState extends State<HomePage> {
 
   // 💡 用于动态发现模块的卡片数据
   List<Map<String, dynamic>> _discoverCards = [];
-  final MobileClipBackendPreferenceService _backendPreferenceService =
-      MobileClipBackendPreferenceService();
-  final MobileClipEmbeddingService _embeddingService =
-      MobileClipEmbeddingService();
-  MobileClipBackend _selectedBackend = MobileClipBackend.mobileclip2Onnx;
-  bool _isSwitchingBackend = false;
 
   @override
   void initState() {
     super.initState();
-    _loadBackendPreference();
     // 启动时加载照片数据
     _loadRecentPhotos();
     // 🌟 启动本地推荐引擎
@@ -52,59 +43,6 @@ class _HomePageState extends State<HomePage> {
     // ⚠️ 极其重要：销毁页面时必须关闭定时器，防止后台内存泄露
     _timer?.cancel();
     super.dispose();
-  }
-
-  Future<void> _loadBackendPreference() async {
-    await _backendPreferenceService.initialize();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _selectedBackend =
-          _backendPreferenceService.backendListenable.value;
-    });
-  }
-
-  Future<void> _switchBackend(MobileClipBackend backend) async {
-    if (_isSwitchingBackend || backend == _selectedBackend) {
-      return;
-    }
-
-    setState(() {
-      _isSwitchingBackend = true;
-    });
-
-    try {
-      await _embeddingService.switchBackendAndPersist(backend);
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _selectedBackend = backend;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('AI 打标后端已切换为 ${backend.label}'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('切换到 ${backend.label} 失败: $error'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSwitchingBackend = false;
-        });
-      }
-    }
   }
 
   // ==========================================
@@ -630,65 +568,11 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '相册扫描后端',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
+              const Text('提示', style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
               Text(
-                '新的相册扫描和 AI 打标将使用当前后端',
+                '模型类型设置已迁移到「我的」页面，可在设置中按需切换。',
                 style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
-              ),
-              const SizedBox(height: 10),
-              SegmentedButton<MobileClipBackend>(
-                segments: const <ButtonSegment<MobileClipBackend>>[
-                  ButtonSegment<MobileClipBackend>(
-                    value: MobileClipBackend.mobileclip2Onnx,
-                    label: Text('MobileCLIP2 ONNX'),
-                    icon: Icon(Icons.auto_awesome_outlined),
-                  ),
-                  ButtonSegment<MobileClipBackend>(
-                    value: MobileClipBackend.ncnn,
-                    label: Text('NCNN'),
-                    icon: Icon(Icons.flash_on_outlined),
-                  ),
-                ],
-                selected: <MobileClipBackend>{_selectedBackend},
-                onSelectionChanged: _isSwitchingBackend
-                    ? null
-                    : (selection) {
-                        final backend = selection.first;
-                        _switchBackend(backend);
-                      },
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  if (_isSwitchingBackend)
-                    const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    Icon(
-                      _selectedBackend == MobileClipBackend.ncnn
-                          ? Icons.flash_on
-                          : Icons.auto_awesome,
-                      size: 16,
-                      color: Colors.purple.shade700,
-                    ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '当前: ${_selectedBackend.label} · ${_selectedBackend.description}',
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
               ),
             ],
           ),

@@ -15,7 +15,8 @@ class MobileClipEmbeddingService {
 
   final MobileClipVisionService _mobileclip2OnnxService =
       MobileClipVisionService();
-  final NcnnMobileClipNativeService _ncnnService = NcnnMobileClipNativeService();
+  final NcnnMobileClipNativeService _ncnnService =
+      NcnnMobileClipNativeService();
   final MobileClipBackendPreferenceService _preferenceService =
       MobileClipBackendPreferenceService();
 
@@ -73,7 +74,7 @@ class MobileClipEmbeddingService {
       return;
     }
 
-    await warmUpBackend(newBackend);
+    // 按需加载：切换配置时只持久化选择，不在设置阶段预热模型。
     await releaseBackend(currentBackend);
     await _preferenceService.setSelectedBackend(newBackend);
   }

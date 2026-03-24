@@ -13,7 +13,6 @@ import 'package:photo_manager/photo_manager.dart';
 import 'event_detail_page.dart';
 import '../../service/mobileclip_backend_preference_service.dart';
 import '../../service/mobileclip_embedding_service.dart';
-import '../../service/cognito_auth_service.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 
 class HomePage extends StatefulWidget {
@@ -649,13 +648,8 @@ class _HomePageState extends State<HomePage> {
                     icon: Icon(Icons.auto_awesome_outlined),
                   ),
                   ButtonSegment<MobileClipBackend>(
-                    value: MobileClipBackend.onnx,
-                    label: Text('ONNX(旧)'),
-                    icon: Icon(Icons.verified_outlined),
-                  ),
-                  ButtonSegment<MobileClipBackend>(
                     value: MobileClipBackend.ncnn,
-                    label: Text('NCNN(旧)'),
+                    label: Text('NCNN'),
                     icon: Icon(Icons.flash_on_outlined),
                   ),
                 ],
@@ -680,8 +674,6 @@ class _HomePageState extends State<HomePage> {
                     Icon(
                       _selectedBackend == MobileClipBackend.ncnn
                           ? Icons.flash_on
-                          : _selectedBackend == MobileClipBackend.onnx
-                          ? Icons.verified
                           : Icons.auto_awesome,
                       size: 16,
                       color: Colors.purple.shade700,

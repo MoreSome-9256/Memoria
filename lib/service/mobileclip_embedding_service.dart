@@ -13,10 +13,8 @@ class MobileClipEmbeddingService {
 
   factory MobileClipEmbeddingService() => _instance;
 
-    final MobileClipVisionService _mobileclip2OnnxService =
-      MobileClipVisionService(variant: MobileClipOnnxVariant.mobileclip2S2);
-    final MobileClipVisionService _legacyOnnxService =
-      MobileClipVisionService(variant: MobileClipOnnxVariant.legacyS2);
+  final MobileClipVisionService _mobileclip2OnnxService =
+      MobileClipVisionService();
   final NcnnMobileClipNativeService _ncnnService = NcnnMobileClipNativeService();
   final MobileClipBackendPreferenceService _preferenceService =
       MobileClipBackendPreferenceService();
@@ -29,8 +27,6 @@ class MobileClipEmbeddingService {
     switch (backend) {
       case MobileClipBackend.mobileclip2Onnx:
         await _mobileclip2OnnxService.dispose();
-      case MobileClipBackend.onnx:
-        await _legacyOnnxService.dispose();
       case MobileClipBackend.ncnn:
         await _ncnnService.dispose();
     }
@@ -40,9 +36,6 @@ class MobileClipEmbeddingService {
     switch (backend) {
       case MobileClipBackend.mobileclip2Onnx:
         await _mobileclip2OnnxService.warmUp();
-        return null;
-      case MobileClipBackend.onnx:
-        await _legacyOnnxService.warmUp();
         return null;
       case MobileClipBackend.ncnn:
         final status = _ncnnService.getStatus();
@@ -69,8 +62,6 @@ class MobileClipEmbeddingService {
     switch (backend) {
       case MobileClipBackend.mobileclip2Onnx:
         await _mobileclip2OnnxService.warmUp();
-      case MobileClipBackend.onnx:
-        await _legacyOnnxService.warmUp();
       case MobileClipBackend.ncnn:
         await _ncnnService.warmUp();
     }
@@ -98,8 +89,6 @@ class MobileClipEmbeddingService {
     switch (backend) {
       case MobileClipBackend.mobileclip2Onnx:
         return _mobileclip2OnnxService.embedImageFile(imageFile);
-      case MobileClipBackend.onnx:
-        return _legacyOnnxService.embedImageFile(imageFile);
       case MobileClipBackend.ncnn:
         final bytes = await imageFile.readAsBytes();
         return _ncnnService.encodeImageBytes(bytes);
@@ -117,8 +106,6 @@ class MobileClipEmbeddingService {
     switch (backend) {
       case MobileClipBackend.mobileclip2Onnx:
         return _mobileclip2OnnxService.embedImageBytes(imageBytes);
-      case MobileClipBackend.onnx:
-        return _legacyOnnxService.embedImageBytes(imageBytes);
       case MobileClipBackend.ncnn:
         return _ncnnService.encodeImageBytes(imageBytes);
     }

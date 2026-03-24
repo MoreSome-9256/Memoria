@@ -81,9 +81,7 @@ class ThemeClusterService {
   }) : _peopleSubclusterer = peopleSubclusterer ?? const PeopleThemeSubclusterer(),
        _genericSubclusterer = genericSubclusterer ?? const GenericThemeSubclusterer(),
        _semanticService = semanticService ?? SemanticMatchingService(),
-       _visionService =
-           visionService ??
-           MobileClipVisionService(variant: MobileClipOnnxVariant.mobileclip2S2),
+          _visionService = visionService ?? MobileClipVisionService(),
        _definitions = definitions ?? _defaultDefinitions,
        _photosLoader = photosLoader,
        _embeddingPreparer = embeddingPreparer,

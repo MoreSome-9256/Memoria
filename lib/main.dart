@@ -16,21 +16,14 @@ const bool _mobileClipVectorProbeMode = bool.fromEnvironment(
   'MOBILECLIP_VECTOR_PROBE',
   defaultValue: false,
 );
+const bool _enableStartupMobileClipWarmUp = bool.fromEnvironment(
+  'ENABLE_STARTUP_MOBILECLIP_WARMUP',
+  defaultValue: false,
+);
 
 void main() async {
-  // 1. 确保 Flutter 绑定初始化
+  // 保证绑定可用后尽快 runApp，把重初始化放到应用内异步执行。
   WidgetsFlutterBinding.ensureInitialized();
-
-  await _configureAmplifyAuth();
-
-  // 2. 初始化 PhotoService (打开数据库)
-  await PhotoService().init();
-
-  debugPrint(
-    '🔎 OCR policy: ml_kit_enabled=${OcrPolicy.mlKitEnabled} '
-    '(use --dart-define=ENABLE_ML_KIT_OCR=true to enable)',
-  );
-
   runApp(const MyApp());
 }
 
@@ -51,21 +44,25 @@ Future<void> _configureAmplifyAuth() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
+  static final _AppStartupCoordinator _startupCoordinator =
+      _AppStartupCoordinator();
   static bool _mobileClipWarmUpScheduled = false;
 
-  void _scheduleStartupWarmUp() {
-    if (_mobileClipWarmUpScheduled) {
+  void _scheduleStartupWarmUpIfEnabled() {
+    if (!_enableStartupMobileClipWarmUp || _mobileClipWarmUpScheduled) {
       return;
     }
     _mobileClipWarmUpScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      MobileClipTagService().scheduleWarmUpAtAppStart();
+      MobileClipTagService().scheduleWarmUpAtAppStart(
+        initialDelay: const Duration(seconds: 8),
+      );
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    _scheduleStartupWarmUp();
+    _scheduleStartupWarmUpIfEnabled();
     return MaterialApp(
       title: '智能影记',
       debugShowCheckedModeBanner: false,
@@ -79,20 +76,47 @@ class MyApp extends StatelessWidget {
       ),
       home: _mobileClipVectorProbeMode
           ? const MobileClipVectorProbePage()
-          : FutureBuilder<bool>(
-              future: const CognitoAuthService().isSignedIn(),
+          : FutureBuilder<_LaunchTarget>(
+              future: _startupCoordinator.resolveLaunchTarget(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState != ConnectionState.done) {
                   return const Scaffold(
                     body: Center(child: CircularProgressIndicator()),
                   );
                 }
-                if (snapshot.data ?? false) {
+                if (snapshot.data == _LaunchTarget.signedIn) {
                   return const WidgetTree();
                 }
                 return const WelcomePage();
               },
             ),
     );
+  }
+}
+
+enum _LaunchTarget { signedIn, welcome }
+
+class _AppStartupCoordinator {
+  Future<void>? _startupFuture;
+
+  Future<_LaunchTarget> resolveLaunchTarget() async {
+    await _ensureStartupComplete();
+    final signedIn = await const CognitoAuthService().isSignedIn();
+    return signedIn ? _LaunchTarget.signedIn : _LaunchTarget.welcome;
+  }
+
+  Future<void> _ensureStartupComplete() {
+    if (_startupFuture != null) {
+      return _startupFuture!;
+    }
+    _startupFuture = Future<void>(() async {
+      await _configureAmplifyAuth();
+      await PhotoService().init();
+      debugPrint(
+        '🔎 OCR policy: ml_kit_enabled=${OcrPolicy.mlKitEnabled} '
+        '(use --dart-define=ENABLE_ML_KIT_OCR=true to enable)',
+      );
+    });
+    return _startupFuture!;
   }
 }

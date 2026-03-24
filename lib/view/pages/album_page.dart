@@ -32,6 +32,7 @@ enum _AlbumViewMode { tags, moments }
 
 class _AlbumPageState extends State<AlbumPage> {
   static const double _contentBottomInset = 118;
+  static const int _tagBrowserPhotoSoftLimit = 3000;
   bool _isClearingCache = false;
   String? _lastPromptedJunkCleanupReportId;
   final TextEditingController _semanticSearchController =
@@ -496,9 +497,14 @@ class _AlbumPageState extends State<AlbumPage> {
   }
 
   Future<List<PhotoEntity>> _loadAllPhotosForTagBrowser() async {
-    final photos = await PhotoService().isar.collection<PhotoEntity>().where().findAll();
-    photos.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    return photos;
+    // 仅加载最近一段数据，避免大图库每次变更都触发全量排序。
+    return PhotoService()
+        .isar
+        .photoEntitys
+        .where()
+        .sortByTimestampDesc()
+        .limit(_tagBrowserPhotoSoftLimit)
+        .findAll();
   }
 
   Future<void> _openTagClusterBrowser(
@@ -1201,9 +1207,13 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
   }
 
   Future<List<PhotoEntity>> _loadCurrentPhotos() async {
-    final photos = await PhotoService().isar.collection<PhotoEntity>().where().findAll();
-    photos.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    return photos;
+    return PhotoService()
+        .isar
+        .photoEntitys
+        .where()
+        .sortByTimestampDesc()
+        .limit(_AlbumPageState._tagBrowserPhotoSoftLimit)
+        .findAll();
   }
 
   List<_AlbumPhotoMonthGroup> _groupPhotosByMonth(List<PhotoEntity> photos) {

@@ -233,8 +233,6 @@ class _ConfigPageState extends State<ConfigPage> {
         if (dynamicBeatData == null) {
           throw Exception('云端音乐分析失败，请检查 Python 后端服务');
         }
-      } else {
-
       }
       // ==========================================
       // 🌟 平台名称转换 (供最终发布页文案生成使用)

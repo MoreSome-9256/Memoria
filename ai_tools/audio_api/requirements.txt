@@ -2,6 +2,3 @@ fastapi
 librosa
 python-multipart
 uvicorn[standard]
-PyJWT
-python-jose[cryptography]
-requests

@@ -1,0 +1,11 @@
+{
+  "AMAP_WEB_KEY": "YOUR_AMAP_WEB_KEY",
+  "LLM_BASE_URL": "https://api.deepseek.com/v1",
+  "LLM_API_PATH": "/chat/completions",
+  "LLM_MODEL": "deepseek-chat",
+  "LLM_API_KEY": "YOUR_LLM_API_KEY",
+  "AWS_REGION": "ap-southeast-1",
+  "COGNITO_USER_POOL_ID": "ap-southeast-1_XXXXXXXXX",
+  "COGNITO_APP_CLIENT_ID": "XXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "COGNITO_IDENTITY_POOL_ID": "ap-southeast-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}

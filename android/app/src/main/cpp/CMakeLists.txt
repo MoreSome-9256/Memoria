@@ -68,6 +68,8 @@ endif()
 
 if (MEMORIA_NCNN_INCLUDE_DIR AND MEMORIA_NCNN_LIBRARY)
     message(STATUS "Memoria NCNN SDK found for ${MEMORIA_ANDROID_ABI}: ${MEMORIA_NCNN_LIBRARY}")
+    target_sources(memoria_ncnn PRIVATE
+        vendored_mobileclip_image_encoder.cpp)
     target_compile_definitions(memoria_ncnn PRIVATE MEMORIA_NCNN_RUNTIME_ENABLED=1)
     target_sources(memoria_ncnn PRIVATE
         vendored_mobileclip_image_encoder.cpp)

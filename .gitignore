@@ -68,9 +68,6 @@ CLAUDE.md
 /checkpoints/
 
 # 忽略 ONNX 模型及其外部数据文件
-# *.onnx
-# !mobileclip_*.onnx
-# *.onnx.data
 
 # 忽略将来可能生成的 TFLite 文件
 *.tflite
@@ -82,8 +79,6 @@ CLAUDE.md
 /ai_tools/expanded_tags_vectors.json
 /ai_tools/expanded_tags_taxonomy.json
 /ai_tools/expanded_tags_taxonomy_checkpoint.json
-/assets/expanded_tags_vectors.json
-/assets/expanded_tags_taxonomy.json
 
 # 忽略 TensorFlow 的中间导出目录
 /saved_model/
@@ -97,8 +92,6 @@ CLAUDE.md
 # 团队协作约定：超过几十 MB 的大文件不进 Git，统一通过群文件/网盘同步。
 /assets/ncnn/mobileclip_s2/
 /third_party/mobileclip_s2_export/
-/third_party/ncnn-android-vulkan/
-/third_party/ncnn-20260113-android-vulkan/
 /third_party/ncnn-android/
 /third_party/ncnn-windows/
 /third_party/ncnn_mobileclip/

@@ -658,6 +658,14 @@ class _AlbumPageState extends State<AlbumPage> {
         ? 'AI 正在结束本轮打标 $completedText$failedSuffix'
         : 'AI 正在后台打标 $completedText$failedSuffix';
     final aiService = AIService();
+    final elapsedLabel = _formatDurationCompact(progress.elapsed);
+    final avgSeconds = progress.averageSecondsPerItem;
+    final avgLabel = avgSeconds == null
+        ? '--'
+        : '${avgSeconds.toStringAsFixed(1)} 秒/张';
+    final etaLabel = progress.estimatedRemainingDuration == null
+        ? '--'
+        : _formatDurationCompact(progress.estimatedRemainingDuration!);
 
     return Container(
       width: double.infinity,
@@ -703,6 +711,11 @@ class _AlbumPageState extends State<AlbumPage> {
             progress.currentStep,
             style: TextStyle(color: Colors.grey[700], fontSize: 12),
           ),
+          const SizedBox(height: 6),
+          Text(
+            '已耗时 $elapsedLabel · 平均 $avgLabel · 预计剩余 $etaLabel',
+            style: TextStyle(color: Colors.grey[700], fontSize: 12),
+          ),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -726,6 +739,19 @@ class _AlbumPageState extends State<AlbumPage> {
         ],
       ),
     );
+  }
+
+  String _formatDurationCompact(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+    if (hours > 0) {
+      return '$hours小时${minutes.toString().padLeft(2, '0')}分';
+    }
+    if (minutes > 0) {
+      return '$minutes分${seconds.toString().padLeft(2, '0')}秒';
+    }
+    return '${duration.inSeconds}秒';
   }
 
   // 🎨 1. 构建空状态界面

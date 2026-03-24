@@ -4,6 +4,7 @@ import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_album/service/amplify_cognito_config.dart';
+import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_tag_service.dart';
 import 'package:photo_album/service/photo_service.dart';
@@ -112,6 +113,12 @@ class _AppStartupCoordinator {
     _startupFuture = Future<void>(() async {
       await _configureAmplifyAuth();
       await PhotoService().init();
+      unawaited(
+        Future<void>.delayed(
+          const Duration(milliseconds: 800),
+          () => AIService().resumePendingAnalysisIfNeeded(),
+        ),
+      );
       debugPrint(
         '🔎 OCR policy: ml_kit_enabled=${OcrPolicy.mlKitEnabled} '
         '(use --dart-define=ENABLE_ML_KIT_OCR=true to enable)',

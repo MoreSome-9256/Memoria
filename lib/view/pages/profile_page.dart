@@ -268,19 +268,6 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           _buildSettingsTile(
             context,
-            Icons.smart_toy_outlined,
-            '本地 VLM 测试',
-            '使用手机本地 Qwen3.5-0.8B 生成 caption 或多图故事',
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => const LocalVlmTestPage(),
-                ),
-              );
-            },
-          ),
-          _buildSettingsTile(
-            context,
             Icons.developer_mode,
             "开发者设置",
             "谨慎调整内部设置，除非你很清楚自己在做什么！",
@@ -305,6 +292,23 @@ class _ProfilePageState extends State<ProfilePage> {
                                 ?.copyWith(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 20),
+                          ListTile(
+                            leading: const Icon(Icons.smart_toy_outlined),
+                            title: const Text('本地 VLM 测试'),
+                            subtitle: const Text(
+                              '使用手机本地 Qwen3.5-0.8B 生成 caption 或多图故事',
+                            ),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () {
+                              Navigator.of(context).pop();
+                              Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (context) =>
+                                      const LocalVlmTestPage(),
+                                ),
+                              );
+                            },
+                          ),
                           ListTile(
                             leading: const Icon(Icons.analytics_outlined),
                             title: const Text('MobileCLIP Benchmark'),

@@ -1,7 +1,7 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 // import 'dart:math'; // ➕ 新增：用于生成随机的假数据
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
@@ -39,6 +39,7 @@ class AIService {
   static const ThumbnailSize _mobileClipThumbnailSize = ThumbnailSize.square(
     384,
   );
+  static const int _maxParallelWorkers = 4;
 
   final ValueNotifier<AIAnalysisProgress> _progressNotifier =
       ValueNotifier<AIAnalysisProgress>(AIAnalysisProgress.idle());
@@ -136,6 +137,35 @@ class AIService {
     }
   }
 
+  Future<void> resumePendingAnalysisIfNeeded() async {
+    if (_isAnalyzing) {
+      return;
+    }
+    final pending = await PhotoService().isar
+        .collection<PhotoEntity>()
+        .filter()
+        .isAiAnalyzedEqualTo(false)
+        .count();
+    if (pending <= 0) {
+      return;
+    }
+    debugPrint('🔁 检测到 $pending 张未完成照片，自动续跑 AI 打标任务');
+    unawaited(_runFullAiPipelineInBackground());
+  }
+
+  Future<void> _runFullAiPipelineInBackground() async {
+    try {
+      await analyzePhotosInBackground();
+      await backfillMissingCaptionsInBackground();
+    } catch (error) {
+      debugPrint('❌ 自动续跑 AI 管线失败: $error');
+      // 为了稳定，我们可以考虑清理掉未完成的状态，避免下次启动时再次触发续跑。然后提示用户，重新启动 AI 打标。
+      await stopAnalysisAndWait();
+      debugPrint('⚠️ 自动续跑 AI 管线失败，已停止分析任务');
+      debugPrint('⚠️ 请重新启动 AI 打标任务');
+    }
+  }
+
   // 🧠 核心方法：批量分析未处理的照片（包含人脸检测和情感分析）
   Future<void> analyzePhotosInBackground({
     int batchSize = 10,
@@ -166,6 +196,7 @@ class AIService {
     final targetTotal = maxPhotos == null
         ? pendingCount
         : math.min(pendingCount, maxPhotos);
+    final startedAtMs = DateTime.now().millisecondsSinceEpoch;
 
     if (targetTotal <= 0) {
       _progressNotifier.value = AIAnalysisProgress.idle();
@@ -177,6 +208,9 @@ class AIService {
       return;
     }
 
+    await mobileClipEmbeddingService.beginWorkflowSession();
+    await mobileClipTagService.beginWorkflowSession();
+
     final selectedBackend = await mobileClipEmbeddingService
         .getSelectedBackend();
     _progressNotifier.value = AIAnalysisProgress.running(
@@ -184,6 +218,7 @@ class AIService {
       completed: 0,
       failed: 0,
       currentStep: '准备开始 AI 打标 (${selectedBackend.label})',
+      elapsedMs: 0,
     );
 
     await Future<void>.delayed(const Duration(milliseconds: 120));
@@ -192,14 +227,13 @@ class AIService {
       completed: 0,
       failed: 0,
       currentStep: '即将开始按需加载模型并分析图片',
+      elapsedMs: DateTime.now().millisecondsSinceEpoch - startedAtMs,
     );
 
-    // 2. 初始化 ML Kit 人脸检测（视觉标签改由 MobileCLIP 统一生成）
-    final FaceDetectorOptions faceOptions = FaceDetectorOptions(
+    final faceOptions = FaceDetectorOptions(
       enableClassification: true,
       enableTracking: false,
     );
-    final faceDetector = FaceDetector(options: faceOptions);
 
     var totalAnalyzed = 0;
     final affectedEventIds = <int>{};
@@ -207,6 +241,7 @@ class AIService {
     var failedCount = 0;
     var processedCount = 0;
     final junkCandidates = <JunkPhotoCleanupCandidate>[];
+    final attemptedPhotoIds = <Id>{};
 
     try {
       while (true) {
@@ -215,260 +250,134 @@ class AIService {
           break;
         }
 
-        if (remainingPhotos != null && remainingPhotos <= 0) {
+        if (remainingPhotos != null && remainingPhotos! <= 0) {
           break;
         }
 
         final currentBatchSize = remainingPhotos == null
             ? batchSize
-            : math.min(batchSize, remainingPhotos);
+            : math.min(batchSize, remainingPhotos!);
 
-        // 🌟 修复点：直接拉取未分析的照片，不搞复杂的预取和过滤
         final photosToAnalyze = await isar
             .collection<PhotoEntity>()
             .filter()
             .isAiAnalyzedEqualTo(false)
             .sortByTimestampDesc()
-            .limit(currentBatchSize)
-            .findAll();
+            .limit(currentBatchSize * 3)
+            .findAll()
+            .then(
+              (photos) => photos
+                  .where((photo) => !attemptedPhotoIds.contains(photo.id))
+                  .take(currentBatchSize)
+                  .toList(growable: false),
+            );
 
         if (photosToAnalyze.isEmpty) {
           break;
         }
 
-        debugPrint("🤖 开始 AI 视觉分析，本批次: ${photosToAnalyze.length} 张");
-
-        Future<_PreparedAnalysisInput?>? preparedFuture = _prepareAnalysisInput(
-          photosToAnalyze.first,
+        final workerCount = _resolveWorkerCount(photosToAnalyze.length);
+        debugPrint(
+          '🤖 开始 AI 并行分析，本批次: ${photosToAnalyze.length} 张，worker=$workerCount',
         );
 
-        for (var i = 0; i < photosToAnalyze.length; i++) {
-          final photo = photosToAnalyze[i];
-          final shouldContinue = await _waitIfPaused();
-          if (!shouldContinue || _stopRequested) {
-            break;
-          }
-
-          final currentPreparedFuture =
-              preparedFuture ?? _prepareAnalysisInput(photo);
-          preparedFuture = i + 1 < photosToAnalyze.length
-              ? _prepareAnalysisInput(photosToAnalyze[i + 1])
-              : null;
-
-          var didFail = false;
-          File? analysisFile;
-          _progressNotifier.value = AIAnalysisProgress.running(
-            total: targetTotal,
-            completed: processedCount,
-            failed: failedCount,
-            currentStep: '正在分析第 ${processedCount + 1} / $targetTotal 张',
-          );
-
+        final queue = ListQueue<PhotoEntity>.of(photosToAnalyze);
+        final workers = List<Future<void>>.generate(workerCount, (
+          workerIndex,
+        ) async {
+          final faceDetector = FaceDetector(options: faceOptions);
           try {
-            final prepared = await currentPreparedFuture;
-            if (prepared == null) {
-              await _markAsAnalyzed(
-                photo.id,
-                [],
-                const <double>[],
-                '',
-                '',
-                const <String>[],
-                0,
-                0.0,
-                0.0,
-                isar,
-              );
-              didFail = true;
-              continue;
-            }
-
-            final embedding = await mobileClipEmbeddingService
-                .embedImageBytesWithBackend(
-                  prepared.mobileClipBytes,
-                  selectedBackend,
-                );
-
-            final junkDecision = await _junkPhotoFilterService.evaluatePhoto(
-              photo: photo,
-              imageEmbedding: embedding,
-            );
-            if (junkDecision.shouldFilter) {
-              await _markAsAnalyzed(
-                photo.id,
-                const <String>[JunkPhotoFilterService.junkCandidateTag],
-                embedding,
-                '',
-                '',
-                const <String>[],
-                0,
-                0.0,
-                0.0,
-                isar,
-              );
-              junkCandidates.add(
-                JunkPhotoCleanupCandidate(
-                  photoId: photo.id,
-                  assetId: photo.assetId,
-                  path: photo.path,
-                  timestamp: photo.timestamp,
-                  reasons: junkDecision.hits,
-                ),
-              );
-              if (photo.eventId != null) {
-                affectedEventIds.add(photo.eventId!);
+            while (true) {
+              final shouldContinue = await _waitIfPaused();
+              if (!shouldContinue || _stopRequested) {
+                break;
               }
-              debugPrint(
-                '🧹 已标记低价值候选: ${photo.id} '
-                '(${junkDecision.hits.map((item) => item.label).join('、')})',
-              );
-              totalAnalyzed++;
-              if (remainingPhotos != null) {
-                remainingPhotos--;
+
+              if (queue.isEmpty) {
+                break;
               }
-              continue;
-            }
+              final photo = queue.removeFirst();
+              attemptedPhotoIds.add(photo.id);
 
-            final mobileClipTags = await mobileClipTagService.retrieveTags(
-              embedding,
-            );
-            final visualTags = _sanitizeVisualTags(mobileClipTags);
-
-            analysisFile = await _createAuxiliaryAnalysisFile(
-              prepared.file,
-              photo.id,
-            );
-            final inputImage = InputImage.fromFile(analysisFile);
-
-            OcrResult ocrResult = OcrResult.empty();
-            if (OcrService.shouldRunOcr(
-              visualTags,
-              aspectRatio: photo.aspectRatio,
-            )) {
-              ocrResult = await ocrService.analyzeImageFile(analysisFile);
-            }
-
-            // 😊 任务2：情感分析
-            final faces = await faceDetector.processImage(inputImage);
-            int faceCount = faces.length;
-            double maxSmileProb = faces.isNotEmpty
-                ? faces
-                      .map((f) => f.smilingProbability ?? 0.0)
-                      .reduce((a, b) => a > b ? a : b)
-                : 0.0;
-
-            double joyScore = AIScoreHelper.calculateJoyScore(
-              faceCount: faceCount,
-              maxSmileProb: maxSmileProb,
-              tags: visualTags,
-            );
-
-            await facePipelineService.rebuildFacesForPhoto(
-              isar: isar,
-              photo: photo,
-              imageFile: analysisFile,
-              faces: faces,
-            );
-
-            final caption = await photoCaptionService.generateCaption(
-              imageFile: analysisFile,
-              visualTags: visualTags,
-              ocrTags: ocrResult.tags,
-              ocrText: ocrResult.text,
-              location:
-                  photo.locationName ??
-                  photo.district ??
-                  photo.city ??
-                  photo.province,
-              takenAt: DateTime.fromMillisecondsSinceEpoch(photo.timestamp),
-              isProbablyScreenshot: photo.isProbablyScreenshot,
-              faceCount: faceCount,
-            );
-
-            await _markAsAnalyzed(
-              photo.id,
-              visualTags,
-              embedding,
-              caption,
-              ocrResult.text,
-              ocrResult.tags,
-              faceCount,
-              maxSmileProb,
-              joyScore,
-              isar,
-            );
-
-            if (photo.eventId != null) {
-              affectedEventIds.add(photo.eventId!);
-            }
-            totalAnalyzed++;
-            if (remainingPhotos != null) {
-              remainingPhotos--;
-            }
-          } catch (e) {
-            didFail = true;
-            debugPrint("❌ AI 分析失败: $e");
-            await _markAsAnalyzed(
-              photo.id,
-              [],
-              const <double>[],
-              '',
-              '',
-              const <String>[],
-              0,
-              0.0,
-              0.0,
-              isar,
-            );
-            if (remainingPhotos != null) {
-              remainingPhotos--;
-            }
-          } finally {
-            if (didFail) {
-              failedCount++;
-            }
-            processedCount++;
-            if (_stopRequested) {
-              _progressNotifier.value = AIAnalysisProgress.stopping(
-                total: targetTotal,
-                completed: processedCount,
-                failed: failedCount,
-                currentStep: '正在结束本轮打标…',
-              );
-            } else if (_pauseRequested) {
-              _progressNotifier.value = AIAnalysisProgress.paused(
-                total: targetTotal,
-                completed: processedCount,
-                failed: failedCount,
-                currentStep: '已暂停，随时可以继续',
-              );
-            } else {
               _progressNotifier.value = AIAnalysisProgress.running(
                 total: targetTotal,
                 completed: processedCount,
                 failed: failedCount,
-                currentStep: processedCount >= targetTotal
-                    ? '正在收尾整理结果'
-                    : '已完成 $processedCount / $targetTotal 张',
+                currentStep:
+                    '并行处理中 (worker ${workerIndex + 1}) 第 ${processedCount + 1} / $targetTotal 张',
+                elapsedMs: DateTime.now().millisecondsSinceEpoch - startedAtMs,
               );
-            }
 
-            // 🧹 清理辅助分析用的临时文件
-            if (analysisFile != null &&
-                analysisFile.path != photo.path &&
-                analysisFile.existsSync()) {
-              try {
-                await analysisFile.delete();
-              } catch (error) {
-                debugPrint('⚠️ 清理临时文件失败: $error');
+              final result = await _processSinglePhoto(
+                photo: photo,
+                isar: isar,
+                selectedBackend: selectedBackend,
+                mobileClipEmbeddingService: mobileClipEmbeddingService,
+                mobileClipTagService: mobileClipTagService,
+                photoCaptionService: photoCaptionService,
+                facePipelineService: facePipelineService,
+                ocrService: ocrService,
+                faceDetector: faceDetector,
+              );
+
+              if (result.didSucceed) {
+                totalAnalyzed++;
+                if (result.junkCandidate != null) {
+                  junkCandidates.add(result.junkCandidate!);
+                }
+                if (result.eventId != null) {
+                  affectedEventIds.add(result.eventId!);
+                }
+              } else {
+                failedCount++;
+              }
+
+              processedCount++;
+              if (remainingPhotos != null) {
+                remainingPhotos = remainingPhotos! - 1;
+              }
+
+              if (_stopRequested) {
+                _progressNotifier.value = AIAnalysisProgress.stopping(
+                  total: targetTotal,
+                  completed: processedCount,
+                  failed: failedCount,
+                  currentStep: '正在结束本轮打标…',
+                  elapsedMs:
+                      DateTime.now().millisecondsSinceEpoch - startedAtMs,
+                );
+              } else if (_pauseRequested) {
+                _progressNotifier.value = AIAnalysisProgress.paused(
+                  total: targetTotal,
+                  completed: processedCount,
+                  failed: failedCount,
+                  currentStep: '已暂停，随时可以继续',
+                  elapsedMs:
+                      DateTime.now().millisecondsSinceEpoch - startedAtMs,
+                );
+              } else {
+                _progressNotifier.value = AIAnalysisProgress.running(
+                  total: targetTotal,
+                  completed: processedCount,
+                  failed: failedCount,
+                  currentStep: processedCount >= targetTotal
+                      ? '正在收尾整理结果'
+                      : '已完成 $processedCount / $targetTotal 张',
+                  elapsedMs:
+                      DateTime.now().millisecondsSinceEpoch - startedAtMs,
+                );
+              }
+
+              if (_stopRequested) {
+                break;
               }
             }
+          } finally {
+            await faceDetector.close();
           }
+        });
 
-          if (_stopRequested) {
-            break;
-          }
-        }
+        await Future.wait(workers);
 
         if (_stopRequested) {
           break;
@@ -486,7 +395,8 @@ class AIService {
       }
       debugPrint("✅ AI 分析完成，总计处理: $totalAnalyzed 张");
     } finally {
-      await faceDetector.close();
+      await mobileClipTagService.endWorkflowSession();
+      await mobileClipEmbeddingService.endWorkflowSession();
       _progressNotifier.value = AIAnalysisProgress.idle();
       _isAnalyzing = false;
       _pauseRequested = false;
@@ -518,6 +428,7 @@ class AIService {
       isar,
       maxPhotos: maxPhotos,
     );
+    final startedAtMs = DateTime.now().millisecondsSinceEpoch;
 
     if (targetTotal <= 0) {
       _progressNotifier.value = AIAnalysisProgress.idle();
@@ -534,6 +445,7 @@ class AIService {
       completed: 0,
       failed: 0,
       currentStep: '准备回填旧照片 caption',
+      elapsedMs: 0,
     );
 
     var processedCount = 0;
@@ -583,6 +495,7 @@ class AIService {
             failed: failedCount,
             currentStep:
                 '正在回填第 ${processedCount + 1} / $targetTotal 张照片的 caption',
+            elapsedMs: DateTime.now().millisecondsSinceEpoch - startedAtMs,
           );
 
           try {
@@ -624,6 +537,7 @@ class AIService {
                 completed: processedCount,
                 failed: failedCount,
                 currentStep: '正在结束本轮 caption 回填…',
+                elapsedMs: DateTime.now().millisecondsSinceEpoch - startedAtMs,
               );
             } else if (_pauseRequested) {
               _progressNotifier.value = AIAnalysisProgress.paused(
@@ -631,6 +545,7 @@ class AIService {
                 completed: processedCount,
                 failed: failedCount,
                 currentStep: 'caption 回填已暂停，随时可以继续',
+                elapsedMs: DateTime.now().millisecondsSinceEpoch - startedAtMs,
               );
             } else {
               _progressNotifier.value = AIAnalysisProgress.running(
@@ -640,6 +555,7 @@ class AIService {
                 currentStep: processedCount >= targetTotal
                     ? '正在收尾整理 caption 结果'
                     : '已回填 $processedCount / $targetTotal 张 caption',
+                elapsedMs: DateTime.now().millisecondsSinceEpoch - startedAtMs,
               );
             }
           }
@@ -674,6 +590,148 @@ class AIService {
       await Future.delayed(const Duration(milliseconds: 300));
     }
     return !_stopRequested;
+  }
+
+  int _resolveWorkerCount(int workItems) {
+    if (workItems <= 1) {
+      return 1;
+    }
+    final cpuCores = Platform.numberOfProcessors;
+    final suggested = cpuCores <= 2 ? 1 : math.max(2, cpuCores - 1);
+    final bounded = math.min(_maxParallelWorkers, suggested);
+    return math.max(1, math.min(bounded, workItems));
+  }
+
+  Future<_PhotoProcessResult> _processSinglePhoto({
+    required PhotoEntity photo,
+    required Isar isar,
+    required MobileClipBackend selectedBackend,
+    required MobileClipEmbeddingService mobileClipEmbeddingService,
+    required MobileClipTagService mobileClipTagService,
+    required PhotoCaptionService photoCaptionService,
+    required FacePipelineService facePipelineService,
+    required OcrService ocrService,
+    required FaceDetector faceDetector,
+  }) async {
+    File? analysisFile;
+    try {
+      final prepared = await _prepareAnalysisInput(photo);
+      if (prepared == null) {
+        return const _PhotoProcessResult.failed();
+      }
+
+      final embedding = await mobileClipEmbeddingService
+          .embedImageBytesWithBackend(
+            prepared.mobileClipBytes,
+            selectedBackend,
+          );
+
+      final junkDecision = await _junkPhotoFilterService.evaluatePhoto(
+        photo: photo,
+        imageEmbedding: embedding,
+      );
+      if (junkDecision.shouldFilter) {
+        await _markAsAnalyzed(
+          photo.id,
+          const <String>[JunkPhotoFilterService.junkCandidateTag],
+          embedding,
+          '',
+          '',
+          const <String>[],
+          0,
+          0.0,
+          0.0,
+          isar,
+        );
+        return _PhotoProcessResult.success(
+          eventId: photo.eventId,
+          junkCandidate: JunkPhotoCleanupCandidate(
+            photoId: photo.id,
+            assetId: photo.assetId,
+            path: photo.path,
+            timestamp: photo.timestamp,
+            reasons: junkDecision.hits,
+          ),
+        );
+      }
+
+      final mobileClipTags = await mobileClipTagService.retrieveTags(embedding);
+      final visualTags = _sanitizeVisualTags(mobileClipTags);
+
+      analysisFile = await _createAuxiliaryAnalysisFile(
+        prepared.file,
+        photo.id,
+      );
+      final inputImage = InputImage.fromFile(analysisFile);
+
+      var ocrResult = OcrResult.empty();
+      if (OcrService.shouldRunOcr(visualTags, aspectRatio: photo.aspectRatio)) {
+        ocrResult = await ocrService.analyzeImageFile(analysisFile);
+      }
+
+      final faces = await faceDetector.processImage(inputImage);
+      final faceCount = faces.length;
+      final maxSmileProb = faces.isNotEmpty
+          ? faces
+                .map((f) => f.smilingProbability ?? 0.0)
+                .reduce((a, b) => a > b ? a : b)
+          : 0.0;
+      final joyScore = AIScoreHelper.calculateJoyScore(
+        faceCount: faceCount,
+        maxSmileProb: maxSmileProb,
+        tags: visualTags,
+      );
+
+      await facePipelineService.rebuildFacesForPhoto(
+        isar: isar,
+        photo: photo,
+        imageFile: analysisFile,
+        faces: faces,
+      );
+
+      final caption = await photoCaptionService.generateCaption(
+        imageFile: analysisFile,
+        visualTags: visualTags,
+        ocrTags: ocrResult.tags,
+        ocrText: ocrResult.text,
+        location:
+            photo.locationName ??
+            photo.district ??
+            photo.city ??
+            photo.province,
+        takenAt: DateTime.fromMillisecondsSinceEpoch(photo.timestamp),
+        isProbablyScreenshot: photo.isProbablyScreenshot,
+        faceCount: faceCount,
+      );
+
+      await _markAsAnalyzed(
+        photo.id,
+        visualTags,
+        embedding,
+        caption,
+        ocrResult.text,
+        ocrResult.tags,
+        faceCount,
+        maxSmileProb,
+        joyScore,
+        isar,
+      );
+
+      return _PhotoProcessResult.success(eventId: photo.eventId);
+    } catch (error) {
+      debugPrint('❌ AI 分析失败 photoId=${photo.id}: $error');
+      return const _PhotoProcessResult.failed();
+    } finally {
+      if (analysisFile != null &&
+          analysisFile.path != photo.path &&
+          analysisFile.existsSync()) {
+        try {
+          await analysisFile.delete();
+        } catch (error) {
+          debugPrint('⚠️ 清理临时文件失败: $error');
+        }
+      }
+    }
   }
 
   List<String> _sanitizeVisualTags(List<String> source, {int maxTags = 5}) {
@@ -875,6 +933,7 @@ class AIAnalysisProgress {
     required this.completed,
     required this.failed,
     required this.currentStep,
+    required this.elapsedMs,
   });
 
   factory AIAnalysisProgress.idle() {
@@ -886,6 +945,7 @@ class AIAnalysisProgress {
       completed: 0,
       failed: 0,
       currentStep: '',
+      elapsedMs: 0,
     );
   }
 
@@ -894,6 +954,7 @@ class AIAnalysisProgress {
     required int completed,
     required int failed,
     required String currentStep,
+    int elapsedMs = 0,
   }) {
     return AIAnalysisProgress(
       isRunning: true,
@@ -903,6 +964,7 @@ class AIAnalysisProgress {
       completed: completed,
       failed: failed,
       currentStep: currentStep,
+      elapsedMs: elapsedMs,
     );
   }
 
@@ -911,6 +973,7 @@ class AIAnalysisProgress {
     required int completed,
     required int failed,
     required String currentStep,
+    int elapsedMs = 0,
   }) {
     return AIAnalysisProgress(
       isRunning: false,
@@ -920,6 +983,7 @@ class AIAnalysisProgress {
       completed: completed,
       failed: failed,
       currentStep: currentStep,
+      elapsedMs: elapsedMs,
     );
   }
 
@@ -928,6 +992,7 @@ class AIAnalysisProgress {
     required int completed,
     required int failed,
     required String currentStep,
+    int elapsedMs = 0,
   }) {
     return AIAnalysisProgress(
       isRunning: false,
@@ -937,6 +1002,7 @@ class AIAnalysisProgress {
       completed: completed,
       failed: failed,
       currentStep: currentStep,
+      elapsedMs: elapsedMs,
     );
   }
 
@@ -947,6 +1013,7 @@ class AIAnalysisProgress {
   final int completed;
   final int failed;
   final String currentStep;
+  final int elapsedMs;
 
   AIAnalysisProgress copyWith({
     bool? isRunning,
@@ -956,6 +1023,7 @@ class AIAnalysisProgress {
     int? completed,
     int? failed,
     String? currentStep,
+    int? elapsedMs,
   }) {
     return AIAnalysisProgress(
       isRunning: isRunning ?? this.isRunning,
@@ -965,8 +1033,28 @@ class AIAnalysisProgress {
       completed: completed ?? this.completed,
       failed: failed ?? this.failed,
       currentStep: currentStep ?? this.currentStep,
+      elapsedMs: elapsedMs ?? this.elapsedMs,
     );
   }
+
+  double? get averageSecondsPerItem {
+    if (completed <= 0 || elapsedMs <= 0) {
+      return null;
+    }
+    return elapsedMs / 1000.0 / completed;
+  }
+
+  Duration? get estimatedRemainingDuration {
+    final avg = averageSecondsPerItem;
+    final remaining = total - completed;
+    if (avg == null || remaining <= 0) {
+      return null;
+    }
+    final etaMs = (avg * remaining * 1000).round();
+    return Duration(milliseconds: etaMs);
+  }
+
+  Duration get elapsed => Duration(milliseconds: elapsedMs);
 
   double get fraction {
     if (total <= 0) {
@@ -990,4 +1078,24 @@ class _PreparedAnalysisInput {
   final File file;
   final Uint8List mobileClipBytes;
   final bool usedThumbnail;
+}
+
+class _PhotoProcessResult {
+  const _PhotoProcessResult._({
+    required this.didSucceed,
+    this.eventId,
+    this.junkCandidate,
+  });
+
+  const _PhotoProcessResult.success({
+    int? eventId,
+    JunkPhotoCleanupCandidate? junkCandidate,
+  }) : this._(didSucceed: true, eventId: eventId, junkCandidate: junkCandidate);
+
+  const _PhotoProcessResult.failed()
+    : this._(didSucceed: false, eventId: null, junkCandidate: null);
+
+  final bool didSucceed;
+  final int? eventId;
+  final JunkPhotoCleanupCandidate? junkCandidate;
 }

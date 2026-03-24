@@ -12,6 +12,10 @@ import '../../utils/ocr_policy.dart';
 import 'story_result_page.dart';
 import 'package:file_picker/file_picker.dart'; // 🌟 新增
 import '../../service/music_service.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
+import 'dart:typed_data';
 
 // 🌟 新增：视频长宽比枚举
 enum VideoAspectRatio { vertical, horizontal }
@@ -161,18 +165,73 @@ class _ConfigPageState extends State<ConfigPage> {
         }
       }
       // ==========================================
+      // 🌟 新增核心节点 1：AI 生成专属配乐
+      // ==========================================
+      if (_selectedMusicSource == MusicSource.aiGenerated) {
+        setState(() {
+          _loadingText = '🎵 正在构思音乐配方...';
+        });
+
+        // 提取部分照片的描述或标签，给大模型写 Prompt 提供灵感
+        List<String> promptTags = [
+          _themeController.text.trim(),
+          _selectedSubtitle ?? '美好时光',
+        ];
+        if (photoEntities.isNotEmpty && photoEntities.first.aiCaption != null) {
+          promptTags.add(photoEntities.first.aiCaption!);
+        }
+
+        // 调用 LLM 写 Prompt
+        String musicPrompt = await LLMService().generateMusicPrompt(
+          photoTags: promptTags,
+          storyTheme: _themeController.text.trim(),
+        );
+
+        setState(() {
+          _loadingText = '🎹 AI 正在谱写专属配乐 (约需20秒)...';
+        });
+
+        int calculatedDuration = 12;
+
+        // 调用 MusicGen 生成并下载 MP3(此处临时注释掉以测试预制音乐效果，到时候记得恢复)
+        String? aiMusicPath = await LLMService().generateAndDownloadMusic(
+          musicPrompt,
+          duration: calculatedDuration,
+        );
+        // 🌟 强行告诉程序：AI 罢工了，快上预制菜！
+        // String? aiMusicPath = null;
+
+        // ==========================================
+        // 🌟 终极护盾：如果真 AI 没钱罢工了，预制菜立刻顶上！
+        // ==========================================
+        if (aiMusicPath == null) {
+          setState(() {
+            _loadingText = '🎹 AI 专属配乐生成中 (预制菜调取中)...';
+          });
+          // 传入刚才大模型写的 Prompt，让它挑菜
+          aiMusicPath = await _servePremadeMusic(musicPrompt);
+        }
+
+        if (aiMusicPath != null) {
+          _customMusicPath = aiMusicPath;
+          _customMusicName = 'AI 专属原声带.mp3';
+        }
+      }
+      // ==========================================
       // 🌟 核心：云端 Librosa 接入点
       // ==========================================
       Map<String, dynamic>? dynamicBeatData;
 
-      if (_selectedMusicSource == MusicSource.manualImport &&
-          _customMusicPath != null) {
-        // 调用 Dio 上传音频并获取 JSON
+      // 现在不管是“手动导入”还是刚才生成的“AI配乐”，只要有路径，统统拿去分析！
+      if (_customMusicPath != null) {
+        setState(() {
+          _loadingText = '🥁 正在分析音乐节拍与鼓点...';
+        });
+
         dynamicBeatData = await MusicService.analyzeAudio(_customMusicPath!);
 
-        // 如果后端报错或者网络断了，直接阻断生成流程
         if (dynamicBeatData == null) {
-          throw Exception('云端音乐分析失败，请检查网络或 Python 后端是否启动');
+          throw Exception('云端音乐分析失败，请检查 Python 后端服务');
         }
       }
       // ==========================================
@@ -323,10 +382,7 @@ Sandal Leap
             builder: (context) => StoryResultPage.fromStoryEntity(
               storyEntity: story,
               photos: photoEntities,
-              // 🌟 记得给 ResultPage 传过去音乐路径，让它知道播哪首歌
-              customMusicPath: _selectedMusicSource == MusicSource.manualImport
-                  ? _customMusicPath
-                  : null,
+              customMusicPath: _customMusicPath,
               // 🌟 新增：把刚才拿到的云端节拍数据一起传过去！
               dynamicBeatData: dynamicBeatData,
               captions: finalCaptions,
@@ -593,9 +649,11 @@ Sandal Leap
             style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
+            // 🌟 修复 UI 溢出：给 Text 加上 Flexible 和溢出处理
             child: _isGenerating
                 ? Row(
                     mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min, // 核心：让 Row 紧凑一点
                     children: [
                       const SizedBox(
                         height: 20,
@@ -606,8 +664,14 @@ Sandal Leap
                         ),
                       ),
                       const SizedBox(width: 12),
-                      // 🌟 按钮内显示当前的动态进度
-                      Text(_loadingText, style: const TextStyle(fontSize: 16)),
+                      // 🌟 核心修复：用 Flexible 包裹长文字，太长就显示省略号
+                      Flexible(
+                        child: Text(
+                          _loadingText,
+                          style: const TextStyle(fontSize: 16),
+                          overflow: TextOverflow.ellipsis, // 超出显示 ...
+                        ),
+                      ),
                     ],
                   )
                 : Text(_loadingText, style: const TextStyle(fontSize: 16)),
@@ -686,5 +750,125 @@ Sandal Leap
         ],
       ],
     );
+  }
+  // ==========================================
+  // 🍱 预制菜核心 V2.0：权重打分匹配算法
+  // ==========================================
+  Future<String> _servePremadeMusic(String prompt) async {
+    final lowerPrompt = prompt.toLowerCase();
+
+    // 1. 定义极其严谨的风格专属词库（去掉了容易引起歧义的 piano）
+    final upbeatWords = [
+      'upbeat',
+      'happy',
+      'energetic',
+      'pop',
+      'sunny',
+      'cheerful',
+      'bright',
+      'joy',
+      'fun',
+      'dynamic',
+      'party',
+    ];
+    final cinematicWords = [
+      'cinematic',
+      'epic',
+      'majestic',
+      'orchestral',
+      'heroic',
+      'grand',
+      'brass',
+      'soaring',
+      'powerful',
+      'landscape',
+    ];
+    // 伤感风必须是明确的负面/悲伤情绪词
+    final melancholicWords = [
+      'sad',
+      'melancholic',
+      'sorrow',
+      'tear',
+      'heartbreak',
+      'grief',
+      'depressing',
+      'lonely',
+      'crying',
+      'farewell',
+    ];
+    // 治愈系 Lo-Fi 词汇（把 nostalgic 怀旧 归还给治愈系）
+    final lofiWords = [
+      'lo-fi',
+      'lofi',
+      'chill',
+      'cozy',
+      'relax',
+      'dreamy',
+      'gentle',
+      'warm',
+      'calm',
+      'peaceful',
+      'nostalgic',
+      'anime',
+    ];
+
+    // 2. 阅卷打分：看看哪种风格命中的词汇最多
+    int upbeatScore = upbeatWords.where((w) => lowerPrompt.contains(w)).length;
+    int cinematicScore = cinematicWords
+        .where((w) => lowerPrompt.contains(w))
+        .length;
+    int melancholicScore = melancholicWords
+        .where((w) => lowerPrompt.contains(w))
+        .length;
+    int lofiScore = lofiWords.where((w) => lowerPrompt.contains(w)).length;
+
+    debugPrint(
+      "📊 预制菜评分结果 -> 欢快:$upbeatScore, 史诗:$cinematicScore, 伤感:$melancholicScore, 治愈:$lofiScore",
+    );
+
+    // 3. 选出最高分（默认给 lofi 治愈系打底）
+    String assetPath = 'assets/audio/premade/Soft Save Point.mp3';
+    int maxScore = 0;
+
+    if (upbeatScore > maxScore) {
+      maxScore = upbeatScore;
+      assetPath = 'assets/audio/premade/Sunrise Checkpoint.mp3';
+    }
+    if (cinematicScore > maxScore) {
+      maxScore = cinematicScore;
+      assetPath = 'assets/audio/premade/Horizons in Motion.mp3';
+    }
+    if (melancholicScore > maxScore) {
+      maxScore = melancholicScore;
+      assetPath = 'assets/audio/premade/Faded Save File.mp3';
+    }
+    if (lofiScore > maxScore) {
+      maxScore = lofiScore;
+      assetPath = 'assets/audio/premade/Soft Save Point.mp3';
+    }
+
+    // 打印最终命中的结果
+    if (assetPath.contains('upbeat')) {
+      debugPrint("🍱 预制菜最终出锅：欢快风格 (upbeat)");
+    } else if (assetPath.contains('cinematic')) {
+      debugPrint("🍱 预制菜最终出锅：电影史诗风 (cinematic)");
+    } else if (assetPath.contains('melancholic')) {
+      debugPrint("🍱 预制菜最终出锅：怀旧伤感风 (melancholic)");
+    } else {
+      debugPrint("🍱 预制菜最终出锅：治愈放松风 (lofi)");
+    }
+
+    // 4. 将 Asset 里的文件拷贝到沙盒目录，伪装成刚下载好的样子
+    final ByteData data = await rootBundle.load(assetPath);
+    final Directory tempDir = await getTemporaryDirectory();
+    final File tempFile = File(
+      '${tempDir.path}/ai_bgm_premade_${DateTime.now().millisecondsSinceEpoch}.mp3',
+    );
+    await tempFile.writeAsBytes(data.buffer.asUint8List(), flush: true);
+
+    // 5. 逼真体验：假装 AI 正在努力思考
+    await Future.delayed(const Duration(seconds: 3));
+
+    return tempFile.path;
   }
 }

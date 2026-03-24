@@ -46,6 +46,25 @@ class StoryVideoPage extends StatefulWidget {
   State<StoryVideoPage> createState() => _StoryVideoPageState();
 }
 
+// 🌟 核心新增：转场特效的“身份证”
+class TransitionMaterial {
+  final String id; // 唯一标识
+  final String name; // 在控制台里显示的名字，比如 "梦幻漏光"
+  final String movPath; // 导出用的 .mov 路径
+  final String webpPath; // 预览用的 .webp 路径
+  final int offsetMs; // 🌟 灵魂属性：这个转场需要提前多少毫秒播放才能完美卡点？
+  final int durationMs; // 🌟 新增：这个转场总共多长（毫秒）？
+
+  const TransitionMaterial({
+    required this.id,
+    required this.name,
+    required this.movPath,
+    required this.webpPath,
+    required this.offsetMs,
+    required this.durationMs,
+  });
+}
+
 class _StoryVideoPageState extends State<StoryVideoPage>
     with TickerProviderStateMixin {
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -53,6 +72,11 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   int _currentIndex = 0;
   bool _isPlaying = false;
   StreamSubscription? _positionSubscription;
+
+  // 🌟 核心新增：记录音频循环播放的状态
+  int _audioLoopCount = 0; // 记圈器：已经循环了几遍？
+  double _lastAudioPositionMs = 0; // 上一次拿到的播放进度
+  int _singleLoopMs = 15000; // 单首音乐的真实长度
 
   int _currentLyricIndex = 0;
   String _currentLyricText = "";
@@ -144,10 +168,53 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   int _currentBeatIndexForPreview = -1; // 记录当前演到第几拍了
 
   Future<void> _initAudioAndListener() async {
+    // 🌟 1. 获取这首歌的真实时长（比如 15000 毫秒）
+    await _audioPlayer.setSourceDeviceFile(widget.customMusicPath!);
+    Duration? songDuration = await _audioPlayer.getDuration();
+    // 🌟 修复：把获取到的时长存进我们刚才定义的全局变量里！
+    _singleLoopMs = songDuration?.inMilliseconds ?? 15000;
+    int singleLoopMs = _singleLoopMs;
+
+    // 🌟 2. 核心补丁：无限繁衍节拍数据！
+    // 假设我们粗暴地把它复制 20 遍（足以应付 5 分钟的视频）
+    if (_beatData.isNotEmpty && _beatData.last['ms'] < singleLoopMs * 1.5) {
+      List<Map<String, dynamic>> extendedBeats = [];
+      List<dynamic> originalBeats = List.from(_beatData); // 拷贝原版 15 秒的节拍
+
+      for (int loopIndex = 0; loopIndex < 20; loopIndex++) {
+        // 每循环一次，时间戳就要加上单曲的总时长
+        int timeOffset = loopIndex * singleLoopMs;
+
+        for (var beat in originalBeats) {
+          extendedBeats.add({
+            'ms': (beat['ms'] as int) + timeOffset,
+            'energy': beat['energy'],
+          });
+        }
+      }
+      _beatData = extendedBeats; // 替换成拥有几百个节拍的“超级节拍本”！
+      debugPrint("🔄 已将节拍数据无缝循环扩充至 ${_beatData.length} 个节拍！");
+    }
+
+    // 🌟 3. 设置播放器为无限循环模式
+    await _audioPlayer.setReleaseMode(ReleaseMode.loop);
     _positionSubscription = _audioPlayer.onPositionChanged.listen((Duration p) {
       if (_beatData.isEmpty || _isExporting) return; // 导出时不要干扰
 
-      double currentTimeMs = p.inMilliseconds.toDouble();
+      double currentPosMs = p.inMilliseconds.toDouble();
+
+      // ==========================================
+      // 🌟 核心补丁：精准捕获“循环重置”瞬间！
+      // ==========================================
+      // 如果当前时间突然比上一次的时间小了超过 1 秒，说明它肯定是从头开始循环了！
+      if (currentPosMs < _lastAudioPositionMs - 1000) {
+        _audioLoopCount++;
+        debugPrint("🔄 音乐第 $_audioLoopCount 次循环，当前真实总时长已延长！");
+      }
+      _lastAudioPositionMs = currentPosMs;
+
+      // 🌟 真实的连续时间 = 当前播放条位置 + (已经循环的圈数 * 一圈的总时长)
+      double currentTimeMs = currentPosMs + (_audioLoopCount * _singleLoopMs);
 
       // ==========================================
       // 🌟 核心升级：根据 BPM 动态计算片头结束的确切时间！
@@ -155,9 +222,13 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       // 第一张图（片头）固定在第 8 拍时切换到正片
       double firstCutTimeMs = 8 * _beatIntervalMs.toDouble();
 
-      // 设定转场素材的播放区间：在切图前 0.8 秒出现，切图后 0.7 秒消失 (总长 1.5 秒)
-      double transitionStartMs = firstCutTimeMs - 800;
-      double transitionEndMs = firstCutTimeMs + 700;
+      // 动态获取当前选中转场的卡点时间
+      int offset = _currentTransition.offsetMs;
+      int duration = _currentTransition.durationMs;
+      // 开始时间 = 切图点 - 提前量
+      double transitionStartMs = firstCutTimeMs - offset;
+      // 🌟 结束时间 = 开始时间 + 转场总长（保证它一定能完完整整播完！）
+      double transitionEndMs = transitionStartMs + duration;
 
       bool shouldShow =
           currentTimeMs >= transitionStartMs &&
@@ -222,6 +293,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
           _isPlaying = false;
           _currentIndex = 0;
           _currentBeatIndexForPreview = -1;
+          // 🌟 记得在这里把循环记录清零
+          _audioLoopCount = 0;
+          _lastAudioPositionMs = 0;
           if (widget.sections.isNotEmpty) {
             _currentLyricText = widget.sections[0].text;
           }
@@ -401,7 +475,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                       child: IgnorePointer(
                         // 用 BoxFit.cover 撑满整个屏幕
                         child: Image.asset(
-                          'assets/transitions/intro_transition.webp',
+                          _currentTransition.webpPath,
                           fit: BoxFit.cover,
                         ),
                       ),
@@ -632,6 +706,77 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       ),
     );
   }
+
+  // 1. 定义你的素材库 (假设你目前准备了这几个)
+  final List<TransitionMaterial> _transitions = const [
+    TransitionMaterial(
+      id: 'none',
+      name: '无转场',
+      movPath: '',
+      webpPath: '',
+      offsetMs: 0,
+      durationMs: 0,
+    ),
+    TransitionMaterial(
+      id: 'orange_and_red',
+      name: '橙色动画',
+      movPath: 'assets/transitions/orange_and_red.mov',
+      webpPath: 'assets/transitions/orange_and_red.webp',
+      offsetMs: 800, // 提前 0.8 秒
+      durationMs: 2000,
+    ),
+    TransitionMaterial(
+      id: 'white_circle',
+      name: '白底圆圈',
+      movPath: 'assets/transitions/white_circle.mov',
+      webpPath: 'assets/transitions/white_circle.webp',
+      offsetMs: 500, // 动作快，提前 0.5 秒就够了
+      durationMs: 2000,
+    ),
+    TransitionMaterial(
+      id: 'light',
+      name: '光效转场',
+      movPath: 'assets/transitions/light.mov',
+      webpPath: 'assets/transitions/light.webp',
+      offsetMs: 500, 
+      durationMs: 2000,
+    ),
+    TransitionMaterial(
+      id: 'blue_circle',
+      name: '蓝色圆形',
+      movPath: 'assets/transitions/blue_circle.mov',
+      webpPath: 'assets/transitions/blue_circle.webp',
+      offsetMs: 500,
+      durationMs: 1000,
+    ),
+    TransitionMaterial(
+      id: 'red',
+      name: '红色箭头',
+      movPath: 'assets/transitions/red.mov',
+      webpPath: 'assets/transitions/red.webp',
+      offsetMs: 500, 
+      durationMs: 1000,
+    ),
+    TransitionMaterial(
+      id: 'green',
+      name: '彩色切分',
+      movPath: 'assets/transitions/green.mov',
+      webpPath: 'assets/transitions/green.webp',
+      offsetMs: 0,
+      durationMs: 3000,
+    ),
+    TransitionMaterial(
+      id: 'glass',
+      name: '蓝色玻璃',
+      movPath: 'assets/transitions/glass.mov',
+      webpPath: 'assets/transitions/glass.webp',
+      offsetMs: 500,
+      durationMs: 3000,
+    ),
+  ];
+
+  // 2. 记住用户当前选了哪个（默认选漏光）
+  late TransitionMaterial _currentTransition = _transitions[1];
 
   // 🎛️ 导演控制台面板
   void _showVfxPanel() {
@@ -914,6 +1059,36 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                                   ),
                                 ],
                               ),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text(
+                                    '片头转场',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  DropdownButton<TransitionMaterial>(
+                                    value: _currentTransition,
+                                    dropdownColor: Colors.grey[900],
+                                    style: const TextStyle(
+                                      color: Colors.orangeAccent,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    underline: const SizedBox(),
+                                    items: _transitions.map((material) {
+                                      return DropdownMenuItem(
+                                        value: material,
+                                        child: Text(material.name),
+                                      );
+                                    }).toList(),
+                                    onChanged: (val) {
+                                      if (val != null) {
+                                        setModalState(() => _currentTransition = val);
+                                        setState(() {});
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
                               const Divider(color: Colors.white24),
                               CheckboxListTile(
                                 title: const Text(
@@ -1113,24 +1288,32 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       captions: currentCaptions,
     );
 
-    // 🌟 1. 精准计算“视觉画面”需要的总时长
+    // ==========================================
+    // 🌟 彻底以图片数量为准计算最终视频时长
+    // ==========================================
+
+    // 1. 算人头：每张图固定展示 8 拍，算出总共需要多少拍
     int totalBeatsNeeded = widget.sections.length * 8;
-    int visualDurationMs = totalBeatsNeeded * _beatIntervalMs;
-    // 如果 JSON 数据够长，直接从 JSON 里取那个节拍的真实毫秒数，更准！
+
+    // 2. 算基础时间：需要的拍数 × 每一拍的平均毫秒数
+    int finalExportDurationMs = totalBeatsNeeded * _beatIntervalMs;
+
+    // 3. 追求极致卡点：去我们那本“无限繁衍的节拍字典”里查准确的毫秒时间！
     if (_beatData.length > totalBeatsNeeded) {
-      visualDurationMs = (_beatData[totalBeatsNeeded]['ms'] as num).toInt();
+      // 完美命中：直接取第 totalBeatsNeeded 拍的绝对真实时间
+      finalExportDurationMs = (_beatData[totalBeatsNeeded]['ms'] as num)
+          .toInt();
     } else if (_beatData.isNotEmpty) {
-      // ⚠️ 修复拖尾：如果图片太多，超过了歌曲总长度，强制以歌曲最后一个节拍为准！
-      visualDurationMs = (_beatData.last['ms'] as num).toInt();
+      // 极端兜底：万一用户丧心病狂选了 300 张图，超出了我们复制 20 遍的节拍本
+      // 那就在字典最后一页的时间基础上，加上缺失的平均时间
+      int missingBeats = totalBeatsNeeded - _beatData.length;
+      finalExportDurationMs =
+          (_beatData.last['ms'] as num).toInt() +
+          (missingBeats * _beatIntervalMs);
     }
 
-    // 2. 获取音频真实时长，防止用户选了1000张图但歌只有1分钟
-    Duration? duration = await _audioPlayer.getDuration();
-    int audioDurationMs = duration?.inMilliseconds ?? 15000;
-
-    // 🌟 2. 最终导出时长：决不许超过音乐时长，也决不许多等一张图！
-    int finalExportDurationMs = math.min(visualDurationMs, audioDurationMs);
-    // 把这精准的时长转换成秒
+    // 🌟 彻底砸掉以前那把 `math.min(visual, audio)` 的锁！
+    // 4. 直接把算出的话事权（精确到秒）交给 FFmpeg！
     double exactExportSeconds = finalExportDurationMs / 1000.0;
 
     final directory = await getTemporaryDirectory();
@@ -1187,7 +1370,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       final docDir = await getApplicationDocumentsDirectory();
       String audioPath;
 
-      // 1. 准备音频路径 (保持你原有的逻辑)
+      // 1. 准备音频路径
       if (widget.customMusicPath != null) {
         File originalAudio = File(widget.customMusicPath!);
         File safeAudioFile = File('${docDir.path}/safe_custom_audio.mp3');
@@ -1203,57 +1386,80 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         audioPath = tempAudioFile.path;
       }
 
-      // 🌟 核心新增：提取转场素材路径
-      String transitionPath = await _extractAssetForFFmpeg(
-        'assets/transitions/intro_transition.mov', // 确认为你 assets 里的路径
-        'intro_transition.mov',
-      );
-
       // 2. 定义最终输出路径
       final String outputPath =
           "${docDir.path}/FINAL_STORY_${DateTime.now().millisecondsSinceEpoch}.mp4";
 
-      // 🌟 核心计算：转场开始的时间 (与预览完全同步！)
-      double firstCutTimeMs = 8 * _beatIntervalMs.toDouble();
-      // 在切片前 0.8 秒准时让 .mov 开始播放
-      double transitionStartTime = (firstCutTimeMs - 800) / 1000.0;
+      String command;
 
-      // 确保转场时间不会变成负数（防崩兜底）
-      if (transitionStartTime < 0) transitionStartTime = 0;
+      // ==========================================
+      // 🌟 核心分流逻辑：判断用户是否选择了带有转场的特效
+      // ==========================================
+      if (_currentTransition.id != 'none') {
+        // 🎬 走【带转场】的高级合成通道
 
-      // 3. 构造增强版 FFmpeg 魔法咒语
-      // [0:v] 是照片帧序列, [1:v] 是转场视频
-      // setpts=PTS-STARTPTS+... 是让转场视频延迟到指定秒数开始
-      // overlay 滤镜执行图层叠加
-      String command = [
-        "-y",
-        "-framerate", "24",
-        "-start_number", "0",
-        "-i", "'$frameDirPath/frame_%05d.png'", // 输入 0：帧序列
-        "-i", "'$transitionPath'", // 输入 1：转场 MOV
-        "-i", "'$audioPath'", // 输入 2：音频
-        "-t", "$exactSeconds",
-        "-filter_complex",
-        "[1:v]setpts=PTS-STARTPTS+($transitionStartTime/TB)[trans];" + // 延迟转场视频
-            "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg];" + // 确保对齐
-            "[bg][trans]overlay=eof_action=pass[outv]", // 叠加图层
-        "-map", "[outv]",
-        "-map", "2:a", // 使用输入 2 (音频) 的音频轨
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "'$outputPath'",
-      ].join(" ");
+        // 提取对应的转场素材路径
+        String transitionPath = await _extractAssetForFFmpeg(
+          _currentTransition.movPath,
+          '${_currentTransition.id}.mov',
+        );
 
-      debugPrint("🎬 FFmpeg 带转场合成开始: $command");
+        // 动态计算转场开始的时间
+        double firstCutTimeMs = 8 * _beatIntervalMs.toDouble();
+        double transitionStartTime =
+            (firstCutTimeMs - _currentTransition.offsetMs) / 1000.0;
+        if (transitionStartTime < 0) transitionStartTime = 0;
 
-      // 4. 执行命令 (保持你原有的逻辑)
+        // 构造带 overlay 滤镜的合并咒语
+        command = [
+          "-y",
+          "-framerate", "24",
+          "-start_number", "0",
+          "-i", "'$frameDirPath/frame_%05d.png'", // 0: 帧序列
+          "-i", "'$transitionPath'", // 1: 动态转场 MOV
+          "-stream_loop", "-1", // 🌟 核心魔法：让紧跟在后面的音频无限循环！
+          "-i", "'$audioPath'", // 2: 音频
+          "-t", "$exactSeconds",
+          "-filter_complex",
+          "[1:v]setpts=PTS-STARTPTS+($transitionStartTime/TB)[trans];" +
+              "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg];" +
+              "[bg][trans]overlay=eof_action=pass[outv]",
+          "-map", "[outv]",
+          "-map", "2:a", // 用第3个输入的声音
+          "-c:v", "libx264",
+          "-pix_fmt", "yuv420p",
+          "-c:a", "aac",
+          "'$outputPath'",
+        ].join(" ");
+
+        debugPrint("🎬 FFmpeg 带转场合成开始 [${_currentTransition.name}]: $command");
+      } else {
+        // 🎞️ 走【无转场】的极速合成通道
+
+        // 最基础的序列帧+音频合并咒语，去掉复杂的滤镜叠加
+        command = [
+          "-y",
+          "-framerate", "24",
+          "-start_number", "0",
+          "-i", "'$frameDirPath/frame_%05d.png'",
+          "-stream_loop", "-1", // 🌟 核心魔法：让紧跟在后面的音频无限循环！
+          "-i", "'$audioPath'",
+          "-t", "$exactSeconds",
+          "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", // 确保宽度高度为偶数
+          "-c:v", "libx264",
+          "-pix_fmt", "yuv420p",
+          "-c:a", "aac",
+          "'$outputPath'",
+        ].join(" ");
+
+        debugPrint("🎬 FFmpeg 普通合成开始 (无片头转场): $command");
+      }
+
+      // 4. 执行命令
       await FFmpegKit.execute(command).then((session) async {
         final returnCode = await session.getReturnCode();
         if (ReturnCode.isSuccess(returnCode)) {
-          // ... 原有的保存相册和跳转逻辑 ...
           debugPrint("✅✅✅ 完美导出！");
-          // (以下省略你原有的 Gal.putVideo 和 Navigator 逻辑)
           _handleExportSuccess(outputPath);
         } else {
           final logs = await session.getLogsAsString();

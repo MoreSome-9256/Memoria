@@ -187,10 +187,22 @@ class PhotoService {
         '未获得相册访问权限，请在系统设置中允许访问照片。',
       );
     }
+    // ==========================================
+    // 🌟 核心修复：创建一个带有明确排序规则的过滤器
+    // ==========================================
+    final FilterOptionGroup safeFilter = FilterOptionGroup(
+      orders: [
+        const OrderOption(
+          type: OrderOptionType.createDate,
+          asc: false, // 强制按照创建时间倒序（最新的在前面）
+        ),
+      ],
+    );
 
     final preferredAlbums = await PhotoManager.getAssetPathList(
       type: RequestType.image,
       onlyAll: true,
+      filterOption: safeFilter,
     );
     var albums = preferredAlbums;
     // onlyAll=true 在部分 ROM / 授权模式下可能返回空或空壳相册，降级到全量列表取图片最多的相册
@@ -198,6 +210,7 @@ class PhotoService {
       albums = await PhotoManager.getAssetPathList(
         type: RequestType.image,
         onlyAll: false,
+        filterOption: safeFilter,
       );
     }
 
@@ -216,6 +229,7 @@ class PhotoService {
       final fallbackAlbums = await PhotoManager.getAssetPathList(
         type: RequestType.image,
         onlyAll: false,
+        filterOption: safeFilter,
       );
       for (final album in fallbackAlbums) {
         final count = await album.assetCountAsync;
@@ -266,18 +280,35 @@ class PhotoService {
     final assets = <AssetEntity>[];
     var page = 0;
 
+    // ==========================================
+    // 🌟 核心修复：定义明确的排序规则，填补 SQL 语句的空白
+    // ==========================================
+    final FilterOptionGroup safeFilter = FilterOptionGroup(
+      orders: [
+        const OrderOption(
+          type: OrderOptionType.createDate,
+          asc: false, // 强制按照创建时间倒序（最新的在前面）
+        ),
+      ],
+    );
+
     while (true) {
-      final remaining = maxAssets == null ? pageSize : maxAssets - assets.length;
+      final remaining = maxAssets == null
+          ? pageSize
+          : maxAssets - assets.length;
       if (remaining <= 0) {
         break;
       }
 
+      // 🌟 修复点：强制传入 filterOption
       final batch = await PhotoManager.getAssetListPaged(
         page: page,
         pageCount: remaining < pageSize ? remaining : pageSize,
         type: RequestType.image,
+        filterOption: safeFilter, // 👈 补丁打在这里！
       );
       print('🧰 全局媒体库第 ${page + 1} 页返回 ${batch.length} 张图片');
+
       if (batch.isEmpty) {
         break;
       }

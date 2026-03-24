@@ -136,7 +136,7 @@ class _SubtitleEffectLayerState extends State<SubtitleEffectLayer> {
         Shadow(color: Colors.black87, blurRadius: 6, offset: Offset(0, 2)),
       ],
       height: 1.5,
-      letterSpacing: 8,
+      letterSpacing: 2.0,
     );
 
     switch (widget.effectType) {
@@ -351,6 +351,47 @@ class _SubtitleEffectLayerState extends State<SubtitleEffectLayer> {
                 curve: Curves.elasticOut,
                 duration: 800.ms,
               ), // 弹性缩放
+        );
+      case 'typewriter':
+        // 🌟 核心新增：带闪烁光标的打字机特效
+        final int textLen = widget.text.length;
+        // 动态计算打字总时长：字越多，打字越久（这里设定每个字大概耗时 120 毫秒）
+        final int durationMs = math.max(400, textLen * 120);
+
+        return TweenAnimationBuilder<int>(
+          key: ValueKey('typewriter_${widget.text}'),
+          tween: IntTween(begin: 0, end: textLen),
+          duration: Duration(milliseconds: durationMs),
+          builder: (context, charCount, child) {
+            // 截取当前应该显示的文字长度
+            String visibleText = widget.text.substring(0, charCount);
+
+            return Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: visibleText),
+                  WidgetSpan(
+                    alignment: PlaceholderAlignment.middle,
+                    child: child!, // 把一直闪烁的光标插在最后面
+                  ),
+                ],
+              ),
+              style: baseStyle,
+              textAlign: TextAlign.center,
+            );
+          },
+          // 将光标作为独立的 child 传入，保证光标的闪烁动画不会因为文字增加而被打断
+          child:
+              Text(
+                    '_', // 你也可以换成 '|' 或者 '█'
+                    style: baseStyle.copyWith(
+                      color: Colors.greenAccent, // 给光标加个显眼的荧光绿，更有极客/打字机味
+                    ),
+                  )
+                  .animate(
+                    onPlay: (controller) => controller.repeat(reverse: true),
+                  )
+                  .fade(duration: 350.ms, curve: Curves.easeInOut), // 呼吸闪烁
         );
       case 'strip':
         // 🌟 核心复刻：斜向文字条效果

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
+import '../../utils/ocr_policy.dart';
 import '../widgets/path_image.dart';
 import 'config_page.dart';
 
@@ -25,8 +26,9 @@ class _EventDetailPageState extends State<EventDetailPage> {
   List<Photo> get _textRichSelectedPhotos => _selectedPhotos
       .where(
         (photo) =>
-            (photo.ocrSummary?.trim().isNotEmpty ?? false) ||
-            photo.ocrTags.isNotEmpty,
+            OcrPolicy.mlKitEnabled &&
+            ((photo.ocrSummary?.trim().isNotEmpty ?? false) ||
+                photo.ocrTags.isNotEmpty),
       )
       .toList(growable: false);
 
@@ -154,14 +156,16 @@ class _EventDetailPageState extends State<EventDetailPage> {
                     emptyText: '这张照片暂时没有 AI 关键词。',
                     color: Theme.of(context).colorScheme.primaryContainer,
                   ),
-                  const SizedBox(height: 20),
-                  _buildTagSection(
-                    context,
-                    title: 'OCR 关键词',
-                    tags: photo.ocrTags,
-                    emptyText: '这张照片没有识别出明显文字关键词。',
-                    color: Theme.of(context).colorScheme.secondaryContainer,
-                  ),
+                  if (OcrPolicy.mlKitEnabled) ...[
+                    const SizedBox(height: 20),
+                    _buildTagSection(
+                      context,
+                      title: 'OCR 关键词',
+                      tags: photo.ocrTags,
+                      emptyText: '这张照片没有识别出明显文字关键词。',
+                      color: Theme.of(context).colorScheme.secondaryContainer,
+                    ),
+                  ],
                 ],
               ),
             );
@@ -437,7 +441,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(
-                            '${photo.tags.length + photo.ocrTags.length}',
+                            '${photo.tags.length + (OcrPolicy.mlKitEnabled ? photo.ocrTags.length : 0)}',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 11,

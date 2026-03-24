@@ -7,6 +7,7 @@ import '../../models/entity/story_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_service.dart';
+import '../../utils/ocr_policy.dart';
 import '../widgets/path_image.dart';
 import 'story_video_page.dart';
 
@@ -18,6 +19,8 @@ class StoryResultPage extends StatefulWidget {
   final int? storyEntityId;
   final String? customMusicPath;
   final Map<String, dynamic>? dynamicBeatData;
+  final bool isHorizontal;
+  final String targetPlatform;
 
   const StoryResultPage({
     super.key,
@@ -28,6 +31,8 @@ class StoryResultPage extends StatefulWidget {
     this.storyEntityId,
     this.customMusicPath,
     this.dynamicBeatData,
+    required this.isHorizontal,
+    required this.targetPlatform,
   });
 
   factory StoryResultPage.fromStoryEntity({
@@ -36,6 +41,8 @@ class StoryResultPage extends StatefulWidget {
     String? customMusicPath,
     Map<String, dynamic>? dynamicBeatData,
     List<String>? captions,
+    required bool isHorizontal,
+    required String targetPlatform,
   }) {
     final Map<String, String> captionMap = {};
     if (captions != null && captions.isNotEmpty) {
@@ -74,9 +81,10 @@ class StoryResultPage extends StatefulWidget {
               dateTaken: DateTime.fromMillisecondsSinceEpoch(p.timestamp),
               tags: p.aiTags ?? [],
               caption: p.aiCaption?.trim(),
-              ocrSummary: (p.ocrTags != null && p.ocrTags!.isNotEmpty)
-                  ? p.ocrTags!.take(3).join(' · ')
-                  : p.ocrText?.trim(),
+              ocrSummary: OcrPolicy.effectiveSummary(
+                tags: p.ocrTags ?? const <String>[],
+                text: p.ocrText,
+              ),
               location: p.city ?? p.province ?? '未知地点',
             ),
           ),
@@ -115,6 +123,8 @@ class StoryResultPage extends StatefulWidget {
       storyEntityId: storyEntity.id,
       customMusicPath: customMusicPath,
       dynamicBeatData: dynamicBeatData,
+      isHorizontal: isHorizontal,
+      targetPlatform: targetPlatform,
     );
   }
 
@@ -127,6 +137,8 @@ class StoryResultPage extends StatefulWidget {
           .where((block) => block.photo != null)
           .map((block) => StorySection(text: block.text, photo: block.photo!))
           .toList(),
+      isHorizontal: story.isHorizontal,
+      targetPlatform: '小红书',
     );
   }
 
@@ -213,10 +225,11 @@ class _StoryResultPageState extends State<StoryResultPage> {
         context,
       ).showSnackBar(const SnackBar(content: Text('故事已保存，可在故事页回查')));
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('保存失败: $e')));
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -377,8 +390,9 @@ class _StoryResultPageState extends State<StoryResultPage> {
                 subtitle: widget.subtitle,
                 sections: finalVideoSections, // 👈 把带有片头的数据安全地传过去
                 customMusicPath: widget.customMusicPath,
-                isHorizontal: true,
+                isHorizontal: widget.isHorizontal,
                 dynamicBeatData: widget.dynamicBeatData,
+                targetPlatform: widget.targetPlatform,
               ),
             ),
           );

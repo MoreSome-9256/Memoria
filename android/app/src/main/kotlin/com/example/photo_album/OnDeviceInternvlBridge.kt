@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import java.io.InterruptedIOException
 import java.io.IOException
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -17,14 +18,14 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * Android 侧的 InternVL 设备探测桥。
+ * Android 侧的本地 Qwen-VL / 多模态模型设备探测桥。
  *
  * 这个类当前只做两件事：
- * 1. 告诉 Flutter 当前手机的 CPU / RAM / ABI 情况，方便判断能不能扛住 1B Q4 级别模型。
+ * 1. 告诉 Flutter 当前手机的 CPU / RAM / ABI 情况，方便判断能不能扛住 0.8B/1B Q4 级别模型。
  * 2. 明确告诉上层：仓库目前还没有接入 Android 原生 llama.cpp / GGML 推理后端。
  *
  * 这里刻意不伪造“本地已可运行”的状态，避免让 UI 或业务层误以为模型已经真正集成。
- * 真正要把 InternVL 直接跑在手机里，后续还需要在 Android 侧补 JNI / NDK 推理实现。
+ * 真正要把手机本地 VLM 直接跑在更底层加速后端里，后续还需要在 Android 侧补 JNI / NDK 推理实现。
  */
 class OnDeviceInternvlBridge(private val context: Context) {
 
@@ -38,7 +39,7 @@ class OnDeviceInternvlBridge(private val context: Context) {
     private val libDir = "$installRoot/lib"
     private val modelPathCandidates = listOf(
         "$deployedRoot/checkpoints/qwen/Qwen3.5-0.8B-Q4_K_M.gguf",
-        "$deployedRoot/InternVL3-1B-Instruct-Q4_K_M.gguf",
+        "$deployedRoot/checkpoints/qwen/qwen3.5-0.8b-q4_k_m.gguf",
     )
     private val mmprojPathCandidates = listOf(
         "$deployedRoot/checkpoints/qwen/mmproj-F16.gguf",
@@ -51,7 +52,7 @@ class OnDeviceInternvlBridge(private val context: Context) {
     private val appRuntimeServerFile by lazy { File(appRuntimeBinDir, "llama-server") }
     private val serverHost = "127.0.0.1"
     private val serverPort = 8080
-    private val serverModelAlias = "local-internvl"
+    private val serverModelAlias = "local-qwen3.5-0.8b-vl"
     private val serverStartupTimeoutMs = 60_000L
     private val linkerPath by lazy {
         sequenceOf(
@@ -136,7 +137,7 @@ class OnDeviceInternvlBridge(private val context: Context) {
     }
 
     /**
-     * 生成“手机是否适合承载 InternVL-3-1B Q4”所需的基础画像。
+     * 生成“手机是否适合承载本地多模态 Q4 模型”所需的基础画像。
      *
      * 这些值不是绝对结论，而是用于给 Flutter 层提供一份接近真实的工程判断：
      * - RAM 够不够
@@ -208,7 +209,7 @@ class OnDeviceInternvlBridge(private val context: Context) {
     }
 
     /**
-     * 返回当前仓库对“手机本地 InternVL”的真实后端状态。
+     * 返回当前仓库对“手机本地 Qwen-VL / 多模态模型”的真实后端状态。
      *
      * 为什么要单独暴露这个接口：
      * 设备足够强 != 应用已经具备本地运行能力。
@@ -235,7 +236,7 @@ class OnDeviceInternvlBridge(private val context: Context) {
             } else if (serverReady) {
                 "先由 App 在启动阶段拉起本地 llama-server；若启动失败，再排查手机上的 llama-server 二进制是否存在 Illegal instruction 或缺失依赖。"
             } else {
-                "先把 llama-server、依赖动态库、InternVL GGUF 和 mmproj 推送到 /data/local/tmp/llama.cpp，再回到实验页直接测试。"
+                "先把 llama-server、依赖动态库、Qwen3.5-0.8B GGUF 和 mmproj 推送到 /data/local/tmp/llama.cpp/checkpoints/qwen，再回到实验页直接测试。"
             }
         )
     }
@@ -253,7 +254,7 @@ class OnDeviceInternvlBridge(private val context: Context) {
             if (!installDirectory.exists()) add("install-android-baseline 目录缺失")
             if (!serverFile.exists()) add("llama-server 缺失")
             if (!libDirectory.exists()) add("动态库目录缺失")
-            if (!modelFile.exists()) add("InternVL 主模型缺失")
+            if (!modelFile.exists()) add("Qwen 主模型缺失")
             if (!mmprojFile.exists()) add("mmproj 文件缺失")
             if (!linkerFile.exists()) add("Android linker64 缺失")
         }
@@ -340,7 +341,7 @@ class OnDeviceInternvlBridge(private val context: Context) {
             if (!installDirectory.exists()) add("install-android-baseline 目录缺失")
             if (!cliFile.exists()) add("llama-mtmd-cli 缺失")
             if (!libDirectory.exists()) add("动态库目录缺失")
-            if (!modelFile.exists()) add("InternVL 主模型缺失")
+            if (!modelFile.exists()) add("Qwen 主模型缺失")
             if (!mmprojFile.exists()) add("mmproj 文件缺失")
             if (!linkerFile.exists()) add("Android linker64 缺失")
         }
@@ -496,8 +497,17 @@ class OnDeviceInternvlBridge(private val context: Context) {
             .start()
 
         Thread {
-            process.inputStream.bufferedReader().useLines { lines ->
-                lines.forEach(::appendServerLog)
+            try {
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach(::appendServerLog)
+                }
+            } catch (_: InterruptedIOException) {
+                // The process stream can be closed by another thread during stop/restart.
+                // This is expected and must not crash the host app process.
+            } catch (_: IOException) {
+                // Ignore transient stream read errors from the background log tailer.
+            } catch (_: Throwable) {
+                // Never let the log collector crash the Flutter app.
             }
         }.apply {
             name = "internvl-llama-server-log"

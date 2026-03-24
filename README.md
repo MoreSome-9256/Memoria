@@ -55,33 +55,41 @@ flutter pub get
 dart run build_runner build --delete-conflicting-outputs
 ```
 
-### 3. 运行应用
+### 3. 使用 Profile 运行（推荐）
+
+不再建议每次手写一长串 `--dart-define`。项目已改为 Profile 文件驱动：
+
+1) 先创建本地 profile（不要提交密钥）
 
 ```bash
-flutter run
+mkdir -p config/profiles
+cp config/profiles/dev.example.json config/profiles/dev.json
 ```
 
-如果需要完整能力，请同时提供高德和 LLM 配置：
+2) 编辑 `config/profiles/dev.json`，填入你自己的参数（LLM / AMap / Cognito）
+
+3) 直接按 profile 启动
 
 ```bash
-flutter run \
-  --dart-define=AMAP_WEB_KEY=YOUR_AMAP_WEB_KEY \
-  --dart-define=LLM_BASE_URL=http://your-gateway/v1 \
-  --dart-define=LLM_API_PATH=/chat/completions \
-  --dart-define=LLM_MODEL=deepseek-chat \
-  --dart-define=LLM_API_KEY=YOUR_API_KEY
+# macOS / Linux
+./launch.sh dev
+
+# Windows PowerShell
+./launch.ps1 dev
 ```
 
-当前项目常用的真机启动模板（按你们最近的配置整理）如下：
+也支持直接使用 Flutter 原生命令：
 
 ```bash
-flutter run -d YOUR_DEVICE_ID \
-  --dart-define=LLM_BASE_URL=https://api.deepseek.com/v1 \
-  --dart-define=LLM_API_PATH=/chat/completions \
-  --dart-define=LLM_MODEL=deepseek-chat \
-  --dart-define=LLM_API_KEY=YOUR_API_KEY \
-  --dart-define=AMAP_WEB_KEY=YOUR_AMAP_WEB_KEY
+flutter run --dart-define-from-file=config/profiles/dev.json
 ```
+
+当前支持 profile 切换：
+
+- `dev` -> `config/profiles/dev.json`
+- `prod` -> `config/profiles/prod.json`
+
+你可以继续新增 `staging.json` 等环境，脚本会按同名 profile 自动读取。
 
 如果要切换 MobileCLIP2 模型来源，也可以追加这些可选参数：
 
@@ -101,21 +109,7 @@ flutter run -d YOUR_DEVICE_ID \
 
 ## 运行配置（可选）
 
-### 高德逆地理
-
-```bash
-flutter run --dart-define=AMAP_WEB_KEY=YOUR_AMAP_WEB_KEY
-```
-
-### LLM 配置
-
-```bash
-flutter run \
-  --dart-define=LLM_BASE_URL=http://your-gateway/v1 \
-  --dart-define=LLM_API_PATH=/chat/completions \
-  --dart-define=LLM_MODEL=deepseek-chat \
-  --dart-define=LLM_API_KEY=YOUR_API_KEY
-```
+运行参数统一放在 profile 文件中，由 `--dart-define-from-file` 一次性注入。
 
 ## App 内使用说明
 

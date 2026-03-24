@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../widget_tree.dart'; // 登录成功后跳转到这里
+import 'package:photo_album/view/pages/sign_in_page.dart';
+import 'package:photo_album/view/pages/sign_up_page.dart';
 
 class WelcomePage extends StatelessWidget {
   const WelcomePage({super.key});
@@ -93,9 +94,9 @@ class WelcomePage extends StatelessWidget {
                     label: '登录',
                     color: const Color(0xFFF48FB1),
                     onPressed: () {
-                      Navigator.of(context).pushReplacement(
+                      Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (context) => const WidgetTree(),
+                          builder: (context) => const SignInPage(),
                         ),
                       );
                     },
@@ -105,7 +106,13 @@ class WelcomePage extends StatelessWidget {
                     context,
                     label: '注册',
                     color: const Color(0xFFB39DDB),
-                    onPressed: () {},
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const SignUpPage(),
+                        ),
+                      );
+                    },
                   ),
                   const SizedBox(height: 60),
                 ],

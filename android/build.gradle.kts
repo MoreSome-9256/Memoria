@@ -1,13 +1,5 @@
 allprojects {
     repositories {
-        // 🌟 新增这一行：专门用来下载 Flutter 引擎 (flutter_embedding) 的国内镜像！
-        maven { url = uri("https://storage.flutter-io.cn/download.flutter.io") }
-        // 🌟 1. 加上阿里云的公共和 Google 镜像源（Kotlin 语法）
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        
-        // 🌟 2. 为了以防万一，把 FFmpeg 以前常驻的老巢 JCenter 镜像也加上
-        maven { url = uri("https://maven.aliyun.com/repository/jcenter") }
         google()
         mavenCentral()
     }
@@ -24,7 +16,6 @@ subprojects {
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
 
-//  补丁挪到了这里！在 evaluationDependsOn 之前执行
 subprojects {
     afterEvaluate {
         if (project.hasProperty("android")) {
@@ -32,9 +23,36 @@ subprojects {
                 if (namespace == null) {
                     namespace = project.group.toString()
                 }
-                // ➕ 新增下面这一行：强行把所有老插件的编译版本拉高到 34！
                 compileSdkVersion(34)
+                compileOptions.sourceCompatibility = JavaVersion.VERSION_17
+                compileOptions.targetCompatibility = JavaVersion.VERSION_17
             }
+        }
+    }
+}
+
+subprojects {
+    tasks.withType<JavaCompile>().configureEach {
+        options.compilerArgs.add("-Xlint:-options")
+    }
+}
+
+subprojects {
+    configurations.all {
+        resolutionStrategy {
+            force("androidx.browser:browser:1.8.0")
+            force("androidx.activity:activity:1.9.3")
+            force("androidx.activity:activity-ktx:1.9.3")
+            force("androidx.core:core:1.13.1")
+            force("androidx.core:core-ktx:1.13.1")
+        }
+    }
+}
+
+subprojects {
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
     }
 }

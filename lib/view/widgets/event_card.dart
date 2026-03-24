@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/event.dart';
 import '../pages/event_detail_page.dart';
+import 'fullscreen_photo_viewer.dart';
 import 'path_image.dart';
 
 class EventCard extends StatelessWidget {
@@ -14,22 +15,20 @@ class EventCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => EventDetailPage(event: event),
-            ),
-          );
-        },
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Cover images
-            _buildCoverImages(),
-            // Event info
-            Padding(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildCoverImages(context),
+          InkWell(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => EventDetailPage(event: event),
+                ),
+              );
+            },
+            child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -84,13 +83,13 @@ class EventCard extends StatelessWidget {
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildCoverImages() {
+  Widget _buildCoverImages(BuildContext context) {
     final coverPhotos = event.coverPhotos;
 
     if (coverPhotos.isEmpty) {
@@ -102,11 +101,23 @@ class EventCard extends StatelessWidget {
     }
 
     if (coverPhotos.length == 1) {
-      return PathImage(
-        path: coverPhotos[0].path,
-        height: 200,
-        width: double.infinity,
-        fit: BoxFit.cover,
+      final photo = coverPhotos.first;
+      final heroTag = 'event-cover-${event.id}-${photo.id}';
+      return GestureDetector(
+        onTap: () => showFullscreenPhotoViewer(
+          context,
+          path: photo.path,
+          heroTag: heroTag,
+        ),
+        child: Hero(
+          tag: heroTag,
+          child: PathImage(
+            path: photo.path,
+            height: 200,
+            width: double.infinity,
+            fit: BoxFit.cover,
+          ),
+        ),
       );
     }
 
@@ -120,10 +131,20 @@ class EventCard extends StatelessWidget {
               padding: EdgeInsets.only(
                 right: entry.key < coverPhotos.length - 1 ? 2 : 0,
               ),
-              child: PathImage(
-                path: entry.value.path,
-                height: 200,
-                fit: BoxFit.cover,
+              child: GestureDetector(
+                onTap: () => showFullscreenPhotoViewer(
+                  context,
+                  path: entry.value.path,
+                  heroTag: 'event-cover-${event.id}-${entry.value.id}',
+                ),
+                child: Hero(
+                  tag: 'event-cover-${event.id}-${entry.value.id}',
+                  child: PathImage(
+                    path: entry.value.path,
+                    height: 200,
+                    fit: BoxFit.cover,
+                  ),
+                ),
               ),
             ),
           );

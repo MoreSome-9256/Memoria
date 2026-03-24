@@ -1,6 +1,7 @@
 import 'package:isar/isar.dart';
 import 'photo_entity.dart';
 import '../vo/photo.dart';
+import '../../utils/ocr_policy.dart';
 
 part 'story_entity.g.dart';
 
@@ -15,6 +16,8 @@ class StoryEntity {
   late String content; // Markdown 格式内容（含图片占位符）
   late int createdAt; // 创建时间戳
   late int updatedAt; // 更新时间戳
+  late bool isHorizontal;
+  String? targetPlatform;
 
   // 🔗 关联信息
   late int eventId; // 来源事件 ID
@@ -120,19 +123,17 @@ class StoryEntity {
 
   // 🔄 PhotoEntity 转换为 Photo (UI 模型)
   static Photo _convertToPhoto(PhotoEntity entity) {
-    final ocrText = entity.ocrText?.trim();
     return Photo(
       id: entity.assetId,
       path: entity.path,
       dateTaken: DateTime.fromMillisecondsSinceEpoch(entity.timestamp),
       tags: entity.aiTags ?? [],
       caption: entity.aiCaption?.trim(),
-      ocrSummary: (entity.ocrTags != null && entity.ocrTags!.isNotEmpty)
-          ? entity.ocrTags!.take(3).join(' · ')
-          : (ocrText == null || ocrText.isEmpty)
-          ? null
-          : (ocrText.length > 36 ? '${ocrText.substring(0, 36)}...' : ocrText),
-      ocrTags: entity.ocrTags ?? const <String>[],
+      ocrSummary: OcrPolicy.effectiveSummary(
+        tags: entity.ocrTags ?? const <String>[],
+        text: entity.ocrText,
+      ),
+      ocrTags: OcrPolicy.effectiveTags(entity.ocrTags ?? const <String>[]),
       location:
           entity.locationName ??
           entity.district ??

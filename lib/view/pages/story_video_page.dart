@@ -18,6 +18,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:gal/gal.dart';
+import 'publish_page.dart';
+import '../../service/llm_service.dart';
 
 class StoryVideoPage extends StatefulWidget {
   final String title;
@@ -26,6 +28,7 @@ class StoryVideoPage extends StatefulWidget {
   final String? customMusicPath;
   final Map<String, dynamic>? dynamicBeatData; // 🌟 接收云端数据
   final String subtitle;
+  final String targetPlatform;
 
   const StoryVideoPage({
     super.key,
@@ -35,6 +38,7 @@ class StoryVideoPage extends StatefulWidget {
     this.customMusicPath,
     this.dynamicBeatData,
     required this.subtitle,
+    required this.targetPlatform,
   });
 
   @override
@@ -48,7 +52,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   int _currentIndex = 0;
   bool _isPlaying = false;
   StreamSubscription? _positionSubscription;
-  
+
   int _currentLyricIndex = 0;
   String _currentLyricText = "";
   // 🎛️ VFX 控制台参数
@@ -76,7 +80,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       'hero'; // 'standard' (普通底栏), 'hero' (居中大字), 'cards' (字卡散落)
   double _textYPosition = 0.8; // 0.0 为顶部，0.5 为屏幕正中，1.0 为贴底
   double _textSize = 24.0;
-  String _fontFamily = 'sans-serif'; // 以后可以接入 Google Fonts
+  final String _fontFamily = 'sans-serif'; // 以后可以接入 Google Fonts
 
   bool _isExporting = false; // 🌟 控制是否处于导出模式
   double _exportProgress = 0.0; // 🌟 导出百分比 (0.0 到 1.0)
@@ -132,7 +136,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     _initAudioAndListener(); // 启动音频实时监听
     _togglePlay(); // 自动开始播放
   }
-  
+
   int _currentBeatIndexForPreview = -1; // 记录当前演到第几拍了
 
   Future<void> _initAudioAndListener() async {
@@ -233,8 +237,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
   @override
   Widget build(BuildContext context) {
-    if (widget.sections.isEmpty)
+    if (widget.sections.isEmpty) {
       return const Scaffold(body: Center(child: Text('无内容')));
+    }
 
     final currentSection = widget.sections[_currentIndex];
 
@@ -385,7 +390,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         screenBody = Stack(
           fit: StackFit.expand,
           children: [
-            Image.file(File(currentSection.photo.path!), fit: BoxFit.cover),
+            Image.file(File(currentSection.photo.path), fit: BoxFit.cover),
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
               child: Container(color: Colors.black.withValues(alpha: 0.6)),
@@ -720,7 +725,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                                   '高光闪烁 (Flash)',
                                   style: TextStyle(color: Colors.white70),
                                 ),
-                                activeColor: Colors.pinkAccent,
+                                activeThumbColor: Colors.pinkAccent,
                                 value: _enableFlash,
                                 onChanged: (val) {
                                   setModalState(() => _enableFlash = val);
@@ -923,6 +928,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       },
     );
   }
+
   // 📊 导出时的进度遮罩层
   Widget _buildExportProgressOverlay() {
     return Container(
@@ -1002,6 +1008,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       _currentLyricText = widget.sections[_currentIndex].text;
     });
   }
+
   Future<Uint8List?> _captureFrame() async {
     try {
       // 找到那根“虚拟取景器”的边界
@@ -1023,8 +1030,23 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     }
   }
 
+  // 🌟 新增一个变量，用来装这个“未来的文案”
+  Future<String>? _aiCopyFuture;
+
   Future<void> _startExport() async {
     if (_isPlaying) await _togglePlay();
+
+    // ==========================================
+    // 🚀 核心优化：提前呼叫 AI，让它在后台默默写小作文
+    // 注意这里千万别加 await，我们不要等它，让它自己跑！
+    // ==========================================
+    List<String> currentCaptions = widget.sections.map((s) => s.text).toList();
+    _aiCopyFuture = LLMService().generateSocialMediaCopy(
+      platform: widget.targetPlatform,
+      title: widget.title,
+      subtitle: widget.subtitle,
+      captions: currentCaptions,
+    );
 
     // 🌟 1. 精准计算“视觉画面”需要的总时长
     int totalBeatsNeeded = widget.sections.length * 8;
@@ -1146,14 +1168,24 @@ class _StoryVideoPageState extends State<StoryVideoPage>
             await Gal.putVideo(outputPath);
             debugPrint("📸 视频已成功保存至手机系统相册！");
 
-            // 给用户一个极其舒适的视觉反馈
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('🎉 视频渲染完成，已保存至手机相册！快去图库看看吧！'),
-                  backgroundColor: Colors.pinkAccent,
-                  behavior: SnackBarBehavior.floating, // 悬浮样式更好看
-                  duration: Duration(seconds: 4),
+              // 🌟 1. 提取当前视频里所有的台词送给发布页
+              List<String> currentCaptions = widget.sections
+                  .map((s) => s.text)
+                  .toList();
+
+              // 🌟 2. 彻底关掉当前的视频渲染页，进入充满成就感的发布页！
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => PublishPage(
+                    title: widget.title,
+                    subtitle: widget.subtitle,
+                    captions: currentCaptions,
+                    targetPlatform: widget.targetPlatform, // 完美交接平台数据
+                    exportedVideoPath: outputPath,
+                    generatedCopyFuture: _aiCopyFuture,
+                  ),
                 ),
               );
             }
@@ -1167,10 +1199,12 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       });
     } finally {
       // 6. 收工，撤掉黑布
-      setState(() {
-        _isExporting = false;
-        _exportProgress = 0.0;
-      });
+      if (mounted) {
+        setState(() {
+          _isExporting = false;
+          _exportProgress = 0.0;
+        });
+      }
     }
   }
 
@@ -1203,6 +1237,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     );
   }
 }
+
 class CinematicTitleIntro extends StatelessWidget {
   final String title;
   final String subtitle;

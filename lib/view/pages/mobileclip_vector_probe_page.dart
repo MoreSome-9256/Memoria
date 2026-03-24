@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../../data/tag_dictionary.dart';
+import '../../data/tag_taxonomy_v2.dart';
 import '../../service/mobileclip_vision_service.dart';
 import '../../service/ncnn_mobileclip_native_service.dart';
 import '../../service/semantic_matching_service.dart';

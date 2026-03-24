@@ -43,13 +43,15 @@ ScoredThemePhoto _scored({
 
 void main() {
   group('theme_subclustering core', () {
-    test('people heuristic mode splits group and solo', () {
+    test('people hybrid mode splits different solo identities and keeps group photos', () {
       final now = DateTime(2026, 1, 1, 10);
       final scored = <ScoredThemePhoto>[
-        _scored(photo: _photo(id: 1, t: now, faceCount: 2), embedding: const [1, 0], score: 0.9),
-        _scored(photo: _photo(id: 2, t: now.add(const Duration(minutes: 1)), faceCount: 2), embedding: const [1, 0], score: 0.8),
-        _scored(photo: _photo(id: 3, t: now.add(const Duration(minutes: 2)), faceCount: 1), embedding: const [1, 0], score: 0.7),
-        _scored(photo: _photo(id: 4, t: now.add(const Duration(minutes: 3)), faceCount: 1), embedding: const [1, 0], score: 0.6),
+        _scored(photo: _photo(id: 1, t: now, faceCount: 1), embedding: const [1.0, 0.0], score: 0.9),
+        _scored(photo: _photo(id: 2, t: now.add(const Duration(minutes: 1)), faceCount: 1), embedding: const [0.999, 0.001], score: 0.8),
+        _scored(photo: _photo(id: 3, t: now.add(const Duration(minutes: 2)), faceCount: 1), embedding: const [-1.0, 0.0], score: 0.7),
+        _scored(photo: _photo(id: 4, t: now.add(const Duration(minutes: 3)), faceCount: 1), embedding: const [-0.999, -0.001], score: 0.6),
+        _scored(photo: _photo(id: 5, t: now.add(const Duration(minutes: 4)), faceCount: 2), embedding: const [0.0, 1.0], score: 0.7),
+        _scored(photo: _photo(id: 6, t: now.add(const Duration(minutes: 5)), faceCount: 2), embedding: const [0.001, 0.999], score: 0.6),
       ];
 
       final subclusters = const PeopleThemeSubclusterer().buildSubclusters(
@@ -60,10 +62,57 @@ void main() {
         pureEmbeddingOnly: false,
       );
 
-      expect(subclusters.length, 2);
-      final titles = subclusters.map((e) => e.title).toSet();
-      expect(titles.contains('合影'), isTrue);
-      expect(titles.contains('单人'), isTrue);
+      expect(subclusters.length, 3);
+      final identityClusters = subclusters
+          .where((item) => item.title.startsWith('人物簇 '))
+          .toList(growable: false);
+      expect(identityClusters.length, 2);
+      expect(subclusters.any((item) => item.title == '多人合影'), isTrue);
+    });
+
+    test('people hybrid mode respects minPhotosPerSubcluster and avoids tiny identity shards', () {
+      final now = DateTime(2026, 1, 1, 10);
+      final scored = <ScoredThemePhoto>[
+        _scored(photo: _photo(id: 1, t: now, faceCount: 1), embedding: const [1.0, 0.0], score: 0.9),
+        _scored(photo: _photo(id: 2, t: now.add(const Duration(minutes: 1)), faceCount: 1), embedding: const [0.999, 0.001], score: 0.8),
+        _scored(photo: _photo(id: 3, t: now.add(const Duration(minutes: 2)), faceCount: 1), embedding: const [-1.0, 0.0], score: 0.7),
+        _scored(photo: _photo(id: 4, t: now.add(const Duration(minutes: 3)), faceCount: 1), embedding: const [-0.999, -0.001], score: 0.6),
+      ];
+
+      final subclusters = const PeopleThemeSubclusterer().buildSubclusters(
+        definition: _theme('people'),
+        scoredPhotos: scored,
+        maxPreviewPerGroup: 10,
+        minPhotosPerSubcluster: 4,
+        pureEmbeddingOnly: false,
+      );
+
+      expect(subclusters.length, 1);
+      expect(subclusters.first.title, '单人照片');
+      expect(subclusters.first.totalPhotos, 4);
+    });
+
+    test('people hybrid mode absorbs nearby leftovers back into a stable identity cluster', () {
+      final now = DateTime(2026, 1, 1, 10);
+      final scored = <ScoredThemePhoto>[
+        _scored(photo: _photo(id: 1, t: now, faceCount: 1), embedding: const [1.0, 0.0], score: 0.9),
+        _scored(photo: _photo(id: 2, t: now.add(const Duration(minutes: 1)), faceCount: 1), embedding: const [0.995, 0.005], score: 0.88),
+        _scored(photo: _photo(id: 3, t: now.add(const Duration(minutes: 2)), faceCount: 1), embedding: const [0.99, 0.01], score: 0.86),
+        _scored(photo: _photo(id: 4, t: now.add(const Duration(minutes: 3)), faceCount: 1), embedding: const [0.985, 0.015], score: 0.84),
+        _scored(photo: _photo(id: 5, t: now.add(const Duration(minutes: 4)), faceCount: 1), embedding: const [0.97, 0.03], score: 0.82),
+      ];
+
+      final subclusters = const PeopleThemeSubclusterer().buildSubclusters(
+        definition: _theme('people'),
+        scoredPhotos: scored,
+        maxPreviewPerGroup: 10,
+        minPhotosPerSubcluster: 4,
+        pureEmbeddingOnly: false,
+      );
+
+      expect(subclusters.length, 1);
+      expect(subclusters.first.title, '人物簇 1');
+      expect(subclusters.first.totalPhotos, 5);
     });
 
     test('people pure embedding mode delegates to DBSCAN path', () {

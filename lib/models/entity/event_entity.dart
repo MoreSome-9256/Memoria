@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:isar/isar.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../ai_theme.dart';
 import 'photo_entity.dart';
 import '../event.dart';
+import '../../utils/ocr_policy.dart';
 import '../../utils/tag_sanitizer.dart';
 import '../vo/photo.dart';
 
@@ -104,9 +107,7 @@ class EventEntity {
           ),
           caption: entity.aiCaption?.trim(),
           ocrSummary: _buildOcrSummary(entity),
-          ocrTags: TagSanitizer.sanitizeOcrTags(
-            entity.ocrTags ?? const <String>[],
-          ),
+          ocrTags: OcrPolicy.effectiveTags(entity.ocrTags ?? const <String>[]),
           location:
               entity.locationName ??
               entity.district ??
@@ -134,25 +135,19 @@ class EventEntity {
   }
 
   Future<String> _resolvePhotoPath(PhotoEntity entity) async {
+    if (entity.path.trim().isNotEmpty && File(entity.path).existsSync()) {
+      return entity.path;
+    }
     final asset = await AssetEntity.fromId(entity.assetId);
     final file = await asset?.file;
     return file?.path ?? entity.path;
   }
 
   String? _buildOcrSummary(PhotoEntity entity) {
-    final ocrTags = TagSanitizer.sanitizeOcrTags(
-      entity.ocrTags ?? const <String>[],
+    return OcrPolicy.effectiveSummary(
+      tags: entity.ocrTags ?? const <String>[],
+      text: entity.ocrText,
     );
-    if (ocrTags.isNotEmpty) {
-      return ocrTags.take(3).join(' · ');
-    }
-
-    final text = entity.ocrText?.trim();
-    if (text == null || text.isEmpty) {
-      return null;
-    }
-
-    return text.length > 36 ? '${text.substring(0, 36)}...' : text;
   }
 
   List<AITheme> _buildAiThemes() {

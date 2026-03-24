@@ -43,9 +43,9 @@ class OnDeviceInternvlImagePayload {
     return map;
   }
 }
-/// 手机本地 InternVL 设备画像。
+/// 手机本地多模态模型设备画像。
 ///
-/// 这不是“已经集成成功”的运行状态，而是“当前手机硬件适不适合承载 InternVL-3-1B Q4”
+/// 这不是“已经集成成功”的运行状态，而是“当前手机硬件适不适合承载本地多模态 Q4 模型”
 /// 的诊断结果。它用于回答几个关键问题：
 /// 1. RAM 是否可能成为硬瓶颈。
 /// 2. CPU 线程应该保守开多少。
@@ -104,7 +104,7 @@ class OnDeviceInternvlProfile {
     );
   }
 
-  /// 是否值得继续走“手机本地 InternVL”这条路。
+  /// 是否值得继续走“手机本地多模态模型”这条路。
   ///
   /// 这里只做保守判断：
   /// - 至少要能承载 1B Q4 主模型
@@ -112,7 +112,7 @@ class OnDeviceInternvlProfile {
   bool get looksViable => likelyEnoughRamFor1BQ4 && primaryAbi.isNotEmpty;
 }
 
-/// 当前仓库对“手机本地 InternVL”原生后端的接入状态。
+/// 当前仓库对“手机本地多模态模型”原生后端的接入状态。
 ///
 /// 这份状态与硬件画像分开，是因为：
 /// - 你的手机可能够强
@@ -144,7 +144,7 @@ class OnDeviceInternvlBackendStatus {
   }
 }
 
-/// 手机侧本地 InternVL CLI 部署状态。
+/// 手机侧本地多模态 CLI 部署状态。
 class OnDeviceInternvlCliDeploymentStatus {
   const OnDeviceInternvlCliDeploymentStatus({
     required this.deployedRoot,
@@ -295,7 +295,7 @@ class OnDeviceInternvlServerStatus {
       ready: map['ready'] == true,
       port: _mapValueToInt(map['port']),
       host: map['host']?.toString() ?? '127.0.0.1',
-      modelAlias: map['modelAlias']?.toString() ?? 'local-internvl',
+      modelAlias: map['modelAlias']?.toString() ?? 'local-qwen3.5-0.8b-vl',
       serverUrl: map['serverUrl']?.toString() ?? '',
       chatCompletionsUrl: map['chatCompletionsUrl']?.toString() ?? '',
       pid: _mapValueToInt(map['pid']),
@@ -336,7 +336,7 @@ class OnDeviceInternvlCliResult {
   }
 }
 
-/// Dart 侧的 InternVL 设备诊断服务。
+/// Dart 侧的本地多模态设备诊断服务。
 ///
 /// 当前版本的职责非常明确：
 /// 1. 通过平台通道读取 Android 真机硬件画像。
@@ -525,9 +525,9 @@ class OnDeviceInternvlService {
       final serverStatus = await getServerStatus();
 
       if (profile != null) {
-        debugPrint('📱 [InternVL 设备画像] ${profile.summary}');
+        debugPrint('📱 [Qwen VLM 设备画像] ${profile.summary}');
         debugPrint(
-          '📱 [InternVL 设备画像] ABI=${profile.supportedAbis.join(', ')} '
+          '📱 [Qwen VLM 设备画像] ABI=${profile.supportedAbis.join(', ')} '
           '推荐ctx=${profile.recommendedContextSize} '
           '推荐线程=${profile.recommendedThreads} '
           '1BQ4可行=${profile.likelyEnoughRamFor1BQ4} '
@@ -538,39 +538,39 @@ class OnDeviceInternvlService {
 
       if (backend != null) {
         debugPrint(
-          '📱 [InternVL 后端状态] integrated=${backend.backendIntegrated} '
+          '📱 [Qwen VLM 后端状态] integrated=${backend.backendIntegrated} '
           'direct=${backend.supportsDirectOnDeviceInternvl} '
           'backend=${backend.backendName}',
         );
-        debugPrint('📱 [InternVL 后端状态] ${backend.reason}');
-        debugPrint('📱 [InternVL 后端状态] 下一步：${backend.nextStep}');
+        debugPrint('📱 [Qwen VLM 后端状态] ${backend.reason}');
+        debugPrint('📱 [Qwen VLM 后端状态] 下一步：${backend.nextStep}');
       }
 
       if (serverDeployment != null) {
         debugPrint(
-          '📱 [InternVL Server 部署] runnable=${serverDeployment.isRunnable} '
+          '📱 [Qwen VLM Server 部署] runnable=${serverDeployment.isRunnable} '
           'server=${serverDeployment.serverExists} '
           'model=${serverDeployment.modelExists} '
           'mmproj=${serverDeployment.mmprojExists} '
           'port=${serverDeployment.port}',
         );
-        debugPrint('📱 [InternVL Server 部署] ${serverDeployment.summary}');
+        debugPrint('📱 [Qwen VLM Server 部署] ${serverDeployment.summary}');
       }
 
       if (serverStatus != null) {
         debugPrint(
-          '📱 [InternVL Server 状态] running=${serverStatus.running} '
+          '📱 [Qwen VLM Server 状态] running=${serverStatus.running} '
           'reachable=${serverStatus.reachable} pid=${serverStatus.pid}',
         );
-        debugPrint('📱 [InternVL Server 状态] ${serverStatus.summary}');
+        debugPrint('📱 [Qwen VLM Server 状态] ${serverStatus.summary}');
         if (serverStatus.error.isNotEmpty) {
-          debugPrint('📱 [InternVL Server 状态] error=${serverStatus.error}');
+          debugPrint('📱 [Qwen VLM Server 状态] error=${serverStatus.error}');
         }
       }
     } on MissingPluginException {
-      debugPrint('⚠️ [InternVL 设备画像] 当前平台未注册 Android 探测通道');
+      debugPrint('⚠️ [Qwen VLM 设备画像] 当前平台未注册 Android 探测通道');
     } catch (error) {
-      debugPrint('⚠️ [InternVL 设备画像] 探测失败: $error');
+      debugPrint('⚠️ [Qwen VLM 设备画像] 探测失败: $error');
     }
   }
 }

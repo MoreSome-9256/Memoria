@@ -1,12 +1,11 @@
+import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
+import 'package:photo_album/service/cognito_auth_service.dart';
+import 'package:photo_album/view/pages/welcome_page.dart';
 
+import 'local_vlm_test_page.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
-
-import 'mobileclip_benchmark_page.dart';
-import 'mobileclip_vector_probe_page.dart';
-
-import 'internvl_lab_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -16,7 +15,104 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  bool _showInternvlLab = false;
+  final _auth = const CognitoAuthService();
+
+  Future<AuthUser?> _loadUser() async {
+    try {
+      final signedIn = await _auth.isSignedIn();
+      if (!signedIn) {
+        return null;
+      }
+      return Amplify.Auth.getCurrentUser();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<List<AuthUserAttribute>?> _loadAttributes() async {
+    try {
+      return await Amplify.Auth.fetchUserAttributes();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _signOut() async {
+    await _auth.signOut();
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const WelcomePage()),
+      (_) => false,
+    );
+  }
+
+  void _showAccountDetails() async {
+    final attributes = await _loadAttributes();
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '账号详情',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const SizedBox(height: 20),
+                if (attributes == null)
+                  const Center(child: CircularProgressIndicator())
+                else
+                  ...attributes.map((attr) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            _getAttributeLabel(attr.userAttributeKey.key),
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                          Text(attr.value),
+                        ],
+                      ),
+                    );
+                  }),
+                const SizedBox(height: 20),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _getAttributeLabel(String key) {
+    switch (key) {
+      case 'email':
+        return '电子邮箱';
+      case 'name':
+        return '姓名';
+      case 'sub':
+        return '用户唯一标识';
+      case 'email_verified':
+        return '邮箱已验证';
+      default:
+        return key;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,88 +131,151 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ),
           const SizedBox(height: 16),
-          Center(
-            child: Text(
-              '智能故事相册',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+          FutureBuilder<AuthUser?>(
+            future: _loadUser(),
+            builder: (context, snapshot) {
+              final user = snapshot.data;
+              return Column(
+                children: [
+                  Text(
+                    user?.username ?? '未登录用户',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    user == null ? '智能故事相册' : '已登录',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 32),
           _buildSettingsTile(
             context,
-            Icons.photo_library_outlined,
-            '相册管理',
-            '管理本地照片',
+            Icons.person_outline,
+            '账号信息',
+            '查看当前登录状态与详情',
+            onTap: _showAccountDetails,
           ),
           _buildSettingsTile(
             context,
-            Icons.cloud_outlined,
-            '云端服务',
-            '配置 LLM 服务',
-          ),
-          _buildSettingsTile(
-            context,
-            Icons.security_outlined,
-            '隐私设置',
-            '本地优先，保护隐私',
-          ),
-          _buildSettingsTile(
-            context,
-            Icons.science_outlined,
-            'MobileCLIP Benchmark',
-            '对比 ONNX 基线与未来 ncnn 接入',
+            Icons.smart_toy_outlined,
+            '本地 VLM 测试',
+            '使用手机本地 Qwen3.5-0.8B 生成 caption 或多图故事',
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
-                  builder: (context) => const MobileClipBenchmarkPage(),
+                  builder: (_) => const LocalVlmTestPage(),
                 ),
               );
             },
           ),
-          _buildSettingsTile(
-            context,
-            Icons.analytics_outlined,
-            'MobileCLIP Vector Probe',
-            '检查指定图片在手机端 ONNX / NCNN 的向量',
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (context) => const MobileClipVectorProbePage(),
-                ),
-              );
-            },
-          ),
-          CheckboxListTile(
-            value: _showInternvlLab,
-            title: const Text('显示 VLM 推理入口'),
-            subtitle: const Text('仅用于手机本地多模态推理，避免与正式功能冲突'),
-            controlAffinity: ListTileControlAffinity.trailing,
-            onChanged: (bool? value) {
-              setState(() {
-                _showInternvlLab = value ?? false;
-              });
-            },
-          ),
-          if (_showInternvlLab)
-            _buildSettingsTile(
-              context,
-              Icons.memory_outlined,
-              'VLM 推理',
-              '选择图片并自由提问，直接在手机上完成多模态推理',
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (BuildContext context) => const InternvlLabPage(),
+          _buildSettingsTile(context, Icons.developer_mode, "开发者设置", "谨慎调整内部设置，除非你很清楚自己在做什么！", onTap: () {
+            // 对比性能和提取示例向量两个功能 entry point，后续可以扩展更多开发者工具
+            showModalBottomSheet(
+              context: context,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              builder: (context) {                return SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '开发者工具',
+                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                        ),
+                        const SizedBox(height: 20),
+                        ListTile(
+                          leading: const Icon(Icons.analytics_outlined),
+                          title: const Text('MobileCLIP Benchmark'),
+                          subtitle: const Text('对比 ONNX 基线与未来 ncnn 接入'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {                            Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (context) => const MobileClipBenchmarkPage(),
+                              ),
+                            );
+                          },
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.science_outlined),
+                          title: const Text('MobileCLIP Vector Probe'),
+                          subtitle: const Text('检查示例图片在手机端 ONNX / NCNN 的向量'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {                            Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (context) => const MobileClipVectorProbePage(),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
                   ),
-                );
-              },
-            ),
-          _buildSettingsTile(
-            context,
-            Icons.info_outline,
-            '关于',
-            '版本 1.0.0',
+                );              },
+             );
+      
+
+          }),
+          // _buildSettingsTile(
+          //   context,
+          //   Icons.photo_library_outlined,
+          //   '相册管理',
+          //   '管理本地照片',
+          // ),
+          // _buildSettingsTile(
+          //   context,
+          //   Icons.cloud_outlined,
+          //   '云端服务',
+          //   '配置 LLM 服务',
+          // ),
+          // _buildSettingsTile(
+          //   context,
+          //   Icons.security_outlined,
+          //   '隐私设置',
+          //   '本地优先，保护隐私',
+          // ),
+          // _buildSettingsTile(
+          //   context,
+          //   Icons.science_outlined,
+          //   'MobileCLIP Benchmark',
+          //   '对比 ONNX 基线与未来 ncnn 接入',
+          //   onTap: () {
+          //     Navigator.of(context).push(
+          //       MaterialPageRoute<void>(
+          //         builder: (context) => const MobileClipBenchmarkPage(),
+          //       ),
+          //     );
+          //   },
+          // ),
+          // _buildSettingsTile(
+          //   context,
+          //   Icons.analytics_outlined,
+          //   'MobileCLIP Vector Probe',
+          //   '检查指定图片在手机端 ONNX / NCNN 的向量',
+          //   onTap: () {
+          //     Navigator.of(context).push(
+          //       MaterialPageRoute<void>(
+          //         builder: (context) => const MobileClipVectorProbePage(),
+          //       ),
+          //     );
+          //   },
+          // ),
+          _buildSettingsTile(context, Icons.info_outline, '关于', '版本 1.0.0'),
+          const Divider(height: 32),
+          ListTile(
+            leading: const Icon(Icons.logout, color: Colors.redAccent),
+            title: const Text('退出登录', style: TextStyle(color: Colors.redAccent)),
+            subtitle: const Text('从当前设备登出账号'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _signOut,
           ),
         ],
       ),
@@ -129,8 +288,6 @@ class _ProfilePageState extends State<ProfilePage> {
     String title,
     String subtitle, {
     VoidCallback? onTap,
-    {VoidCallback? onTap,
-    }
   }) {
     return ListTile(
       leading: Icon(icon),

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../service/ai_service.dart';
+import '../service/album_refresh_service.dart';
 import 'pages/home_page.dart'; // 🌟 导入刚才新写的首页
 import 'pages/album_page.dart';
 import 'pages/create_page.dart';
@@ -27,7 +29,12 @@ class _WidgetTreeState extends State<WidgetTree> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _pages[_currentIndex],
+      body: Stack(
+        children: [
+          _pages[_currentIndex],
+          _buildTopProgressOverlay(),
+        ],
+      ),
       extendBody: true,
       resizeToAvoidBottomInset: false,
 
@@ -101,6 +108,36 @@ class _WidgetTreeState extends State<WidgetTree> {
     );
   }
 
+  Widget _buildTopProgressOverlay() {
+    return ValueListenableBuilder<AlbumRefreshProgress>(
+      valueListenable: AlbumRefreshService().progressListenable,
+      builder: (context, refreshProgress, _) {
+        return ValueListenableBuilder<AIAnalysisProgress>(
+          valueListenable: AIService().progressListenable,
+          builder: (context, aiProgress, child) {
+            if (refreshProgress.isVisible) {
+              return _TopProgressBanner(
+                key: const ValueKey<String>('album-refresh-progress'),
+                title: refreshProgress.title,
+                message: refreshProgress.message,
+                progress: refreshProgress.progress,
+              );
+            }
+            if (_currentIndex == 1 || !aiProgress.isVisible) {
+              return const SizedBox.shrink();
+            }
+            return _TopProgressBanner(
+              key: const ValueKey<String>('global-ai-progress'),
+              title: '后台 AI 正在继续处理',
+              message: aiProgress.currentStep,
+              progress: aiProgress.fraction,
+            );
+          },
+        );
+      },
+    );
+  }
+
   // 🌟 底部导航栏子项的统一构建方法
   Widget _buildNavItem(
     IconData icon,
@@ -137,6 +174,69 @@ class _WidgetTreeState extends State<WidgetTree> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _TopProgressBanner extends StatelessWidget {
+  const _TopProgressBanner({
+    super.key,
+    required this.title,
+    required this.message,
+    required this.progress,
+  });
+
+  final String title;
+  final String message;
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: SafeArea(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: Container(
+            width: double.infinity,
+            margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: const [
+                BoxShadow(
+                  blurRadius: 14,
+                  offset: Offset(0, 4),
+                  color: Color(0x22000000),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  message,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                ),
+                const SizedBox(height: 10),
+                LinearProgressIndicator(
+                  value: progress.clamp(0, 1),
+                  minHeight: 6,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -6,6 +6,7 @@ import 'package:isar/isar.dart';
 
 import '../models/entity/photo_entity.dart';
 import '../models/theme_cluster_models.dart';
+import '../utils/ocr_policy.dart';
 import '../utils/theme_subclustering.dart';
 import 'mobileclip_vision_service.dart';
 import 'photo_service.dart';
@@ -449,7 +450,7 @@ class ThemeClusterService {
 
   Future<List<PhotoEntity>> _loadPhotos() async {
     if (_photosLoader != null) {
-      return _photosLoader!();
+      return _photosLoader();
     }
     return PhotoService().isar.collection<PhotoEntity>().where().findAll();
   }
@@ -467,7 +468,7 @@ class ThemeClusterService {
   }
   ) async {
     if (_embeddingPreparer != null) {
-      return _embeddingPreparer!(photos);
+      return _embeddingPreparer(photos);
     }
 
     final cached = <int, List<double>>{};
@@ -636,7 +637,7 @@ class ThemeClusterService {
 
   Future<Map<String, List<double>>> _buildThemePrototypeVectors() async {
     if (_prototypeBuilder != null) {
-      return _prototypeBuilder!();
+      return _prototypeBuilder();
     }
 
     await _semanticService.warmUp();
@@ -719,7 +720,8 @@ class ThemeClusterService {
       }
     }
 
-    if (definition.id == 'books' && (photo.ocrTags?.isNotEmpty ?? false)) {
+    if (definition.id == 'books' &&
+        OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]).isNotEmpty) {
       score += 0.04;
     }
 
@@ -746,10 +748,10 @@ class ThemeClusterService {
     for (final tag in photo.aiTags ?? const <String>[]) {
       addText(tag);
     }
-    for (final tag in photo.ocrTags ?? const <String>[]) {
+    for (final tag in OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[])) {
       addText(tag);
     }
-    addText(photo.ocrText);
+    addText(OcrPolicy.effectiveText(photo.ocrText));
     addText(photo.locationName);
     addText(photo.district);
     addText(photo.city);

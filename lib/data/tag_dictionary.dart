@@ -4,9 +4,7 @@
 /// 需要喂给语义服务时请使用 [memoriaMasterTaxonomyPromptToLabel]。
 const Map<String, String> memoriaMasterTaxonomy = {
   // 人物与群体 (People & Portraits)
-  '人物自拍': 'a selfie photo of a single person, close up portrait looking at the camera',
-  '合影留念': 'a group photo of multiple people, friends or family smiling together',
-  '婴幼儿/儿童': 'a photo of a cute baby, toddler or children playing',
+  '人物': 'a photo of people, portraits, selfies, couples, families or group memories',
 
   // 物体与特写 (Objects & Close-ups)
   '美食饮品': 'a delicious close-up photo of food, meal, dessert, coffee or drink in a restaurant',
@@ -14,12 +12,11 @@ const Map<String, String> memoriaMasterTaxonomy = {
   '花卉/植物': 'a photo of beautiful flowers, leaves, trees or vibrant indoor plants',
   '交通工具': 'a photo of a vehicle, car, bus, train, bicycle, motorcycle or airplane',
   '数码/电子产品': 'a photo of gadgets, smartphone, computer screen, camera or electronics',
+  '手工': 'a photo of a handmade craft, diy project or handicraft item',
 
   // 场景与环境 (Scenes & Environments)
   '自然风光': 'a beautiful nature landscape photo, mountains, lakes, or green forests',
   '城市街景': 'a photo of a city street, tall buildings, road or urban landscape',
-  '室内建筑': 'a photo of indoor architecture, room interior, furniture or building inside',
-  '游乐场/主题乐园': 'a photo of an amusement park, theme park, roller coaster, ferris wheel or playground',
   '旅游景点': 'a photo of a famous tourist attraction, historic site, monument or scenic spot',
   '演出/表演': 'a photo of a stage performance, concert, exhibition, museum or theater',
   '运动/户外活动': 'a photo of people playing sports, gym, running, or doing outdoor activities',

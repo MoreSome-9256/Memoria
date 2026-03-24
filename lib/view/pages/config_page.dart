@@ -7,11 +7,10 @@ import '../../models/entity/event_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/entity/story_entity.dart';
 import '../../service/photo_service.dart';
-import '../../service/story_service.dart';
 import '../../service/llm_service.dart';
+import '../../utils/ocr_policy.dart';
 import 'story_result_page.dart';
 import 'package:file_picker/file_picker.dart'; // 🌟 新增
-import 'package:path/path.dart' as p;
 import '../../service/music_service.dart';
 
 // 🌟 新增：视频长宽比枚举
@@ -65,11 +64,12 @@ class _ConfigPageState extends State<ConfigPage> {
     _selectedSubtitle = widget.selectedTheme.subtitle;
     _manualCaptionsController = TextEditingController();
   }
+
   // 🌟 新增：拣选音乐的方法
   Future<void> _pickMusic() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['mp3', 'wav', 'aac', 'm4a', 'flac','ogg'],
+      allowedExtensions: ['mp3', 'wav', 'aac', 'm4a', 'flac', 'ogg'],
       allowMultiple: false,
     );
 
@@ -90,10 +90,11 @@ class _ConfigPageState extends State<ConfigPage> {
 
   Future<void> _generateStory() async {
     // 校验：如果选择了手动导入但没选文件
-    if (_selectedMusicSource == MusicSource.manualImport && _customMusicPath == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先选择一段本地音乐'))
-      );
+    if (_selectedMusicSource == MusicSource.manualImport &&
+        _customMusicPath == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先选择一段本地音乐')));
       return;
     }
     if (_themeController.text.trim().isEmpty) {
@@ -175,6 +176,24 @@ class _ConfigPageState extends State<ConfigPage> {
         }
       }
       // ==========================================
+      // 🌟 平台名称转换 (供最终发布页文案生成使用)
+      // ==========================================
+      String platformName = '小红书'; // 默认值
+      switch (_selectedPlatform) {
+        case PublishingPlatform.xiaohongshu:
+          platformName = '小红书';
+          break;
+        case PublishingPlatform.moments:
+          platformName = '朋友圈';
+          break;
+        case PublishingPlatform.bilibili:
+          platformName = 'B站';
+          break;
+        case PublishingPlatform.tiktok:
+          platformName = '抖音';
+          break;
+      }
+      // ==========================================
       // 🌟 第一步：呼叫 VLM 接口生成剧本大纲
       // ==========================================
       setState(() {
@@ -211,6 +230,8 @@ class _ConfigPageState extends State<ConfigPage> {
         ..photoCount = selectedAssetIds.length
         ..isLlmGenerated = false
         // ⚠️ 最最最关键的 content：必须带有 ![img](x) 占位符，否则 UI 无法切图！
+        ..targetPlatform =
+            platformName // 👈 🌟 核心新增：把平台写进数据库！
         ..content =
             '''
 测试
@@ -222,7 +243,7 @@ Sandal Leap
 ![img](1)
 '''
                 .trim();
-      
+
       // ==========================================
       // 🌟 第二步：根据剧本，提炼视频台词 (Captions)
       // ==========================================
@@ -238,17 +259,22 @@ Sandal Leap
         List<String> styleTags = [_selectedSubtitle ?? '治愈风', '小红书感'];
 
         // ==========================================
-        // 🌟 核心提取：把你队友打好的 Tag 揉成一句话送给 LLM
+        // 🌟 核心提取：把打好的 Tag 揉成一句话送给 LLM
         // ==========================================
         List<String> photoDescriptions = photoEntities.map((p) {
           // 提取图片描述
           String desc = p.aiCaption?.trim() ?? "未知画面元素";
 
           // 如果有 OCR 文本线索，也一并塞进去
-          if (p.ocrTags != null && p.ocrTags!.isNotEmpty) {
-            desc += " (画面包含文字: ${p.ocrTags!.take(3).join('，')})";
-          } else if (p.ocrText != null && p.ocrText!.trim().isNotEmpty) {
-            desc += " (画面包含文字: ${p.ocrText!.trim()})";
+          final ocrTags = OcrPolicy.effectiveTags(
+            p.ocrTags ?? const <String>[],
+            maxTags: 3,
+          );
+          final ocrText = OcrPolicy.effectiveText(p.ocrText);
+          if (ocrTags.isNotEmpty) {
+            desc += " (画面包含文字: ${ocrTags.join('，')})";
+          } else if (ocrText.isNotEmpty) {
+            desc += " (画面包含文字: $ocrText)";
           }
           return desc;
         }).toList();
@@ -298,14 +324,19 @@ Sandal Leap
               storyEntity: story,
               photos: photoEntities,
               // 🌟 记得给 ResultPage 传过去音乐路径，让它知道播哪首歌
-              customMusicPath: _selectedMusicSource == MusicSource.manualImport ? _customMusicPath : null,
+              customMusicPath: _selectedMusicSource == MusicSource.manualImport
+                  ? _customMusicPath
+                  : null,
               // 🌟 新增：把刚才拿到的云端节拍数据一起传过去！
               dynamicBeatData: dynamicBeatData,
               captions: finalCaptions,
+              isHorizontal: _selectedAspectRatio == VideoAspectRatio.horizontal,
+              targetPlatform: platformName,
             ),
           ),
         );
       } else {
+        // 🌟 修复点 2：补回被不小心删掉的失败提示兜底
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('故事生成失败，请重试')));
@@ -471,40 +502,44 @@ Sandal Leap
                 label: const Text('✨ 小红书'),
                 selected: _selectedPlatform == PublishingPlatform.xiaohongshu,
                 onSelected: (selected) {
-                  if (selected)
+                  if (selected) {
                     setState(
                       () => _selectedPlatform = PublishingPlatform.xiaohongshu,
                     );
+                  }
                 },
               ),
               ChoiceChip(
                 label: const Text('💬 朋友圈'),
                 selected: _selectedPlatform == PublishingPlatform.moments,
                 onSelected: (selected) {
-                  if (selected)
+                  if (selected) {
                     setState(
                       () => _selectedPlatform = PublishingPlatform.moments,
                     );
+                  }
                 },
               ),
               ChoiceChip(
                 label: const Text('📺 B站'),
                 selected: _selectedPlatform == PublishingPlatform.bilibili,
                 onSelected: (selected) {
-                  if (selected)
+                  if (selected) {
                     setState(
                       () => _selectedPlatform = PublishingPlatform.bilibili,
                     );
+                  }
                 },
               ),
               ChoiceChip(
                 label: const Text('🔥 短视频'),
                 selected: _selectedPlatform == PublishingPlatform.tiktok,
                 onSelected: (selected) {
-                  if (selected)
+                  if (selected) {
                     setState(
                       () => _selectedPlatform = PublishingPlatform.tiktok,
                     );
+                  }
                 },
               ),
             ],
@@ -523,7 +558,7 @@ Sandal Leap
             ),
             subtitle: const Text('AI将根据剧本为每张照片提炼一句专属短字幕'),
             value: _enableAutoCaptions,
-            activeColor: Colors.pinkAccent,
+            activeThumbColor: Colors.pinkAccent,
             onChanged: (val) {
               setState(() {
                 _enableAutoCaptions = val;
@@ -582,6 +617,7 @@ Sandal Leap
       ),
     );
   }
+
   Widget _buildMusicSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

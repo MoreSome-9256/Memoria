@@ -244,8 +244,9 @@ class _SubtitleEffectLayerState extends State<SubtitleEffectLayer> {
           runSpacing: 12.0,
           children: chars
               .map((char) {
-                if (char.trim().isEmpty)
+                if (char.trim().isEmpty) {
                   return SizedBox(width: widget.fontSize * 0.5);
+                }
                 return Container(
                   padding: EdgeInsets.all(widget.fontSize * 0.2),
                   decoration: BoxDecoration(
@@ -286,8 +287,9 @@ class _SubtitleEffectLayerState extends State<SubtitleEffectLayer> {
                 int i = entry.key;
                 String char = entry.value;
 
-                if (char.trim().isEmpty)
+                if (char.trim().isEmpty) {
                   return SizedBox(width: widget.fontSize * 0.5);
+                }
 
                 // 1. 计算错落的 Y 轴位移 (偶数向上，奇数向下)
                 final double staggerY =

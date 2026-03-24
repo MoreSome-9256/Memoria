@@ -5,8 +5,8 @@ import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_album/service/amplify_cognito_config.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
+import 'package:photo_album/service/mobileclip_tag_service.dart';
 import 'package:photo_album/service/photo_service.dart';
-import 'package:photo_album/service/ncnn_mobileclip_native_service.dart';
 import 'package:photo_album/utils/ocr_policy.dart';
 import 'package:photo_album/view/pages/mobileclip_vector_probe_page.dart';
 import 'view/pages/welcome_page.dart';
@@ -31,12 +31,6 @@ void main() async {
     '(use --dart-define=ENABLE_ML_KIT_OCR=true to enable)',
   );
 
-  unawaited(
-    NcnnMobileClipNativeService().ensureModelInitialized().catchError((error) {
-      debugPrint('NCNN init skipped at startup: $error');
-    }),
-  );
-
   runApp(const MyApp());
 }
 
@@ -57,8 +51,21 @@ Future<void> _configureAmplifyAuth() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
+  static bool _mobileClipWarmUpScheduled = false;
+
+  void _scheduleStartupWarmUp() {
+    if (_mobileClipWarmUpScheduled) {
+      return;
+    }
+    _mobileClipWarmUpScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      MobileClipTagService().scheduleWarmUpAtAppStart();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    _scheduleStartupWarmUp();
     return MaterialApp(
       title: '智能影记',
       debugShowCheckedModeBanner: false,

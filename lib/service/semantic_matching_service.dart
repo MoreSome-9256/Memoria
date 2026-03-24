@@ -34,6 +34,7 @@ class SemanticMatchingService {
   final Map<String, List<double>> _textVectorCache = {};
 
   bool _isReady = false;
+  Future<void>? _warmUpFuture;
 
   // ---------------------------------------------------------------------------
   // Lifecycle
@@ -43,11 +44,22 @@ class SemanticMatchingService {
   /// Safe to call multiple times — subsequent calls return immediately.
   Future<void> warmUp() async {
     if (_isReady) return;
-    await Future.wait([
-      _tokenizer.warmUp(),
-      _textService.warmUp(),
-    ]);
-    _isReady = true;
+    if (_warmUpFuture != null) {
+      await _warmUpFuture;
+      return;
+    }
+    _warmUpFuture = Future<void>(() async {
+      await Future.wait([
+        _tokenizer.warmUp(),
+        _textService.warmUp(),
+      ]);
+      _isReady = true;
+    });
+    try {
+      await _warmUpFuture;
+    } finally {
+      _warmUpFuture = null;
+    }
   }
 
   /// Releases the ONNX session and clears the vector cache.
@@ -55,6 +67,7 @@ class SemanticMatchingService {
     await _textService.dispose();
     _textVectorCache.clear();
     _isReady = false;
+    _warmUpFuture = null;
   }
 
   /// Clears only the in-memory text vector cache without tearing down the

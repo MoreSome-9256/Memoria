@@ -31,4 +31,4 @@ Write-Host "Using profile: $Profile"
 Write-Host "Using device : $DeviceId"
 
 # launch the app on the device
-flutter run -d $DeviceId --dart-define-from-file=$profileFile
+flutter run -d $DeviceId --no-enable-impeller --dart-define-from-file=$profileFile

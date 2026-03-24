@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_vision_service.dart';
@@ -102,6 +103,24 @@ class MobileClipEmbeddingService {
       case MobileClipBackend.ncnn:
         final bytes = await imageFile.readAsBytes();
         return _ncnnService.encodeImageBytes(bytes);
+    }
+  }
+
+  Future<List<double>> embedImageBytesWithBackend(
+    Uint8List imageBytes,
+    MobileClipBackend backend,
+  ) async {
+    if (imageBytes.isEmpty) {
+      throw ArgumentError('图片字节为空');
+    }
+
+    switch (backend) {
+      case MobileClipBackend.mobileclip2Onnx:
+        return _mobileclip2OnnxService.embedImageBytes(imageBytes);
+      case MobileClipBackend.onnx:
+        return _legacyOnnxService.embedImageBytes(imageBytes);
+      case MobileClipBackend.ncnn:
+        return _ncnnService.encodeImageBytes(imageBytes);
     }
   }
 }

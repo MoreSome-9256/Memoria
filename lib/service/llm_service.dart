@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/entity/event_entity.dart';
 
 /// LLM 服务 - 通过 OpenAI 兼容第三方中转站生成内容
@@ -13,11 +15,17 @@ class LLMService {
     String? baseUrl,
     String? apiPath,
     String? modelName,
+    String? replicateApiToken,
     Dio? dio,
   }) : _apiKey = apiKey ?? _defaultApiKey,
        _baseUrl = baseUrl ?? _defaultBaseUrl,
        _apiPath = apiPath ?? _defaultApiPath,
        _modelName = modelName ?? _defaultModelName,
+       _replicateApiToken = replicateApiToken ?? _defaultReplicateApiToken,
+       _visionModelName =
+         _defaultVisionModelName.isEmpty
+           ? (modelName ?? _defaultModelName)
+           : _defaultVisionModelName,
        _dio =
            dio ??
            Dio(
@@ -46,6 +54,7 @@ class LLMService {
     required String baseUrl,
     String apiPath = '/chat/completions',
     String modelName = 'deepseek-ai/DeepSeek-V3.2',
+    String? replicateApiToken,
     Dio? dio,
   }) {
     return LLMService._internal(
@@ -53,6 +62,7 @@ class LLMService {
       baseUrl: baseUrl,
       apiPath: apiPath,
       modelName: modelName,
+      replicateApiToken: replicateApiToken,
       dio: dio,
     );
   }
@@ -78,16 +88,20 @@ class LLMService {
     'LLM_VISION_MODEL',
     defaultValue: '',
   );
+  static const String _defaultReplicateApiToken = String.fromEnvironment(
+    'REPLICATE_API_TOKEN',
+    defaultValue: '',
+  );
 
   final String _apiKey;
   final String _baseUrl;
   final String _apiPath;
   final String _modelName;
+  final String _replicateApiToken;
+  final String _visionModelName;
   final Dio _dio;
-
-  String get _visionModelName => _defaultVisionModelName.trim().isEmpty
-      ? _modelName
-      : _defaultVisionModelName.trim();
+  static const String _defaultTextSystemPrompt =
+      '你是一个中文摄影故事与标题助手。只能基于输入信息生成，不要编造未提供事实。';
 
   /// 🎨 核心方法：生成创意标题
   ///
@@ -277,6 +291,13 @@ class LLMService {
 
   bool get isVisionApiConfigured => isApiKeyConfigured;
 
+  Future<String?> completeText({
+    required String prompt,
+    String systemPrompt = _defaultTextSystemPrompt,
+  }) {
+    return _chatCompletion(prompt, systemPrompt: systemPrompt);
+  }
+
   Future<String?> generatePhotoCaption({
     required Uint8List imageBytes,
     required String mimeType,
@@ -331,7 +352,10 @@ class LLMService {
     }
   }
 
-  Future<String?> _chatCompletion(String prompt) async {
+  Future<String?> _chatCompletion(
+    String prompt, {
+    String systemPrompt = _defaultTextSystemPrompt,
+  }) async {
     final baseUrl = _baseUrl.endsWith('/')
         ? _baseUrl.substring(0, _baseUrl.length - 1)
         : _baseUrl;
@@ -339,15 +363,21 @@ class LLMService {
     final isChatCompletions = apiPath.contains('/chat/completions');
     final requestBody = _buildRequestBody(
       prompt: prompt,
+      systemPrompt: systemPrompt,
       useChatCompletions: isChatCompletions,
     );
 
     // print('🌐 [LLM REQUEST] POST $baseUrl$apiPath');
     // print('🧾 [LLM REQUEST BODY] ${jsonEncode(requestBody)}');
 
+    final headers = <String, String>{};
+    if (_apiKey.trim().isNotEmpty) {
+      headers['Authorization'] = 'Bearer $_apiKey';
+    }
+
     final response = await _dio.post(
       '$baseUrl$apiPath',
-      options: Options(headers: {'Authorization': 'Bearer $_apiKey'}),
+      options: Options(headers: headers.isEmpty ? null : headers),
       data: requestBody,
     );
 
@@ -466,16 +496,15 @@ class LLMService {
 
   Map<String, dynamic> _buildRequestBody({
     required String prompt,
+    required String systemPrompt,
     required bool useChatCompletions,
   }) {
-    const systemText = '你是一个中文摄影故事与标题助手。只能基于输入信息生成，不要编造未提供事实。';
-
     if (useChatCompletions) {
       return {
         'model': _modelName,
         // chat/completions 风格
         'messages': [
-          {'role': 'system', 'content': systemText},
+          {'role': 'system', 'content': systemPrompt},
           {'role': 'user', 'content': prompt},
         ],
       };
@@ -488,7 +517,7 @@ class LLMService {
         {
           'role': 'user',
           'content': [
-            {'type': 'input_text', 'text': systemText},
+            {'type': 'input_text', 'text': systemPrompt},
             {'type': 'input_text', 'text': prompt},
           ],
         },
@@ -852,5 +881,137 @@ $framesInfo
       print("❌ 文案生成失败: $e");
       return '生成失败，请自己写点什么吧~';
     }
+  }
+  // =========================================================
+  // 🎵 新增：AI 音乐生成模块 (MusicGen)
+  // =========================================================
+
+  /// 🎵 1. 根据照片风格和故事，提取 MusicGen 专属英文提示词
+  Future<String> generateMusicPrompt({
+    required List<String> photoTags,
+    required String storyTheme,
+  }) async {
+    final prompt =
+        '''
+你现在是一个专业的电影配乐师。我有一组照片，主题是 "$storyTheme"。
+照片包含的元素有：${photoTags.join(', ')}。
+请为我写一段用于 Meta MusicGen AI 生成背景音乐的英文提示词（Prompt）。
+
+要求：
+1. 必须是纯英文，不要包含任何中文和多余的解释。
+2. 包含具体的音乐流派（如 Lo-Fi, Cinematic, Acoustic Pop）。
+3. 包含情绪关键词（如 Upbeat, Melancholy, Chill）。
+4. 包含核心乐器（如 Bright Piano, Heavy Bass, Acoustic Guitar）。
+5. 包含大致的 BPM（如 90 bpm, 120 bpm）。
+6. 【极其重要】必须在提示词的开头加上 "Seamless loop, video game background loop"，确保生成的音乐没有明显的开头淡入和结尾淡出，首尾可以完美无缝衔接。
+
+示例输出：
+Seamless loop, video game background loop, upbeat acoustic pop, sunny travel vlog vibe, 120 bpm.
+''';
+
+    try {
+      print("🚀 [LLM] 正在撰写专属音乐提示词...");
+      final result = await generateBlogText(prompt);
+      final cleanPrompt =
+          (result ?? "Upbeat cinematic acoustic pop, warm vibe, 100 bpm")
+              .trim();
+      print("🎵 [LLM] 生成的音乐配方: $cleanPrompt");
+      return cleanPrompt;
+    } catch (e) {
+      print("❌ 音乐提示词生成失败，使用兜底提示词: $e");
+      return "Chill lofi hip hop beat, warm piano, relaxed vlog vibe, 90 bpm";
+    }
+  }
+
+  /// 🎵 2. 传入英文 Prompt，调用 Replicate MusicGen 生成并下载 MP3
+  Future<String?> generateAndDownloadMusic(
+    String prompt, {
+    int duration = 12,
+  }) async {
+    if (_replicateApiToken.isEmpty) {
+      print("⚠️ 警告：未配置 REPLICATE_API_TOKEN，已跳过 AI 音乐生成！");
+      return null;
+    }
+
+    try {
+      print("☁️ [MusicGen] 开始生成 ${duration}s 的专属配乐...");
+
+      // 1. 退回最稳妥的 v1/predictions 经典路由，使用绝对不会 404 的固定版本号
+      // 1. 发起生成任务请求 (使用你截图里发现的最新版本)
+      final response = await _dio.post(
+        'https://api.replicate.com/v1/predictions',
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer $_replicateApiToken',
+            'Content-Type': 'application/json',
+          },
+        ),
+        data: {
+          // 🌟 从你截图里提取出的完整最新版本号！
+          "version":
+              "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb",
+          "input": {
+            "prompt": prompt,
+            "duration": duration,
+            // 🌟 既然是最新版，直接把截图里的高音质参数全拉满！
+            "model_version": "stereo-large", // 启用大模型立体声
+            "output_format": "mp3", // 直接输出 mp3 格式
+            "normalization_strategy": "peak", // 峰值归一化，防止爆音
+          },
+        },
+      );
+
+      if (response.statusCode != 201) {
+        print('❌ MusicGen 请求未成功创建: ${response.data}');
+        return null;
+      }
+
+      // 2. 轮询等待生成完成
+      final predictionUrl = response.data['urls']['get'];
+      String? audioUrl;
+
+      print("⏳ [MusicGen] 音乐生成中，正在轮询等待结果...");
+      while (true) {
+        await Future.delayed(const Duration(seconds: 4));
+
+        final pollResponse = await _dio.get(
+          predictionUrl,
+          options: Options(
+            headers: {'Authorization': 'Bearer $_replicateApiToken'},
+          ),
+        );
+
+        final pollData = pollResponse.data;
+        final status = pollData['status'];
+
+        if (status == 'succeeded') {
+          audioUrl = pollData['output'];
+          break;
+        } else if (status == 'failed' || status == 'canceled') {
+          print('❌ MusicGen 生成被服务器判定为失败: $pollData');
+          return null;
+        }
+      }
+
+      // 3. 将生成的 MP3 下载到手机沙盒目录
+      if (audioUrl != null) {
+        print("📥 [MusicGen] 生成完毕！开始下载: $audioUrl");
+        final dir = await getTemporaryDirectory();
+        final filePath =
+            '${dir.path}/ai_bgm_${DateTime.now().millisecondsSinceEpoch}.mp3';
+
+        await _dio.download(audioUrl, filePath);
+
+        print("✅ [MusicGen] 专属 BGM 下载成功，路径: $filePath");
+        return filePath;
+      }
+    } on DioException catch (e) {
+      print("❌ [MusicGen] 网络请求被拒！");
+      // 🌟 核心排雷雷达：如果再报 422，这里会精准打印出到底哪个参数写错了！
+      print("😡 服务器详细原话: ${e.response?.data}");
+    } catch (e) {
+      print("❌ [MusicGen] 代码运行崩溃: $e");
+    }
+    return null;
   }
 }

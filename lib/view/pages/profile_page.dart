@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 
+import 'local_vlm_test_page.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
 
@@ -88,7 +89,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         ],
                       ),
                     );
-                  }).toList(),
+                  }),
                 const SizedBox(height: 20),
               ],
             ),
@@ -118,7 +119,7 @@ class _ProfilePageState extends State<ProfilePage> {
     return Scaffold(
       appBar: AppBar(title: const Text('我的'), elevation: 0),
       body: ListView(
-        children: [
+        children: <Widget>[
           const SizedBox(height: 20),
           CircleAvatar(
             radius: 50,
@@ -156,6 +157,19 @@ class _ProfilePageState extends State<ProfilePage> {
             '账号信息',
             '查看当前登录状态与详情',
             onTap: _showAccountDetails,
+          ),
+          _buildSettingsTile(
+            context,
+            Icons.smart_toy_outlined,
+            '本地 VLM 测试',
+            '使用手机本地 Qwen3.5-0.8B 生成 caption 或多图故事',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const LocalVlmTestPage(),
+                ),
+              );
+            },
           ),
           _buildSettingsTile(context, Icons.developer_mode, "开发者设置", "谨慎调整内部设置，除非你很清楚自己在做什么！", onTap: () {
             // 对比性能和提取示例向量两个功能 entry point，后续可以扩展更多开发者工具

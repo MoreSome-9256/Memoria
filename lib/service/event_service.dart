@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:isar/isar.dart';
+import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../utils/ocr_policy.dart';
@@ -22,6 +23,7 @@ class EventService {
     '字幕',
     '房主',
     '采购员',
+    memoriaOtherLabel,
   };
 
   static const Set<String> _textSceneTags = <String>{
@@ -591,7 +593,10 @@ class EventService {
 
   // 🧠 核心方法：增量刷新事件的智能信息（混合标题生成）
   // 此方法由 AIService 在分析完一批照片后调用
-  Future<void> refreshEventSmartInfo(List<int> eventIds) async {
+  Future<void> refreshEventSmartInfo(
+    List<int> eventIds, {
+    bool allowLlm = true,
+  }) async {
     if (eventIds.isEmpty) return;
 
     final isar = PhotoService().isar;
@@ -634,7 +639,7 @@ class EventService {
         List<String> generatedTitles;
         bool shouldUseLLM = false;
 
-        if (progress >= 100) {
+        if (allowLlm && progress >= 100) {
           // ✅ 分析完成：尝试使用 LLM
           shouldUseLLM = true;
 
@@ -645,65 +650,61 @@ class EventService {
           }
         }
 
-        await isar.writeTxn(() async {
-          final e = await isar.collection<EventEntity>().get(eventId);
-          if (e != null) {
-            // 更新基础 AI 数据
-            e.joyScore = stats['avgJoyScore'];
-            e.analyzedPhotoCount = stats['analyzedCount'] as int;
-            e.coverPhotoId = stats['bestPhotoId'] as int?;
-            e.tags = _extractTopTags(stats, 5);
-
-            if (shouldUseLLM) {
-              // 📡 Phase 2: LLM 生成创意标题
-              try {
-                final topTags = _extractTopTags(stats, 5);
-
-                // 检查是否使用模拟模式（如果 API Key 未配置）
-                final llmService = LLMService();
-                if (llmService.isApiKeyConfigured) {
-                  generatedTitles = await llmService.generateCreativeTitles(
-                    e,
-                    topTags,
-                  );
-                } else {
-                  print("  ⚠️ LLM API Key 未配置，使用模拟模式");
-                  generatedTitles = await llmService.generateCreativeTitlesMock(
-                    e,
-                    topTags,
-                  );
-                }
-
-                e.aiThemes = generatedTitles;
-                e.isLlmGenerated = true;
-                print("  🎨 [LLM] 生成 ${generatedTitles.length} 个创意标题");
-              } catch (llmError) {
-                print("  ❌ LLM 生成失败: $llmError，回退到本地规则");
-                // LLM 失败，回退到本地规则
-                generatedTitles = [_generateLocalTitle(e, stats)];
-                e.aiThemes = generatedTitles;
-                e.isLlmGenerated = false;
-              }
+        final topTags = _extractTopTags(stats, 5);
+        var isLlmGenerated = false;
+        if (shouldUseLLM) {
+          // 📡 Phase 2: LLM 生成创意标题
+          try {
+            final llmService = LLMService();
+            if (llmService.isApiKeyConfigured) {
+              generatedTitles = await llmService.generateCreativeTitles(
+                event,
+                topTags,
+              );
             } else {
-              // 📋 Phase 1: 本地规则生成
-              generatedTitles = [_generateLocalTitle(e, stats)];
-              e.aiThemes = generatedTitles;
-              e.isLlmGenerated = false;
-              print(
-                "  🏠 [本地] 生成规则标题: ${generatedTitles.first} (进度: $progress%)",
+              print("  ⚠️ LLM API Key 未配置，使用模拟模式");
+              generatedTitles = await llmService.generateCreativeTitlesMock(
+                event,
+                topTags,
               );
             }
-
-            // 更新默认显示标题（使用第一个生成的标题）
-            if (e.aiThemes != null && e.aiThemes!.isNotEmpty) {
-              e.title = e.aiThemes!.first;
-            }
-
-            await isar.collection<EventEntity>().put(e);
-            print(
-              "  ✅ 事件 $eventId 已更新：封面=${e.coverPhotoId} 欢乐=${e.joyScore?.toStringAsFixed(2)} 进度=$progress%",
-            );
+            isLlmGenerated = true;
+            print("  🎨 [LLM] 生成 ${generatedTitles.length} 个创意标题");
+          } catch (llmError) {
+            print("  ❌ LLM 生成失败: $llmError，回退到本地规则");
+            generatedTitles = [_generateLocalTitle(event, stats)];
           }
+        } else {
+          // 📋 Phase 1: 本地规则生成
+          generatedTitles = [_generateLocalTitle(event, stats)];
+          print(
+            "  🏠 [本地] 生成规则标题: ${generatedTitles.first} (进度: $progress%)",
+          );
+        }
+
+        await isar.writeTxn(() async {
+          final e = await isar.collection<EventEntity>().get(eventId);
+          if (e == null) {
+            return;
+          }
+
+          // 更新基础 AI 数据
+          e.joyScore = stats['avgJoyScore'];
+          e.analyzedPhotoCount = stats['analyzedCount'] as int;
+          e.coverPhotoId = stats['bestPhotoId'] as int?;
+          e.tags = topTags;
+          e.aiThemes = generatedTitles;
+          e.isLlmGenerated = isLlmGenerated;
+
+          // 更新默认显示标题（使用第一个生成的标题）
+          if (generatedTitles.isNotEmpty) {
+            e.title = generatedTitles.first;
+          }
+
+          await isar.collection<EventEntity>().put(e);
+          print(
+            "  ✅ 事件 $eventId 已更新：封面=${e.coverPhotoId} 欢乐=${e.joyScore?.toStringAsFixed(2)} 进度=$progress%",
+          );
         });
       } catch (e) {
         print("  ❌ 刷新事件 $eventId 失败: $e");

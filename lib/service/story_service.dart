@@ -1,6 +1,7 @@
 import 'package:isar/isar.dart';
 import 'package:photo_manager/photo_manager.dart';
 
+import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/story_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
@@ -34,6 +35,10 @@ class StoryService {
     '黑板',
     '广告',
     '专题',
+  };
+
+  static const Set<String> _nonPromptTags = <String>{
+    memoriaOtherLabel,
   };
 
   /// 📝 核心方法：生成故事
@@ -214,7 +219,7 @@ class StoryService {
   List<String> _buildPromptTagsForPhoto(PhotoEntity photo) {
     final aiTags = TagSanitizer.sanitizeVisualTags(
       photo.aiTags ?? const <String>[],
-    );
+    ).where((tag) => !_nonPromptTags.contains(tag)).toList(growable: false);
     final ocrTags = OcrPolicy.effectiveTags(
       photo.ocrTags ?? const <String>[],
     ).where((tag) => !_looksLikeAsciiNoise(tag)).toList(growable: false);

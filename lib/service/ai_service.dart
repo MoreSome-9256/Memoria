@@ -1,13 +1,16 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 // import 'dart:math'; // ➕ 新增：用于生成随机的假数据
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:isar/isar.dart';
+import 'package:photo_manager/photo_manager.dart';
 import '../models/entity/photo_entity.dart';
 import '../utils/ai_score_helper.dart';
 import '../utils/tag_sanitizer.dart';
+import 'junk_photo_filter_service.dart';
 import 'photo_service.dart';
 import 'event_service.dart';
 import 'mobileclip_backend_preference_service.dart';
@@ -32,9 +35,14 @@ class AIService {
     '截图',
     '自拍',
   };
+  static const ThumbnailSize _mobileClipThumbnailSize = ThumbnailSize.square(384);
 
   final ValueNotifier<AIAnalysisProgress> _progressNotifier =
       ValueNotifier<AIAnalysisProgress>(AIAnalysisProgress.idle());
+  final ValueNotifier<JunkPhotoCleanupReport?> _junkCleanupReportNotifier =
+      ValueNotifier<JunkPhotoCleanupReport?>(null);
+  final JunkPhotoFilterService _junkPhotoFilterService =
+      JunkPhotoFilterService();
 
   bool _isAnalyzing = false;
   bool _pauseRequested = false;
@@ -43,6 +51,20 @@ class AIService {
 
   ValueListenable<AIAnalysisProgress> get progressListenable =>
       _progressNotifier;
+  ValueListenable<JunkPhotoCleanupReport?> get junkCleanupReportListenable =>
+      _junkCleanupReportNotifier;
+  bool get isAnalyzing => _isAnalyzing;
+
+  JunkPhotoCleanupReport? get latestJunkCleanupReport =>
+      _junkCleanupReportNotifier.value;
+
+  void replacePendingJunkCleanupReport(JunkPhotoCleanupReport? report) {
+    _junkCleanupReportNotifier.value = report;
+  }
+
+  void clearPendingJunkCleanupReport() {
+    replacePendingJunkCleanupReport(null);
+  }
 
   void pauseAnalysis() {
     if (!_isAnalyzing || _pauseRequested) {
@@ -125,14 +147,12 @@ class AIService {
     _pauseRequested = false;
     _stopRequested = false;
     _analysisCompleter = Completer<void>();
+    clearPendingJunkCleanupReport();
     final isar = PhotoService().isar;
     final mobileClipEmbeddingService = MobileClipEmbeddingService();
     final mobileClipTagService = MobileClipTagService();
     final photoCaptionService = PhotoCaptionService();
     final ocrService = OcrService();
-    final selectedBackend = await mobileClipEmbeddingService.getSelectedBackend();
-    await mobileClipEmbeddingService.warmUpBackend(selectedBackend);
-    await mobileClipTagService.warmUp();
 
     final pendingCount = await isar
         .collection<PhotoEntity>()
@@ -146,15 +166,31 @@ class AIService {
     if (targetTotal <= 0) {
       _progressNotifier.value = AIAnalysisProgress.idle();
       _isAnalyzing = false;
+      if (_analysisCompleter != null && !_analysisCompleter!.isCompleted) {
+        _analysisCompleter!.complete();
+      }
+      _analysisCompleter = null;
       return;
     }
 
+    final selectedBackend = await mobileClipEmbeddingService.getSelectedBackend();
     _progressNotifier.value = AIAnalysisProgress.running(
       total: targetTotal,
       completed: 0,
       failed: 0,
       currentStep: '准备开始 AI 打标 (${selectedBackend.label})',
     );
+
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    _progressNotifier.value = AIAnalysisProgress.running(
+      total: targetTotal,
+      completed: 0,
+      failed: 0,
+      currentStep: '正在预热 MobileCLIP 与标签向量缓存',
+    );
+    await mobileClipEmbeddingService.warmUpBackend(selectedBackend);
+    await mobileClipTagService.warmUp();
+    await _junkPhotoFilterService.warmUp();
 
     // 2. 初始化 ML Kit 人脸检测（视觉标签改由 MobileCLIP 统一生成）
     final FaceDetectorOptions faceOptions = FaceDetectorOptions(
@@ -168,6 +204,7 @@ class AIService {
     var remainingPhotos = maxPhotos;
     var failedCount = 0;
     var processedCount = 0;
+    final junkCandidates = <JunkPhotoCleanupCandidate>[];
 
     try {
       while (true) {
@@ -199,15 +236,25 @@ class AIService {
 
         debugPrint("🤖 开始 AI 视觉分析，本批次: ${photosToAnalyze.length} 张");
 
-        for (final photo in photosToAnalyze) {
+        Future<_PreparedAnalysisInput?>? preparedFuture = _prepareAnalysisInput(
+          photosToAnalyze.first,
+        );
+
+        for (var i = 0; i < photosToAnalyze.length; i++) {
+          final photo = photosToAnalyze[i];
           final shouldContinue = await _waitIfPaused();
           if (!shouldContinue || _stopRequested) {
             break;
           }
 
-          final file = File(photo.path);
+          final currentPreparedFuture =
+              preparedFuture ?? _prepareAnalysisInput(photo);
+          preparedFuture = i + 1 < photosToAnalyze.length
+              ? _prepareAnalysisInput(photosToAnalyze[i + 1])
+              : null;
+
           var didFail = false;
-          File? compressedTempFile;
+          File? analysisFile;
           _progressNotifier.value = AIAnalysisProgress.running(
             total: targetTotal,
             completed: processedCount,
@@ -216,7 +263,8 @@ class AIService {
           );
 
           try {
-            if (!file.existsSync()) {
+            final prepared = await currentPreparedFuture;
+            if (prepared == null) {
               await _markAsAnalyzed(
                 photo.id,
                 [],
@@ -232,58 +280,53 @@ class AIService {
               didFail = true;
               continue;
             }
-            // ==========================================
-            // 🌟 核心拦截网：在这里识别并放过截图！
-            // ==========================================
-            if (photo.isProbablyScreenshot) {
-              debugPrint("⏭️ 检测到截图，跳过 AI 视觉打标: ${photo.id}");
-              // 直接假装分析完了，随便塞个“截图”标签，其他全部塞空值
+
+            final embedding =
+                await mobileClipEmbeddingService.embedImageBytesWithBackend(
+                  prepared.mobileClipBytes,
+                  selectedBackend,
+                );
+
+            final junkDecision = await _junkPhotoFilterService.evaluatePhoto(
+              photo: photo,
+              imageEmbedding: embedding,
+            );
+            if (junkDecision.shouldFilter) {
               await _markAsAnalyzed(
                 photo.id,
-                ['截图'], // visualTags
-                const <double>[], // embedding (🌟 新增：空向量)
-                '', // caption (🌟 新增：空描述)
-                '', // ocrText
-                const <String>[], // ocrTags
-                0, // faceCount
-                0.0, // maxSmileProb
-                0.0, // joyScore
-                isar, // isar 实例
+                const <String>[JunkPhotoFilterService.junkCandidateTag],
+                embedding,
+                '',
+                '',
+                const <String>[],
+                0,
+                0.0,
+                0.0,
+                isar,
+              );
+              junkCandidates.add(
+                JunkPhotoCleanupCandidate(
+                  photoId: photo.id,
+                  assetId: photo.assetId,
+                  path: photo.path,
+                  timestamp: photo.timestamp,
+                  reasons: junkDecision.hits,
+                ),
               );
               if (photo.eventId != null) {
                 affectedEventIds.add(photo.eventId!);
               }
+              debugPrint(
+                '🧹 已标记低价值候选: ${photo.id} '
+                '(${junkDecision.hits.map((item) => item.label).join('、')})',
+              );
               totalAnalyzed++;
               if (remainingPhotos != null) {
                 remainingPhotos--;
               }
-              continue; // 🚀 直接触发 finally 块去更新进度条，并进入下一张照片！
+              continue;
             }
 
-            final tempDir = await getTemporaryDirectory();
-            final targetPath = '${tempDir.path}/temp_mlkit_${photo.id}.jpg';
-
-            // 🔧 压缩图片，防止 OOM
-            final result = await FlutterImageCompress.compressAndGetFile(
-              file.absolute.path,
-              targetPath,
-              minWidth: 1024,
-              minHeight: 1024,
-              quality: 80,
-            );
-
-            if (result == null) throw Exception("压缩失败");
-            compressedTempFile = File(result.path);
-
-            final embedding =
-                await mobileClipEmbeddingService.embedImageFileWithBackend(
-                  compressedTempFile,
-                  selectedBackend,
-                );
-
-            final inputImage = InputImage.fromFile(compressedTempFile);
-
-            // 📸 任务1：视觉标签识别（仅使用 MobileCLIP）
             final mobileClipTags = await mobileClipTagService.retrieveTags(
               embedding,
             );
@@ -291,12 +334,15 @@ class AIService {
               mobileClipTags,
             );
 
+            analysisFile = await _createAuxiliaryAnalysisFile(prepared.file, photo.id);
+            final inputImage = InputImage.fromFile(analysisFile);
+
             OcrResult ocrResult = OcrResult.empty();
             if (OcrService.shouldRunOcr(
               visualTags,
               aspectRatio: photo.aspectRatio,
             )) {
-              ocrResult = await ocrService.analyzeImageFile(compressedTempFile);
+              ocrResult = await ocrService.analyzeImageFile(analysisFile);
             }
 
             // 😊 任务2：情感分析
@@ -315,7 +361,7 @@ class AIService {
             );
 
             final caption = await photoCaptionService.generateCaption(
-              imageFile: compressedTempFile,
+              imageFile: analysisFile,
               visualTags: visualTags,
               ocrTags: ocrResult.tags,
               ocrText: ocrResult.text,
@@ -397,16 +443,19 @@ class AIService {
               );
             }
 
-            // 🧹 清理临时文件
-            if (compressedTempFile != null && compressedTempFile.existsSync()) {
-              compressedTempFile.deleteSync();
+            // 🧹 清理辅助分析用的临时文件
+            if (analysisFile != null && analysisFile.path != photo.path && analysisFile.existsSync()) {
+              try {
+                await analysisFile.delete();
+              } catch (error) {
+                debugPrint('⚠️ 清理临时文件失败: $error');
+              }
             }
           }
 
           if (_stopRequested) {
             break;
           }
-          await Future.delayed(const Duration(milliseconds: 100));
         }
 
         if (_stopRequested) {
@@ -414,13 +463,20 @@ class AIService {
         }
       }
 
-      faceDetector.close();
+      if (junkCandidates.isNotEmpty) {
+        replacePendingJunkCleanupReport(
+          JunkPhotoCleanupReport.fromCandidates(
+            junkCandidates,
+          ),
+        );
+      }
 
       if (affectedEventIds.isNotEmpty) {
         await EventService().refreshEventSmartInfo(affectedEventIds.toList());
       }
       debugPrint("✅ AI 分析完成，总计处理: $totalAnalyzed 张");
     } finally {
+      await faceDetector.close();
       _progressNotifier.value = AIAnalysisProgress.idle();
       _isAnalyzing = false;
       _pauseRequested = false;
@@ -456,6 +512,10 @@ class AIService {
     if (targetTotal <= 0) {
       _progressNotifier.value = AIAnalysisProgress.idle();
       _isAnalyzing = false;
+      if (_analysisCompleter != null && !_analysisCompleter!.isCompleted) {
+        _analysisCompleter!.complete();
+      }
+      _analysisCompleter = null;
       return;
     }
 
@@ -630,6 +690,49 @@ class AIService {
     }
 
     return TagSanitizer.sanitizeVisualTags(sanitized, maxTags: maxTags);
+  }
+
+  Future<_PreparedAnalysisInput?> _prepareAnalysisInput(PhotoEntity photo) async {
+    final file = File(photo.path);
+    if (!file.existsSync()) {
+      return null;
+    }
+
+    Uint8List? mobileClipBytes;
+    try {
+      final asset = await AssetEntity.fromId(photo.assetId);
+      mobileClipBytes = await asset?.thumbnailDataWithSize(_mobileClipThumbnailSize);
+    } catch (error) {
+      debugPrint('⚠️ 读取系统缩略图失败 photoId=${photo.id}: $error');
+    }
+
+    mobileClipBytes ??= await file.readAsBytes();
+    if (mobileClipBytes.isEmpty) {
+      return null;
+    }
+
+    return _PreparedAnalysisInput(
+      photo: photo,
+      file: file,
+      mobileClipBytes: mobileClipBytes,
+      usedThumbnail: mobileClipBytes.lengthInBytes < file.lengthSync(),
+    );
+  }
+
+  Future<File> _createAuxiliaryAnalysisFile(File sourceFile, int photoId) async {
+    final tempDir = await getTemporaryDirectory();
+    final targetPath = '${tempDir.path}/temp_mlkit_$photoId.jpg';
+    final result = await FlutterImageCompress.compressAndGetFile(
+      sourceFile.absolute.path,
+      targetPath,
+      minWidth: 1024,
+      minHeight: 1024,
+      quality: 80,
+    );
+    if (result == null) {
+      throw Exception('压缩失败');
+    }
+    return File(result.path);
   }
 
   // 将 AI 分析结果写入数据库（增强版）
@@ -856,4 +959,18 @@ class AIAnalysisProgress {
   }
 
   bool get isVisible => (isRunning || isPaused || isStopping) && total > 0;
+}
+
+class _PreparedAnalysisInput {
+  const _PreparedAnalysisInput({
+    required this.photo,
+    required this.file,
+    required this.mobileClipBytes,
+    required this.usedThumbnail,
+  });
+
+  final PhotoEntity photo;
+  final File file;
+  final Uint8List mobileClipBytes;
+  final bool usedThumbnail;
 }

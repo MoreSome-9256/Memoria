@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math' as math;
 
+import '../data/tag_taxonomy_v2.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 import 'llm_service.dart';
@@ -23,6 +24,10 @@ class PhotoCaptionService {
     '未婚妻',
     '未婚夫',
     '套路',
+  };
+
+  static const Set<String> _nonDescriptiveVisualTags = <String>{
+    memoriaOtherLabel,
   };
 
   static const Set<String> _textSceneTags = <String>{
@@ -93,7 +98,11 @@ class PhotoCaptionService {
   List<String> _sanitizeCaptionTags(List<String> tags) {
     final sanitized = TagSanitizer.sanitizeVisualTags(tags, maxTags: 6);
     return sanitized
-        .where((tag) => !_blockedRoleTags.contains(tag))
+        .where(
+          (tag) =>
+              !_blockedRoleTags.contains(tag) &&
+              !_nonDescriptiveVisualTags.contains(tag),
+        )
         .toList(growable: false);
   }
 

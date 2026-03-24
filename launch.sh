@@ -28,4 +28,5 @@ echo "Using device : ${DEVICE}"
 
 flutter run \
 	-d "${DEVICE}" \
+	--no-enable-impeller \
 	--dart-define-from-file="${PROFILE_FILE}"

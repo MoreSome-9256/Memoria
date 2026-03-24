@@ -8,6 +8,7 @@ class TagSanitizer {
     '炕洞',
     '月票',
     '当票',
+    '__junk_candidate__',
   };
 
   static String? sanitizeVisualTag(String? value) {

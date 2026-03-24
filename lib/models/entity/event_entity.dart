@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:isar/isar.dart';
 import 'package:photo_manager/photo_manager.dart';
 
@@ -133,6 +135,9 @@ class EventEntity {
   }
 
   Future<String> _resolvePhotoPath(PhotoEntity entity) async {
+    if (entity.path.trim().isNotEmpty && File(entity.path).existsSync()) {
+      return entity.path;
+    }
     final asset = await AssetEntity.fromId(entity.assetId);
     final file = await asset?.file;
     return file?.path ?? entity.path;

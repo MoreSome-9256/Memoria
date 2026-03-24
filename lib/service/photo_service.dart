@@ -1,5 +1,7 @@
-import 'package:isar/isar.dart';
 import 'dart:io';
+import 'dart:math' as math;
+
+import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -7,7 +9,8 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../models/entity/story_entity.dart';
-import '../data/tag_dictionary.dart';
+import '../data/tag_taxonomy_v2.dart';
+import '../service/junk_photo_filter_service.dart';
 import '../utils/photo_filter_helper.dart';
 
 class _PreparedScanData {
@@ -42,6 +45,7 @@ class _ScanBuildResult {
 
 class PhotoService {
   late Isar _isar;
+  static const bool _verboseAssetLogging = false;
 
   static final PhotoService _instance = PhotoService._internal();
   factory PhotoService() => _instance;
@@ -187,10 +191,22 @@ class PhotoService {
         '未获得相册访问权限，请在系统设置中允许访问照片。',
       );
     }
+    // ==========================================
+    // 🌟 核心修复：创建一个带有明确排序规则的过滤器
+    // ==========================================
+    final FilterOptionGroup safeFilter = FilterOptionGroup(
+      orders: [
+        const OrderOption(
+          type: OrderOptionType.createDate,
+          asc: false, // 强制按照创建时间倒序（最新的在前面）
+        ),
+      ],
+    );
 
     final preferredAlbums = await PhotoManager.getAssetPathList(
       type: RequestType.image,
       onlyAll: true,
+      filterOption: safeFilter,
     );
     var albums = preferredAlbums;
     // onlyAll=true 在部分 ROM / 授权模式下可能返回空或空壳相册，降级到全量列表取图片最多的相册
@@ -198,6 +214,7 @@ class PhotoService {
       albums = await PhotoManager.getAssetPathList(
         type: RequestType.image,
         onlyAll: false,
+        filterOption: safeFilter,
       );
     }
 
@@ -216,6 +233,7 @@ class PhotoService {
       final fallbackAlbums = await PhotoManager.getAssetPathList(
         type: RequestType.image,
         onlyAll: false,
+        filterOption: safeFilter,
       );
       for (final album in fallbackAlbums) {
         final count = await album.assetCountAsync;
@@ -252,7 +270,16 @@ class PhotoService {
     final fetchCount = maxAssets == null
         ? totalCount
         : (maxAssets < totalCount ? maxAssets : totalCount);
-    final assets = await selectedAlbum.getAssetListRange(start: 0, end: fetchCount);
+    final startIndex = maxAssets == null ? 0 : math.max(0, totalCount - fetchCount);
+    final assets = await selectedAlbum.getAssetListRange(
+      start: startIndex,
+      end: totalCount,
+    );
+    assets.sort(
+      (a, b) => b.createDateTime.millisecondsSinceEpoch.compareTo(
+        a.createDateTime.millisecondsSinceEpoch,
+      ),
+    );
 
     return _PreparedScanData(
       assets: assets,
@@ -266,18 +293,35 @@ class PhotoService {
     final assets = <AssetEntity>[];
     var page = 0;
 
+    // ==========================================
+    // 🌟 核心修复：定义明确的排序规则，填补 SQL 语句的空白
+    // ==========================================
+    final FilterOptionGroup safeFilter = FilterOptionGroup(
+      orders: [
+        const OrderOption(
+          type: OrderOptionType.createDate,
+          asc: false, // 强制按照创建时间倒序（最新的在前面）
+        ),
+      ],
+    );
+
     while (true) {
-      final remaining = maxAssets == null ? pageSize : maxAssets - assets.length;
+      final remaining = maxAssets == null
+          ? pageSize
+          : maxAssets - assets.length;
       if (remaining <= 0) {
         break;
       }
 
+      // 🌟 修复点：强制传入 filterOption
       final batch = await PhotoManager.getAssetListPaged(
         page: page,
         pageCount: remaining < pageSize ? remaining : pageSize,
         type: RequestType.image,
+        filterOption: safeFilter, // 👈 补丁打在这里！
       );
       print('🧰 全局媒体库第 ${page + 1} 页返回 ${batch.length} 张图片');
+
       if (batch.isEmpty) {
         break;
       }
@@ -287,6 +331,15 @@ class PhotoService {
         break;
       }
       page++;
+    }
+
+    assets.sort(
+      (a, b) => b.createDateTime.millisecondsSinceEpoch.compareTo(
+        a.createDateTime.millisecondsSinceEpoch,
+      ),
+    );
+    if (maxAssets != null && assets.length > maxAssets) {
+      assets.removeRange(maxAssets, assets.length);
     }
 
     print('✅ 全局媒体库兜底共拿到 ${assets.length} 张图片');
@@ -302,21 +355,22 @@ class PhotoService {
     required bool skipExisting,
   }) async {
     final photos = <PhotoEntity>[];
+    final existingAssetIds = <String>{};
     var skippedInvalidTime = 0;
     var insertedNoGps = 0;
     var skippedNonCamera = 0;
     var skippedScreenshot = 0;
 
+    if (skipExisting) {
+      final existingPhotos = await _isar.collection<PhotoEntity>().where().findAll();
+      existingAssetIds.addAll(
+        existingPhotos.map((photo) => photo.assetId).where((id) => id.isNotEmpty),
+      );
+    }
+
     for (final asset in assets) {
-      if (skipExisting) {
-        final existing = await _isar
-            .collection<PhotoEntity>()
-            .filter()
-            .assetIdEqualTo(asset.id)
-            .findFirst();
-        if (existing != null) {
-          continue;
-        }
+      if (skipExisting && existingAssetIds.contains(asset.id)) {
+        continue;
       }
 
       final file = await _resolveReadableFile(asset);
@@ -349,8 +403,11 @@ class PhotoService {
         // continue;
       }
 
-      final latLong = await asset.latlngAsync();
-      _logAssetExtInfo(asset: asset, filePath: file.path, latLong: latLong);
+      final shouldResolveGps = !screenshotByRatio && likelyCameraPhoto;
+      final latLong = shouldResolveGps ? await asset.latlngAsync() : null;
+      if (_verboseAssetLogging) {
+        _logAssetExtInfo(asset: asset, filePath: file.path, latLong: latLong);
+      }
 
       final timestamp = asset.createDateTime.millisecondsSinceEpoch;
       if (!PhotoFilterHelper.hasValidTimestamp(timestamp)) {
@@ -480,13 +537,19 @@ class PhotoService {
     }
 
     final taxonomyLabels = memoriaMasterLabels.toSet();
-    const passthroughLabels = <String>{'截图'};
+    const passthroughLabels = <String>{
+      '截图',
+      memoriaOtherLabel,
+      JunkPhotoFilterService.junkCandidateTag,
+    };
 
     var updatedCount = 0;
     for (final photo in photos) {
       final aiTags = photo.aiTags ?? const <String>[];
+      final isJunkCandidate = aiTags.contains(JunkPhotoFilterService.junkCandidateTag);
       final needsReset =
           photo.isAiAnalyzed &&
+          !isJunkCandidate &&
           (aiTags.isEmpty ||
               (photo.imageEmbedding == null || photo.imageEmbedding!.isEmpty));
       final hasOutdatedTags =
@@ -526,6 +589,41 @@ class PhotoService {
         ? '${photos.length} 张照片'
         : '最近 $maxPhotos 张照片';
     print('🔁 已将 $scopeText 中的 $updatedCount 张重新加入 AI 打标队列');
+    return updatedCount;
+  }
+
+  Future<int> requeuePhotosForAiByIds(Iterable<int> photoIds) async {
+    final normalizedIds = photoIds.toSet().toList(growable: false);
+    if (normalizedIds.isEmpty) {
+      return 0;
+    }
+
+    final photos = (await _isar.collection<PhotoEntity>().getAll(normalizedIds))
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
+    if (photos.isEmpty) {
+      return 0;
+    }
+
+    var updatedCount = 0;
+    for (final photo in photos) {
+      photo.isAiAnalyzed = false;
+      photo.aiTags = <String>[];
+      photo.aiCaption = null;
+      photo.imageEmbedding = null;
+      photo.ocrText = null;
+      photo.ocrTags = <String>[];
+      photo.faceCount = 0;
+      photo.smileProb = 0.0;
+      photo.joyScore = 0.0;
+      updatedCount++;
+    }
+
+    await _isar.writeTxn(() async {
+      await _isar.collection<PhotoEntity>().putAll(photos);
+    });
+
+    print('🔁 已将 $updatedCount 张低质量候选重新加入正常 AI 打标队列');
     return updatedCount;
   }
 

@@ -73,6 +73,8 @@ dependencies:
   uuid: ^4.5.3
 
 dependency_overrides:
+  amap_flutter_location:
+    path: third_party/plugins/amap_flutter_location
   sqflite_android: 2.4.1
 
 dev_dependencies:
@@ -130,8 +132,25 @@ flutter:
     - assets/images/noise.png
     - assets/images/frame_horizontal.png
     - assets/images/frame_vertical.png
-    - assets/transitions/intro_transition.mov
-    - assets/transitions/intro_transition.webp
+    - assets/transitions/orange_and_red.mov
+    - assets/transitions/orange_and_red.webp
+    - assets/transitions/white_circle.mov
+    - assets/transitions/white_circle.webp
+    - assets/transitions/flowers.mov
+    - assets/transitions/flowers.webp
+    - assets/transitions/light.mov
+    - assets/transitions/light.webp
+    - assets/transitions/blue_circle.mov
+    - assets/transitions/blue_circle.webp
+    - assets/transitions/red.mov
+    - assets/transitions/red.webp
+    - assets/transitions/green.mov
+    - assets/transitions/green.webp
+    - assets/transitions/glass.mov
+    - assets/transitions/glass.webp
+    - assets/transitions/mosaic.mov
+    - assets/transitions/mosaic.webp
+    - assets/audio/premade/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

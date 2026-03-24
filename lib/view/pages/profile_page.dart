@@ -4,6 +4,7 @@ import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 
 import 'local_vlm_test_page.dart';
+import 'face_cluster_debug_page.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
 
@@ -212,6 +213,19 @@ class _ProfilePageState extends State<ProfilePage> {
                           onTap: () {                            Navigator.of(context).push(
                               MaterialPageRoute<void>(
                                 builder: (context) => const MobileClipVectorProbePage(),
+                              ),
+                            );
+                          },
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.face_retouching_natural_outlined),
+                          title: const Text('Face Cluster Debug'),
+                          subtitle: const Text('观察按脸聚类结果，不影响主题主链路'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (context) => const FaceClusterDebugPage(),
                               ),
                             );
                           },

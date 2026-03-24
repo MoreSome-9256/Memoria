@@ -122,6 +122,7 @@ flutter:
     - assets/ncnn/mobileclip_s2/projection_layer.ncnn.bin
     - assets/mobileclip2/s2/vision_model.onnx
     - assets/mobileclip2/s2/text_model.onnx
+    - assets/face/   
     - ai_tools/test_student.png
     - ai_tools/test1.png
     - ai_tools/test_youleyuan.png

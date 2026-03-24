@@ -11,6 +11,7 @@ import '../models/entity/photo_entity.dart';
 import '../utils/ai_score_helper.dart';
 import '../utils/tag_sanitizer.dart';
 import 'junk_photo_filter_service.dart';
+import 'face_pipeline_service.dart';
 import 'photo_service.dart';
 import 'event_service.dart';
 import 'mobileclip_backend_preference_service.dart';
@@ -152,6 +153,7 @@ class AIService {
     final mobileClipEmbeddingService = MobileClipEmbeddingService();
     final mobileClipTagService = MobileClipTagService();
     final photoCaptionService = PhotoCaptionService();
+    final facePipelineService = FacePipelineService();
     final ocrService = OcrService();
 
     final pendingCount = await isar
@@ -358,6 +360,13 @@ class AIService {
               faceCount: faceCount,
               maxSmileProb: maxSmileProb,
               tags: visualTags,
+            );
+
+            await facePipelineService.rebuildFacesForPhoto(
+              isar: isar,
+              photo: photo,
+              imageFile: compressedTempFile,
+              faces: faces,
             );
 
             final caption = await photoCaptionService.generateCaption(

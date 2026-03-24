@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../models/entity/face_entity.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../models/entity/story_entity.dart';
@@ -58,7 +59,12 @@ class PhotoService {
   Future<void> init() async {
     final dir = await getApplicationDocumentsDirectory();
     _isar = await Isar.open(
-      [PhotoEntitySchema, EventEntitySchema, StoryEntitySchema], // 注册所有实体
+      [
+        PhotoEntitySchema,
+        FaceEntitySchema,
+        EventEntitySchema,
+        StoryEntitySchema,
+      ], // 注册所有实体
       directory: dir.path,
     );
   }
@@ -67,6 +73,7 @@ class PhotoService {
     await _isar.writeTxn(() async {
       await _isar.collection<StoryEntity>().clear();
       await _isar.collection<EventEntity>().clear();
+      await _isar.collection<FaceEntity>().clear();
       await _isar.collection<PhotoEntity>().clear();
     });
 
@@ -98,6 +105,7 @@ class PhotoService {
     await _isar.writeTxn(() async {
       await _isar.collection<StoryEntity>().clear();
       await _isar.collection<EventEntity>().clear();
+      await _isar.collection<FaceEntity>().clear();
       await _isar.collection<PhotoEntity>().clear();
       await _isar.collection<PhotoEntity>().putAll(built.photos);
     });
@@ -544,6 +552,7 @@ class PhotoService {
     };
 
     var updatedCount = 0;
+    final updatedPhotoIds = <int>[];
     for (final photo in photos) {
       final aiTags = photo.aiTags ?? const <String>[];
       final isJunkCandidate = aiTags.contains(JunkPhotoFilterService.junkCandidateTag);
@@ -575,13 +584,30 @@ class PhotoService {
       photo.smileProb = 0.0;
       photo.joyScore = 0.0;
       updatedCount++;
+      updatedPhotoIds.add(photo.id);
     }
 
     if (updatedCount == 0) {
       return 0;
     }
 
+    final resetPhotoIds = updatedPhotoIds
+        .toSet()
+        .toList(growable: false);
+    final staleFaces = resetPhotoIds.isEmpty
+        ? const <FaceEntity>[]
+        : await _isar
+              .collection<FaceEntity>()
+              .filter()
+              .anyOf(resetPhotoIds, (query, photoId) => query.photoIdEqualTo(photoId))
+              .findAll();
+
     await _isar.writeTxn(() async {
+      if (staleFaces.isNotEmpty) {
+        await _isar.collection<FaceEntity>().deleteAll(
+          staleFaces.map((item) => item.id).toList(growable: false),
+        );
+      }
       await _isar.collection<PhotoEntity>().putAll(photos);
     });
 
@@ -648,6 +674,8 @@ class PhotoService {
       return;
     }
 
+    final staleFaces = await _isar.collection<FaceEntity>().where().findAll();
+
     // 2. 将它们的状态重置，并清空旧标签
 
     for (var photo in oldPhotos) {
@@ -662,6 +690,11 @@ class PhotoService {
     // 3. 批量写回数据库
 
     await _isar.writeTxn(() async {
+      if (staleFaces.isNotEmpty) {
+        await _isar.collection<FaceEntity>().deleteAll(
+          staleFaces.map((item) => item.id).toList(growable: false),
+        );
+      }
       await _isar.collection<PhotoEntity>().putAll(oldPhotos);
     });
 

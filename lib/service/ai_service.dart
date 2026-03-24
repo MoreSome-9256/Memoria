@@ -365,7 +365,7 @@ class AIService {
             await facePipelineService.rebuildFacesForPhoto(
               isar: isar,
               photo: photo,
-              imageFile: compressedTempFile,
+              imageFile: analysisFile,
               faces: faces,
             );
 

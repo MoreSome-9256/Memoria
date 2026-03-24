@@ -68,8 +68,9 @@ CLAUDE.md
 /checkpoints/
 
 # 忽略 ONNX 模型及其外部数据文件
-*.onnx
-*.onnx.data
+# *.onnx
+# !mobileclip_*.onnx
+# *.onnx.data
 
 # 忽略将来可能生成的 TFLite 文件
 *.tflite

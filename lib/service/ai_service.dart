@@ -196,7 +196,14 @@ class AIService {
     final targetTotal = maxPhotos == null
         ? pendingCount
         : math.min(pendingCount, maxPhotos);
-    final startedAtMs = DateTime.now().millisecondsSinceEpoch;
+    int? processingStartedAtMs;
+    int _elapsedMs() {
+      final startedAtMs = processingStartedAtMs;
+      if (startedAtMs == null) {
+        return 0;
+      }
+      return DateTime.now().millisecondsSinceEpoch - startedAtMs;
+    }
 
     if (targetTotal <= 0) {
       _progressNotifier.value = AIAnalysisProgress.idle();
@@ -227,7 +234,7 @@ class AIService {
       completed: 0,
       failed: 0,
       currentStep: '即将开始按需加载模型并分析图片',
-      elapsedMs: DateTime.now().millisecondsSinceEpoch - startedAtMs,
+      elapsedMs: _elapsedMs(),
     );
 
     final faceOptions = FaceDetectorOptions(
@@ -242,6 +249,7 @@ class AIService {
     var processedCount = 0;
     final junkCandidates = <JunkPhotoCleanupCandidate>[];
     final attemptedPhotoIds = <Id>{};
+    var engineBootstrapped = false;
 
     try {
       while (true) {
@@ -277,6 +285,59 @@ class AIService {
         }
 
         final workerCount = _resolveWorkerCount(photosToAnalyze.length);
+        if (!engineBootstrapped) {
+          _progressNotifier.value = AIAnalysisProgress.running(
+            total: targetTotal,
+            completed: processedCount,
+            failed: failedCount,
+            currentStep: '正在预热引擎 (1/3)：加载图像模型 ${selectedBackend.label}',
+            elapsedMs: _elapsedMs(),
+          );
+          await mobileClipEmbeddingService.warmUpBackend(selectedBackend);
+
+          _progressNotifier.value = AIAnalysisProgress.running(
+            total: targetTotal,
+            completed: processedCount,
+            failed: failedCount,
+            currentStep: '正在预热引擎 (2/3)：加载标签语义模型',
+            elapsedMs: _elapsedMs(),
+          );
+          await mobileClipTagService.warmUp();
+
+          _progressNotifier.value = AIAnalysisProgress.running(
+            total: targetTotal,
+            completed: processedCount,
+            failed: failedCount,
+            currentStep: '正在预热引擎 (3/3)：加载低价值过滤模板',
+            elapsedMs: _elapsedMs(),
+          );
+          await _junkPhotoFilterService.warmUp();
+
+          final readyWorkers = <int>[];
+          for (var index = 1; index <= workerCount; index++) {
+            readyWorkers.add(index);
+            _progressNotifier.value = AIAnalysisProgress.running(
+              total: targetTotal,
+              completed: processedCount,
+              failed: failedCount,
+              currentStep:
+                  '正在预热并行引擎：${_formatWorkerWarmupStatus(readyWorkers, workerCount)}',
+              elapsedMs: _elapsedMs(),
+            );
+            await Future<void>.delayed(const Duration(milliseconds: 60));
+          }
+
+          _progressNotifier.value = AIAnalysisProgress.running(
+            total: targetTotal,
+            completed: processedCount,
+            failed: failedCount,
+            currentStep:
+                '引擎预热完成：${_formatWorkerWarmupStatus(readyWorkers, workerCount)}，开始分配任务',
+            elapsedMs: _elapsedMs(),
+          );
+          engineBootstrapped = true;
+        }
+
         debugPrint(
           '🤖 开始 AI 并行分析，本批次: ${photosToAnalyze.length} 张，worker=$workerCount',
         );
@@ -298,6 +359,8 @@ class AIService {
               }
               final photo = queue.removeFirst();
               attemptedPhotoIds.add(photo.id);
+              processingStartedAtMs ??=
+                  DateTime.now().millisecondsSinceEpoch;
 
               _progressNotifier.value = AIAnalysisProgress.running(
                 total: targetTotal,
@@ -305,7 +368,7 @@ class AIService {
                 failed: failedCount,
                 currentStep:
                     '并行处理中 (worker ${workerIndex + 1}) 第 ${processedCount + 1} / $targetTotal 张',
-                elapsedMs: DateTime.now().millisecondsSinceEpoch - startedAtMs,
+                elapsedMs: _elapsedMs(),
               );
 
               final result = await _processSinglePhoto(
@@ -343,8 +406,7 @@ class AIService {
                   completed: processedCount,
                   failed: failedCount,
                   currentStep: '正在结束本轮打标…',
-                  elapsedMs:
-                      DateTime.now().millisecondsSinceEpoch - startedAtMs,
+                  elapsedMs: _elapsedMs(),
                 );
               } else if (_pauseRequested) {
                 _progressNotifier.value = AIAnalysisProgress.paused(
@@ -352,8 +414,7 @@ class AIService {
                   completed: processedCount,
                   failed: failedCount,
                   currentStep: '已暂停，随时可以继续',
-                  elapsedMs:
-                      DateTime.now().millisecondsSinceEpoch - startedAtMs,
+                  elapsedMs: _elapsedMs(),
                 );
               } else {
                 _progressNotifier.value = AIAnalysisProgress.running(
@@ -363,8 +424,7 @@ class AIService {
                   currentStep: processedCount >= targetTotal
                       ? '正在收尾整理结果'
                       : '已完成 $processedCount / $targetTotal 张',
-                  elapsedMs:
-                      DateTime.now().millisecondsSinceEpoch - startedAtMs,
+                  elapsedMs: _elapsedMs(),
                 );
               }
 
@@ -428,7 +488,14 @@ class AIService {
       isar,
       maxPhotos: maxPhotos,
     );
-    final startedAtMs = DateTime.now().millisecondsSinceEpoch;
+    int? processingStartedAtMs;
+    int _elapsedMs() {
+      final startedAtMs = processingStartedAtMs;
+      if (startedAtMs == null) {
+        return 0;
+      }
+      return DateTime.now().millisecondsSinceEpoch - startedAtMs;
+    }
 
     if (targetTotal <= 0) {
       _progressNotifier.value = AIAnalysisProgress.idle();
@@ -489,13 +556,14 @@ class AIService {
           }
 
           var didFail = false;
+          processingStartedAtMs ??= DateTime.now().millisecondsSinceEpoch;
           _progressNotifier.value = AIAnalysisProgress.running(
             total: targetTotal,
             completed: processedCount,
             failed: failedCount,
             currentStep:
                 '正在回填第 ${processedCount + 1} / $targetTotal 张照片的 caption',
-            elapsedMs: DateTime.now().millisecondsSinceEpoch - startedAtMs,
+            elapsedMs: _elapsedMs(),
           );
 
           try {
@@ -537,7 +605,7 @@ class AIService {
                 completed: processedCount,
                 failed: failedCount,
                 currentStep: '正在结束本轮 caption 回填…',
-                elapsedMs: DateTime.now().millisecondsSinceEpoch - startedAtMs,
+                elapsedMs: _elapsedMs(),
               );
             } else if (_pauseRequested) {
               _progressNotifier.value = AIAnalysisProgress.paused(
@@ -545,7 +613,7 @@ class AIService {
                 completed: processedCount,
                 failed: failedCount,
                 currentStep: 'caption 回填已暂停，随时可以继续',
-                elapsedMs: DateTime.now().millisecondsSinceEpoch - startedAtMs,
+                elapsedMs: _elapsedMs(),
               );
             } else {
               _progressNotifier.value = AIAnalysisProgress.running(
@@ -555,7 +623,7 @@ class AIService {
                 currentStep: processedCount >= targetTotal
                     ? '正在收尾整理 caption 结果'
                     : '已回填 $processedCount / $targetTotal 张 caption',
-                elapsedMs: DateTime.now().millisecondsSinceEpoch - startedAtMs,
+                elapsedMs: _elapsedMs(),
               );
             }
           }
@@ -600,6 +668,14 @@ class AIService {
     final suggested = cpuCores <= 2 ? 1 : math.max(2, cpuCores - 1);
     final bounded = math.min(_maxParallelWorkers, suggested);
     return math.max(1, math.min(bounded, workItems));
+  }
+
+  String _formatWorkerWarmupStatus(List<int> readyWorkers, int totalWorkers) {
+    if (readyWorkers.isEmpty) {
+      return 'workers无 / 共$totalWorkers';
+    }
+    final labels = readyWorkers.map((id) => 'workers$id').join(',');
+    return '$labels / 共$totalWorkers';
   }
 
   Future<_PhotoProcessResult> _processSinglePhoto({

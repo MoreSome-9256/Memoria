@@ -9,14 +9,6 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "61.0.0"
-  amap_flutter_location:
-    dependency: "direct main"
-    description:
-      name: amap_flutter_location
-      sha256: f35ff00e196d579608e0bc28ccbc1f6f53787644702f947de941f775769cc701
-      url: "https://pub.flutter-io.cn"
-    source: hosted
-    version: "3.0.0"
   amplify_analytics_pinpoint:
     dependency: transitive
     description:

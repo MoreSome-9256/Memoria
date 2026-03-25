@@ -20,6 +20,7 @@ import 'mobileclip_tag_service.dart';
 import 'ocr_service.dart';
 import 'photo_caption_service.dart';
 import 'ai_progress_notification_service.dart';
+import 'ai_foreground_service.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -29,6 +30,8 @@ class AIService {
   factory AIService() => _instance;
   AIService._internal() {
     _progressNotifier.addListener(_syncProgressNotification);
+    AIForegroundService().bindActionHandler(_handleForegroundAction);
+    AIProgressNotificationService().bindActionHandler(_handleForegroundAction);
   }
 
   static const Set<String> _blockedVisualTags = <String>{
@@ -101,6 +104,16 @@ class AIService {
         fraction: progress.fraction,
       ),
     );
+  }
+
+  void _handleForegroundAction(String action) {
+    if (action == AIForegroundService.actionPause) {
+      pauseAnalysis();
+      return;
+    }
+    if (action == AIForegroundService.actionResume) {
+      resumeAnalysis();
+    }
   }
 
   Future<bool> getAutoResumePreference() async {

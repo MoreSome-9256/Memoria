@@ -8,7 +8,11 @@ class AIForegroundService {
 
   factory AIForegroundService() => _instance;
 
+  static const String actionPause = 'pause';
+  static const String actionResume = 'resume';
+
   bool _initialized = false;
+  ValueChanged<String>? _actionHandler;
 
   Future<void> initialize() async {
     if (_initialized || kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
@@ -37,11 +41,35 @@ class AIForegroundService {
       ),
     );
 
+    FlutterForegroundTask.initCommunicationPort();
+    FlutterForegroundTask.removeTaskDataCallback(_onTaskData);
+    FlutterForegroundTask.addTaskDataCallback(_onTaskData);
+
     _initialized = true;
+  }
+
+  void bindActionHandler(ValueChanged<String> handler) {
+    _actionHandler = handler;
+  }
+
+  void _onTaskData(Object data) {
+    if (data is! String) {
+      return;
+    }
+    const prefix = 'ai_action:';
+    if (!data.startsWith(prefix)) {
+      return;
+    }
+    final action = data.substring(prefix.length).trim();
+    if (action.isEmpty) {
+      return;
+    }
+    _actionHandler?.call(action);
   }
 
   Future<void> sync({
     required bool shouldRun,
+    required bool isPaused,
     required String title,
     required String text,
   }) async {
@@ -59,10 +87,18 @@ class AIForegroundService {
       return;
     }
 
+    final buttons = <NotificationButton>[
+      NotificationButton(
+        id: isPaused ? actionResume : actionPause,
+        text: isPaused ? '继续' : '暂停',
+      ),
+    ];
+
     if (running) {
       await FlutterForegroundTask.updateService(
         notificationTitle: title,
         notificationText: text,
+        notificationButtons: buttons,
       );
       return;
     }
@@ -71,6 +107,7 @@ class AIForegroundService {
       serviceId: 43002,
       notificationTitle: title,
       notificationText: text,
+      notificationButtons: buttons,
       callback: _startCallback,
     );
   }
@@ -95,7 +132,9 @@ class _AIForegroundTaskHandler extends TaskHandler {
   void onReceiveData(Object data) {}
 
   @override
-  void onNotificationButtonPressed(String id) {}
+  void onNotificationButtonPressed(String id) {
+    FlutterForegroundTask.sendDataToMain('ai_action:$id');
+  }
 
   @override
   void onNotificationPressed() {}

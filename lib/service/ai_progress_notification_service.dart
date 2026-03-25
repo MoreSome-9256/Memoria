@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
 import 'ai_foreground_service.dart';
 
 class AIProgressNotificationService {
@@ -11,6 +12,7 @@ class AIProgressNotificationService {
   factory AIProgressNotificationService() => _instance;
 
   static const String _channelId = 'ai_progress_channel';
+  static const String _channelName = 'AI 打标进度';
   static const int _notificationId = 43001;
 
   final FlutterLocalNotificationsPlugin _plugin =
@@ -20,23 +22,26 @@ class AIProgressNotificationService {
   int _lastShownAtMs = 0;
   String _lastSignature = '';
 
+  ValueChanged<String>? _actionHandler;
+
   Future<void> initialize() async {
     if (_initialized) {
       return;
     }
 
-    const androidSettings = AndroidInitializationSettings(
-      '@mipmap/ic_launcher',
-    );
-    const iosSettings = DarwinInitializationSettings();
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const darwinSettings = DarwinInitializationSettings();
     const settings = InitializationSettings(
       android: androidSettings,
-      iOS: iosSettings,
-      macOS: iosSettings,
+      iOS: darwinSettings,
+      macOS: darwinSettings,
     );
 
-    await _plugin.initialize(settings);
-    await AIForegroundService().initialize();
+    await _plugin.initialize(
+      settings,
+      onDidReceiveNotificationResponse: _onForegroundResponse,
+      onDidReceiveBackgroundNotificationResponse: _onBackgroundResponse,
+    );
 
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       final androidImpl = _plugin
@@ -52,7 +57,30 @@ class AIProgressNotificationService {
       await iosImpl?.requestPermissions(alert: true, badge: false, sound: false);
     }
 
+    await AIForegroundService().initialize();
+
     _initialized = true;
+  }
+
+  void bindActionHandler(ValueChanged<String> handler) {
+    _actionHandler = handler;
+  }
+
+  @pragma('vm:entry-point')
+  static void _onBackgroundResponse(NotificationResponse response) {
+    final actionId = response.actionId ?? '';
+    if (actionId.isEmpty) {
+      return;
+    }
+    _instance._actionHandler?.call(actionId);
+  }
+
+  void _onForegroundResponse(NotificationResponse response) {
+    final actionId = response.actionId ?? '';
+    if (actionId.isEmpty) {
+      return;
+    }
+    _actionHandler?.call(actionId);
   }
 
   Future<void> syncProgress({
@@ -73,14 +101,17 @@ class AIProgressNotificationService {
         : isPaused
         ? 'AI 打标已暂停'
         : 'AI 打标进行中';
-    final body = '$completed/$total${failed > 0 ? ' · 失败 $failed' : ''}';
 
-    // Android: 使用前台服务承载常驻通知，提升后台存活概率。
+    final bodyBase = '$completed/$total${failed > 0 ? ' · 失败 $failed' : ''}';
+    final progressPercent = (fraction.clamp(0, 1) * 100).round();
+    final body = '$bodyBase · $currentStep';
+
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       await AIForegroundService().sync(
         shouldRun: isVisible,
+        isPaused: isPaused,
         title: title,
-        text: '$body · $currentStep',
+        text: '$progressPercent% · $body',
       );
     }
 
@@ -91,35 +122,39 @@ class AIProgressNotificationService {
 
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final signature =
-        '$isRunning|$isPaused|$isStopping|$completed|$total|$failed|${fraction.toStringAsFixed(3)}|$currentStep';
+        '$isRunning|$isPaused|$isStopping|$completed|$total|$failed|$progressPercent|$currentStep';
 
-    // 节流通知更新，避免频繁刷通知导致额外卡顿。
-    if (signature == _lastSignature && nowMs - _lastShownAtMs < 1000) {
+    if (signature == _lastSignature && nowMs - _lastShownAtMs < 900) {
       return;
     }
     _lastSignature = signature;
     _lastShownAtMs = nowMs;
 
-    // iOS / 其他端：继续使用本地通知展示进度。
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      return;
-    }
-
-    final safeProgress = (fraction.clamp(0, 1) * 100).round();
+    final actions = <AndroidNotificationAction>[
+      AndroidNotificationAction(
+        isPaused
+            ? AIForegroundService.actionResume
+            : AIForegroundService.actionPause,
+        isPaused ? '继续' : '暂停',
+        showsUserInterface: false,
+        cancelNotification: false,
+      ),
+    ];
 
     final androidDetails = AndroidNotificationDetails(
       _channelId,
-      'AI 打标进度',
-      channelDescription: '展示 AI 打标任务进度',
+      _channelName,
+      channelDescription: '展示 AI 打标任务进度与控制按钮',
       importance: Importance.low,
       priority: Priority.low,
-      ongoing: isRunning || isPaused || isStopping,
       onlyAlertOnce: true,
+      ongoing: isRunning || isPaused || isStopping,
       showProgress: true,
       maxProgress: 100,
-      progress: safeProgress,
+      progress: progressPercent,
       indeterminate: false,
       category: AndroidNotificationCategory.progress,
+      actions: actions,
     );
 
     const iosDetails = DarwinNotificationDetails(
@@ -131,7 +166,7 @@ class AIProgressNotificationService {
     await _plugin.show(
       _notificationId,
       title,
-      '$body · $currentStep',
+      body,
       NotificationDetails(android: androidDetails, iOS: iosDetails),
     );
   }

@@ -8,6 +8,11 @@ import 'package:llamadart/llamadart.dart';
 class LlamadartLocalEngineService {
   LlamadartLocalEngineService._internal();
 
+  // static const int _gpuLayers = int.fromEnvironment(
+  //   'LOCAL_LLAMADART_GPU_LAYERS',
+  //   defaultValue: 0,
+  // );
+
   static final LlamadartLocalEngineService _instance =
       LlamadartLocalEngineService._internal();
 
@@ -41,7 +46,23 @@ class LlamadartLocalEngineService {
     }
 
     final engine = LlamaEngine(LlamaBackend());
-    await engine.loadModel(normalizedModelPath);
+    try {
+      // Default to CPU-only loading on Android to avoid unstable GPU offload
+      // crashes on certain devices / model quantizations.
+      await engine.loadModel(
+        normalizedModelPath,
+        modelParams: ModelParams(
+          gpuLayers: _gpuLayers,
+          preferredBackend: GpuBackend.cpu,
+        ),
+      );
+    } catch (error) {
+      throw StateError(
+        '模型加载失败: $normalizedModelPath\n'
+        '建议检查: 模型/mmproj 是否匹配、文件是否完整、量化是否受当前 llama 版本支持。\n'
+        '当前参数: gpuLayers=$_gpuLayers (LOCAL_LLAMADART_GPU_LAYERS)',
+      );
+    }
 
     if (normalizedMmprojPath.isNotEmpty) {
       await engine.loadMultimodalProjector(normalizedMmprojPath);

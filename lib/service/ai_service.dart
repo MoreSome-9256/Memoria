@@ -19,6 +19,7 @@ import 'mobileclip_embedding_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'ocr_service.dart';
 import 'photo_caption_service.dart';
+import 'ai_progress_notification_service.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -26,7 +27,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 class AIService {
   static final AIService _instance = AIService._internal();
   factory AIService() => _instance;
-  AIService._internal();
+  AIService._internal() {
+    _progressNotifier.addListener(_syncProgressNotification);
+    AIProgressNotificationService().bindActionHandler(_handleForegroundAction);
+  }
 
   static const Set<String> _blockedVisualTags = <String>{
     'Screenshot',
@@ -42,6 +46,11 @@ class AIService {
   );
   static const int _maxParallelWorkers = 8;
   static const String _autoResumeKey = 'ai_auto_resume';
+  static const String _runtimeActiveKey = 'ai_runtime_active';
+  static const String _runtimeHeartbeatAtKey = 'ai_runtime_heartbeat_at';
+  static const String _runtimeTotalKey = 'ai_runtime_total';
+  static const String _runtimeCompletedKey = 'ai_runtime_completed';
+  static const String _runtimeFailedKey = 'ai_runtime_failed';
 
   final ValueNotifier<AIAnalysisProgress> _progressNotifier =
       ValueNotifier<AIAnalysisProgress>(AIAnalysisProgress.idle());
@@ -57,6 +66,7 @@ class AIService {
   bool _pauseRequested = false;
   bool _stopRequested = false;
   Completer<void>? _analysisCompleter;
+  int _lastRuntimeHeartbeatPersistAtMs = 0;
 
   ValueListenable<AIAnalysisProgress> get progressListenable =>
       _progressNotifier;
@@ -81,6 +91,51 @@ class AIService {
     _autoResumeEnabled = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_autoResumeKey, enabled);
+  }
+
+  void _syncProgressNotification() {
+    final progress = _progressNotifier.value;
+    unawaited(
+      AIProgressNotificationService().syncProgress(
+        isVisible: progress.isVisible,
+        isRunning: progress.isRunning,
+        isPaused: progress.isPaused,
+        isStopping: progress.isStopping,
+        completed: progress.completed,
+        total: progress.total,
+        failed: progress.failed,
+        currentStep: progress.currentStep,
+        fraction: progress.fraction,
+      ),
+    );
+
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (progress.isVisible) {
+      if (nowMs - _lastRuntimeHeartbeatPersistAtMs >= 1500) {
+        _lastRuntimeHeartbeatPersistAtMs = nowMs;
+        unawaited(
+          _persistRuntimeState(
+            isActive: true,
+            total: progress.total,
+            completed: progress.completed,
+            failed: progress.failed,
+          ),
+        );
+      }
+    } else {
+      _lastRuntimeHeartbeatPersistAtMs = 0;
+      unawaited(_persistRuntimeState(isActive: false));
+    }
+  }
+
+  void _handleForegroundAction(String action) {
+    if (action == AIProgressNotificationService.actionPause) {
+      pauseAnalysis();
+      return;
+    }
+    if (action == AIProgressNotificationService.actionResume) {
+      resumeAnalysis();
+    }
   }
 
   Future<bool> getAutoResumePreference() async {
@@ -191,16 +246,39 @@ class AIService {
     if (_isAnalyzing) {
       return;
     }
+
+    await loadAutoResumePreference();
+
     final pending = await PhotoService().isar
         .collection<PhotoEntity>()
         .filter()
         .isAiAnalyzedEqualTo(false)
         .count();
     if (pending <= 0) {
+      await AIProgressNotificationService().clearProgressNotificationSurfaces();
+      await _persistRuntimeState(isActive: false);
       return;
     }
-    
-    await loadAutoResumePreference();
+
+    final runtimeSnapshot = await _readRuntimeSnapshot();
+    final runtimeActive = runtimeSnapshot.isActive;
+
+    if (runtimeActive) {
+      final restoredCompleted = runtimeSnapshot.completed.clamp(0, pending);
+      _progressNotifier.value = AIAnalysisProgress.running(
+        total: pending,
+        completed: restoredCompleted,
+        failed: runtimeSnapshot.failed,
+        currentStep: '检测到上次打标任务，正在重连并恢复…',
+        elapsedMs: 0,
+      );
+      debugPrint(
+        '🔁 检测到历史运行态(runtime=$runtimeActive)，尝试恢复 AI 打标',
+      );
+      unawaited(_runFullAiPipelineInBackground());
+      return;
+    }
+
     if (!_autoResumeEnabled) {
       debugPrint('⏸️ 检测到 $pending 张未完成照片，但自动恢复已禁用，显示暂停状态');
       _progressNotifier.value = AIAnalysisProgress.paused(
@@ -239,6 +317,8 @@ class AIService {
       return;
     }
 
+    await _persistRuntimeState(isActive: true);
+
     _isAnalyzing = true;
     _pauseRequested = false;
     _stopRequested = false;
@@ -260,7 +340,7 @@ class AIService {
         ? pendingCount
         : math.min(pendingCount, maxPhotos);
     int? processingStartedAtMs;
-    int _elapsedMs() {
+    int elapsedMs() {
       final startedAtMs = processingStartedAtMs;
       if (startedAtMs == null) {
         return 0;
@@ -271,6 +351,7 @@ class AIService {
     if (targetTotal <= 0) {
       _progressNotifier.value = AIAnalysisProgress.idle();
       _isAnalyzing = false;
+      await _persistRuntimeState(isActive: false);
       if (_analysisCompleter != null && !_analysisCompleter!.isCompleted) {
         _analysisCompleter!.complete();
       }
@@ -297,7 +378,7 @@ class AIService {
       completed: 0,
       failed: 0,
       currentStep: '即将开始按需加载模型并分析图片',
-      elapsedMs: _elapsedMs(),
+      elapsedMs: elapsedMs(),
     );
 
     final faceOptions = FaceDetectorOptions(
@@ -331,7 +412,7 @@ class AIService {
           completed: processedCount,
           failed: failedCount,
           currentStep: '正在预热引擎 (1/3)：加载图像模型 ${selectedBackend.label}',
-          elapsedMs: _elapsedMs(),
+          elapsedMs: elapsedMs(),
         );
         await mobileClipEmbeddingService.warmUpBackend(selectedBackend);
 
@@ -340,7 +421,7 @@ class AIService {
           completed: processedCount,
           failed: failedCount,
           currentStep: '正在预热引擎 (2/3)：加载标签语义模型',
-          elapsedMs: _elapsedMs(),
+          elapsedMs: elapsedMs(),
         );
         await mobileClipTagService.warmUp();
 
@@ -349,7 +430,7 @@ class AIService {
           completed: processedCount,
           failed: failedCount,
           currentStep: '正在预热引擎 (3/3)：加载低价值过滤模板',
-          elapsedMs: _elapsedMs(),
+          elapsedMs: elapsedMs(),
         );
         await _junkPhotoFilterService.warmUp();
 
@@ -362,7 +443,7 @@ class AIService {
             failed: failedCount,
             currentStep:
                 '正在预热并行引擎：${_formatWorkerWarmupStatus(readyWorkers, maxWorkerCount)}',
-            elapsedMs: _elapsedMs(),
+            elapsedMs: elapsedMs(),
           );
           await Future<void>.delayed(const Duration(milliseconds: 60));
         }
@@ -375,7 +456,7 @@ class AIService {
           failed: failedCount,
           currentStep:
               '引擎预热完成：${_formatWorkerWarmupStatus(readyWorkers, maxWorkerCount)}，初始并发 $activeWorkerCount / $maxWorkerCount',
-          elapsedMs: _elapsedMs(),
+          elapsedMs: elapsedMs(),
         );
         engineBootstrapped = true;
       }
@@ -436,7 +517,7 @@ class AIService {
               failed: failedCount,
               currentStep:
                   '任务已入队 $scheduledCount / $targetTotal，等待 workers 处理',
-              elapsedMs: _elapsedMs(),
+              elapsedMs: elapsedMs(),
             );
           }
         } finally {
@@ -545,7 +626,7 @@ class AIService {
               failed: failedCount,
               currentStep:
                   '并行处理中 (worker ${workerIndex + 1}) 第 ${processedCount + 1} / $targetTotal 张',
-              elapsedMs: _elapsedMs(),
+              elapsedMs: elapsedMs(),
             );
 
             try {
@@ -592,7 +673,7 @@ class AIService {
                 completed: processedCount,
                 failed: failedCount,
                 currentStep: '正在结束本轮打标…',
-                elapsedMs: _elapsedMs(),
+                elapsedMs: elapsedMs(),
               );
             } else if (_pauseRequested) {
               _progressNotifier.value = AIAnalysisProgress.paused(
@@ -600,7 +681,7 @@ class AIService {
                 completed: processedCount,
                 failed: failedCount,
                 currentStep: '已暂停，随时可以继续',
-                elapsedMs: _elapsedMs(),
+                elapsedMs: elapsedMs(),
               );
             } else {
               _progressNotifier.value = AIAnalysisProgress.running(
@@ -610,7 +691,7 @@ class AIService {
                 currentStep: processedCount >= targetTotal
                     ? '正在收尾整理结果'
                     : '已完成 $processedCount / $targetTotal 张 (并发 $activeWorkerCount / $maxWorkerCount)',
-                elapsedMs: _elapsedMs(),
+                elapsedMs: elapsedMs(),
               );
             }
 
@@ -642,11 +723,57 @@ class AIService {
       _isAnalyzing = false;
       _pauseRequested = false;
       _stopRequested = false;
+      await _persistRuntimeState(isActive: false);
       if (_analysisCompleter != null && !_analysisCompleter!.isCompleted) {
         _analysisCompleter!.complete();
       }
       _analysisCompleter = null;
     }
+  }
+
+  Future<void> _persistRuntimeState({
+    required bool isActive,
+    int? total,
+    int? completed,
+    int? failed,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_runtimeActiveKey, isActive);
+    if (!isActive) {
+      await prefs.remove(_runtimeHeartbeatAtKey);
+      await prefs.remove(_runtimeTotalKey);
+      await prefs.remove(_runtimeCompletedKey);
+      await prefs.remove(_runtimeFailedKey);
+      return;
+    }
+
+    await prefs.setInt(
+      _runtimeHeartbeatAtKey,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    if (total != null) {
+      await prefs.setInt(_runtimeTotalKey, total);
+    }
+    if (completed != null) {
+      await prefs.setInt(_runtimeCompletedKey, completed);
+    }
+    if (failed != null) {
+      await prefs.setInt(_runtimeFailedKey, failed);
+    }
+  }
+
+  Future<_RuntimeSnapshot> _readRuntimeSnapshot() async {
+    final prefs = await SharedPreferences.getInstance();
+    final active = prefs.getBool(_runtimeActiveKey) ?? false;
+    final heartbeatAtMs = prefs.getInt(_runtimeHeartbeatAtKey) ?? 0;
+    final ageMs = DateTime.now().millisecondsSinceEpoch - heartbeatAtMs;
+    final recent = heartbeatAtMs > 0 && ageMs <= const Duration(hours: 1).inMilliseconds;
+    return _RuntimeSnapshot(
+      isActive: active && recent,
+      total: prefs.getInt(_runtimeTotalKey) ?? 0,
+      completed: prefs.getInt(_runtimeCompletedKey) ?? 0,
+      failed: prefs.getInt(_runtimeFailedKey) ?? 0,
+    );
   }
 
   Future<bool> _waitIfPaused() async {
@@ -1104,4 +1231,18 @@ class _PhotoProcessResult {
   final bool didSucceed;
   final int? eventId;
   final JunkPhotoCleanupCandidate? junkCandidate;
+}
+
+class _RuntimeSnapshot {
+  const _RuntimeSnapshot({
+    required this.isActive,
+    required this.total,
+    required this.completed,
+    required this.failed,
+  });
+
+  final bool isActive;
+  final int total;
+  final int completed;
+  final int failed;
 }

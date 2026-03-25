@@ -18,7 +18,7 @@ class AlbumRefreshProgress {
     required this.message,
   });
 
-  factory AlbumRefreshProgress.idle() {
+  factory AlbumRefreshProgress.idle() {  // 默认状态，隐藏进度提示
     return const AlbumRefreshProgress(
       stage: AlbumRefreshStage.idle,
       isRunning: false,
@@ -28,7 +28,7 @@ class AlbumRefreshProgress {
     );
   }
 
-  factory AlbumRefreshProgress.running({
+  factory AlbumRefreshProgress.running({  
     required AlbumRefreshStage stage,
     required double progress,
     required String title,
@@ -136,6 +136,28 @@ class AlbumRefreshService {
             _scanOffsetByChunk[normalizedChunk] = 0;
           }
         }
+      }
+
+      final hasDataMutation =
+          clearCacheFirst ||
+          scanSummary.insertedCount > 0 ||
+          scanSummary.removedCount > 0;
+
+      if (!hasDataMutation) {
+        _setProgress(
+          stage: AlbumRefreshStage.handoff,
+          progress: 0.95,
+          title: '扫描完成，无需重建',
+          message: '本次未发现新增或删除照片，已跳过聚类与 AI 入队',
+        );
+
+        return AlbumRefreshResult(
+          scanSummary: scanSummary,
+          requeuedCount: 0,
+          recentPhotoLimit: normalizedChunk,
+          clearCacheFirst: clearCacheFirst,
+          aiAlreadyRunning: AIService().isAnalyzing,
+        );
       }
 
       _setProgress(

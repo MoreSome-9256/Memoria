@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../service/ai_progress_notification_service.dart';
 import '../service/ai_service.dart';
 import '../service/album_refresh_service.dart';
 import 'pages/home_page.dart'; // 🌟 导入刚才新写的首页
@@ -31,12 +32,26 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    AIProgressNotificationService().bindNavigationHandler(_handleNavigationTarget);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  void _handleNavigationTarget(dynamic target) {
+    if (!mounted || target is! String) {
+      return;
+    }
+    if (target == 'album' ||
+        target == AIProgressNotificationService.navigationAlbum) {
+      setState(() {
+        _currentIndex = 1;
+        _progressBannerHidden = false;
+      });
+    }
   }
 
   @override

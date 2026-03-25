@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/ai_service.dart';
+import 'package:photo_album/service/ai_progress_notification_service.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 
 import 'local_vlm_test_page.dart';
@@ -140,7 +141,15 @@ class _ProfilePageState extends State<ProfilePage> {
                           });
                         },
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.info_outline),
+                        title: const Text('后台运行提醒（Android）'),
+                        subtitle: const Text(
+                          '如需提高后台继续处理成功率，请不要在最近任务中划掉本应用；建议在系统任务管理里给本应用加锁。',
+                        ),
+                      ),
                       const SizedBox(height: 24),
                       
                       Row(
@@ -182,7 +191,9 @@ class _ProfilePageState extends State<ProfilePage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
-        content: Text('已设置模型类型为 ${latest.label}，自动恢复 ${_autoResumeEnabled ? '已启用' : '已禁用'}'),
+        content: Text(
+          '已设置模型类型为 ${latest.label}，自动恢复 ${_autoResumeEnabled ? '已启用' : '已禁用'}',
+        ),
       ),
     );
   }
@@ -300,8 +311,8 @@ class _ProfilePageState extends State<ProfilePage> {
           _buildSettingsTile(
             context,
             Icons.tune,
-            'AI 模型类型',
-            '切换 MobileCLIP2 ONNX / NCNN（按需加载）',
+            '相册 AI 模型设定',
+            '切换模型及其运作形式',
             onTap: _showModelTypeSettings,
           ),
           _buildSettingsTile(

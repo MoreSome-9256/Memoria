@@ -14,6 +14,8 @@ class AIProgressNotificationService {
   static const String _channelId = 'ai_progress_channel';
   static const String _channelName = 'AI 打标进度';
   static const int _notificationId = 43001;
+  static const String actionPause = 'pause';
+  static const String actionResume = 'resume';
 
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
@@ -56,8 +58,6 @@ class AIProgressNotificationService {
           >();
       await iosImpl?.requestPermissions(alert: true, badge: false, sound: false);
     }
-
-    await AIForegroundService().initialize();
 
     _initialized = true;
   }
@@ -109,7 +109,6 @@ class AIProgressNotificationService {
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       await AIForegroundService().sync(
         shouldRun: isVisible,
-        isPaused: isPaused,
         title: title,
         text: '$progressPercent% · $body',
       );
@@ -132,9 +131,7 @@ class AIProgressNotificationService {
 
     final actions = <AndroidNotificationAction>[
       AndroidNotificationAction(
-        isPaused
-            ? AIForegroundService.actionResume
-            : AIForegroundService.actionPause,
+        isPaused ? actionResume : actionPause,
         isPaused ? '继续' : '暂停',
         showsUserInterface: false,
         cancelNotification: false,

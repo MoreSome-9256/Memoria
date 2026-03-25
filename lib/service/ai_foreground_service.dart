@@ -8,11 +8,11 @@ class AIForegroundService {
 
   factory AIForegroundService() => _instance;
 
-  static const String actionPause = 'pause';
-  static const String actionResume = 'resume';
+  static const String channelId = 'ai_progress_channel';
+  static const String channelName = 'AI 打标进度';
+  static const int notificationId = 43001;
 
   bool _initialized = false;
-  ValueChanged<String>? _actionHandler;
 
   Future<void> initialize() async {
     if (_initialized || kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
@@ -21,8 +21,8 @@ class AIForegroundService {
 
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
-        channelId: 'ai_fg_service_channel',
-        channelName: 'AI 后台处理',
+        channelId: channelId,
+        channelName: channelName,
         channelDescription: '用于保持 AI 打标任务在后台持续处理',
         channelImportance: NotificationChannelImportance.LOW,
         priority: NotificationPriority.LOW,
@@ -41,35 +41,11 @@ class AIForegroundService {
       ),
     );
 
-    FlutterForegroundTask.initCommunicationPort();
-    FlutterForegroundTask.removeTaskDataCallback(_onTaskData);
-    FlutterForegroundTask.addTaskDataCallback(_onTaskData);
-
     _initialized = true;
-  }
-
-  void bindActionHandler(ValueChanged<String> handler) {
-    _actionHandler = handler;
-  }
-
-  void _onTaskData(Object data) {
-    if (data is! String) {
-      return;
-    }
-    const prefix = 'ai_action:';
-    if (!data.startsWith(prefix)) {
-      return;
-    }
-    final action = data.substring(prefix.length).trim();
-    if (action.isEmpty) {
-      return;
-    }
-    _actionHandler?.call(action);
   }
 
   Future<void> sync({
     required bool shouldRun,
-    required bool isPaused,
     required String title,
     required String text,
   }) async {
@@ -87,27 +63,18 @@ class AIForegroundService {
       return;
     }
 
-    final buttons = <NotificationButton>[
-      NotificationButton(
-        id: isPaused ? actionResume : actionPause,
-        text: isPaused ? '继续' : '暂停',
-      ),
-    ];
-
     if (running) {
       await FlutterForegroundTask.updateService(
         notificationTitle: title,
         notificationText: text,
-        notificationButtons: buttons,
       );
       return;
     }
 
     await FlutterForegroundTask.startService(
-      serviceId: 43002,
+      serviceId: notificationId,
       notificationTitle: title,
       notificationText: text,
-      notificationButtons: buttons,
       callback: _startCallback,
     );
   }
@@ -132,9 +99,7 @@ class _AIForegroundTaskHandler extends TaskHandler {
   void onReceiveData(Object data) {}
 
   @override
-  void onNotificationButtonPressed(String id) {
-    FlutterForegroundTask.sendDataToMain('ai_action:$id');
-  }
+  void onNotificationButtonPressed(String id) {}
 
   @override
   void onNotificationPressed() {}

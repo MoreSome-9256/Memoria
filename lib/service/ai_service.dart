@@ -20,7 +20,6 @@ import 'mobileclip_tag_service.dart';
 import 'ocr_service.dart';
 import 'photo_caption_service.dart';
 import 'ai_progress_notification_service.dart';
-import 'ai_foreground_service.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -30,7 +29,6 @@ class AIService {
   factory AIService() => _instance;
   AIService._internal() {
     _progressNotifier.addListener(_syncProgressNotification);
-    AIForegroundService().bindActionHandler(_handleForegroundAction);
     AIProgressNotificationService().bindActionHandler(_handleForegroundAction);
   }
 
@@ -107,11 +105,11 @@ class AIService {
   }
 
   void _handleForegroundAction(String action) {
-    if (action == AIForegroundService.actionPause) {
+    if (action == AIProgressNotificationService.actionPause) {
       pauseAnalysis();
       return;
     }
-    if (action == AIForegroundService.actionResume) {
+    if (action == AIProgressNotificationService.actionResume) {
       resumeAnalysis();
     }
   }
@@ -293,7 +291,7 @@ class AIService {
         ? pendingCount
         : math.min(pendingCount, maxPhotos);
     int? processingStartedAtMs;
-    int _elapsedMs() {
+    int elapsedMs() {
       final startedAtMs = processingStartedAtMs;
       if (startedAtMs == null) {
         return 0;
@@ -330,7 +328,7 @@ class AIService {
       completed: 0,
       failed: 0,
       currentStep: '即将开始按需加载模型并分析图片',
-      elapsedMs: _elapsedMs(),
+      elapsedMs: elapsedMs(),
     );
 
     final faceOptions = FaceDetectorOptions(
@@ -364,7 +362,7 @@ class AIService {
           completed: processedCount,
           failed: failedCount,
           currentStep: '正在预热引擎 (1/3)：加载图像模型 ${selectedBackend.label}',
-          elapsedMs: _elapsedMs(),
+          elapsedMs: elapsedMs(),
         );
         await mobileClipEmbeddingService.warmUpBackend(selectedBackend);
 
@@ -373,7 +371,7 @@ class AIService {
           completed: processedCount,
           failed: failedCount,
           currentStep: '正在预热引擎 (2/3)：加载标签语义模型',
-          elapsedMs: _elapsedMs(),
+          elapsedMs: elapsedMs(),
         );
         await mobileClipTagService.warmUp();
 
@@ -382,7 +380,7 @@ class AIService {
           completed: processedCount,
           failed: failedCount,
           currentStep: '正在预热引擎 (3/3)：加载低价值过滤模板',
-          elapsedMs: _elapsedMs(),
+          elapsedMs: elapsedMs(),
         );
         await _junkPhotoFilterService.warmUp();
 
@@ -395,7 +393,7 @@ class AIService {
             failed: failedCount,
             currentStep:
                 '正在预热并行引擎：${_formatWorkerWarmupStatus(readyWorkers, maxWorkerCount)}',
-            elapsedMs: _elapsedMs(),
+            elapsedMs: elapsedMs(),
           );
           await Future<void>.delayed(const Duration(milliseconds: 60));
         }
@@ -408,7 +406,7 @@ class AIService {
           failed: failedCount,
           currentStep:
               '引擎预热完成：${_formatWorkerWarmupStatus(readyWorkers, maxWorkerCount)}，初始并发 $activeWorkerCount / $maxWorkerCount',
-          elapsedMs: _elapsedMs(),
+          elapsedMs: elapsedMs(),
         );
         engineBootstrapped = true;
       }
@@ -469,7 +467,7 @@ class AIService {
               failed: failedCount,
               currentStep:
                   '任务已入队 $scheduledCount / $targetTotal，等待 workers 处理',
-              elapsedMs: _elapsedMs(),
+              elapsedMs: elapsedMs(),
             );
           }
         } finally {
@@ -578,7 +576,7 @@ class AIService {
               failed: failedCount,
               currentStep:
                   '并行处理中 (worker ${workerIndex + 1}) 第 ${processedCount + 1} / $targetTotal 张',
-              elapsedMs: _elapsedMs(),
+              elapsedMs: elapsedMs(),
             );
 
             try {
@@ -625,7 +623,7 @@ class AIService {
                 completed: processedCount,
                 failed: failedCount,
                 currentStep: '正在结束本轮打标…',
-                elapsedMs: _elapsedMs(),
+                elapsedMs: elapsedMs(),
               );
             } else if (_pauseRequested) {
               _progressNotifier.value = AIAnalysisProgress.paused(
@@ -633,7 +631,7 @@ class AIService {
                 completed: processedCount,
                 failed: failedCount,
                 currentStep: '已暂停，随时可以继续',
-                elapsedMs: _elapsedMs(),
+                elapsedMs: elapsedMs(),
               );
             } else {
               _progressNotifier.value = AIAnalysisProgress.running(
@@ -643,7 +641,7 @@ class AIService {
                 currentStep: processedCount >= targetTotal
                     ? '正在收尾整理结果'
                     : '已完成 $processedCount / $targetTotal 张 (并发 $activeWorkerCount / $maxWorkerCount)',
-                elapsedMs: _elapsedMs(),
+                elapsedMs: elapsedMs(),
               );
             }
 

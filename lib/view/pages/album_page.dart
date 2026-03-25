@@ -32,7 +32,7 @@ enum _AlbumViewMode { tags, moments }
 
 class _AlbumPageState extends State<AlbumPage> {
   static const double _contentBottomInset = 118;
-  static const int _tagBrowserPhotoSoftLimit = 3000;
+  static const int _tagBrowserPhotoSoftLimit = 1200;
   bool _isClearingCache = false;
   String? _lastPromptedJunkCleanupReportId;
   final TextEditingController _semanticSearchController =
@@ -425,7 +425,7 @@ class _AlbumPageState extends State<AlbumPage> {
     );
     final uiEventsSource = _debounceStream<List<EventEntity>>(
       EventService().watchEvents(),
-      const Duration(milliseconds: 180),
+      const Duration(milliseconds: 420),
     );
     _uiEventsStream = uiEventsSource
         .asyncMap((eventEntities) => _groupEvents(eventEntities))
@@ -433,7 +433,7 @@ class _AlbumPageState extends State<AlbumPage> {
 
     _albumTagBrowserStream = _debounceStream<void>(
           PhotoService().isar.collection<PhotoEntity>().watchLazy(fireImmediately: true),
-          const Duration(milliseconds: 220),
+          const Duration(milliseconds: 700),
         )
         .asyncMap((_) => _loadAllPhotosForTagBrowser())
         .asyncMap((photos) async {
@@ -1068,7 +1068,7 @@ class _AlbumTagClusterCoverMosaic extends StatelessWidget {
     }
 
     if (photos.length <= 2) {
-      return PathImage(path: photos.first.path, fit: BoxFit.cover);
+      return _DeferredPathImage(path: photos.first.path, fit: BoxFit.cover);
     }
 
     final visible = photos.take(4).toList(growable: false);
@@ -1082,7 +1082,7 @@ class _AlbumTagClusterCoverMosaic extends StatelessWidget {
         crossAxisSpacing: 2,
       ),
       itemBuilder: (context, index) {
-        return PathImage(path: visible[index].path, fit: BoxFit.cover);
+        return _DeferredPathImage(path: visible[index].path, fit: BoxFit.cover);
       },
     );
   }
@@ -1103,15 +1103,62 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
   String? _selectedFineTag;
   static const int _secondaryFilterTopK = 12;
   static const double _sheetBottomInset = 110;
+  static const int _sheetPhotoSoftLimit = 800;
   late final Stream<List<PhotoEntity>> _photosStream;
 
   @override
   void initState() {
     super.initState();
-    _photosStream = PhotoService().isar
-        .collection<PhotoEntity>()
-        .watchLazy(fireImmediately: true)
+    _photosStream = _debounceStream<void>(
+          PhotoService().isar
+              .collection<PhotoEntity>()
+              .watchLazy(fireImmediately: true),
+          const Duration(milliseconds: 650),
+        )
         .asyncMap((_) => _loadCurrentPhotos());
+  }
+
+  Stream<T> _debounceStream<T>(Stream<T> source, Duration delay) {
+    late StreamController<T> controller;
+    StreamSubscription<T>? subscription;
+    Timer? timer;
+    T? pending;
+    var hasPending = false;
+
+    void emitPending() {
+      if (!hasPending) {
+        return;
+      }
+      controller.add(pending as T);
+      hasPending = false;
+      pending = null;
+    }
+
+    controller = StreamController<T>(
+      onListen: () {
+        subscription = source.listen(
+          (event) {
+            pending = event;
+            hasPending = true;
+            timer?.cancel();
+            timer = Timer(delay, emitPending);
+          },
+          onError: controller.addError,
+          onDone: () {
+            timer?.cancel();
+            emitPending();
+            controller.close();
+          },
+          cancelOnError: false,
+        );
+      },
+      onCancel: () {
+        timer?.cancel();
+        subscription?.cancel();
+      },
+    );
+
+    return controller.stream;
   }
 
   @override
@@ -1263,10 +1310,15 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
   }
 
   Future<List<PhotoEntity>> _loadCurrentPhotos() async {
+    if (AIService().isAnalyzing) {
+      // 打标高峰期避免每次写库都触发重查，减少 UI 抢占。
+      return widget.allPhotos;
+    }
+
     return PhotoService().isar.photoEntitys
         .where()
         .sortByTimestampDesc()
-        .limit(_AlbumPageState._tagBrowserPhotoSoftLimit)
+        .limit(_sheetPhotoSoftLimit)
         .findAll();
   }
 
@@ -1324,8 +1376,62 @@ class _AlbumTagPhotoTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           child: Hero(
             tag: heroTag,
-            child: PathImage(path: photo.path, fit: BoxFit.cover),
+            child: _DeferredPathImage(path: photo.path, fit: BoxFit.cover),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DeferredPathImage extends StatefulWidget {
+  const _DeferredPathImage({required this.path, this.fit = BoxFit.cover});
+
+  final String path;
+  final BoxFit fit;
+
+  @override
+  State<_DeferredPathImage> createState() => _DeferredPathImageState();
+}
+
+class _DeferredPathImageState extends State<_DeferredPathImage> {
+  bool _ready = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    // 按路径哈希做轻微错峰，避免同一帧触发大量解码。
+    final delayMs = 30 + (widget.path.hashCode.abs() % 9) * 35;
+    _timer = Timer(Duration(milliseconds: delayMs), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _ready = true;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_ready) {
+      return PathImage(path: widget.path, fit: widget.fit);
+    }
+
+    return DecoratedBox(
+      decoration: BoxDecoration(color: Colors.grey.shade200),
+      child: const Center(
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
       ),
     );

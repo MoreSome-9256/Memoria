@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../models/entity/photo_entity.dart';
@@ -16,6 +18,7 @@ class ThemeClustersPage extends StatefulWidget {
 class _ThemeClustersPageState extends State<ThemeClustersPage> {
   late Future<List<ThemeCluster>> _clustersFuture;
   bool _pureEmbeddingOnly = false;
+  bool _deferredUiReady = false;
 
   static const Map<String, IconData> _themeIcons = <String, IconData>{
     'people': Icons.people_alt_outlined,
@@ -42,6 +45,19 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
       pureEmbeddingOnly: _pureEmbeddingOnly,
       maxNewEmbeddingsPerRun: 300,
     );
+    _scheduleDeferredUiReveal();
+  }
+
+  void _scheduleDeferredUiReveal() {
+    _deferredUiReady = false;
+    Future<void>.delayed(const Duration(milliseconds: 260), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _deferredUiReady = true;
+      });
+    });
   }
 
   Future<void> _reload() async {
@@ -51,6 +67,7 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
         maxNewEmbeddingsPerRun: 300,
       );
     });
+    _scheduleDeferredUiReveal();
   }
 
   void _toggleClusteringMode() {
@@ -61,6 +78,7 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
         maxNewEmbeddingsPerRun: 300,
       );
     });
+    _scheduleDeferredUiReveal();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -169,6 +187,9 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
           }
 
           final clusters = snapshot.data ?? const <ThemeCluster>[];
+          if (!_deferredUiReady) {
+            return const Center(child: CircularProgressIndicator());
+          }
           if (clusters.isEmpty) {
             return const _EmptyThemeView();
           }
@@ -253,15 +274,37 @@ class _ThemeClusterDetailBody extends StatefulWidget {
 
 class _ThemeClusterDetailBodyState extends State<_ThemeClusterDetailBody> {
   late String _selectedSubclusterId;
+  bool _deferredBodyReady = false;
+  Timer? _deferTimer;
 
   @override
   void initState() {
     super.initState();
     _selectedSubclusterId = widget.cluster.primarySubcluster.id;
+    _deferTimer = Timer(const Duration(milliseconds: 220), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _deferredBodyReady = true;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _deferTimer?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!_deferredBodyReady) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     final selectedSubcluster = widget.cluster.subclusters.firstWhere(
       (item) => item.id == _selectedSubclusterId,
       orElse: () => widget.cluster.primarySubcluster,
@@ -456,7 +499,7 @@ class _SubclusterSummaryCard extends StatelessWidget {
                       padding: const EdgeInsets.only(right: 8),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(14),
-                        child: PathImage(path: photo.path, fit: BoxFit.cover),
+                        child: _DeferredThemeImage(path: photo.path, fit: BoxFit.cover),
                       ),
                     ),
                   );
@@ -537,7 +580,7 @@ class _SubclusterSelectorCard extends StatelessWidget {
                       padding: const EdgeInsets.only(right: 6),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child: PathImage(path: photo.path, fit: BoxFit.cover),
+                        child: _DeferredThemeImage(path: photo.path, fit: BoxFit.cover),
                       ),
                     ),
                   );
@@ -697,7 +740,7 @@ class _ThemeClusterCard extends StatelessWidget {
                         padding: const EdgeInsets.only(right: 8),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(16),
-                          child: PathImage(path: photo.path, fit: BoxFit.cover),
+                          child: _DeferredThemeImage(path: photo.path, fit: BoxFit.cover),
                         ),
                       ),
                     );
@@ -783,11 +826,20 @@ class _TimelineGroupSection extends StatelessWidget {
     required this.compactDisplayPreferred,
   });
 
+  static const int _maxGridPhotosPerGroup = 36;
+
   final ThemeTimelineGroup group;
   final bool compactDisplayPreferred;
 
   @override
   Widget build(BuildContext context) {
+    final visibleGridPhotos = compactDisplayPreferred
+        ? group.photos
+        : group.photos.take(_maxGridPhotosPerGroup).toList(growable: false);
+    final hiddenCount = compactDisplayPreferred
+        ? 0
+        : group.totalPhotos - visibleGridPhotos.length;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -807,20 +859,32 @@ class _TimelineGroupSection extends StatelessWidget {
         if (compactDisplayPreferred)
           _CompactTimelineStrip(group: group)
         else
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: group.photos.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 8,
-              childAspectRatio: 1,
-            ),
-            itemBuilder: (context, index) {
-              final photo = group.photos[index];
-              return _ThemePhotoTile(photo: photo);
-            },
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: visibleGridPhotos.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
+                  childAspectRatio: 1,
+                ),
+                itemBuilder: (context, index) {
+                  final photo = visibleGridPhotos[index];
+                  return _ThemePhotoTile(photo: photo);
+                },
+              ),
+              if (hiddenCount > 0) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '该时间段还有 $hiddenCount 张图片，已折叠以保证流畅度',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                ),
+              ],
+            ],
           ),
       ],
     );
@@ -900,7 +964,7 @@ class _ThemePhotoTile extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            PathImage(path: photo.path, fit: BoxFit.cover),
+            _DeferredThemeImage(path: photo.path, fit: BoxFit.cover),
             Positioned(
               left: 6,
               right: 6,
@@ -962,6 +1026,59 @@ class _EmptyThemeView extends StatelessWidget {
               style: TextStyle(color: Colors.grey[600], height: 1.5),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DeferredThemeImage extends StatefulWidget {
+  const _DeferredThemeImage({required this.path, this.fit = BoxFit.cover});
+
+  final String path;
+  final BoxFit fit;
+
+  @override
+  State<_DeferredThemeImage> createState() => _DeferredThemeImageState();
+}
+
+class _DeferredThemeImageState extends State<_DeferredThemeImage> {
+  bool _ready = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    final delayMs = 35 + (widget.path.hashCode.abs() % 10) * 32;
+    _timer = Timer(Duration(milliseconds: delayMs), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _ready = true;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_ready) {
+      return PathImage(path: widget.path, fit: widget.fit);
+    }
+
+    return DecoratedBox(
+      decoration: BoxDecoration(color: Colors.grey.shade200),
+      child: const Center(
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
       ),
     );

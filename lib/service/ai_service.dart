@@ -118,17 +118,35 @@ class AIService {
   }
 
   void resumeAnalysis() {
-    if (!_isAnalyzing || !_pauseRequested) {
+    if (_isAnalyzing && !_pauseRequested) {
       return;
     }
-    _pauseRequested = false;
+
     final current = _progressNotifier.value;
-    if (current.isVisible) {
+
+    // 常规暂停恢复：任务仍在运行，仅解除 pause gate。
+    if (_isAnalyzing && _pauseRequested) {
+      _pauseRequested = false;
+      if (current.isVisible) {
+        _progressNotifier.value = current.copyWith(
+          isRunning: true,
+          isPaused: false,
+          currentStep: '继续后台打标中',
+        );
+      }
+      return;
+    }
+
+    // 冷启动暂停态：应用重启后未自动恢复时，手动点击“继续”应直接拉起分析。
+    if (!_isAnalyzing && current.isPaused && current.total > 0) {
+      _pauseRequested = false;
+      _stopRequested = false;
       _progressNotifier.value = current.copyWith(
         isRunning: true,
         isPaused: false,
-        currentStep: '继续后台打标中',
+        currentStep: '正在手动启动后台打标…',
       );
+      unawaited(analyzePhotosInBackground());
     }
   }
 

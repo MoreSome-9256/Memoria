@@ -271,10 +271,14 @@ class _ThemeClusterDetailBodyState extends State<_ThemeClusterDetailBody> {
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.cluster.definition.title)),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        children: [
-          Container(
+      body: CustomScrollView(
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate(
+                [
+                  Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
               color: widget.color.withValues(alpha: 0.10),
@@ -357,14 +361,24 @@ class _ThemeClusterDetailBodyState extends State<_ThemeClusterDetailBody> {
             cohesion: selectedSubcluster.cohesion,
             color: widget.color,
           ),
-          const SizedBox(height: 18),
-          ...selectedSubcluster.groups.map(
-            (group) => Padding(
-              padding: const EdgeInsets.only(bottom: 18),
-              child: _TimelineGroupSection(
-                group: group,
-                compactDisplayPreferred: compactDisplayPreferred,
+                ],
               ),
+            ),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+            sliver: SliverList.builder(
+              itemCount: selectedSubcluster.groups.length,
+              itemBuilder: (context, index) {
+                final group = selectedSubcluster.groups[index];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 18),
+                  child: _TimelineGroupSection(
+                    group: group,
+                    compactDisplayPreferred: compactDisplayPreferred,
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -880,46 +894,48 @@ class _ThemePhotoTile extends StatelessWidget {
     final date = DateTime.fromMillisecondsSinceEpoch(photo.timestamp);
     final tagText = (photo.aiTags ?? const <String>[]).take(2).join(' · ');
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          PathImage(path: photo.path, fit: BoxFit.cover),
-          Positioned(
-            left: 6,
-            right: 6,
-            bottom: 6,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.42),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '${date.month}.${date.day}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  if (tagText.isNotEmpty)
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            PathImage(path: photo.path, fit: BoxFit.cover),
+            Positioned(
+              left: 6,
+              right: 6,
+              bottom: 6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.42),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                     Text(
-                      tagText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontSize: 10),
+                      '${date.month}.${date.day}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                ],
+                    if (tagText.isNotEmpty)
+                      Text(
+                        tagText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                      ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

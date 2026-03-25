@@ -39,7 +39,7 @@ class AIService {
   static const ThumbnailSize _mobileClipThumbnailSize = ThumbnailSize.square(
     384,
   );
-  static const int _maxParallelWorkers = 4;
+  static const int _maxParallelWorkers = 8;
 
   final ValueNotifier<AIAnalysisProgress> _progressNotifier =
       ValueNotifier<AIAnalysisProgress>(AIAnalysisProgress.idle());

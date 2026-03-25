@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -78,6 +79,7 @@ class AlbumRefreshService {
       ValueNotifier<AlbumRefreshProgress>(AlbumRefreshProgress.idle());
 
   bool _isRunning = false;
+  final Map<int, int> _scanOffsetByChunk = <int, int>{};
 
   ValueListenable<AlbumRefreshProgress> get progressListenable =>
       _progressNotifier;
@@ -96,10 +98,16 @@ class AlbumRefreshService {
     _isRunning = true;
 
     try {
+      final normalizedChunk = recentPhotoLimit == null
+          ? null
+          : math.max(1, recentPhotoLimit);
+      final currentOffset = normalizedChunk == null
+          ? 0
+          : (_scanOffsetByChunk[normalizedChunk] ?? 0);
       _setProgress(
         stage: AlbumRefreshStage.scanning,
         progress: 0.08,
-        title: '正在扫描最近图片',
+        title: '正在扫描下一批图片',
         message: _buildScopeMessage(
           recentPhotoLimit,
           fallback: '准备读取系统相册资源',
@@ -109,13 +117,25 @@ class AlbumRefreshService {
       late final PhotoScanSummary scanSummary;
       if (clearCacheFirst) {
         await AIService().stopAnalysisAndWait();
+        _scanOffsetByChunk.clear();
         scanSummary = await PhotoService().rebuildAllCachedData(
           maxAssets: recentPhotoLimit,
         );
       } else {
-        scanSummary = await PhotoService().scanAndSyncPhotos(
-          maxAssets: recentPhotoLimit,
+        scanSummary = await PhotoService().scanAndSyncPhotosWithOffset(
+          maxAssets: normalizedChunk,
+          offsetFromNewest: currentOffset,
         );
+        if (normalizedChunk != null) {
+          final consumed = scanSummary.scannedCount;
+          if (consumed > 0) {
+            _scanOffsetByChunk[normalizedChunk] = currentOffset + consumed;
+          }
+          if (consumed < normalizedChunk) {
+            // 到达末尾后，下次从头开始，形成滚动窗口。
+            _scanOffsetByChunk[normalizedChunk] = 0;
+          }
+        }
       }
 
       _setProgress(
@@ -135,9 +155,11 @@ class AlbumRefreshService {
 
       var requeuedCount = 0;
       if (!clearCacheFirst) {
-        requeuedCount = await PhotoService().requeueLatestPhotosForAi(
-          maxPhotos: recentPhotoLimit,
-        );
+        if (scanSummary.insertedPhotoIds.isNotEmpty) {
+          requeuedCount = await PhotoService().requeuePhotosForAiByIds(
+            scanSummary.insertedPhotoIds,
+          );
+        }
       }
 
       final aiAlreadyRunning = AIService().isAnalyzing;
@@ -157,7 +179,7 @@ class AlbumRefreshService {
       return AlbumRefreshResult(
         scanSummary: scanSummary,
         requeuedCount: requeuedCount,
-        recentPhotoLimit: recentPhotoLimit,
+        recentPhotoLimit: normalizedChunk,
         clearCacheFirst: clearCacheFirst,
         aiAlreadyRunning: aiAlreadyRunning,
       );
@@ -204,6 +226,6 @@ class AlbumRefreshService {
     if (recentPhotoLimit == null) {
       return '$fallback（全量）';
     }
-    return '$fallback（最近 $recentPhotoLimit 张）';
+    return '$fallback（下一批 $recentPhotoLimit 张）';
   }
 }

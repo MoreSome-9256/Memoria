@@ -19,11 +19,13 @@ class _PreparedScanData {
     required this.assets,
     required this.totalCount,
     required this.fetchCount,
+    required this.startOffset,
   });
 
   final List<AssetEntity> assets;
   final int totalCount;
   final int fetchCount;
+  final int startOffset;
 }
 
 class _ScanBuildResult {
@@ -128,8 +130,18 @@ class PhotoService {
 
   // 1️⃣ 扫描相册 (快速入库，带截图过滤)
   Future<PhotoScanSummary> scanAndSyncPhotos({int? maxAssets}) async {
+    return scanAndSyncPhotosWithOffset(maxAssets: maxAssets);
+  }
+
+  Future<PhotoScanSummary> scanAndSyncPhotosWithOffset({
+    int? maxAssets,
+    int offsetFromNewest = 0,
+  }) async {
     final totalBefore = await _isar.collection<PhotoEntity>().count();
-    final prepared = await _prepareScan(maxAssets: maxAssets);
+    final prepared = await _prepareScan(
+      maxAssets: maxAssets,
+      offsetFromNewest: offsetFromNewest,
+    );
 
     // 先做反向同步：清理系统相册已删除/已不可访问的照片
     final removedCount = await _removeUnavailablePhotos();
@@ -149,6 +161,10 @@ class PhotoService {
         await _isar.collection<PhotoEntity>().putAll(built.photos);
       });
     }
+    final insertedPhotoIds = built.photos
+        .map((photo) => photo.id)
+        .where((id) => id > 0)
+        .toList(growable: false);
 
     print(
       "✅ 基础数据同步完成: 删除=$removedCount 入库=${built.insertedCount} 其中无GPS入库=${built.insertedNoGps} 跳过[无时间=${built.skippedInvalidTime} 非相机=${built.skippedNonCamera} 截图=${built.skippedScreenshot}]",
@@ -168,6 +184,9 @@ class PhotoService {
       totalAfter: totalAfter,
       removedCount: removedCount,
       insertedCount: built.insertedCount,
+      insertedPhotoIds: insertedPhotoIds,
+      scanStartOffset: prepared.startOffset,
+      scannedCount: prepared.fetchCount,
       skippedInvalidTime: built.skippedInvalidTime,
       insertedNoGps: built.insertedNoGps,
       skippedNonCamera: built.skippedNonCamera,
@@ -175,7 +194,10 @@ class PhotoService {
     );
   }
 
-  Future<_PreparedScanData> _prepareScan({int? maxAssets}) async {
+  Future<_PreparedScanData> _prepareScan({
+    int? maxAssets,
+    int offsetFromNewest = 0,
+  }) async {
     if (Platform.isAndroid) {
       final photosStatus = await Permission.photos.request();
       print('📸 Android photos 权限请求结果: $photosStatus');
@@ -275,13 +297,18 @@ class PhotoService {
 
     print('✅ 本次扫描选中相册: ${selectedAlbum.name} ($selectedCount 张)');
     final totalCount = selectedCount;
+    final normalizedOffset = math.max(0, offsetFromNewest);
+    final startOffset = maxAssets == null
+        ? 0
+        : math.min(normalizedOffset, totalCount);
+    final remainingCount = math.max(0, totalCount - startOffset);
     final fetchCount = maxAssets == null
         ? totalCount
-        : (maxAssets < totalCount ? maxAssets : totalCount);
-    final startIndex = maxAssets == null ? 0 : math.max(0, totalCount - fetchCount);
+        : math.min(maxAssets, remainingCount);
+    final endIndex = startOffset + fetchCount;
     final assets = await selectedAlbum.getAssetListRange(
-      start: startIndex,
-      end: totalCount,
+      start: startOffset,
+      end: endIndex,
     );
     assets.sort(
       (a, b) => b.createDateTime.millisecondsSinceEpoch.compareTo(
@@ -293,6 +320,7 @@ class PhotoService {
       assets: assets,
       totalCount: totalCount,
       fetchCount: fetchCount,
+      startOffset: startOffset,
     );
   }
 
@@ -355,6 +383,7 @@ class PhotoService {
       assets: assets,
       totalCount: assets.length,
       fetchCount: assets.length,
+      startOffset: 0,
     );
   }
 
@@ -723,6 +752,9 @@ class PhotoScanSummary {
   final int totalAfter;
   final int removedCount;
   final int insertedCount;
+  final List<int> insertedPhotoIds;
+  final int scanStartOffset;
+  final int scannedCount;
   final int skippedInvalidTime;
   final int insertedNoGps;
   final int skippedNonCamera;
@@ -733,6 +765,9 @@ class PhotoScanSummary {
     required this.totalAfter,
     required this.removedCount,
     required this.insertedCount,
+    this.insertedPhotoIds = const <int>[],
+    this.scanStartOffset = 0,
+    this.scannedCount = 0,
     required this.skippedInvalidTime,
     required this.insertedNoGps,
     required this.skippedNonCamera,

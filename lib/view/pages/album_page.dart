@@ -45,10 +45,6 @@ class _AlbumPageState extends State<AlbumPage> {
   // 🌟 1. 改为直接监听最终 UI 数据结构的 Stream
   late Stream<Map<String, List<Event>>> _uiEventsStream;
   late Stream<_AlbumTagBrowserData> _albumTagBrowserStream;
-  StreamSubscription<Map<String, List<Event>>>? _uiEventsCacheSubscription;
-  StreamSubscription<_AlbumTagBrowserData>? _albumTagBrowserCacheSubscription;
-  Map<String, List<Event>> _latestGroupedEvents = const <String, List<Event>>{};
-  _AlbumTagBrowserData? _latestAlbumTagBrowserData;
 
   static const int _fullRefreshOption = -1;
   static const List<int> _refreshPhotoOptions = <int>[
@@ -112,7 +108,7 @@ class _AlbumPageState extends State<AlbumPage> {
 
     final scopeLabel = recentPhotoLimit == null
         ? '全部照片'
-        : '最近 $recentPhotoLimit 张';
+      : '下一批 $recentPhotoLimit 张';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
@@ -141,10 +137,10 @@ class _AlbumPageState extends State<AlbumPage> {
                 : result.requeuedCount > 0
                 ? result.recentPhotoLimit == null
                       ? '相册已更新，并将 ${result.requeuedCount} 张旧照片重新加入中文打标队列。'
-                      : '已刷新最近 ${result.recentPhotoLimit} 张照片，并将其中 ${result.requeuedCount} 张重新加入中文打标队列。'
+                  : '已刷新下一批 ${result.recentPhotoLimit} 张照片，并将新增的 ${result.requeuedCount} 张加入中文打标队列。'
                 : result.recentPhotoLimit == null
                 ? '相册已更新。$handoffText'
-                : '最近 ${result.recentPhotoLimit} 张照片已刷新。$handoffText';
+                : '下一批 ${result.recentPhotoLimit} 张照片已刷新。$handoffText';
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 behavior: SnackBarBehavior.floating,
@@ -283,10 +279,10 @@ class _AlbumPageState extends State<AlbumPage> {
                 ..._refreshPhotoOptions.map((option) {
                   // 这里假设你的代码里定义了 _fullRefreshOption，如果没有请替换为你实际的值
                   final isFull = option == -1; // 假设 -1 代表全部，请根据你的代码调整
-                  final label = isFull ? '全部运行' : '先跑最近 $option 张';
+                  final label = isFull ? '全部运行' : '跑下一批 $option 张';
                   final subtitle = isFull
                       ? '扫描全部照片并对全部待处理照片后台打标'
-                      : '仅扫描最近照片，并只重排这部分照片的 AI 打标';
+                    : '按窗口滚动扫描下一批，并仅重排本批新增照片的 AI 打标';
                   return ListTile(
                     leading: Icon(
                       isFull ? Icons.all_inclusive : Icons.flash_on,
@@ -427,16 +423,22 @@ class _AlbumPageState extends State<AlbumPage> {
     AIService().junkCleanupReportListenable.addListener(
       _onJunkCleanupReportChanged,
     );
-    // 🌟 2. 使用 asyncMap 把异步处理逻辑直接塞进数据流的管道里
-    // 这样 UI 层只负责接收完全处理好的数据，彻底消灭 FutureBuilder 嵌套！
-    _uiEventsStream = EventService().watchEvents().asyncMap((eventEntities) {
-      return _groupEvents(eventEntities);
-    }).asBroadcastStream();
-    _albumTagBrowserStream = PhotoService().isar
-        .collection<PhotoEntity>()
-        .watchLazy(fireImmediately: true)
+    final uiEventsSource = _debounceStream<List<EventEntity>>(
+      EventService().watchEvents(),
+      const Duration(milliseconds: 180),
+    );
+    _uiEventsStream = uiEventsSource
+        .asyncMap((eventEntities) => _groupEvents(eventEntities))
+        .asBroadcastStream();
+
+    _albumTagBrowserStream = _debounceStream<void>(
+          PhotoService().isar.collection<PhotoEntity>().watchLazy(fireImmediately: true),
+          const Duration(milliseconds: 220),
+        )
         .asyncMap((_) => _loadAllPhotosForTagBrowser())
-        .map((photos) {
+        .asyncMap((photos) async {
+          // 主动让出一帧，降低同帧内计算尖峰。
+          await Future<void>.delayed(Duration.zero);
           final taggedPhotos =
               photos
                   .where(_albumTagBrowserService.hasClassifiableTag)
@@ -457,18 +459,10 @@ class _AlbumPageState extends State<AlbumPage> {
           );
         })
         .asBroadcastStream();
-    _uiEventsCacheSubscription = _uiEventsStream.listen((value) {
-      _latestGroupedEvents = value;
-    });
-    _albumTagBrowserCacheSubscription = _albumTagBrowserStream.listen((value) {
-      _latestAlbumTagBrowserData = value;
-    });
   }
 
   @override
   void dispose() {
-    _uiEventsCacheSubscription?.cancel();
-    _albumTagBrowserCacheSubscription?.cancel();
     AIService().junkCleanupReportListenable.removeListener(
       _onJunkCleanupReportChanged,
     );
@@ -505,6 +499,49 @@ class _AlbumPageState extends State<AlbumPage> {
         .sortByTimestampDesc()
         .limit(_tagBrowserPhotoSoftLimit)
         .findAll();
+  }
+
+  Stream<T> _debounceStream<T>(Stream<T> source, Duration delay) {
+    late StreamController<T> controller;
+    StreamSubscription<T>? subscription;
+    Timer? timer;
+    T? pending;
+    var hasPending = false;
+
+    void emitPending() {
+      if (!hasPending) {
+        return;
+      }
+      controller.add(pending as T);
+      hasPending = false;
+      pending = null;
+    }
+
+    controller = StreamController<T>(
+      onListen: () {
+        subscription = source.listen(
+          (event) {
+            pending = event;
+            hasPending = true;
+            timer?.cancel();
+            timer = Timer(delay, emitPending);
+          },
+          onError: controller.addError,
+          onDone: () {
+            timer?.cancel();
+            emitPending();
+            controller.close();
+          },
+          cancelOnError: false,
+        );
+      },
+      onCancel: () {
+        timer?.cancel();
+        subscription?.cancel();
+      },
+    );
+
+    return controller.stream;
   }
 
   Future<void> _openTagClusterBrowser(
@@ -791,7 +828,6 @@ class _AlbumPageState extends State<AlbumPage> {
   Widget _buildAlbumTagBrowserView() {
     return StreamBuilder<_AlbumTagBrowserData>(
       stream: _albumTagBrowserStream,
-      initialData: _latestAlbumTagBrowserData,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
@@ -844,7 +880,6 @@ class _AlbumPageState extends State<AlbumPage> {
   Widget _buildMomentsView() {
     return StreamBuilder<Map<String, List<Event>>>(
       stream: _uiEventsStream,
-      initialData: _latestGroupedEvents,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
@@ -1278,17 +1313,19 @@ class _AlbumTagPhotoTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final heroTag = 'album-tag-photo-${photo.id}';
-    return GestureDetector(
-      onTap: () => showFullscreenPhotoViewer(
-        context,
-        path: photo.path,
-        heroTag: heroTag,
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Hero(
-          tag: heroTag,
-          child: PathImage(path: photo.path, fit: BoxFit.cover),
+    return RepaintBoundary(
+      child: GestureDetector(
+        onTap: () => showFullscreenPhotoViewer(
+          context,
+          path: photo.path,
+          heroTag: heroTag,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Hero(
+            tag: heroTag,
+            child: PathImage(path: photo.path, fit: BoxFit.cover),
+          ),
         ),
       ),
     );

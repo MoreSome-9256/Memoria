@@ -69,7 +69,7 @@ class LlamadartLocalEngineService {
     final messages = <LlamaChatMessage>[
       LlamaChatMessage.withContent(
         role: LlamaChatRole.user,
-        content: <LlamaContent>[
+        content: <LlamaContentPart>[
           ...imagePaths.map((path) => LlamaImageContent(path: path)),
           LlamaTextContent(prompt),
         ],
@@ -78,9 +78,9 @@ class LlamadartLocalEngineService {
 
     final response = engine.create(
       messages,
-      generationParams: GenerationParams(
+      params: GenerationParams(
         maxTokens: maxTokens,
-        temperature: temperature,
+        temp: temperature,
       ),
     );
 

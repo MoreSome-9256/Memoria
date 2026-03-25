@@ -19,6 +19,7 @@ import 'mobileclip_embedding_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'ocr_service.dart';
 import 'photo_caption_service.dart';
+import 'ai_progress_notification_service.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -26,7 +27,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 class AIService {
   static final AIService _instance = AIService._internal();
   factory AIService() => _instance;
-  AIService._internal();
+  AIService._internal() {
+    _progressNotifier.addListener(_syncProgressNotification);
+  }
 
   static const Set<String> _blockedVisualTags = <String>{
     'Screenshot',
@@ -81,6 +84,23 @@ class AIService {
     _autoResumeEnabled = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_autoResumeKey, enabled);
+  }
+
+  void _syncProgressNotification() {
+    final progress = _progressNotifier.value;
+    unawaited(
+      AIProgressNotificationService().syncProgress(
+        isVisible: progress.isVisible,
+        isRunning: progress.isRunning,
+        isPaused: progress.isPaused,
+        isStopping: progress.isStopping,
+        completed: progress.completed,
+        total: progress.total,
+        failed: progress.failed,
+        currentStep: progress.currentStep,
+        fraction: progress.fraction,
+      ),
+    );
   }
 
   Future<bool> getAutoResumePreference() async {

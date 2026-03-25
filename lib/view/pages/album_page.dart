@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
@@ -33,6 +34,7 @@ enum _AlbumViewMode { tags, moments }
 class _AlbumPageState extends State<AlbumPage> {
   static const double _contentBottomInset = 118;
   static const int _tagBrowserPhotoSoftLimit = 1200;
+  static const int _tagBrowserYieldChunk = 120;
   bool _isClearingCache = false;
   String? _lastPromptedJunkCleanupReportId;
   final TextEditingController _semanticSearchController =
@@ -436,29 +438,45 @@ class _AlbumPageState extends State<AlbumPage> {
           const Duration(milliseconds: 700),
         )
         .asyncMap((_) => _loadAllPhotosForTagBrowser())
-        .asyncMap((photos) async {
-          // 主动让出一帧，降低同帧内计算尖峰。
-          await Future<void>.delayed(Duration.zero);
-          final taggedPhotos =
-              photos
-                  .where(_albumTagBrowserService.hasClassifiableTag)
-                  .toList(growable: false)
-                ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-          final clusters = _albumTagBrowserService.buildCoarseClusters(
-            taggedPhotos,
-            fineTopK: memoriaFineTopK,
-          );
-          return _AlbumTagBrowserData(
-            totalPhotoCount: photos.length,
-            analyzedPhotoCount: photos
-                .where((photo) => photo.isAiAnalyzed)
-                .length,
-            taggedPhotoCount: taggedPhotos.length,
-            photos: taggedPhotos,
-            clusters: clusters,
-          );
-        })
+        .asyncMap(_buildAlbumTagBrowserData)
         .asBroadcastStream();
+  }
+
+  Future<_AlbumTagBrowserData> _buildAlbumTagBrowserData(
+    List<PhotoEntity> photos,
+  ) async {
+    var analyzedPhotoCount = 0;
+    final taggedPhotos = <PhotoEntity>[];
+
+    for (var i = 0; i < photos.length; i++) {
+      final photo = photos[i];
+      if (photo.isAiAnalyzed) {
+        analyzedPhotoCount += 1;
+      }
+      if (_albumTagBrowserService.hasClassifiableTag(photo)) {
+        taggedPhotos.add(photo);
+      }
+
+      if (i % _tagBrowserYieldChunk == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    taggedPhotos.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    await Future<void>.delayed(Duration.zero);
+
+    final clusters = _albumTagBrowserService.buildCoarseClusters(
+      taggedPhotos,
+      fineTopK: memoriaFineTopK,
+    );
+
+    return _AlbumTagBrowserData(
+      totalPhotoCount: photos.length,
+      analyzedPhotoCount: analyzedPhotoCount,
+      taggedPhotoCount: taggedPhotos.length,
+      photos: taggedPhotos,
+      clusters: clusters,
+    );
   }
 
   @override
@@ -604,6 +622,21 @@ class _AlbumPageState extends State<AlbumPage> {
         builder: (context, progress, _) {
           return Column(
             children: [
+              ValueListenableBuilder<int>(
+                valueListenable:
+                    _DeferredImageLoadScheduler.pendingCountListenable,
+                builder: (context, pendingCount, _) {
+                  return AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: pendingCount > 0
+                        ? const LinearProgressIndicator(
+                            key: ValueKey<String>('deferred-images-loading'),
+                            minHeight: 2.5,
+                          )
+                        : const SizedBox.shrink(),
+                  );
+                },
+              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: TextField(
@@ -883,7 +916,7 @@ class _AlbumPageState extends State<AlbumPage> {
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
+          return _buildTopIndeterminateLoading();
         }
 
         if (snapshot.hasError) {
@@ -965,6 +998,22 @@ class _AlbumPageState extends State<AlbumPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTopIndeterminateLoading() {
+    return Column(
+      children: [
+        const LinearProgressIndicator(minHeight: 2.5),
+        Expanded(
+          child: Center(
+            child: Text(
+              '正在加载相册...',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1357,6 +1406,80 @@ class _AlbumPhotoMonthGroup {
   final List<PhotoEntity> photos;
 }
 
+class _DeferredImageTicket {
+  _DeferredImageTicket();
+
+  bool started = false;
+  bool completed = false;
+}
+
+class _DeferredImageLoadScheduler {
+  static const int _maxConcurrent = 4;
+  static final ValueNotifier<int> pendingCountListenable =
+      ValueNotifier<int>(0);
+  static final Queue<(_DeferredImageTicket, VoidCallback)> _queue =
+      Queue<(_DeferredImageTicket, VoidCallback)>();
+  static int _active = 0;
+  static int _pendingCount = 0;
+  static bool _flushScheduled = false;
+
+  static void enqueue(_DeferredImageTicket ticket, VoidCallback starter) {
+    if (ticket.completed) {
+      return;
+    }
+    _setPendingCount(_pendingCount + 1);
+    _queue.add((ticket, starter));
+    _pump();
+  }
+
+  static void complete(_DeferredImageTicket ticket) {
+    if (ticket.completed) {
+      return;
+    }
+    ticket.completed = true;
+
+    if (ticket.started && _active > 0) {
+      _active -= 1;
+    } else {
+      _queue.removeWhere((entry) => identical(entry.$1, ticket));
+    }
+
+    final next = _pendingCount - 1;
+    _setPendingCount(next < 0 ? 0 : next);
+    _pump();
+  }
+
+  static void _setPendingCount(int value) {
+    _pendingCount = value;
+    _scheduleFlush();
+  }
+
+  static void _scheduleFlush() {
+    if (_flushScheduled) {
+      return;
+    }
+    _flushScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _flushScheduled = false;
+      if (pendingCountListenable.value != _pendingCount) {
+        pendingCountListenable.value = _pendingCount;
+      }
+    });
+  }
+
+  static void _pump() {
+    while (_active < _maxConcurrent && _queue.isNotEmpty) {
+      final (ticket, starter) = _queue.removeFirst();
+      if (ticket.completed) {
+        continue;
+      }
+      ticket.started = true;
+      _active += 1;
+      starter();
+    }
+  }
+}
+
 class _AlbumTagPhotoTile extends StatelessWidget {
   const _AlbumTagPhotoTile({required this.photo});
 
@@ -1395,16 +1518,22 @@ class _DeferredPathImage extends StatefulWidget {
 }
 
 class _DeferredPathImageState extends State<_DeferredPathImage> {
+  final _DeferredImageTicket _ticket = _DeferredImageTicket();
   bool _ready = false;
+  bool _firstFrameReported = false;
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    // 按路径哈希做轻微错峰，避免同一帧触发大量解码。
-    final delayMs = 30 + (widget.path.hashCode.abs() % 9) * 35;
+    _DeferredImageLoadScheduler.enqueue(_ticket, _startDeferredLoad);
+  }
+
+  void _startDeferredLoad() {
+    // 按路径哈希错峰 + 并发限流，避免短时间触发大量图片解码。
+    final delayMs = 30 + (widget.path.hashCode.abs() % 11) * 28;
     _timer = Timer(Duration(milliseconds: delayMs), () {
-      if (!mounted) {
+      if (!mounted || _ticket.completed) {
         return;
       }
       setState(() {
@@ -1413,16 +1542,29 @@ class _DeferredPathImageState extends State<_DeferredPathImage> {
     });
   }
 
+  void _onFirstFrame() {
+    if (_firstFrameReported) {
+      return;
+    }
+    _firstFrameReported = true;
+    _DeferredImageLoadScheduler.complete(_ticket);
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
+    _DeferredImageLoadScheduler.complete(_ticket);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     if (_ready) {
-      return PathImage(path: widget.path, fit: widget.fit);
+      return PathImage(
+        path: widget.path,
+        fit: widget.fit,
+        onFirstFrame: _onFirstFrame,
+      );
     }
 
     return DecoratedBox(

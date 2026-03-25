@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -11,6 +12,7 @@ import '../utils/theme_subclustering.dart';
 import 'mobileclip_vision_service.dart';
 import 'photo_service.dart';
 import 'semantic_matching_service.dart';
+import 'theme_cluster_compute_helpers.dart';
 
 typedef ThemePhotosLoader = Future<List<PhotoEntity>> Function();
 typedef ThemeEmbeddingPreparer =
@@ -120,6 +122,12 @@ class ThemeClusterService {
 
   static const int _embeddingDim = 512;
   static const int _defaultMaxNewEmbeddingsPerRun = 400;
+  static const int _defaultMaxPhotosToScan = 2400;
+  static const int _yieldEveryEmbeddingItems = 24;
+  static const int _yieldEveryScoringItems = 80;
+  static const Duration _embeddingTimeout = Duration(seconds: 10);
+  static const Duration _prototypeWarmUpTimeout = Duration(seconds: 15);
+  static const Duration _prototypePromptTimeout = Duration(seconds: 8);
 
   ValueListenable<ThemeClusteringProgress> get progressListenable =>
       _progressNotifier;
@@ -270,6 +278,7 @@ class ThemeClusterService {
     int minPhotosPerSubcluster = 4,
     bool pureEmbeddingOnly = false,
     int maxNewEmbeddingsPerRun = _defaultMaxNewEmbeddingsPerRun,
+    int maxPhotosToScan = _defaultMaxPhotosToScan,
   }) async {
     _updateProgress(
       const ThemeClusteringProgress(
@@ -279,7 +288,7 @@ class ThemeClusterService {
         message: '正在加载照片',
       ),
     );
-    final photos = await _loadPhotos();
+    final photos = await _loadPhotos(maxPhotosToScan: maxPhotosToScan);
     if (photos.isEmpty) {
       _updateProgress(
         const ThemeClusteringProgress(
@@ -360,17 +369,24 @@ class ThemeClusterService {
       }
 
       final matches = <ScoredThemePhoto>[];
-      for (final photo in photos) {
+      for (var photoIndex = 0; photoIndex < photos.length; photoIndex++) {
+        final photo = photos[photoIndex];
         if (_shouldSkipPhotoForTheme(
           photo,
           definition,
           pureEmbeddingOnly: pureEmbeddingOnly,
         )) {
+          if (photoIndex % _yieldEveryScoringItems == 0) {
+            await Future<void>.delayed(Duration.zero);
+          }
           continue;
         }
 
         final embedding = embeddingByPhotoId[photo.id];
         if (embedding == null) {
+          if (photoIndex % _yieldEveryScoringItems == 0) {
+            await Future<void>.delayed(Duration.zero);
+          }
           continue;
         }
 
@@ -389,6 +405,10 @@ class ThemeClusterService {
               embedding: embedding,
             ),
           );
+        }
+
+        if (photoIndex % _yieldEveryScoringItems == 0) {
+          await Future<void>.delayed(Duration.zero);
         }
       }
 
@@ -446,11 +466,16 @@ class ThemeClusterService {
     return clusters.take(maxThemes).toList(growable: false);
   }
 
-  Future<List<PhotoEntity>> _loadPhotos() async {
+  Future<List<PhotoEntity>> _loadPhotos({required int maxPhotosToScan}) async {
     if (_photosLoader != null) {
       return _photosLoader();
     }
-    return PhotoService().isar.collection<PhotoEntity>().where().findAll();
+    return PhotoService().isar
+        .collection<PhotoEntity>()
+        .where()
+        .sortByTimestampDesc()
+        .limit(maxPhotosToScan)
+        .findAll();
   }
 
   ThemeSubclusterer _resolveSubclusterer(ThemeDefinition definition) {
@@ -531,7 +556,7 @@ class ThemeClusterService {
       }
 
       final file = File(photo.path);
-      if (!file.existsSync()) {
+      if (!await file.exists()) {
         skippedMissingFiles++;
         _emitEmbeddingProgress(
           processed: processed,
@@ -543,8 +568,16 @@ class ThemeClusterService {
       }
 
       try {
-        final embedding = await _visionService.embedImageFile(file);
+        final embedding = await _visionService
+            .embedImageFile(file)
+            .timeout(_embeddingTimeout);
         if (embedding.length != _embeddingDim) {
+          _emitEmbeddingProgress(
+            processed: processed,
+            total: total,
+            newEmbeddings: newEmbeddings,
+            cachedEmbeddings: cachedEmbeddings,
+          );
           continue;
         }
 
@@ -552,6 +585,15 @@ class ThemeClusterService {
         photo.imageEmbedding = embedding;
         updated.add(photo);
         newEmbeddings++;
+      } on TimeoutException {
+        _emitEmbeddingProgress(
+          processed: processed,
+          total: total,
+          newEmbeddings: newEmbeddings,
+          cachedEmbeddings: cachedEmbeddings,
+          force: true,
+        );
+        continue;
       } catch (_) {
         _emitEmbeddingProgress(
           processed: processed,
@@ -568,6 +610,10 @@ class ThemeClusterService {
         newEmbeddings: newEmbeddings,
         cachedEmbeddings: cachedEmbeddings,
       );
+
+      if (processed % _yieldEveryEmbeddingItems == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
     }
 
     if (updated.isNotEmpty) {
@@ -638,7 +684,12 @@ class ThemeClusterService {
       return _prototypeBuilder();
     }
 
-    await _semanticService.warmUp();
+    try {
+      await _semanticService.warmUp().timeout(_prototypeWarmUpTimeout);
+    } on TimeoutException {
+      debugPrint('⚠️ [主题聚类] 语义模型 warmUp 超时，跳过本轮聚类');
+      return const <String, List<double>>{};
+    }
     final result = <String, List<double>>{};
 
     for (final definition in _definitions) {
@@ -646,45 +697,28 @@ class ThemeClusterService {
         continue;
       }
 
-      final promptVectors = await Future.wait(
-        definition.prototypePrompts.map(_semanticService.embedText),
-      );
-      final merged = _meanAndNormalize(promptVectors);
+      final promptVectors = <List<double>>[];
+      for (final prompt in definition.prototypePrompts) {
+        try {
+          final vector = await _semanticService
+              .embedText(prompt)
+              .timeout(_prototypePromptTimeout);
+          promptVectors.add(vector);
+        } on TimeoutException {
+          continue;
+        } catch (_) {
+          continue;
+        }
+      }
+      final merged = ThemeClusterComputeHelpers.meanAndNormalize(promptVectors);
       if (merged.length == _embeddingDim) {
         result[definition.id] = merged;
       }
+
+      await Future<void>.delayed(Duration.zero);
     }
 
     return result;
-  }
-
-  List<double> _meanAndNormalize(List<List<double>> vectors) {
-    if (vectors.isEmpty) {
-      return const <double>[];
-    }
-
-    final dim = vectors.first.length;
-    if (dim == 0 || vectors.any((vector) => vector.length != dim)) {
-      return const <double>[];
-    }
-
-    final mean = List<double>.filled(dim, 0.0);
-    for (final vector in vectors) {
-      for (var i = 0; i < dim; i++) {
-        mean[i] += vector[i];
-      }
-    }
-    for (var i = 0; i < dim; i++) {
-      mean[i] /= vectors.length;
-    }
-
-    final norm = math.sqrt(
-      mean.fold<double>(0.0, (sum, value) => sum + value * value),
-    );
-    if (norm <= 0) {
-      return mean;
-    }
-    return mean.map((value) => value / norm).toList(growable: false);
   }
 
   double _scorePhoto(
@@ -694,13 +728,16 @@ class ThemeClusterService {
     required List<double> prototype,
     required bool pureEmbeddingOnly,
   }) {
-    var score = _cosineSimilarity(embedding, prototype);
+    var score = ThemeClusterComputeHelpers.cosineSimilarity(
+      embedding,
+      prototype,
+    );
 
     if (pureEmbeddingOnly) {
       return score;
     }
 
-    final bag = _buildTokenBag(photo);
+    final bag = ThemeClusterComputeHelpers.buildTokenBag(photo);
     final lexicalHits = definition.keywords
         .where((keyword) => bag.contains(keyword.toLowerCase()))
         .length;
@@ -726,56 +763,4 @@ class ThemeClusterService {
     return score;
   }
 
-  Set<String> _buildTokenBag(PhotoEntity photo) {
-    final tokens = <String>{};
-
-    void addText(String? text) {
-      final normalized = text?.trim().toLowerCase();
-      if (normalized == null || normalized.isEmpty) {
-        return;
-      }
-      tokens.add(normalized);
-      for (final piece in normalized.split(RegExp(r'[\s,，。；：、|/\\()\[\]{}_-]+'))) {
-        final value = piece.trim();
-        if (value.isNotEmpty) {
-          tokens.add(value);
-        }
-      }
-    }
-
-    for (final tag in photo.aiTags ?? const <String>[]) {
-      addText(tag);
-    }
-    for (final tag in OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[])) {
-      addText(tag);
-    }
-    addText(OcrPolicy.effectiveText(photo.ocrText));
-    addText(photo.locationName);
-    addText(photo.district);
-    addText(photo.city);
-
-    return tokens;
-  }
-
-  double _cosineSimilarity(List<double> left, List<double> right) {
-    if (left.isEmpty || right.isEmpty || left.length != right.length) {
-      return 0;
-    }
-
-    var dot = 0.0;
-    var leftNorm = 0.0;
-    var rightNorm = 0.0;
-
-    for (var index = 0; index < left.length; index++) {
-      dot += left[index] * right[index];
-      leftNorm += left[index] * left[index];
-      rightNorm += right[index] * right[index];
-    }
-
-    if (leftNorm <= 0 || rightNorm <= 0) {
-      return 0;
-    }
-
-    return dot / (math.sqrt(leftNorm) * math.sqrt(rightNorm));
-  }
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/material.dart';
 
@@ -129,109 +130,203 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
           ),
         ],
       ),
-      body: FutureBuilder<List<ThemeCluster>>(
-        future: _clustersFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return ValueListenableBuilder<ThemeClusteringProgress>(
-              valueListenable: ThemeClusterService().progressListenable,
-              builder: (context, progress, _) {
-                final isDeterminate = progress.total > 0;
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircularProgressIndicator(
-                          value: isDeterminate ? progress.ratio : null,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          progress.message ?? '正在计算主题聚类...',
-                          textAlign: TextAlign.center,
-                        ),
-                        if (progress.stage ==
-                            ThemeClusteringStage.preparingEmbeddings)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Text(
-                              '复用向量 ${progress.cachedEmbeddings} · 新算 ${progress.newEmbeddings}',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
+      body: Column(
+        children: [
+          ValueListenableBuilder<int>(
+            valueListenable: _DeferredThemeImageScheduler.pendingCountListenable,
+            builder: (context, pendingCount, _) {
+              return AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child: pendingCount > 0
+                    ? const LinearProgressIndicator(
+                        key: ValueKey<String>('theme-images-loading'),
+                        minHeight: 2.5,
+                      )
+                    : const SizedBox.shrink(),
+              );
+            },
+          ),
+          Expanded(
+            child: FutureBuilder<List<ThemeCluster>>(
+              future: _clustersFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return ValueListenableBuilder<ThemeClusteringProgress>(
+                    valueListenable: ThemeClusterService().progressListenable,
+                    builder: (context, progress, _) {
+                      final isDeterminate = progress.total > 0;
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              CircularProgressIndicator(
+                                value: isDeterminate ? progress.ratio : null,
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                progress.message ?? '正在计算主题聚类...',
+                                textAlign: TextAlign.center,
+                              ),
+                              if (progress.stage ==
+                                  ThemeClusteringStage.preparingEmbeddings)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Text(
+                                    '复用向量 ${progress.cachedEmbeddings} · 新算 ${progress.newEmbeddings}',
+                                    style: Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ),
+                            ],
                           ),
-                      ],
+                        ),
+                      );
+                    },
+                  );
+                }
+
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.error_outline, size: 56, color: Colors.redAccent),
+                          const SizedBox(height: 12),
+                          Text('主题聚类加载失败: ${snapshot.error}'),
+                          const SizedBox(height: 12),
+                          FilledButton(onPressed: _reload, child: const Text('重试')),
+                        ],
+                      ),
                     ),
+                  );
+                }
+
+                final clusters = snapshot.data ?? const <ThemeCluster>[];
+                if (!_deferredUiReady) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (clusters.isEmpty) {
+                  return const _EmptyThemeView();
+                }
+
+                return RefreshIndicator(
+                  onRefresh: _reload,
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                    itemCount: clusters.length + 1,
+                    separatorBuilder: (context, index) => const SizedBox(height: 14),
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return const _IntroCard();
+                      }
+
+                      final cluster = clusters[index - 1];
+                      final color = _themeColors[cluster.definition.id] ?? Theme.of(context).colorScheme.primary;
+                      final icon = _themeIcons[cluster.definition.id] ?? Icons.category_outlined;
+
+                      return _ThemeClusterCard(
+                        cluster: cluster,
+                        color: color,
+                        icon: icon,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ThemeClusterDetailPage(
+                                cluster: cluster,
+                                color: color,
+                                icon: icon,
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
                   ),
                 );
               },
-            );
-          }
-
-          if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.error_outline, size: 56, color: Colors.redAccent),
-                    const SizedBox(height: 12),
-                    Text('主题聚类加载失败: ${snapshot.error}'),
-                    const SizedBox(height: 12),
-                    FilledButton(onPressed: _reload, child: const Text('重试')),
-                  ],
-                ),
-              ),
-            );
-          }
-
-          final clusters = snapshot.data ?? const <ThemeCluster>[];
-          if (!_deferredUiReady) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (clusters.isEmpty) {
-            return const _EmptyThemeView();
-          }
-
-          return RefreshIndicator(
-            onRefresh: _reload,
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              itemCount: clusters.length + 1,
-              separatorBuilder: (context, index) => const SizedBox(height: 14),
-              itemBuilder: (context, index) {
-                if (index == 0) {
-                  return const _IntroCard();
-                }
-
-                final cluster = clusters[index - 1];
-                final color = _themeColors[cluster.definition.id] ?? Theme.of(context).colorScheme.primary;
-                final icon = _themeIcons[cluster.definition.id] ?? Icons.category_outlined;
-
-                return _ThemeClusterCard(
-                  cluster: cluster,
-                  color: color,
-                  icon: icon,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ThemeClusterDetailPage(
-                          cluster: cluster,
-                          color: color,
-                          icon: icon,
-                        ),
-                      ),
-                    );
-                  },
-                );
-              },
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
+  }
+}
+
+class _DeferredThemeImageTicket {
+  _DeferredThemeImageTicket();
+
+  bool started = false;
+  bool completed = false;
+}
+
+class _DeferredThemeImageScheduler {
+  static const int _maxConcurrent = 4;
+  static final ValueNotifier<int> pendingCountListenable =
+      ValueNotifier<int>(0);
+  static final Queue<(_DeferredThemeImageTicket, VoidCallback)> _queue =
+      Queue<(_DeferredThemeImageTicket, VoidCallback)>();
+  static int _active = 0;
+  static int _pendingCount = 0;
+  static bool _flushScheduled = false;
+
+  static void enqueue(_DeferredThemeImageTicket ticket, VoidCallback starter) {
+    if (ticket.completed) {
+      return;
+    }
+    _setPendingCount(_pendingCount + 1);
+    _queue.add((ticket, starter));
+    _pump();
+  }
+
+  static void complete(_DeferredThemeImageTicket ticket) {
+    if (ticket.completed) {
+      return;
+    }
+    ticket.completed = true;
+
+    if (ticket.started && _active > 0) {
+      _active -= 1;
+    } else {
+      _queue.removeWhere((entry) => identical(entry.$1, ticket));
+    }
+
+    final next = _pendingCount - 1;
+    _setPendingCount(next < 0 ? 0 : next);
+    _pump();
+  }
+
+  static void _setPendingCount(int value) {
+    _pendingCount = value;
+    _scheduleFlush();
+  }
+
+  static void _scheduleFlush() {
+    if (_flushScheduled) {
+      return;
+    }
+    _flushScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _flushScheduled = false;
+      if (pendingCountListenable.value != _pendingCount) {
+        pendingCountListenable.value = _pendingCount;
+      }
+    });
+  }
+
+  static void _pump() {
+    while (_active < _maxConcurrent && _queue.isNotEmpty) {
+      final (ticket, starter) = _queue.removeFirst();
+      if (ticket.completed) {
+        continue;
+      }
+      ticket.started = true;
+      _active += 1;
+      starter();
+    }
   }
 }
 
@@ -1043,15 +1138,21 @@ class _DeferredThemeImage extends StatefulWidget {
 }
 
 class _DeferredThemeImageState extends State<_DeferredThemeImage> {
+  final _DeferredThemeImageTicket _ticket = _DeferredThemeImageTicket();
   bool _ready = false;
+  bool _firstFrameReported = false;
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    final delayMs = 35 + (widget.path.hashCode.abs() % 10) * 32;
+    _DeferredThemeImageScheduler.enqueue(_ticket, _startDeferredLoad);
+  }
+
+  void _startDeferredLoad() {
+    final delayMs = 30 + (widget.path.hashCode.abs() % 11) * 28;
     _timer = Timer(Duration(milliseconds: delayMs), () {
-      if (!mounted) {
+      if (!mounted || _ticket.completed) {
         return;
       }
       setState(() {
@@ -1060,16 +1161,29 @@ class _DeferredThemeImageState extends State<_DeferredThemeImage> {
     });
   }
 
+  void _onFirstFrame() {
+    if (_firstFrameReported) {
+      return;
+    }
+    _firstFrameReported = true;
+    _DeferredThemeImageScheduler.complete(_ticket);
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
+    _DeferredThemeImageScheduler.complete(_ticket);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     if (_ready) {
-      return PathImage(path: widget.path, fit: widget.fit);
+      return PathImage(
+        path: widget.path,
+        fit: widget.fit,
+        onFirstFrame: _onFirstFrame,
+      );
     }
 
     return DecoratedBox(

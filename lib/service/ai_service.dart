@@ -19,7 +19,6 @@ import 'mobileclip_embedding_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'ocr_service.dart';
 import 'photo_caption_service.dart';
-import 'ai_foreground_service.dart';
 import 'ai_progress_notification_service.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
@@ -30,7 +29,6 @@ class AIService {
   factory AIService() => _instance;
   AIService._internal() {
     _progressNotifier.addListener(_syncProgressNotification);
-    AIForegroundService().bindActionHandler(_handleForegroundAction);
     AIProgressNotificationService().bindActionHandler(_handleForegroundAction);
   }
 
@@ -48,8 +46,6 @@ class AIService {
   );
   static const int _maxParallelWorkers = 8;
   static const String _autoResumeKey = 'ai_auto_resume';
-  static const String _keepResidentInBackgroundKey =
-      'ai_keep_resident_background';
   static const String _runtimeActiveKey = 'ai_runtime_active';
   static const String _runtimeHeartbeatAtKey = 'ai_runtime_heartbeat_at';
   static const String _runtimeTotalKey = 'ai_runtime_total';
@@ -65,7 +61,6 @@ class AIService {
   final Set<Id> _junkFilterBypassPhotoIds = <Id>{};
 
   bool _autoResumeEnabled = false;
-  bool _keepResidentInBackgroundEnabled = false;
 
   bool _isAnalyzing = false;
   bool _pauseRequested = false;
@@ -91,21 +86,11 @@ class AIService {
   }
 
   bool get autoResumeEnabled => _autoResumeEnabled;
-  bool get keepResidentInBackgroundEnabled => _keepResidentInBackgroundEnabled;
 
   Future<void> setAutoResume(bool enabled) async {
     _autoResumeEnabled = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_autoResumeKey, enabled);
-  }
-
-  Future<void> setKeepResidentInBackground(bool enabled) async {
-    _keepResidentInBackgroundEnabled = enabled;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_keepResidentInBackgroundKey, enabled);
-    if (!enabled) {
-      await AIForegroundService().stop();
-    }
   }
 
   void _syncProgressNotification() {
@@ -121,7 +106,6 @@ class AIService {
         failed: progress.failed,
         currentStep: progress.currentStep,
         fraction: progress.fraction,
-        enableForegroundResident: _keepResidentInBackgroundEnabled,
       ),
     );
 
@@ -145,13 +129,11 @@ class AIService {
   }
 
   void _handleForegroundAction(String action) {
-    if (action == AIProgressNotificationService.actionPause ||
-        action == AIForegroundService.actionPause) {
+    if (action == AIProgressNotificationService.actionPause) {
       pauseAnalysis();
       return;
     }
-    if (action == AIProgressNotificationService.actionResume ||
-        action == AIForegroundService.actionResume) {
+    if (action == AIProgressNotificationService.actionResume) {
       resumeAnalysis();
     }
   }
@@ -161,16 +143,9 @@ class AIService {
     return prefs.getBool(_autoResumeKey) ?? false;
   }
 
-  Future<bool> getKeepResidentInBackgroundPreference() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_keepResidentInBackgroundKey) ?? false;
-  }
-
   Future<void> loadAutoResumePreference() async {
     final prefs = await SharedPreferences.getInstance();
     _autoResumeEnabled = prefs.getBool(_autoResumeKey) ?? false;
-    _keepResidentInBackgroundEnabled =
-        prefs.getBool(_keepResidentInBackgroundKey) ?? false;
   }
 
   void markJunkCandidatesAsKept(Iterable<int> photoIds) {
@@ -287,11 +262,8 @@ class AIService {
 
     final runtimeSnapshot = await _readRuntimeSnapshot();
     final runtimeActive = runtimeSnapshot.isActive;
-    final serviceRunning = _keepResidentInBackgroundEnabled
-        ? await AIForegroundService().isForegroundServiceRunning()
-        : false;
 
-    if (runtimeActive || serviceRunning) {
+    if (runtimeActive) {
       final restoredCompleted = runtimeSnapshot.completed.clamp(0, pending);
       _progressNotifier.value = AIAnalysisProgress.running(
         total: pending,
@@ -301,7 +273,7 @@ class AIService {
         elapsedMs: 0,
       );
       debugPrint(
-        '🔁 检测到历史运行态(runtime=$runtimeActive service=$serviceRunning)，尝试恢复 AI 打标',
+        '🔁 检测到历史运行态(runtime=$runtimeActive)，尝试恢复 AI 打标',
       );
       unawaited(_runFullAiPipelineInBackground());
       return;

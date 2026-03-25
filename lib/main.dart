@@ -8,6 +8,7 @@ import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_tag_service.dart';
 import 'package:photo_album/service/photo_service.dart';
+import 'package:photo_album/service/ai_progress_notification_service.dart';
 import 'package:photo_album/utils/ocr_policy.dart';
 import 'package:photo_album/view/pages/mobileclip_vector_probe_page.dart';
 import 'view/pages/welcome_page.dart';
@@ -111,6 +112,7 @@ class _AppStartupCoordinator {
       return _startupFuture!;
     }
     _startupFuture = Future<void>(() async {
+      await AIProgressNotificationService().initialize();
       await _configureAmplifyAuth();
       await PhotoService().init();
       unawaited(

@@ -1,10 +1,8 @@
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/ai_service.dart';
-import 'package:photo_album/service/ai_foreground_service.dart';
 import 'package:photo_album/service/ai_progress_notification_service.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 
@@ -23,12 +21,8 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   final _auth = const CognitoAuthService();
   final _backendPreferenceService = MobileClipBackendPreferenceService();
-  final _notifications = FlutterLocalNotificationsPlugin();
   
   late bool _autoResumeEnabled;
-  late bool _keepResidentInBackgroundEnabled;
-  String _fgsPolicySummary = '';
-  bool? _isIgnoringBatteryOptimizations;
 
   Future<AuthUser?> _loadUser() async {
     try {
@@ -61,32 +55,9 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  Future<bool> _requestNotificationPermissionIfNeeded() async {
-    if (Theme.of(context).platform != TargetPlatform.android) {
-      return true;
-    }
-
-    await AIProgressNotificationService().initialize();
-    final androidImpl = _notifications
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >();
-    if (androidImpl == null) {
-      return true;
-    }
-
-    final granted = await androidImpl.requestNotificationsPermission();
-    return granted ?? false;
-  }
-
   Future<void> _showModelTypeSettings() async {
     await _backendPreferenceService.initialize();
     _autoResumeEnabled = await AIService().getAutoResumePreference();
-    _keepResidentInBackgroundEnabled =
-        await AIService().getKeepResidentInBackgroundPreference();
-    _fgsPolicySummary = await AIForegroundService().getAndroidFgsPolicySummary();
-    _isIgnoringBatteryOptimizations =
-        await AIForegroundService().isIgnoringBatteryOptimizations();
     if (!mounted) {
       return;
     }
@@ -170,70 +141,15 @@ class _ProfilePageState extends State<ProfilePage> {
                           });
                         },
                       ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('常驻后台（Android）'),
-                        subtitle: const Text('开启后使用前台服务，提升被划掉后继续运行概率'),
-                        value: _keepResidentInBackgroundEnabled,
-                        onChanged: (value) async {
-                          if (value) {
-                            final granted =
-                                await _requestNotificationPermissionIfNeeded();
-                            if (!mounted) {
-                              return;
-                            }
-                            if (!granted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  behavior: SnackBarBehavior.floating,
-                                  content: Text('通知权限未开启，常驻后台通知可能无法显示'),
-                                ),
-                              );
-                            }
-                          }
-                          setSheetState(() {
-                            _keepResidentInBackgroundEnabled = value;
-                          });
-                        },
-                      ),
-                      if (_fgsPolicySummary.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 6),
-                          child: Text(
-                            _fgsPolicySummary,
-                            style: TextStyle(color: Colors.grey[700], fontSize: 12),
-                          ),
-                        ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.battery_saver_outlined),
-                        title: const Text('忽略电池优化（建议）'),
-                        subtitle: Text(
-                          _isIgnoringBatteryOptimizations == true
-                              ? '当前已开启，有利于后台持续运行'
-                              : '当前未开启，可能被系统提前清理',
-                        ),
-                        trailing: TextButton(
-                          onPressed: () async {
-                            final opened = await AIForegroundService()
-                                .openIgnoreBatteryOptimizationSettings();
-                            if (!opened || !context.mounted) {
-                              return;
-                            }
-                            final latest = await AIForegroundService()
-                                .isIgnoringBatteryOptimizations();
-                            if (!context.mounted) {
-                              return;
-                            }
-                            setSheetState(() {
-                              _isIgnoringBatteryOptimizations = latest;
-                            });
-                          },
-                          child: const Text('去设置'),
+                        leading: const Icon(Icons.info_outline),
+                        title: const Text('后台运行提醒（Android）'),
+                        subtitle: const Text(
+                          '如需提高后台继续处理成功率，请不要在最近任务中划掉本应用；建议在系统任务管理里给本应用加锁。',
                         ),
                       ),
-                      const SizedBox(height: 8),
                       const SizedBox(height: 24),
                       
                       Row(
@@ -249,9 +165,6 @@ class _ProfilePageState extends State<ProfilePage> {
                                 selected,
                               );
                               await AIService().setAutoResume(_autoResumeEnabled);
-                              await AIService().setKeepResidentInBackground(
-                                _keepResidentInBackgroundEnabled,
-                              );
                               if (!context.mounted) {
                                 return;
                               }
@@ -279,7 +192,7 @@ class _ProfilePageState extends State<ProfilePage> {
       SnackBar(
         behavior: SnackBarBehavior.floating,
         content: Text(
-          '已设置模型类型为 ${latest.label}，自动恢复 ${_autoResumeEnabled ? '已启用' : '已禁用'}，常驻后台 ${_keepResidentInBackgroundEnabled ? '已启用' : '已禁用'}',
+          '已设置模型类型为 ${latest.label}，自动恢复 ${_autoResumeEnabled ? '已启用' : '已禁用'}',
         ),
       ),
     );
@@ -398,8 +311,8 @@ class _ProfilePageState extends State<ProfilePage> {
           _buildSettingsTile(
             context,
             Icons.tune,
-            'AI 模型类型',
-            '切换 MobileCLIP2 ONNX / NCNN（按需加载）',
+            '相册 AI 模型设定',
+            '切换模型及其运作形式',
             onTap: _showModelTypeSettings,
           ),
           _buildSettingsTile(

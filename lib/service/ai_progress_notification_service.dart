@@ -1,8 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-import 'ai_foreground_service.dart';
-
 class AIProgressNotificationService {
   AIProgressNotificationService._internal();
 
@@ -27,6 +25,8 @@ class AIProgressNotificationService {
 
   ValueChanged<String>? _actionHandler;
   ValueChanged<String>? _navigationHandler;
+  String? _pendingAction;
+  String? _pendingNavigation;
 
   Future<void> initialize() async {
     if (_initialized) {
@@ -72,10 +72,20 @@ class AIProgressNotificationService {
 
   void bindActionHandler(ValueChanged<String> handler) {
     _actionHandler = handler;
+    final pending = _pendingAction;
+    if (pending != null) {
+      _pendingAction = null;
+      handler(pending);
+    }
   }
 
   void bindNavigationHandler(ValueChanged<String> handler) {
     _navigationHandler = handler;
+    final pending = _pendingNavigation;
+    if (pending != null) {
+      _pendingNavigation = null;
+      handler(pending);
+    }
   }
 
   @pragma('vm:entry-point')
@@ -90,20 +100,37 @@ class AIProgressNotificationService {
   void _handleNotificationResponse(NotificationResponse response) {
     final actionId = response.actionId ?? '';
     if (actionId.isNotEmpty) {
-      _actionHandler?.call(actionId);
+      _dispatchOrQueueAction(actionId);
       return;
     }
 
     final payload = response.payload ?? '';
     if (payload.isNotEmpty) {
-      _navigationHandler?.call(payload);
+      _dispatchOrQueueNavigation(payload);
     }
+  }
+
+  void _dispatchOrQueueAction(String actionId) {
+    final handler = _actionHandler;
+    if (handler != null) {
+      handler(actionId);
+      return;
+    }
+    _pendingAction = actionId;
+  }
+
+  void _dispatchOrQueueNavigation(String payload) {
+    final handler = _navigationHandler;
+    if (handler != null) {
+      handler(payload);
+      return;
+    }
+    _pendingNavigation = payload;
   }
 
   Future<void> clearProgressNotificationSurfaces() async {
     await initialize();
     await _plugin.cancel(_notificationId);
-    await AIForegroundService().stop();
   }
 
   Future<void> syncProgress({
@@ -116,7 +143,6 @@ class AIProgressNotificationService {
     required int failed,
     required String currentStep,
     required double fraction,
-    required bool enableForegroundResident,
   }) async {
     await initialize();
 
@@ -139,24 +165,6 @@ class AIProgressNotificationService {
     }
     _lastSignature = signature;
     _lastShownAtMs = nowMs;
-
-    if (!kIsWeb &&
-        defaultTargetPlatform == TargetPlatform.android &&
-        enableForegroundResident) {
-      return _syncAndroidForegroundProgress(
-        isVisible: isVisible,
-        isPaused: isPaused,
-        progressPercent: progressPercent,
-        title: title,
-        body: body,
-      );
-    }
-
-    if (!kIsWeb &&
-        defaultTargetPlatform == TargetPlatform.android &&
-        !enableForegroundResident) {
-      await AIForegroundService().stop();
-    }
 
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
       return _syncIosProgressToBeImplemented(
@@ -203,25 +211,6 @@ class AIProgressNotificationService {
       title: title,
       body: body,
     );
-  }
-
-  Future<void> _syncAndroidForegroundProgress({
-    required bool isVisible,
-    required bool isPaused,
-    required int progressPercent,
-    required String title,
-    required String body,
-  }) async {
-    await AIForegroundService().sync(
-      shouldRun: isVisible,
-      isPaused: isPaused,
-      progress: progressPercent,
-      title: title,
-      text: '$progressPercent% · $body',
-    );
-
-    // Android 前台保活时仅保留前台服务通知，避免双通知互相覆盖。
-    await _plugin.cancel(_notificationId);
   }
 
   Future<void> _syncIosProgressToBeImplemented({

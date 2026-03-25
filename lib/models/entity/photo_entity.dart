@@ -60,7 +60,21 @@ class PhotoEntity {
 
   // 判断是否可能是截图 (极端比例)
   bool get isProbablyScreenshot {
+    final normalizedPath = path.toLowerCase();
+    const screenshotKeywords = <String>[
+      'screenshot',
+      'screen_shot',
+      'screen-shot',
+      'screen shot',
+      'capture',
+      'screen capture',
+      '截屏',
+      '截图',
+    ];
+    if (screenshotKeywords.any(normalizedPath.contains)) {
+      return true;
+    }
     final ratio = aspectRatio;
-    return ratio < 0.45 || ratio > 2.2;
+    return ratio > 0 && ratio < 0.52;
   }
 }

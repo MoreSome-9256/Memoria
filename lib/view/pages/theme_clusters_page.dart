@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:collection';
+
 import 'package:flutter/material.dart';
 
 import '../../models/entity/photo_entity.dart';
@@ -16,6 +19,7 @@ class ThemeClustersPage extends StatefulWidget {
 class _ThemeClustersPageState extends State<ThemeClustersPage> {
   late Future<List<ThemeCluster>> _clustersFuture;
   bool _pureEmbeddingOnly = false;
+  bool _deferredUiReady = false;
 
   static const Map<String, IconData> _themeIcons = <String, IconData>{
     'people': Icons.people_alt_outlined,
@@ -42,6 +46,19 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
       pureEmbeddingOnly: _pureEmbeddingOnly,
       maxNewEmbeddingsPerRun: 300,
     );
+    _scheduleDeferredUiReveal();
+  }
+
+  void _scheduleDeferredUiReveal() {
+    _deferredUiReady = false;
+    Future<void>.delayed(const Duration(milliseconds: 260), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _deferredUiReady = true;
+      });
+    });
   }
 
   Future<void> _reload() async {
@@ -51,6 +68,7 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
         maxNewEmbeddingsPerRun: 300,
       );
     });
+    _scheduleDeferredUiReveal();
   }
 
   void _toggleClusteringMode() {
@@ -61,6 +79,7 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
         maxNewEmbeddingsPerRun: 300,
       );
     });
+    _scheduleDeferredUiReveal();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -111,106 +130,203 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
           ),
         ],
       ),
-      body: FutureBuilder<List<ThemeCluster>>(
-        future: _clustersFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return ValueListenableBuilder<ThemeClusteringProgress>(
-              valueListenable: ThemeClusterService().progressListenable,
-              builder: (context, progress, _) {
-                final isDeterminate = progress.total > 0;
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircularProgressIndicator(
-                          value: isDeterminate ? progress.ratio : null,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          progress.message ?? '正在计算主题聚类...',
-                          textAlign: TextAlign.center,
-                        ),
-                        if (progress.stage ==
-                            ThemeClusteringStage.preparingEmbeddings)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Text(
-                              '复用向量 ${progress.cachedEmbeddings} · 新算 ${progress.newEmbeddings}',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
+      body: Column(
+        children: [
+          ValueListenableBuilder<int>(
+            valueListenable: _DeferredThemeImageScheduler.pendingCountListenable,
+            builder: (context, pendingCount, _) {
+              return AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child: pendingCount > 0
+                    ? const LinearProgressIndicator(
+                        key: ValueKey<String>('theme-images-loading'),
+                        minHeight: 2.5,
+                      )
+                    : const SizedBox.shrink(),
+              );
+            },
+          ),
+          Expanded(
+            child: FutureBuilder<List<ThemeCluster>>(
+              future: _clustersFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return ValueListenableBuilder<ThemeClusteringProgress>(
+                    valueListenable: ThemeClusterService().progressListenable,
+                    builder: (context, progress, _) {
+                      final isDeterminate = progress.total > 0;
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              CircularProgressIndicator(
+                                value: isDeterminate ? progress.ratio : null,
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                progress.message ?? '正在计算主题聚类...',
+                                textAlign: TextAlign.center,
+                              ),
+                              if (progress.stage ==
+                                  ThemeClusteringStage.preparingEmbeddings)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Text(
+                                    '复用向量 ${progress.cachedEmbeddings} · 新算 ${progress.newEmbeddings}',
+                                    style: Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ),
+                            ],
                           ),
-                      ],
+                        ),
+                      );
+                    },
+                  );
+                }
+
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.error_outline, size: 56, color: Colors.redAccent),
+                          const SizedBox(height: 12),
+                          Text('主题聚类加载失败: ${snapshot.error}'),
+                          const SizedBox(height: 12),
+                          FilledButton(onPressed: _reload, child: const Text('重试')),
+                        ],
+                      ),
                     ),
+                  );
+                }
+
+                final clusters = snapshot.data ?? const <ThemeCluster>[];
+                if (!_deferredUiReady) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (clusters.isEmpty) {
+                  return const _EmptyThemeView();
+                }
+
+                return RefreshIndicator(
+                  onRefresh: _reload,
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                    itemCount: clusters.length + 1,
+                    separatorBuilder: (context, index) => const SizedBox(height: 14),
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return const _IntroCard();
+                      }
+
+                      final cluster = clusters[index - 1];
+                      final color = _themeColors[cluster.definition.id] ?? Theme.of(context).colorScheme.primary;
+                      final icon = _themeIcons[cluster.definition.id] ?? Icons.category_outlined;
+
+                      return _ThemeClusterCard(
+                        cluster: cluster,
+                        color: color,
+                        icon: icon,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ThemeClusterDetailPage(
+                                cluster: cluster,
+                                color: color,
+                                icon: icon,
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
                   ),
                 );
               },
-            );
-          }
-
-          if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.error_outline, size: 56, color: Colors.redAccent),
-                    const SizedBox(height: 12),
-                    Text('主题聚类加载失败: ${snapshot.error}'),
-                    const SizedBox(height: 12),
-                    FilledButton(onPressed: _reload, child: const Text('重试')),
-                  ],
-                ),
-              ),
-            );
-          }
-
-          final clusters = snapshot.data ?? const <ThemeCluster>[];
-          if (clusters.isEmpty) {
-            return const _EmptyThemeView();
-          }
-
-          return RefreshIndicator(
-            onRefresh: _reload,
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              itemCount: clusters.length + 1,
-              separatorBuilder: (context, index) => const SizedBox(height: 14),
-              itemBuilder: (context, index) {
-                if (index == 0) {
-                  return const _IntroCard();
-                }
-
-                final cluster = clusters[index - 1];
-                final color = _themeColors[cluster.definition.id] ?? Theme.of(context).colorScheme.primary;
-                final icon = _themeIcons[cluster.definition.id] ?? Icons.category_outlined;
-
-                return _ThemeClusterCard(
-                  cluster: cluster,
-                  color: color,
-                  icon: icon,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ThemeClusterDetailPage(
-                          cluster: cluster,
-                          color: color,
-                          icon: icon,
-                        ),
-                      ),
-                    );
-                  },
-                );
-              },
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
+  }
+}
+
+class _DeferredThemeImageTicket {
+  _DeferredThemeImageTicket();
+
+  bool started = false;
+  bool completed = false;
+}
+
+class _DeferredThemeImageScheduler {
+  static const int _maxConcurrent = 4;
+  static final ValueNotifier<int> pendingCountListenable =
+      ValueNotifier<int>(0);
+  static final Queue<(_DeferredThemeImageTicket, VoidCallback)> _queue =
+      Queue<(_DeferredThemeImageTicket, VoidCallback)>();
+  static int _active = 0;
+  static int _pendingCount = 0;
+  static bool _flushScheduled = false;
+
+  static void enqueue(_DeferredThemeImageTicket ticket, VoidCallback starter) {
+    if (ticket.completed) {
+      return;
+    }
+    _setPendingCount(_pendingCount + 1);
+    _queue.add((ticket, starter));
+    _pump();
+  }
+
+  static void complete(_DeferredThemeImageTicket ticket) {
+    if (ticket.completed) {
+      return;
+    }
+    ticket.completed = true;
+
+    if (ticket.started && _active > 0) {
+      _active -= 1;
+    } else {
+      _queue.removeWhere((entry) => identical(entry.$1, ticket));
+    }
+
+    final next = _pendingCount - 1;
+    _setPendingCount(next < 0 ? 0 : next);
+    _pump();
+  }
+
+  static void _setPendingCount(int value) {
+    _pendingCount = value;
+    _scheduleFlush();
+  }
+
+  static void _scheduleFlush() {
+    if (_flushScheduled) {
+      return;
+    }
+    _flushScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _flushScheduled = false;
+      if (pendingCountListenable.value != _pendingCount) {
+        pendingCountListenable.value = _pendingCount;
+      }
+    });
+  }
+
+  static void _pump() {
+    while (_active < _maxConcurrent && _queue.isNotEmpty) {
+      final (ticket, starter) = _queue.removeFirst();
+      if (ticket.completed) {
+        continue;
+      }
+      ticket.started = true;
+      _active += 1;
+      starter();
+    }
   }
 }
 
@@ -253,15 +369,37 @@ class _ThemeClusterDetailBody extends StatefulWidget {
 
 class _ThemeClusterDetailBodyState extends State<_ThemeClusterDetailBody> {
   late String _selectedSubclusterId;
+  bool _deferredBodyReady = false;
+  Timer? _deferTimer;
 
   @override
   void initState() {
     super.initState();
     _selectedSubclusterId = widget.cluster.primarySubcluster.id;
+    _deferTimer = Timer(const Duration(milliseconds: 220), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _deferredBodyReady = true;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _deferTimer?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!_deferredBodyReady) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     final selectedSubcluster = widget.cluster.subclusters.firstWhere(
       (item) => item.id == _selectedSubclusterId,
       orElse: () => widget.cluster.primarySubcluster,
@@ -271,10 +409,14 @@ class _ThemeClusterDetailBodyState extends State<_ThemeClusterDetailBody> {
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.cluster.definition.title)),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        children: [
-          Container(
+      body: CustomScrollView(
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate(
+                [
+                  Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
               color: widget.color.withValues(alpha: 0.10),
@@ -357,14 +499,24 @@ class _ThemeClusterDetailBodyState extends State<_ThemeClusterDetailBody> {
             cohesion: selectedSubcluster.cohesion,
             color: widget.color,
           ),
-          const SizedBox(height: 18),
-          ...selectedSubcluster.groups.map(
-            (group) => Padding(
-              padding: const EdgeInsets.only(bottom: 18),
-              child: _TimelineGroupSection(
-                group: group,
-                compactDisplayPreferred: compactDisplayPreferred,
+                ],
               ),
+            ),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+            sliver: SliverList.builder(
+              itemCount: selectedSubcluster.groups.length,
+              itemBuilder: (context, index) {
+                final group = selectedSubcluster.groups[index];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 18),
+                  child: _TimelineGroupSection(
+                    group: group,
+                    compactDisplayPreferred: compactDisplayPreferred,
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -442,7 +594,7 @@ class _SubclusterSummaryCard extends StatelessWidget {
                       padding: const EdgeInsets.only(right: 8),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(14),
-                        child: PathImage(path: photo.path, fit: BoxFit.cover),
+                        child: _DeferredThemeImage(path: photo.path, fit: BoxFit.cover),
                       ),
                     ),
                   );
@@ -523,7 +675,7 @@ class _SubclusterSelectorCard extends StatelessWidget {
                       padding: const EdgeInsets.only(right: 6),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child: PathImage(path: photo.path, fit: BoxFit.cover),
+                        child: _DeferredThemeImage(path: photo.path, fit: BoxFit.cover),
                       ),
                     ),
                   );
@@ -683,7 +835,7 @@ class _ThemeClusterCard extends StatelessWidget {
                         padding: const EdgeInsets.only(right: 8),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(16),
-                          child: PathImage(path: photo.path, fit: BoxFit.cover),
+                          child: _DeferredThemeImage(path: photo.path, fit: BoxFit.cover),
                         ),
                       ),
                     );
@@ -769,11 +921,20 @@ class _TimelineGroupSection extends StatelessWidget {
     required this.compactDisplayPreferred,
   });
 
+  static const int _maxGridPhotosPerGroup = 36;
+
   final ThemeTimelineGroup group;
   final bool compactDisplayPreferred;
 
   @override
   Widget build(BuildContext context) {
+    final visibleGridPhotos = compactDisplayPreferred
+        ? group.photos
+        : group.photos.take(_maxGridPhotosPerGroup).toList(growable: false);
+    final hiddenCount = compactDisplayPreferred
+        ? 0
+        : group.totalPhotos - visibleGridPhotos.length;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -793,20 +954,32 @@ class _TimelineGroupSection extends StatelessWidget {
         if (compactDisplayPreferred)
           _CompactTimelineStrip(group: group)
         else
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: group.photos.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 8,
-              childAspectRatio: 1,
-            ),
-            itemBuilder: (context, index) {
-              final photo = group.photos[index];
-              return _ThemePhotoTile(photo: photo);
-            },
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: visibleGridPhotos.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
+                  childAspectRatio: 1,
+                ),
+                itemBuilder: (context, index) {
+                  final photo = visibleGridPhotos[index];
+                  return _ThemePhotoTile(photo: photo);
+                },
+              ),
+              if (hiddenCount > 0) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '该时间段还有 $hiddenCount 张图片，已折叠以保证流畅度',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                ),
+              ],
+            ],
           ),
       ],
     );
@@ -880,46 +1053,48 @@ class _ThemePhotoTile extends StatelessWidget {
     final date = DateTime.fromMillisecondsSinceEpoch(photo.timestamp);
     final tagText = (photo.aiTags ?? const <String>[]).take(2).join(' · ');
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          PathImage(path: photo.path, fit: BoxFit.cover),
-          Positioned(
-            left: 6,
-            right: 6,
-            bottom: 6,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.42),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '${date.month}.${date.day}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  if (tagText.isNotEmpty)
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _DeferredThemeImage(path: photo.path, fit: BoxFit.cover),
+            Positioned(
+              left: 6,
+              right: 6,
+              bottom: 6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.42),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                     Text(
-                      tagText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontSize: 10),
+                      '${date.month}.${date.day}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                ],
+                    if (tagText.isNotEmpty)
+                      Text(
+                        tagText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                      ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -946,6 +1121,78 @@ class _EmptyThemeView extends StatelessWidget {
               style: TextStyle(color: Colors.grey[600], height: 1.5),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DeferredThemeImage extends StatefulWidget {
+  const _DeferredThemeImage({required this.path, this.fit = BoxFit.cover});
+
+  final String path;
+  final BoxFit fit;
+
+  @override
+  State<_DeferredThemeImage> createState() => _DeferredThemeImageState();
+}
+
+class _DeferredThemeImageState extends State<_DeferredThemeImage> {
+  final _DeferredThemeImageTicket _ticket = _DeferredThemeImageTicket();
+  bool _ready = false;
+  bool _firstFrameReported = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _DeferredThemeImageScheduler.enqueue(_ticket, _startDeferredLoad);
+  }
+
+  void _startDeferredLoad() {
+    final delayMs = 30 + (widget.path.hashCode.abs() % 11) * 28;
+    _timer = Timer(Duration(milliseconds: delayMs), () {
+      if (!mounted || _ticket.completed) {
+        return;
+      }
+      setState(() {
+        _ready = true;
+      });
+    });
+  }
+
+  void _onFirstFrame() {
+    if (_firstFrameReported) {
+      return;
+    }
+    _firstFrameReported = true;
+    _DeferredThemeImageScheduler.complete(_ticket);
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _DeferredThemeImageScheduler.complete(_ticket);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_ready) {
+      return PathImage(
+        path: widget.path,
+        fit: widget.fit,
+        onFirstFrame: _onFirstFrame,
+      );
+    }
+
+    return DecoratedBox(
+      decoration: BoxDecoration(color: Colors.grey.shade200),
+      child: const Center(
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
         ),
       ),
     );

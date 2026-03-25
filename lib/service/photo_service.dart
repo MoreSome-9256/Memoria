@@ -19,11 +19,13 @@ class _PreparedScanData {
     required this.assets,
     required this.totalCount,
     required this.fetchCount,
+    required this.startOffset,
   });
 
   final List<AssetEntity> assets;
   final int totalCount;
   final int fetchCount;
+  final int startOffset;
 }
 
 class _ScanBuildResult {
@@ -44,9 +46,27 @@ class _ScanBuildResult {
   final int skippedScreenshot;
 }
 
+class _SingleAssetBuildResult {
+  const _SingleAssetBuildResult({
+    this.photo,
+    this.insertedNoGps = 0,
+    this.skippedInvalidTime = 0,
+    this.skippedNonCamera = 0,
+    this.skippedScreenshot = 0,
+  });
+
+  final PhotoEntity? photo;
+  final int insertedNoGps;
+  final int skippedInvalidTime;
+  final int skippedNonCamera;
+  final int skippedScreenshot;
+}
+
 class PhotoService {
   late Isar _isar;
   static const bool _verboseAssetLogging = false;
+  static const int _assetExistenceWorkerCount = 12;
+  static const int _assetBuildWorkerCount = 8;
 
   static final PhotoService _instance = PhotoService._internal();
   factory PhotoService() => _instance;
@@ -128,8 +148,18 @@ class PhotoService {
 
   // 1️⃣ 扫描相册 (快速入库，带截图过滤)
   Future<PhotoScanSummary> scanAndSyncPhotos({int? maxAssets}) async {
+    return scanAndSyncPhotosWithOffset(maxAssets: maxAssets);
+  }
+
+  Future<PhotoScanSummary> scanAndSyncPhotosWithOffset({
+    int? maxAssets,
+    int offsetFromNewest = 0,
+  }) async {
     final totalBefore = await _isar.collection<PhotoEntity>().count();
-    final prepared = await _prepareScan(maxAssets: maxAssets);
+    final prepared = await _prepareScan(
+      maxAssets: maxAssets,
+      offsetFromNewest: offsetFromNewest,
+    );
 
     // 先做反向同步：清理系统相册已删除/已不可访问的照片
     final removedCount = await _removeUnavailablePhotos();
@@ -149,6 +179,10 @@ class PhotoService {
         await _isar.collection<PhotoEntity>().putAll(built.photos);
       });
     }
+    final insertedPhotoIds = built.photos
+        .map((photo) => photo.id)
+        .where((id) => id > 0)
+        .toList(growable: false);
 
     print(
       "✅ 基础数据同步完成: 删除=$removedCount 入库=${built.insertedCount} 其中无GPS入库=${built.insertedNoGps} 跳过[无时间=${built.skippedInvalidTime} 非相机=${built.skippedNonCamera} 截图=${built.skippedScreenshot}]",
@@ -168,6 +202,9 @@ class PhotoService {
       totalAfter: totalAfter,
       removedCount: removedCount,
       insertedCount: built.insertedCount,
+      insertedPhotoIds: insertedPhotoIds,
+      scanStartOffset: prepared.startOffset,
+      scannedCount: prepared.fetchCount,
       skippedInvalidTime: built.skippedInvalidTime,
       insertedNoGps: built.insertedNoGps,
       skippedNonCamera: built.skippedNonCamera,
@@ -175,7 +212,10 @@ class PhotoService {
     );
   }
 
-  Future<_PreparedScanData> _prepareScan({int? maxAssets}) async {
+  Future<_PreparedScanData> _prepareScan({
+    int? maxAssets,
+    int offsetFromNewest = 0,
+  }) async {
     if (Platform.isAndroid) {
       final photosStatus = await Permission.photos.request();
       print('📸 Android photos 权限请求结果: $photosStatus');
@@ -228,8 +268,15 @@ class PhotoService {
 
     AssetPathEntity? selectedAlbum;
     var selectedCount = -1;
-    for (final album in albums) {
-      final count = await album.assetCountAsync;
+    final albumCountResults = await Future.wait(
+      albums.map((album) async {
+        final count = await album.assetCountAsync;
+        return MapEntry<AssetPathEntity, int>(album, count);
+      }),
+    );
+    for (final entry in albumCountResults) {
+      final album = entry.key;
+      final count = entry.value;
       print('📂 相册 [${album.name}] 内有 $count 张图片');
       if (count > selectedCount) {
         selectedAlbum = album;
@@ -243,8 +290,15 @@ class PhotoService {
         onlyAll: false,
         filterOption: safeFilter,
       );
-      for (final album in fallbackAlbums) {
-        final count = await album.assetCountAsync;
+      final fallbackCountResults = await Future.wait(
+        fallbackAlbums.map((album) async {
+          final count = await album.assetCountAsync;
+          return MapEntry<AssetPathEntity, int>(album, count);
+        }),
+      );
+      for (final entry in fallbackCountResults) {
+        final album = entry.key;
+        final count = entry.value;
         print('📂 兜底相册 [${album.name}] 内有 $count 张图片');
         if (count > selectedCount) {
           selectedAlbum = album;
@@ -275,13 +329,18 @@ class PhotoService {
 
     print('✅ 本次扫描选中相册: ${selectedAlbum.name} ($selectedCount 张)');
     final totalCount = selectedCount;
+    final normalizedOffset = math.max(0, offsetFromNewest);
+    final startOffset = maxAssets == null
+        ? 0
+        : math.min(normalizedOffset, totalCount);
+    final remainingCount = math.max(0, totalCount - startOffset);
     final fetchCount = maxAssets == null
         ? totalCount
-        : (maxAssets < totalCount ? maxAssets : totalCount);
-    final startIndex = maxAssets == null ? 0 : math.max(0, totalCount - fetchCount);
+        : math.min(maxAssets, remainingCount);
+    final endIndex = startOffset + fetchCount;
     final assets = await selectedAlbum.getAssetListRange(
-      start: startIndex,
-      end: totalCount,
+      start: startOffset,
+      end: endIndex,
     );
     assets.sort(
       (a, b) => b.createDateTime.millisecondsSinceEpoch.compareTo(
@@ -293,6 +352,7 @@ class PhotoService {
       assets: assets,
       totalCount: totalCount,
       fetchCount: fetchCount,
+      startOffset: startOffset,
     );
   }
 
@@ -355,6 +415,7 @@ class PhotoService {
       assets: assets,
       totalCount: assets.length,
       fetchCount: assets.length,
+      startOffset: 0,
     );
   }
 
@@ -362,92 +423,147 @@ class PhotoService {
     List<AssetEntity> assets, {
     required bool skipExisting,
   }) async {
-    final photos = <PhotoEntity>[];
     final existingAssetIds = <String>{};
-    var skippedInvalidTime = 0;
-    var insertedNoGps = 0;
-    var skippedNonCamera = 0;
-    var skippedScreenshot = 0;
+    final buildResults = <_SingleAssetBuildResult>[];
 
-    if (skipExisting) {
-      final existingPhotos = await _isar.collection<PhotoEntity>().where().findAll();
-      existingAssetIds.addAll(
-        existingPhotos.map((photo) => photo.assetId).where((id) => id.isNotEmpty),
-      );
+    if (skipExisting && assets.isNotEmpty) {
+      final assetIdsToCheck = assets
+          .map((asset) => asset.id)
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      if (assetIdsToCheck.isNotEmpty) {
+        final existingPhotos = await _isar
+            .collection<PhotoEntity>()
+            .filter()
+            .anyOf(
+              assetIdsToCheck,
+              (query, assetId) => query.assetIdEqualTo(assetId),
+            )
+            .findAll();
+        existingAssetIds.addAll(
+          existingPhotos.map((photo) => photo.assetId).where((id) => id.isNotEmpty),
+        );
+      }
     }
 
-    for (final asset in assets) {
-      if (skipExisting && existingAssetIds.contains(asset.id)) {
-        continue;
-      }
+    if (assets.isNotEmpty) {
+      var cursor = 0;
+      final workerCount = math.min(_assetBuildWorkerCount, assets.length);
+      final workers = List<Future<void>>.generate(workerCount, (_) async {
+        while (true) {
+          final index = cursor;
+          cursor++;
+          if (index >= assets.length) {
+            break;
+          }
 
-      final file = await _resolveReadableFile(asset);
-      if (file == null) {
-        print('⚠️ 资源无法解析为本地文件: assetId=${asset.id} title=${asset.title}');
-        skippedNonCamera++;
-        continue;
-      }
+          final asset = assets[index];
+          if (skipExisting && existingAssetIds.contains(asset.id)) {
+            continue;
+          }
 
-      final width = asset.width;
-      final height = asset.height;
-      if (width <= 0 || height <= 0) {
-        skippedNonCamera++;
-        continue;
-      }
+          final result = await _buildSingleAssetPhoto(asset);
+          buildResults.add(result);
+        }
+      });
 
-      final screenshotByRatio = PhotoFilterHelper.isLikelyScreenshotByRatio(
-        width,
-        height,
-      );
-      final likelyCameraPhoto = PhotoFilterHelper.isLikelyCameraPhoto(
-        file.path,
-      );
-      if (screenshotByRatio) {
-        skippedScreenshot++;
-        // continue;
-      }
-      if (!likelyCameraPhoto) {
-        skippedNonCamera++;
-        // continue;
-      }
-
-      final shouldResolveGps = !screenshotByRatio && likelyCameraPhoto;
-      final latLong = shouldResolveGps ? await asset.latlngAsync() : null;
-      if (_verboseAssetLogging) {
-        _logAssetExtInfo(asset: asset, filePath: file.path, latLong: latLong);
-      }
-
-      final timestamp = asset.createDateTime.millisecondsSinceEpoch;
-      if (!PhotoFilterHelper.hasValidTimestamp(timestamp)) {
-        skippedInvalidTime++;
-        continue;
-      }
-
-      final hasGps = PhotoFilterHelper.hasValidGps(
-        latLong?.latitude,
-        latLong?.longitude,
-      );
-      if (!hasGps) {
-        insertedNoGps++;
-      }
-
-      final newPhoto = PhotoEntity()
-        ..assetId = asset.id
-        ..timestamp = timestamp
-        ..path = file.path
-        ..width = width
-        ..height = height
-        ..latitude = hasGps ? latLong!.latitude : null
-        ..longitude = hasGps ? latLong!.longitude : null
-        ..isLocationProcessed = false;
-      photos.add(newPhoto);
+      await Future.wait(workers);
     }
+
+    final photos = buildResults
+        .map((item) => item.photo)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
+    final insertedNoGps = buildResults.fold<int>(
+      0,
+      (sum, item) => sum + item.insertedNoGps,
+    );
+    final skippedInvalidTime = buildResults.fold<int>(
+      0,
+      (sum, item) => sum + item.skippedInvalidTime,
+    );
+    final skippedNonCamera = buildResults.fold<int>(
+      0,
+      (sum, item) => sum + item.skippedNonCamera,
+    );
+    final skippedScreenshot = buildResults.fold<int>(
+      0,
+      (sum, item) => sum + item.skippedScreenshot,
+    );
 
     return _ScanBuildResult(
       photos: photos,
       insertedCount: photos.length,
       insertedNoGps: insertedNoGps,
       skippedInvalidTime: skippedInvalidTime,
+      skippedNonCamera: skippedNonCamera,
+      skippedScreenshot: skippedScreenshot,
+    );
+  }
+
+  Future<_SingleAssetBuildResult> _buildSingleAssetPhoto(AssetEntity asset) async {
+    final file = await _resolveReadableFile(asset);
+    if (file == null) {
+      print('⚠️ 资源无法解析为本地文件: assetId=${asset.id} title=${asset.title}');
+      return const _SingleAssetBuildResult(skippedNonCamera: 1);
+    }
+
+    final width = asset.width;
+    final height = asset.height;
+    if (width <= 0 || height <= 0) {
+      return const _SingleAssetBuildResult(skippedNonCamera: 1);
+    }
+
+    final screenshotByRatio = PhotoFilterHelper.isLikelyScreenshotByRatio(
+      width,
+      height,
+    );
+    final likelyCameraPhoto = PhotoFilterHelper.isLikelyCameraPhoto(file.path);
+
+    var skippedScreenshot = 0;
+    var skippedNonCamera = 0;
+    if (screenshotByRatio) {
+      skippedScreenshot = 1;
+      // continue;
+    }
+    if (!likelyCameraPhoto) {
+      skippedNonCamera = 1;
+      // continue;
+    }
+
+    final shouldResolveGps = !screenshotByRatio && likelyCameraPhoto;
+    final latLong = shouldResolveGps ? await asset.latlngAsync() : null;
+    if (_verboseAssetLogging) {
+      _logAssetExtInfo(asset: asset, filePath: file.path, latLong: latLong);
+    }
+
+    final timestamp = asset.createDateTime.millisecondsSinceEpoch;
+    if (!PhotoFilterHelper.hasValidTimestamp(timestamp)) {
+      return _SingleAssetBuildResult(
+        skippedInvalidTime: 1,
+        skippedNonCamera: skippedNonCamera,
+        skippedScreenshot: skippedScreenshot,
+      );
+    }
+
+    final hasGps = PhotoFilterHelper.hasValidGps(
+      latLong?.latitude,
+      latLong?.longitude,
+    );
+    final newPhoto = PhotoEntity()
+      ..assetId = asset.id
+      ..timestamp = timestamp
+      ..path = file.path
+      ..width = width
+      ..height = height
+      ..latitude = hasGps ? latLong!.latitude : null
+      ..longitude = hasGps ? latLong!.longitude : null
+      ..isLocationProcessed = false;
+
+    return _SingleAssetBuildResult(
+      photo: newPhoto,
+      insertedNoGps: hasGps ? 0 : 1,
       skippedNonCamera: skippedNonCamera,
       skippedScreenshot: skippedScreenshot,
     );
@@ -498,12 +614,25 @@ class PhotoService {
     }
 
     final removedIds = <int>[];
-    for (final photo in localPhotos) {
-      final asset = await AssetEntity.fromId(photo.assetId);
-      if (asset == null) {
-        removedIds.add(photo.id);
+    var cursor = 0;
+    final workerCount = math.min(_assetExistenceWorkerCount, localPhotos.length);
+    final workers = List<Future<void>>.generate(workerCount, (_) async {
+      while (true) {
+        final index = cursor;
+        cursor++;
+        if (index >= localPhotos.length) {
+          break;
+        }
+
+        final photo = localPhotos[index];
+        final asset = await AssetEntity.fromId(photo.assetId);
+        if (asset == null) {
+          removedIds.add(photo.id);
+        }
       }
-    }
+    });
+
+    await Future.wait(workers);
 
     if (removedIds.isEmpty) {
       return 0;
@@ -552,6 +681,7 @@ class PhotoService {
     };
 
     var updatedCount = 0;
+    final updatedPhotos = <PhotoEntity>[];
     final updatedPhotoIds = <int>[];
     for (final photo in photos) {
       final aiTags = photo.aiTags ?? const <String>[];
@@ -584,6 +714,7 @@ class PhotoService {
       photo.smileProb = 0.0;
       photo.joyScore = 0.0;
       updatedCount++;
+      updatedPhotos.add(photo);
       updatedPhotoIds.add(photo.id);
     }
 
@@ -608,7 +739,7 @@ class PhotoService {
           staleFaces.map((item) => item.id).toList(growable: false),
         );
       }
-      await _isar.collection<PhotoEntity>().putAll(photos);
+      await _isar.collection<PhotoEntity>().putAll(updatedPhotos);
     });
 
     final scopeText = maxPhotos == null
@@ -674,8 +805,6 @@ class PhotoService {
       return;
     }
 
-    final staleFaces = await _isar.collection<FaceEntity>().where().findAll();
-
     // 2. 将它们的状态重置，并清空旧标签
 
     for (var photo in oldPhotos) {
@@ -690,11 +819,7 @@ class PhotoService {
     // 3. 批量写回数据库
 
     await _isar.writeTxn(() async {
-      if (staleFaces.isNotEmpty) {
-        await _isar.collection<FaceEntity>().deleteAll(
-          staleFaces.map((item) => item.id).toList(growable: false),
-        );
-      }
+      await _isar.collection<FaceEntity>().clear();
       await _isar.collection<PhotoEntity>().putAll(oldPhotos);
     });
 
@@ -723,6 +848,9 @@ class PhotoScanSummary {
   final int totalAfter;
   final int removedCount;
   final int insertedCount;
+  final List<int> insertedPhotoIds;
+  final int scanStartOffset;
+  final int scannedCount;
   final int skippedInvalidTime;
   final int insertedNoGps;
   final int skippedNonCamera;
@@ -733,6 +861,9 @@ class PhotoScanSummary {
     required this.totalAfter,
     required this.removedCount,
     required this.insertedCount,
+    this.insertedPhotoIds = const <int>[],
+    this.scanStartOffset = 0,
+    this.scannedCount = 0,
     required this.skippedInvalidTime,
     required this.insertedNoGps,
     required this.skippedNonCamera,

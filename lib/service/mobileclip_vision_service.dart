@@ -6,30 +6,16 @@ import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:onnxruntime/onnxruntime.dart';
 
-enum MobileClipOnnxVariant { mobileclip2S2, legacyS2 }
-
 class MobileClipVisionService {
-  MobileClipVisionService._internal(this._variant);
+  MobileClipVisionService._internal();
 
-  static final Map<MobileClipOnnxVariant, MobileClipVisionService> _instances =
-      <MobileClipOnnxVariant, MobileClipVisionService>{
-        MobileClipOnnxVariant.mobileclip2S2: MobileClipVisionService._internal(
-          MobileClipOnnxVariant.mobileclip2S2,
-        ),
-        MobileClipOnnxVariant.legacyS2: MobileClipVisionService._internal(
-          MobileClipOnnxVariant.legacyS2,
-        ),
-      };
+  static final MobileClipVisionService _instance =
+      MobileClipVisionService._internal();
 
-  factory MobileClipVisionService({
-    MobileClipOnnxVariant variant = MobileClipOnnxVariant.mobileclip2S2,
-  }) => _instances[variant]!;
-
-  final MobileClipOnnxVariant _variant;
+  factory MobileClipVisionService() => _instance;
 
   static const String _defaultModelAssetPath =
       'assets/mobileclip2/s2/vision_model.onnx';
-  static const String _legacyModelAssetPath = 'mobileclip_vision_ir9.onnx';
   static const String _modelFilePathOverride = String.fromEnvironment(
     'MOBILECLIP2_ONNX_FILE',
     defaultValue: '',
@@ -135,7 +121,7 @@ class MobileClipVisionService {
     OrtEnv.instance.init();
     final modelLoadResult = await _loadModelBytes();
     final modelBytes = modelLoadResult.bytes;
-    _preprocessSpec = _preprocessSpecForModel(modelLoadResult.source);
+    _preprocessSpec = const _PreprocessSpec.mobileclip2();
     final sessionOptions = OrtSessionOptions();
     sessionOptions.setIntraOpNumThreads(2);
     sessionOptions.setInterOpNumThreads(1);
@@ -159,18 +145,12 @@ class MobileClipVisionService {
     _inputName = _session!.inputNames.first;
     _outputNames = List<String>.from(_session!.outputNames, growable: false);
     debugPrint(
-      '🧠 MobileCLIP ONNX 就绪 variant=${_variant.name} source=${modelLoadResult.source} input=$_inputName outputs=$_outputNames size=$_inputImageSize mean=${_preprocessSpec.mean} std=${_preprocessSpec.std}',
+      '🧠 MobileCLIP ONNX 就绪 source=${modelLoadResult.source} input=$_inputName outputs=$_outputNames size=$_inputImageSize mean=${_preprocessSpec.mean} std=${_preprocessSpec.std}',
     );
     return _session!;
   }
 
   Future<_ModelLoadResult> _loadModelBytes() async {
-    if (_variant == MobileClipOnnxVariant.legacyS2) {
-      final bytes =
-          (await rootBundle.load(_legacyModelAssetPath)).buffer.asUint8List();
-      return _ModelLoadResult(bytes: bytes, source: _legacyModelAssetPath);
-    }
-
     final filePath = _modelFilePathOverride.trim();
     if (filePath.isNotEmpty) {
       final file = File(filePath);
@@ -201,14 +181,6 @@ class MobileClipVisionService {
       return 256;
     }
     return parsed;
-  }
-
-  _PreprocessSpec _preprocessSpecForModel(String source) {
-    final normalizedSource = source.toLowerCase();
-    if (normalizedSource.contains('mobileclip2')) {
-      return const _PreprocessSpec.mobileclip2();
-    }
-    return const _PreprocessSpec.legacyClip();
   }
 
   List<double> _flattenOutput(Object? output) {
@@ -251,10 +223,6 @@ class _PreprocessSpec {
   const _PreprocessSpec.mobileclip2()
     : mean = const <double>[0.0, 0.0, 0.0],
       std = const <double>[1.0, 1.0, 1.0];
-
-  const _PreprocessSpec.legacyClip()
-    : mean = const <double>[0.48145466, 0.4578275, 0.40821073],
-      std = const <double>[0.26862954, 0.26130258, 0.27577711];
 
   final List<double> mean;
   final List<double> std;

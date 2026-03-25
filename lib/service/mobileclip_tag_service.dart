@@ -39,11 +39,59 @@ class MobileClipTagService {
 
   final SemanticMatchingService _semanticService = SemanticMatchingService();
   final Map<String, List<double>> _prototypeByLabel = <String, List<double>>{};
-  final Map<String, List<double>> _coarsePrototypeById = <String, List<double>>{};
+  final Map<String, List<double>> _coarsePrototypeById =
+      <String, List<double>>{};
+  static const Duration _defaultIdleDisposeDelay = Duration(minutes: 3);
 
   bool _warmedUp = false;
   bool _startupWarmUpScheduled = false;
   Future<void>? _warmUpFuture;
+  int _workflowLeaseCount = 0;
+  Timer? _idleDisposeTimer;
+
+  Future<void> beginWorkflowSession() async {
+    _workflowLeaseCount++;
+    _cancelIdleDisposeTimer();
+  }
+
+  Future<void> endWorkflowSession({
+    Duration idleDisposeDelay = _defaultIdleDisposeDelay,
+  }) async {
+    if (_workflowLeaseCount > 0) {
+      _workflowLeaseCount--;
+    }
+    if (_workflowLeaseCount == 0) {
+      _scheduleIdleDispose(idleDisposeDelay);
+    }
+  }
+
+  void _touchUsage() {
+    _cancelIdleDisposeTimer();
+  }
+
+  void _cancelIdleDisposeTimer() {
+    _idleDisposeTimer?.cancel();
+    _idleDisposeTimer = null;
+  }
+
+  void _scheduleIdleDispose(Duration delay) {
+    _cancelIdleDisposeTimer();
+    _idleDisposeTimer = Timer(delay, () async {
+      if (_workflowLeaseCount > 0) {
+        return;
+      }
+      await dispose();
+    });
+  }
+
+  Future<void> dispose() async {
+    _cancelIdleDisposeTimer();
+    await _semanticService.dispose();
+    _prototypeByLabel.clear();
+    _coarsePrototypeById.clear();
+    _warmedUp = false;
+    _warmUpFuture = null;
+  }
 
   void scheduleWarmUpAtAppStart({
     Duration initialDelay = const Duration(milliseconds: 1200),
@@ -56,6 +104,7 @@ class MobileClipTagService {
   }
 
   Future<void> warmUp() async {
+    _touchUsage();
     if (_warmedUp) {
       return;
     }
@@ -76,9 +125,7 @@ class MobileClipTagService {
         if (coarse.prompts.isEmpty) {
           continue;
         }
-        final promptVectors = await _embedPromptsSequentially(
-          coarse.prompts,
-        );
+        final promptVectors = await _embedPromptsSequentially(coarse.prompts);
         _coarsePrototypeById[coarse.id] = _meanAndNormalize(promptVectors);
         await Future<void>.delayed(Duration.zero);
       }
@@ -134,6 +181,7 @@ class MobileClipTagService {
     List<double> imageEmbedding, {
     int topK = _defaultCoarseTopK,
   }) async {
+    _touchUsage();
     if (imageEmbedding.isEmpty || topK <= 0) {
       return const <MobileClipCoarseDiagnostic>[];
     }
@@ -148,7 +196,10 @@ class MobileClipTagService {
           prototype.length != imageEmbedding.length) {
         continue;
       }
-      final score = _semanticService.calculateSimilarity(imageEmbedding, prototype);
+      final score = _semanticService.calculateSimilarity(
+        imageEmbedding,
+        prototype,
+      );
       scored.add(
         MobileClipCoarseDiagnostic(
           coarseId: definition.id,
@@ -172,6 +223,7 @@ class MobileClipTagService {
     int topK = _defaultTopK,
     int coarseTopK = _defaultCoarseTopK,
   }) async {
+    _touchUsage();
     if (imageEmbedding.isEmpty) {
       return const <MobileClipTagDiagnostic>[];
     }
@@ -186,7 +238,9 @@ class MobileClipTagService {
       return _otherFallbackDiagnostics();
     }
 
-    final selectedCoarseIds = coarseDiagnostics.map((item) => item.coarseId).toSet();
+    final selectedCoarseIds = coarseDiagnostics
+        .map((item) => item.coarseId)
+        .toSet();
     final coarseProbabilityById = <String, double>{
       for (final item in coarseDiagnostics) item.coarseId: item.probability,
     };
@@ -206,7 +260,10 @@ class MobileClipTagService {
           prototype.length != imageEmbedding.length) {
         continue;
       }
-      final score = _semanticService.calculateSimilarity(imageEmbedding, prototype);
+      final score = _semanticService.calculateSimilarity(
+        imageEmbedding,
+        prototype,
+      );
       final weightedScore = _applyCoarseWeight(
         score,
         coarseProbabilityById[coarseId] ?? 0,
@@ -335,20 +392,16 @@ class MobileClipTagService {
     final probabilities = _softmaxProbabilities(
       selected.map((candidate) => candidate.score).toList(growable: false),
     );
-    return List<MobileClipTagDiagnostic>.generate(
-      selected.length,
-      (index) {
-        final entry = selected[index];
-        return MobileClipTagDiagnostic(
-          tag: entry.definition.label,
-          score: entry.score,
-          probability: probabilities[index],
-          category: _coarseLabelForFineTag(entry.definition.label),
-          coarseId: memoriaFineLabelToCoarseId[entry.definition.label] ?? '',
-        );
-      },
-      growable: false,
-    );
+    return List<MobileClipTagDiagnostic>.generate(selected.length, (index) {
+      final entry = selected[index];
+      return MobileClipTagDiagnostic(
+        tag: entry.definition.label,
+        score: entry.score,
+        probability: probabilities[index],
+        category: _coarseLabelForFineTag(entry.definition.label),
+        coarseId: memoriaFineLabelToCoarseId[entry.definition.label] ?? '',
+      );
+    }, growable: false);
   }
 
   List<MobileClipCoarseDiagnostic> _filterConfidentCoarseCandidates(
@@ -358,11 +411,15 @@ class MobileClipTagService {
       return const <MobileClipCoarseDiagnostic>[];
     }
     final bestScore = ranked.first.score;
-    return ranked.where((candidate) {
-      final closeToBest = (bestScore - candidate.score) <= _coarseScoreMargin;
-      return candidate.score >= _coarseScoreThreshold &&
-          (candidate.probability >= _coarseProbabilityThreshold || closeToBest);
-    }).toList(growable: false);
+    return ranked
+        .where((candidate) {
+          final closeToBest =
+              (bestScore - candidate.score) <= _coarseScoreMargin;
+          return candidate.score >= _coarseScoreThreshold &&
+              (candidate.probability >= _coarseProbabilityThreshold ||
+                  closeToBest);
+        })
+        .toList(growable: false);
   }
 
   List<MobileClipTagDiagnostic> _otherFallbackDiagnostics() {
@@ -401,9 +458,7 @@ class MobileClipTagService {
       final fifth = ranked[4].probability;
       final anchor = ranked[count - 1].probability;
       final keepFifth =
-          fifth >= 0.085 ||
-          fifth >= anchor * 0.8 ||
-          (first - fifth) <= 0.28;
+          fifth >= 0.085 || fifth >= anchor * 0.8 || (first - fifth) <= 0.28;
       if (keepFifth) {
         count = 5;
       }
@@ -421,7 +476,9 @@ class MobileClipTagService {
     }
     final limit = math.min(maxTopK, rankedScores.length);
     var count = minTopK.clamp(1, limit);
-    final probabilities = _softmaxProbabilities(rankedScores.take(limit).toList());
+    final probabilities = _softmaxProbabilities(
+      rankedScores.take(limit).toList(),
+    );
     if (count >= limit) {
       return count;
     }
@@ -438,9 +495,7 @@ class MobileClipTagService {
       final previous = probabilities[i - 1];
       final gap = previous - current;
       final shouldKeep =
-          current >= 0.075 ||
-          gap <= 0.1 ||
-          (current / first) >= 0.33;
+          current >= 0.075 || gap <= 0.1 || (current / first) >= 0.33;
       if (!shouldKeep) {
         break;
       }

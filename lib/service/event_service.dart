@@ -140,6 +140,7 @@ class EventService {
       await isar.collection<EventEntity>().clear();
 
       // 插入新事件并更新照片的 eventId
+      final photosToUpdate = <PhotoEntity>[];
       for (final cluster in clusters) {
         final event = EventEntity.fromPhotos(cluster);
         final eventId = await isar.collection<EventEntity>().put(event);
@@ -147,8 +148,12 @@ class EventService {
         // 🔗 关键：将此事件的 ID 写入每张照片的 eventId 字段
         for (final photo in cluster) {
           photo.eventId = eventId;
-          await isar.collection<PhotoEntity>().put(photo);
+          photosToUpdate.add(photo);
         }
+      }
+
+      if (photosToUpdate.isNotEmpty) {
+        await isar.collection<PhotoEntity>().putAll(photosToUpdate);
       }
     });
 

@@ -207,6 +207,21 @@ class JunkPhotoFilterService {
           extraKeywordHints: <String>['qr', 'barcode', 'code'],
         ),
         JunkPhotoCategoryDefinition(
+          id: 'meme',
+          label: '表情包/梗图',
+          description: '聊天表情包、网络梗图、二次创作配文图等重复消费型图片。',
+          prototypePrompts: <String>[
+            'a meme image with text overlay',
+            'a funny reaction meme or sticker',
+            'a social media meme screenshot',
+            'a captioned joke image template',
+          ],
+          threshold: 0.285,
+          ocrBoostThreshold: 8,
+          ocrBoost: 0.015,
+          extraKeywordHints: <String>['meme', 'sticker', 'reaction', '梗图', '表情包'],
+        ),
+        JunkPhotoCategoryDefinition(
           id: 'dark_or_occluded',
           label: '严重遮挡/过暗',
           description: '黑屏、口袋误拍、镜头被遮挡、几乎不可辨认的照片。',

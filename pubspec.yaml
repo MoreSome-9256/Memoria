@@ -44,26 +44,26 @@ dependencies:
   google_mlkit_text_recognition: ^0.15.1
   # ➕ 新增：底层原生图片压缩库
   flutter_image_compress: ^2.4.0
-  # ➕ 高德定位官方插件
-  amap_flutter_location: ^3.0.0
   # ➕ 动态权限申请库（定位必备）
-  permission_handler: ^12.0.1
+  permission_handler: 11.3.1
   flutter_markdown_plus: ^1.0.7
   onnxruntime: ^1.4.1
   image: ^4.2.0
   ffi: ^2.1.3
   shared_preferences: ^2.5.3
+  flutter_local_notifications: ^19.4.2
   audioplayers: ^6.6.0
   flutter_animate: ^4.5.2
   ffmpeg_kit_flutter_new: ^4.1.0
   gal: ^2.3.0
   file_picker: ^10.3.10
   path: ^1.9.0
-  amplify_api: 2.6.5
-  amplify_auth_cognito: 2.6.5
-  amplify_authenticator: 2.3.7
-  amplify_flutter: 2.6.5
-  amplify_storage_s3: 2.6.5
+  amplify_api: 2.6.1
+  amplify_core: 2.6.1
+  amplify_auth_cognito: 2.6.1
+  amplify_authenticator: 2.3.3
+  amplify_flutter: 2.6.1
+  amplify_storage_s3: 2.6.1
   cached_network_image: ^3.4.1
   flutter_riverpod: ^2.6.1
   go_router: ^17.1.0
@@ -71,9 +71,12 @@ dependencies:
   intl: ^0.20.2
   riverpod_annotation: ^2.6.1
   uuid: ^4.5.3
+#  runanywhere: ^0.16.0
+#  runanywhere_onnx: ^0.16.0      # STT, TTS, VAD
+#  runanywhere_llamacpp: ^0.16.0  # LLM text generation
 
-dependency_overrides:
-  sqflite_android: 2.4.1
+#dependency_overrides:
+#  sqflite_android: 2.4.1
 
 dev_dependencies:
   amplify_lints: ^3.0.0
@@ -116,14 +119,14 @@ flutter:
     - assets/ncnn/mobileclip_s2/text_encoder.ncnn.bin
     - assets/ncnn/mobileclip_s2/projection_layer.ncnn.param
     - assets/ncnn/mobileclip_s2/projection_layer.ncnn.bin
+    - assets/mobileclip2/s2/vision_model.onnx
+    - assets/mobileclip2/s2/text_model.onnx
+    - assets/face/   
     - ai_tools/test_student.png
     - ai_tools/test1.png
     - ai_tools/test_youleyuan.png
-    - assets/mobileclip2/s2/vision_model.onnx
-    - assets/mobileclip2/s2/text_model.onnx
-    - assets/face/
     - assets/clip_tokenizer/
-    - mobileclip_vision_ir9.onnx
+    # - mobileclip_vision_ir9.onnx
     - assets/audio/sandal_leap.mp3
     - assets/audio/sandal_leap_beats.json
     - assets/audio/Hachimi.mp3

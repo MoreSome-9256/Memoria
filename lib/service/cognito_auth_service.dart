@@ -1,12 +1,21 @@
 import 'package:amplify_flutter/amplify_flutter.dart';
+import 'package:flutter/material.dart';
 import 'package:photo_album/service/auth_token_service.dart';
+
 
 class CognitoAuthService {
   const CognitoAuthService();
 
   Future<bool> isSignedIn() async {
-    final session = await Amplify.Auth.fetchAuthSession();
-    return session.isSignedIn;
+    try {
+      final session = await Amplify.Auth
+          .fetchAuthSession()
+          .timeout(const Duration(seconds: 10));
+      return session.isSignedIn;
+    } catch (error) {
+      debugPrint('⚠️ fetchAuthSession 超时或失败，按未登录处理: $error');
+      return false;
+    }
   }
 
   Future<String?> currentUsername() async {

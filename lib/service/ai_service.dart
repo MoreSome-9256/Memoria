@@ -65,6 +65,7 @@ class AIService {
   bool _isAnalyzing = false;
   bool _pauseRequested = false;
   bool _stopRequested = false;
+  int _inflightCount = 0;
   Completer<void>? _analysisCompleter;
   int _lastRuntimeHeartbeatPersistAtMs = 0;
 
@@ -129,6 +130,9 @@ class AIService {
   }
 
   void _handleForegroundAction(String action) {
+    debugPrint(
+      '🎛️ 收到通知动作: $action (isAnalyzing=$_isAnalyzing, pauseRequested=$_pauseRequested, inflight=$_inflightCount)',
+    );
     if (action == AIProgressNotificationService.actionPause) {
       pauseAnalysis();
       return;
@@ -159,21 +163,29 @@ class AIService {
 
   void pauseAnalysis() {
     if (!_isAnalyzing || _pauseRequested) {
+      debugPrint(
+        '⏸️ 忽略暂停请求: isAnalyzing=$_isAnalyzing pauseRequested=$_pauseRequested',
+      );
       return;
     }
     _pauseRequested = true;
     final current = _progressNotifier.value;
     if (current.isVisible) {
+      final inflight = _inflightCount;
       _progressNotifier.value = current.copyWith(
         isRunning: false,
         isPaused: true,
-        currentStep: '已暂停，随时可以继续',
+        currentStep: inflight > 0
+            ? '暂停中，等待当前 $inflight 个任务收尾…'
+            : '已暂停，随时可以继续',
       );
+      debugPrint('⏸️ 已进入暂停请求态，当前在途任务: $inflight');
     }
   }
 
   void resumeAnalysis() {
     if (_isAnalyzing && !_pauseRequested) {
+      debugPrint('▶️ 忽略继续请求：当前任务未暂停');
       return;
     }
 
@@ -262,9 +274,22 @@ class AIService {
 
     final runtimeSnapshot = await _readRuntimeSnapshot();
     final runtimeActive = runtimeSnapshot.isActive;
+    final restoredCompleted = runtimeSnapshot.completed.clamp(0, pending);
+
+    // 用户关闭自动恢复时，启动后只展示可手动恢复的暂停态，不自动续跑。
+    if (!_autoResumeEnabled) {
+      debugPrint('⏸️ 检测到 $pending 张未完成照片，但自动恢复已禁用，显示暂停状态');
+      _progressNotifier.value = AIAnalysisProgress.paused(
+        total: pending,
+        completed: restoredCompleted,
+        failed: runtimeSnapshot.failed,
+        currentStep: runtimeActive ? '检测到上次任务，自动恢复已关闭，点击手动继续' : '已暂停 - 点击手动启动',
+        elapsedMs: 0,
+      );
+      return;
+    }
 
     if (runtimeActive) {
-      final restoredCompleted = runtimeSnapshot.completed.clamp(0, pending);
       _progressNotifier.value = AIAnalysisProgress.running(
         total: pending,
         completed: restoredCompleted,
@@ -276,18 +301,6 @@ class AIService {
         '🔁 检测到历史运行态(runtime=$runtimeActive)，尝试恢复 AI 打标',
       );
       unawaited(_runFullAiPipelineInBackground());
-      return;
-    }
-
-    if (!_autoResumeEnabled) {
-      debugPrint('⏸️ 检测到 $pending 张未完成照片，但自动恢复已禁用，显示暂停状态');
-      _progressNotifier.value = AIAnalysisProgress.paused(
-        total: pending,
-        completed: 0,
-        failed: 0,
-        currentStep: '已暂停 - 点击手动启动',
-        elapsedMs: 0,
-      );
       return;
     }
     
@@ -322,6 +335,7 @@ class AIService {
     _isAnalyzing = true;
     _pauseRequested = false;
     _stopRequested = false;
+    _inflightCount = 0;
     _analysisCompleter = Completer<void>();
     clearPendingJunkCleanupReport();
     final isar = PhotoService().isar;
@@ -619,6 +633,7 @@ class AIService {
             final skipJunkFilter = _consumeJunkFilterBypassForPhoto(photo.id);
             final photoStartedAtMs = DateTime.now().millisecondsSinceEpoch;
             inflightCount++;
+            _inflightCount = inflightCount;
 
             _progressNotifier.value = AIAnalysisProgress.running(
               total: targetTotal,
@@ -665,6 +680,7 @@ class AIService {
               processedCount++;
             } finally {
               inflightCount = math.max(0, inflightCount - 1);
+              _inflightCount = inflightCount;
             }
 
             if (_stopRequested) {
@@ -719,10 +735,30 @@ class AIService {
     } finally {
       await mobileClipTagService.endWorkflowSession();
       await mobileClipEmbeddingService.endWorkflowSession();
-      _progressNotifier.value = AIAnalysisProgress.idle();
+
+      final remainingPending = await isar
+          .collection<PhotoEntity>()
+          .filter()
+          .isAiAnalyzedEqualTo(false)
+          .count();
+      if (remainingPending > 0) {
+        _progressNotifier.value = AIAnalysisProgress.paused(
+          total: remainingPending,
+          completed: 0,
+          failed: 0,
+          currentStep: _stopRequested
+              ? '已暂停，剩余 $remainingPending 张待打标'
+              : '本轮结束，剩余 $remainingPending 张待打标，点击继续',
+          elapsedMs: elapsedMs(),
+        );
+      } else {
+        _progressNotifier.value = AIAnalysisProgress.idle();
+      }
+
       _isAnalyzing = false;
       _pauseRequested = false;
       _stopRequested = false;
+      _inflightCount = 0;
       await _persistRuntimeState(isActive: false);
       if (_analysisCompleter != null && !_analysisCompleter!.isCompleted) {
         _analysisCompleter!.complete();

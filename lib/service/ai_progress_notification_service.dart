@@ -111,6 +111,7 @@ class AIProgressNotificationService {
   }
 
   void _dispatchOrQueueAction(String actionId) {
+    debugPrint('🔔 通知动作: $actionId (handlerBound=${_actionHandler != null})');
     final handler = _actionHandler;
     if (handler != null) {
       handler(actionId);
@@ -120,6 +121,7 @@ class AIProgressNotificationService {
   }
 
   void _dispatchOrQueueNavigation(String payload) {
+    debugPrint('🔔 通知导航: $payload (handlerBound=${_navigationHandler != null})');
     final handler = _navigationHandler;
     if (handler != null) {
       handler(payload);
@@ -294,7 +296,9 @@ class AIProgressNotificationService {
       AndroidNotificationAction(
         isPaused ? actionResume : actionPause,
         isPaused ? '继续' : '暂停',
-        showsUserInterface: false,
+        // 关键：走前台/UI isolate 回调，确保能命中 AIService 里绑定的 action handler。
+        // 若为 false，动作会走后台 isolate，当前实现中的内存状态无法直接驱动主流程暂停/继续。
+        showsUserInterface: true,
         cancelNotification: false,
       ),
     ];
@@ -306,7 +310,8 @@ class AIProgressNotificationService {
       importance: Importance.low,
       priority: Priority.low,
       onlyAlertOnce: true,
-      ongoing: isRunning || isPaused || isStopping,
+      ongoing: true,
+      autoCancel: false,
       showProgress: true,
       maxProgress: 100,
       progress: progressPercent,

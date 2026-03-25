@@ -74,51 +74,14 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
           _buildTopProgressOverlay(),
         ],
       ),
-      extendBody: true,
+      extendBody: false,
       resizeToAvoidBottomInset: false,
 
       // ==========================================
       // 🌟 核心视觉点 1：中间凸起的悬浮按钮 (FAB)
       // ==========================================
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      floatingActionButton: Container(
-        width: 60,
-        height: 60,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          // 还原设计图的紫粉渐变色
-          gradient: LinearGradient(
-            colors: [Colors.purpleAccent.shade100, Colors.purple.shade400],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.purple.withValues(alpha: 0.3),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: FloatingActionButton(
-          onPressed: () {
-            // ====================================================
-            // 🚀 神级修改点：不要 setState 切频道了，直接全屏盖上去！
-            // ====================================================
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const CreatePage(),
-                fullscreenDialog: true, // 可选：让它像模态框一样从底部往上弹，更有仪式感
-              ),
-            );
-          },
-          backgroundColor: Colors.transparent, // 背景透明，露出外层的渐变色
-          elevation: 0,
-          shape: const CircleBorder(),
-          child: const Icon(Icons.add, size: 36, color: Colors.white),
-        ),
-      ),
+      floatingActionButton: _buildCenterActionButton(context),
 
       // ==========================================
       // 🌟 核心视觉点 2：带有凹槽的自定义底部导航栏
@@ -126,6 +89,7 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
       bottomNavigationBar: BottomAppBar(
         shape: const CircularNotchedRectangle(), // 魔法属性：制造完美的弧形凹槽
         notchMargin: 8.0, // 凹槽边缘的呼吸间距
+        surfaceTintColor: Colors.transparent,
         padding: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias, // 抗锯齿裁剪
         child: SizedBox(
@@ -141,6 +105,52 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
               _buildNavItem(Icons.category_outlined, Icons.category, '主题', 3),
               _buildNavItem(Icons.person_outline, Icons.person, '我的', 4),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCenterActionButton(BuildContext context) {
+    return SizedBox(
+      width: 64,
+      height: 64,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: LinearGradient(
+            colors: [Colors.pink.shade300, Colors.deepPurple.shade400],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          border: Border.all(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            width: 3,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.deepPurple.withValues(alpha: 0.28),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const CreatePage(),
+                  fullscreenDialog: true,
+                ),
+              );
+            },
+            child: const Center(
+              child: Icon(Icons.add, size: 34, color: Colors.white),
+            ),
           ),
         ),
       ),

@@ -93,6 +93,7 @@ class AIProgressNotificationService {
     required int failed,
     required String currentStep,
     required double fraction,
+    required bool enableForegroundResident,
   }) async {
     await initialize();
 
@@ -116,7 +117,9 @@ class AIProgressNotificationService {
     _lastSignature = signature;
     _lastShownAtMs = nowMs;
 
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android &&
+        enableForegroundResident) {
       return _syncAndroidForegroundProgress(
         isVisible: isVisible,
         isPaused: isPaused,
@@ -124,6 +127,12 @@ class AIProgressNotificationService {
         title: title,
         body: body,
       );
+    }
+
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android &&
+        !enableForegroundResident) {
+      await AIForegroundService().stop();
     }
 
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {

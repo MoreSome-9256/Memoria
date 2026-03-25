@@ -48,6 +48,13 @@ class AIService {
   );
   static const int _maxParallelWorkers = 8;
   static const String _autoResumeKey = 'ai_auto_resume';
+  static const String _keepResidentInBackgroundKey =
+      'ai_keep_resident_background';
+  static const String _runtimeActiveKey = 'ai_runtime_active';
+  static const String _runtimeHeartbeatAtKey = 'ai_runtime_heartbeat_at';
+  static const String _runtimeTotalKey = 'ai_runtime_total';
+  static const String _runtimeCompletedKey = 'ai_runtime_completed';
+  static const String _runtimeFailedKey = 'ai_runtime_failed';
 
   final ValueNotifier<AIAnalysisProgress> _progressNotifier =
       ValueNotifier<AIAnalysisProgress>(AIAnalysisProgress.idle());
@@ -58,11 +65,13 @@ class AIService {
   final Set<Id> _junkFilterBypassPhotoIds = <Id>{};
 
   bool _autoResumeEnabled = false;
+  bool _keepResidentInBackgroundEnabled = false;
 
   bool _isAnalyzing = false;
   bool _pauseRequested = false;
   bool _stopRequested = false;
   Completer<void>? _analysisCompleter;
+  int _lastRuntimeHeartbeatPersistAtMs = 0;
 
   ValueListenable<AIAnalysisProgress> get progressListenable =>
       _progressNotifier;
@@ -82,11 +91,21 @@ class AIService {
   }
 
   bool get autoResumeEnabled => _autoResumeEnabled;
+  bool get keepResidentInBackgroundEnabled => _keepResidentInBackgroundEnabled;
 
   Future<void> setAutoResume(bool enabled) async {
     _autoResumeEnabled = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_autoResumeKey, enabled);
+  }
+
+  Future<void> setKeepResidentInBackground(bool enabled) async {
+    _keepResidentInBackgroundEnabled = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keepResidentInBackgroundKey, enabled);
+    if (!enabled) {
+      await AIForegroundService().stop();
+    }
   }
 
   void _syncProgressNotification() {
@@ -102,8 +121,27 @@ class AIService {
         failed: progress.failed,
         currentStep: progress.currentStep,
         fraction: progress.fraction,
+        enableForegroundResident: _keepResidentInBackgroundEnabled,
       ),
     );
+
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (progress.isVisible) {
+      if (nowMs - _lastRuntimeHeartbeatPersistAtMs >= 1500) {
+        _lastRuntimeHeartbeatPersistAtMs = nowMs;
+        unawaited(
+          _persistRuntimeState(
+            isActive: true,
+            total: progress.total,
+            completed: progress.completed,
+            failed: progress.failed,
+          ),
+        );
+      }
+    } else {
+      _lastRuntimeHeartbeatPersistAtMs = 0;
+      unawaited(_persistRuntimeState(isActive: false));
+    }
   }
 
   void _handleForegroundAction(String action) {
@@ -123,9 +161,16 @@ class AIService {
     return prefs.getBool(_autoResumeKey) ?? false;
   }
 
+  Future<bool> getKeepResidentInBackgroundPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_keepResidentInBackgroundKey) ?? false;
+  }
+
   Future<void> loadAutoResumePreference() async {
     final prefs = await SharedPreferences.getInstance();
     _autoResumeEnabled = prefs.getBool(_autoResumeKey) ?? false;
+    _keepResidentInBackgroundEnabled =
+        prefs.getBool(_keepResidentInBackgroundKey) ?? false;
   }
 
   void markJunkCandidatesAsKept(Iterable<int> photoIds) {
@@ -226,16 +271,41 @@ class AIService {
     if (_isAnalyzing) {
       return;
     }
+
+    await loadAutoResumePreference();
+
     final pending = await PhotoService().isar
         .collection<PhotoEntity>()
         .filter()
         .isAiAnalyzedEqualTo(false)
         .count();
     if (pending <= 0) {
+      await _persistRuntimeState(isActive: false);
       return;
     }
-    
-    await loadAutoResumePreference();
+
+    final runtimeSnapshot = await _readRuntimeSnapshot();
+    final runtimeActive = runtimeSnapshot.isActive;
+    final serviceRunning = _keepResidentInBackgroundEnabled
+        ? await AIForegroundService().isForegroundServiceRunning()
+        : false;
+
+    if (runtimeActive || serviceRunning) {
+      final restoredCompleted = runtimeSnapshot.completed.clamp(0, pending);
+      _progressNotifier.value = AIAnalysisProgress.running(
+        total: pending,
+        completed: restoredCompleted,
+        failed: runtimeSnapshot.failed,
+        currentStep: '检测到上次打标任务，正在重连并恢复…',
+        elapsedMs: 0,
+      );
+      debugPrint(
+        '🔁 检测到历史运行态(runtime=$runtimeActive service=$serviceRunning)，尝试恢复 AI 打标',
+      );
+      unawaited(_runFullAiPipelineInBackground());
+      return;
+    }
+
     if (!_autoResumeEnabled) {
       debugPrint('⏸️ 检测到 $pending 张未完成照片，但自动恢复已禁用，显示暂停状态');
       _progressNotifier.value = AIAnalysisProgress.paused(
@@ -274,6 +344,8 @@ class AIService {
       return;
     }
 
+    await _persistRuntimeState(isActive: true);
+
     _isAnalyzing = true;
     _pauseRequested = false;
     _stopRequested = false;
@@ -306,6 +378,7 @@ class AIService {
     if (targetTotal <= 0) {
       _progressNotifier.value = AIAnalysisProgress.idle();
       _isAnalyzing = false;
+      await _persistRuntimeState(isActive: false);
       if (_analysisCompleter != null && !_analysisCompleter!.isCompleted) {
         _analysisCompleter!.complete();
       }
@@ -677,11 +750,57 @@ class AIService {
       _isAnalyzing = false;
       _pauseRequested = false;
       _stopRequested = false;
+      await _persistRuntimeState(isActive: false);
       if (_analysisCompleter != null && !_analysisCompleter!.isCompleted) {
         _analysisCompleter!.complete();
       }
       _analysisCompleter = null;
     }
+  }
+
+  Future<void> _persistRuntimeState({
+    required bool isActive,
+    int? total,
+    int? completed,
+    int? failed,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_runtimeActiveKey, isActive);
+    if (!isActive) {
+      await prefs.remove(_runtimeHeartbeatAtKey);
+      await prefs.remove(_runtimeTotalKey);
+      await prefs.remove(_runtimeCompletedKey);
+      await prefs.remove(_runtimeFailedKey);
+      return;
+    }
+
+    await prefs.setInt(
+      _runtimeHeartbeatAtKey,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    if (total != null) {
+      await prefs.setInt(_runtimeTotalKey, total);
+    }
+    if (completed != null) {
+      await prefs.setInt(_runtimeCompletedKey, completed);
+    }
+    if (failed != null) {
+      await prefs.setInt(_runtimeFailedKey, failed);
+    }
+  }
+
+  Future<_RuntimeSnapshot> _readRuntimeSnapshot() async {
+    final prefs = await SharedPreferences.getInstance();
+    final active = prefs.getBool(_runtimeActiveKey) ?? false;
+    final heartbeatAtMs = prefs.getInt(_runtimeHeartbeatAtKey) ?? 0;
+    final ageMs = DateTime.now().millisecondsSinceEpoch - heartbeatAtMs;
+    final recent = heartbeatAtMs > 0 && ageMs <= const Duration(hours: 1).inMilliseconds;
+    return _RuntimeSnapshot(
+      isActive: active && recent,
+      total: prefs.getInt(_runtimeTotalKey) ?? 0,
+      completed: prefs.getInt(_runtimeCompletedKey) ?? 0,
+      failed: prefs.getInt(_runtimeFailedKey) ?? 0,
+    );
   }
 
   Future<bool> _waitIfPaused() async {
@@ -1139,4 +1258,18 @@ class _PhotoProcessResult {
   final bool didSucceed;
   final int? eventId;
   final JunkPhotoCleanupCandidate? junkCandidate;
+}
+
+class _RuntimeSnapshot {
+  const _RuntimeSnapshot({
+    required this.isActive,
+    required this.total,
+    required this.completed,
+    required this.failed,
+  });
+
+  final bool isActive;
+  final int total;
+  final int completed;
+  final int failed;
 }

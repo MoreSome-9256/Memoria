@@ -12,9 +12,15 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 
 class AIForegroundNotificationService : Service() {
+    override fun onCreate() {
+        super.onCreate()
+        isRunning = true
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        var startMode = START_STICKY
         when (intent?.action) {
             ACTION_SYNC -> {
                 val title = intent.getStringExtra(EXTRA_TITLE) ?: DEFAULT_TITLE
@@ -27,6 +33,8 @@ class AIForegroundNotificationService : Service() {
             ACTION_STOP -> {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
+                isRunning = false
+                startMode = START_NOT_STICKY
             }
 
             ACTION_BUTTON -> {
@@ -37,7 +45,7 @@ class AIForegroundNotificationService : Service() {
             }
         }
 
-        return START_NOT_STICKY
+        return startMode
     }
 
     private fun showOrUpdateNotification(
@@ -48,16 +56,27 @@ class AIForegroundNotificationService : Service() {
     ) {
         ensureChannel()
 
-        val action = if (isPaused) ACTION_RESUME else ACTION_PAUSE
+        val buttonAction = if (isPaused) ACTION_RESUME else ACTION_PAUSE
         val actionLabel = if (isPaused) "继续" else "暂停"
         val actionIntent = Intent(this, AIForegroundNotificationService::class.java).apply {
             this.action = ACTION_BUTTON
-            putExtra(EXTRA_BUTTON_ACTION, action)
+            putExtra(EXTRA_BUTTON_ACTION, buttonAction)
         }
         val actionPendingIntent = PendingIntent.getService(
             this,
             if (isPaused) 2 else 1,
             actionIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or pendingIntentImmutableFlag(),
+        )
+
+        val openAlbumIntent = Intent(this, MainActivity::class.java).apply {
+            this.action = ACTION_OPEN_ALBUM
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        val openAlbumPendingIntent = PendingIntent.getActivity(
+            this,
+            3,
+            openAlbumIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or pendingIntentImmutableFlag(),
         )
 
@@ -68,12 +87,20 @@ class AIForegroundNotificationService : Service() {
             .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setProgress(100, progress, false)
+            .setContentIntent(openAlbumPendingIntent)
+            .setAutoCancel(false)
             .addAction(0, actionLabel, actionPendingIntent)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
         startForeground(NOTIFICATION_ID, notification)
+        isRunning = true
+    }
+
+    override fun onDestroy() {
+        isRunning = false
+        super.onDestroy()
     }
 
     private fun ensureChannel() {
@@ -114,6 +141,7 @@ class AIForegroundNotificationService : Service() {
         const val ACTION_SYNC = "memoria.ai.notification.SYNC"
         const val ACTION_STOP = "memoria.ai.notification.STOP"
         private const val ACTION_BUTTON = "memoria.ai.notification.BUTTON"
+        const val ACTION_OPEN_ALBUM = "memoria.ai.notification.OPEN_ALBUM"
 
         const val ACTION_PAUSE = "pause"
         const val ACTION_RESUME = "resume"
@@ -125,5 +153,8 @@ class AIForegroundNotificationService : Service() {
         private const val EXTRA_BUTTON_ACTION = "buttonAction"
 
         private const val DEFAULT_TITLE = "AI 打标进行中"
+
+        @Volatile
+        var isRunning: Boolean = false
     }
 }

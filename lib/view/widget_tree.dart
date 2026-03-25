@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../service/ai_service.dart';
 import '../service/album_refresh_service.dart';
 import 'pages/home_page.dart'; // 🌟 导入刚才新写的首页
@@ -15,8 +18,14 @@ class WidgetTree extends StatefulWidget {
 }
 
 class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
+  static const MethodChannel _navigationMethodChannel =
+      MethodChannel('memoria/ai_foreground_notification');
+  static const EventChannel _navigationEventChannel =
+      EventChannel('memoria/app_navigation_events');
+
   int _currentIndex = 0; // 默认一打开显示 0（首页）
   bool _progressBannerHidden = false; // 进度条隐藏状态
+  StreamSubscription<dynamic>? _navigationSubscription;
 
   // 🌟 去掉 CreatePage 这个"伪占位符"，因为现在它是被 push 出来的
   final List<Widget> _pages = const [
@@ -31,12 +40,39 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _bindNotificationNavigation();
   }
 
   @override
   void dispose() {
+    _navigationSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  Future<void> _bindNotificationNavigation() async {
+    _navigationSubscription = _navigationEventChannel
+        .receiveBroadcastStream()
+        .listen(_handleNavigationTarget);
+
+    final pendingTarget = await _navigationMethodChannel.invokeMethod<String>(
+      'consumePendingNavigationTarget',
+    );
+    if (pendingTarget != null) {
+      _handleNavigationTarget(pendingTarget);
+    }
+  }
+
+  void _handleNavigationTarget(dynamic target) {
+    if (!mounted || target is! String) {
+      return;
+    }
+    if (target == 'album') {
+      setState(() {
+        _currentIndex = 1;
+        _progressBannerHidden = false;
+      });
+    }
   }
 
   @override

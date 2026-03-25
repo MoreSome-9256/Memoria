@@ -83,41 +83,54 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     final result = _result;
     return Scaffold(
       appBar: AppBar(title: const Text('语义搜索')),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: TextField(
-              controller: _controller,
-              focusNode: _focusNode,
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) => _performSearch(),
-              decoration: InputDecoration(
-                hintText: '输入时间、地点、人物、场景或排除条件',
-                suffixIcon: IconButton(
-                  onPressed: _performSearch,
-                  icon: const Icon(Icons.search),
-                ),
-                filled: true,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(18),
-                  borderSide: BorderSide.none,
+      body: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                textInputAction: TextInputAction.search,
+                onSubmitted: (_) => _performSearch(),
+                decoration: InputDecoration(
+                  hintText: '输入时间、地点、人物、场景或排除条件',
+                  suffixIcon: IconButton(
+                    onPressed: _performSearch,
+                    icon: const Icon(Icons.search),
+                  ),
+                  filled: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    borderSide: BorderSide.none,
+                  ),
                 ),
               ),
             ),
           ),
-          if (result != null) _buildSummaryCard(result),
-          Expanded(
-            child: _isSearching
-                ? const Center(child: CircularProgressIndicator())
-                : _errorMessage != null
-                ? _buildErrorState()
-                : result == null
-                ? _buildIdleState()
-                : result.photos.isEmpty
-                ? _buildEmptyState(result)
-                : _buildGrid(result),
-          ),
+          if (result != null) SliverToBoxAdapter(child: _buildSummaryCard(result)),
+          if (_isSearching)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_errorMessage != null)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildErrorState(),
+            )
+          else if (result == null)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildIdleState(),
+            )
+          else if (result.photos.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildEmptyState(result),
+            )
+          else
+            _buildGridSliver(result),
         ],
       ),
     );
@@ -232,21 +245,22 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     );
   }
 
-  Widget _buildGrid(SemanticSearchResult result) {
-    return GridView.builder(
+  Widget _buildGridSliver(SemanticSearchResult result) {
+    return SliverPadding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-        childAspectRatio: 0.82,
+      sliver: SliverGrid(
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
+          childAspectRatio: 0.82,
+        ),
+        delegate: SliverChildBuilderDelegate((context, index) {
+          final photo = result.photos[index];
+          final hit = result.hits[photo.id];
+          return _SearchPhotoTile(photo: photo, hit: hit);
+        }, childCount: result.photos.length),
       ),
-      itemCount: result.photos.length,
-      itemBuilder: (context, index) {
-        final photo = result.photos[index];
-        final hit = result.hits[photo.id];
-        return _SearchPhotoTile(photo: photo, hit: hit);
-      },
     );
   }
 

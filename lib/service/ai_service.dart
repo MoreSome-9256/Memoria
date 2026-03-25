@@ -47,6 +47,7 @@ class AIService {
       ValueNotifier<JunkPhotoCleanupReport?>(null);
   final JunkPhotoFilterService _junkPhotoFilterService =
       JunkPhotoFilterService();
+  final Set<Id> _junkFilterBypassPhotoIds = <Id>{};
 
   bool _isAnalyzing = false;
   bool _pauseRequested = false;
@@ -68,6 +69,15 @@ class AIService {
 
   void clearPendingJunkCleanupReport() {
     replacePendingJunkCleanupReport(null);
+  }
+
+  void markJunkCandidatesAsKept(Iterable<int> photoIds) {
+    final normalized = photoIds.where((id) => id > 0);
+    _junkFilterBypassPhotoIds.addAll(normalized);
+  }
+
+  bool _consumeJunkFilterBypassForPhoto(int photoId) {
+    return _junkFilterBypassPhotoIds.remove(photoId);
   }
 
   void pauseAnalysis() {
@@ -361,6 +371,7 @@ class AIService {
               attemptedPhotoIds.add(photo.id);
               processingStartedAtMs ??=
                   DateTime.now().millisecondsSinceEpoch;
+                final skipJunkFilter = _consumeJunkFilterBypassForPhoto(photo.id);
 
               _progressNotifier.value = AIAnalysisProgress.running(
                 total: targetTotal,
@@ -381,6 +392,7 @@ class AIService {
                 facePipelineService: facePipelineService,
                 ocrService: ocrService,
                 faceDetector: faceDetector,
+                skipJunkFilter: skipJunkFilter,
               );
 
               if (result.didSucceed) {
@@ -688,6 +700,7 @@ class AIService {
     required FacePipelineService facePipelineService,
     required OcrService ocrService,
     required FaceDetector faceDetector,
+    required bool skipJunkFilter,
   }) async {
     File? analysisFile;
     try {
@@ -702,33 +715,35 @@ class AIService {
             selectedBackend,
           );
 
-      final junkDecision = await _junkPhotoFilterService.evaluatePhoto(
-        photo: photo,
-        imageEmbedding: embedding,
-      );
-      if (junkDecision.shouldFilter) {
-        await _markAsAnalyzed(
-          photo.id,
-          const <String>[JunkPhotoFilterService.junkCandidateTag],
-          embedding,
-          '',
-          '',
-          const <String>[],
-          0,
-          0.0,
-          0.0,
-          isar,
+      if (!skipJunkFilter) {
+        final junkDecision = await _junkPhotoFilterService.evaluatePhoto(
+          photo: photo,
+          imageEmbedding: embedding,
         );
-        return _PhotoProcessResult.success(
-          eventId: photo.eventId,
-          junkCandidate: JunkPhotoCleanupCandidate(
-            photoId: photo.id,
-            assetId: photo.assetId,
-            path: photo.path,
-            timestamp: photo.timestamp,
-            reasons: junkDecision.hits,
-          ),
-        );
+        if (junkDecision.shouldFilter) {
+          await _markAsAnalyzed(
+            photo.id,
+            const <String>[JunkPhotoFilterService.junkCandidateTag],
+            embedding,
+            '',
+            '',
+            const <String>[],
+            0,
+            0.0,
+            0.0,
+            isar,
+          );
+          return _PhotoProcessResult.success(
+            eventId: photo.eventId,
+            junkCandidate: JunkPhotoCleanupCandidate(
+              photoId: photo.id,
+              assetId: photo.assetId,
+              path: photo.path,
+              timestamp: photo.timestamp,
+              reasons: junkDecision.hits,
+            ),
+          );
+        }
       }
 
       final mobileClipTags = await mobileClipTagService.retrieveTags(embedding);

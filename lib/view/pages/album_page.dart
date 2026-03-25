@@ -356,6 +356,11 @@ class _AlbumPageState extends State<AlbumPage> {
       final remainingCandidates = report.candidates
           .where((candidate) => !selectedPhotoIds.contains(candidate.photoId))
           .toList(growable: false);
+      if (remainingCandidates.isNotEmpty) {
+        AIService().markJunkCandidatesAsKept(
+          remainingCandidates.map((candidate) => candidate.photoId),
+        );
+      }
       final retriedCount = remainingCandidates.isEmpty
           ? 0
           : await PhotoService().requeuePhotosForAiByIds(
@@ -405,6 +410,9 @@ class _AlbumPageState extends State<AlbumPage> {
   Future<void> _requeueRemainingJunkCandidates(
     List<JunkPhotoCleanupCandidate> candidates,
   ) async {
+    AIService().markJunkCandidatesAsKept(
+      candidates.map((candidate) => candidate.photoId),
+    );
     final retriedCount = await PhotoService().requeuePhotosForAiByIds(
       candidates.map((candidate) => candidate.photoId),
     );

@@ -20,7 +20,7 @@ class PhotoFilterHelper {
     }
 
     final ratio = width / height;
-    return ratio < 0.45 || ratio > 2.2;
+    return ratio > 0 && ratio < 0.52;
   }
 
   static bool isLikelyCameraPhoto(String filePath) {

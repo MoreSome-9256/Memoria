@@ -14,10 +14,11 @@ class WidgetTree extends StatefulWidget {
   State<WidgetTree> createState() => _WidgetTreeState();
 }
 
-class _WidgetTreeState extends State<WidgetTree> {
+class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
   int _currentIndex = 0; // 默认一打开显示 0（首页）
+  bool _progressBannerHidden = false; // 进度条隐藏状态
 
-  // 🌟 去掉 CreatePage 这个“伪占位符”，因为现在它是被 push 出来的
+  // 🌟 去掉 CreatePage 这个"伪占位符"，因为现在它是被 push 出来的
   final List<Widget> _pages = const [
     HomePage(), // 0: 首页
     AlbumPage(), // 1: 相册
@@ -25,6 +26,29 @@ class _WidgetTreeState extends State<WidgetTree> {
     ThemeClustersPage(), // 3: 主题聚类
     ProfilePage(), // 4: 我的
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // 每次进入前台或页面变化时，自动显示进度条
+    if (state == AppLifecycleState.resumed) {
+      setState(() {
+        _progressBannerHidden = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -121,9 +145,10 @@ class _WidgetTreeState extends State<WidgetTree> {
                 title: refreshProgress.title,
                 message: refreshProgress.message,
                 progress: refreshProgress.progress,
+                onHide: null, // 相册刷新进度不能隐藏
               );
             }
-            if (_currentIndex == 1 || !aiProgress.isVisible) {
+            if (_currentIndex == 1 || !aiProgress.isVisible || _progressBannerHidden) {
               return const SizedBox.shrink();
             }
             return _TopProgressBanner(
@@ -131,6 +156,11 @@ class _WidgetTreeState extends State<WidgetTree> {
               title: '后台 AI 正在继续处理',
               message: aiProgress.currentStep,
               progress: aiProgress.fraction,
+              onHide: () {
+                setState(() {
+                  _progressBannerHidden = true;
+                });
+              },
             );
           },
         );
@@ -155,6 +185,7 @@ class _WidgetTreeState extends State<WidgetTree> {
       onTap: () {
         setState(() {
           _currentIndex = index;
+          _progressBannerHidden = false; // 页面切换时重新显示进度条
         });
       },
       splashColor: Colors.transparent, // 去除点击时的原生水波纹，让交互更高级
@@ -185,56 +216,77 @@ class _TopProgressBanner extends StatelessWidget {
     required this.title,
     required this.message,
     required this.progress,
+    this.onHide,
   });
 
   final String title;
   final String message;
   final double progress;
+  final VoidCallback? onHide;
 
   @override
   Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: SafeArea(
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: Container(
-            width: double.infinity,
-            margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: const [
-                BoxShadow(
-                  blurRadius: 14,
-                  offset: Offset(0, 4),
-                  color: Color(0x22000000),
+    return SafeArea(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Container(
+          width: double.infinity,
+          margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: const [
+              BoxShadow(
+                blurRadius: 14,
+                offset: Offset(0, 4),
+                color: Color(0x22000000),
+              ),
+            ],
+          ),
+          child: Stack(
+            children: [
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    message,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                  ),
+                  const SizedBox(height: 10),
+                  LinearProgressIndicator(
+                    value: progress.clamp(0, 1),
+                    minHeight: 6,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ],
+              ),
+              // 隐藏按钮（仅在有 onHide 回调时显示）
+              if (onHide != null)
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  child: GestureDetector(
+                    onTap: onHide,
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Icon(
+                        Icons.close,
+                        size: 18,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ),
                 ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  message,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Colors.grey[700], fontSize: 12),
-                ),
-                const SizedBox(height: 10),
-                LinearProgressIndicator(
-                  value: progress.clamp(0, 1),
-                  minHeight: 6,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ],
-            ),
+            ],
           ),
         ),
       ),

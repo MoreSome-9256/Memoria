@@ -21,6 +21,7 @@ import 'ocr_service.dart';
 import 'photo_caption_service.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AIService {
   static final AIService _instance = AIService._internal();
@@ -40,6 +41,7 @@ class AIService {
     384,
   );
   static const int _maxParallelWorkers = 8;
+  static const String _autoResumeKey = 'ai_auto_resume';
 
   final ValueNotifier<AIAnalysisProgress> _progressNotifier =
       ValueNotifier<AIAnalysisProgress>(AIAnalysisProgress.idle());
@@ -48,6 +50,8 @@ class AIService {
   final JunkPhotoFilterService _junkPhotoFilterService =
       JunkPhotoFilterService();
   final Set<Id> _junkFilterBypassPhotoIds = <Id>{};
+
+  bool _autoResumeEnabled = false;
 
   bool _isAnalyzing = false;
   bool _pauseRequested = false;
@@ -69,6 +73,24 @@ class AIService {
 
   void clearPendingJunkCleanupReport() {
     replacePendingJunkCleanupReport(null);
+  }
+
+  bool get autoResumeEnabled => _autoResumeEnabled;
+
+  Future<void> setAutoResume(bool enabled) async {
+    _autoResumeEnabled = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoResumeKey, enabled);
+  }
+
+  Future<bool> getAutoResumePreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_autoResumeKey) ?? false;
+  }
+
+  Future<void> loadAutoResumePreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    _autoResumeEnabled = prefs.getBool(_autoResumeKey) ?? false;
   }
 
   void markJunkCandidatesAsKept(Iterable<int> photoIds) {
@@ -159,6 +181,20 @@ class AIService {
     if (pending <= 0) {
       return;
     }
+    
+    await loadAutoResumePreference();
+    if (!_autoResumeEnabled) {
+      debugPrint('⏸️ 检测到 $pending 张未完成照片，但自动恢复已禁用，显示暂停状态');
+      _progressNotifier.value = AIAnalysisProgress.paused(
+        total: pending,
+        completed: 0,
+        failed: 0,
+        currentStep: '已暂停 - 点击手动启动',
+        elapsedMs: 0,
+      );
+      return;
+    }
+    
     debugPrint('🔁 检测到 $pending 张未完成照片，自动续跑 AI 打标任务');
     unawaited(_runFullAiPipelineInBackground());
   }

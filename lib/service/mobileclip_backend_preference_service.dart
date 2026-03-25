@@ -16,7 +16,7 @@ extension MobileClipBackendX on MobileClipBackend {
 
   String get description => switch (this) {
     MobileClipBackend.mobileclip2Onnx => '新版默认',
-    MobileClipBackend.ncnn => '速度优先',
+    MobileClipBackend.ncnn => '兼容性优先，推理更快但是模型更弱',
   };
 
   static MobileClipBackend fromStorageValue(String? value) {

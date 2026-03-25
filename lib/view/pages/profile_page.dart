@@ -2,6 +2,7 @@ import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
+import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 
 import 'local_vlm_test_page.dart';
@@ -19,6 +20,8 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   final _auth = const CognitoAuthService();
   final _backendPreferenceService = MobileClipBackendPreferenceService();
+  
+  late bool _autoResumeEnabled;
 
   Future<AuthUser?> _loadUser() async {
     try {
@@ -53,6 +56,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _showModelTypeSettings() async {
     await _backendPreferenceService.initialize();
+    _autoResumeEnabled = await AIService().getAutoResumePreference();
     if (!mounted) {
       return;
     }
@@ -60,6 +64,7 @@ class _ProfilePageState extends State<ProfilePage> {
     var selected = _backendPreferenceService.backendListenable.value;
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -69,66 +74,99 @@ class _ProfilePageState extends State<ProfilePage> {
             return SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '模型类型',
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text('改动会应用到后续 AI 扫描任务，模型在首次调用时按需加载。'),
-                    const SizedBox(height: 16),
-                    SegmentedButton<MobileClipBackend>(
-                      segments: const <ButtonSegment<MobileClipBackend>>[
-                        ButtonSegment<MobileClipBackend>(
-                          value: MobileClipBackend.mobileclip2Onnx,
-                          label: Text('MobileCLIP2 ONNX'),
-                          icon: Icon(Icons.auto_awesome_outlined),
-                        ),
-                        ButtonSegment<MobileClipBackend>(
-                          value: MobileClipBackend.ncnn,
-                          label: Text('NCNN'),
-                          icon: Icon(Icons.flash_on_outlined),
-                        ),
-                      ],
-                      selected: <MobileClipBackend>{selected},
-                      onSelectionChanged: (selection) {
-                        setSheetState(() {
-                          selected = selection.first;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      '当前选择: ${selected.label} · ${selected.description}',
-                      style: TextStyle(color: Colors.grey[700], fontSize: 12),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('取消'),
-                        ),
-                        const Spacer(),
-                        FilledButton(
-                          onPressed: () async {
-                            await _backendPreferenceService.setSelectedBackend(
-                              selected,
-                            );
-                            if (!context.mounted) {
-                              return;
-                            }
-                            Navigator.pop(context);
-                          },
-                          child: const Text('保存'),
-                        ),
-                      ],
-                    ),
-                  ],
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'AI 模型设置',
+                        style: Theme.of(context).textTheme.headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text('AI 模型如何表现的相关配置。改动会应用到后续 AI 扫描任务，模型在首次调用时按需加载。'),
+                      const SizedBox(height: 20),
+                      
+                      // 模型类型
+                      Text(
+                        '模型类型',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 10),
+                      SegmentedButton<MobileClipBackend>(
+                        segments: const <ButtonSegment<MobileClipBackend>>[
+                          ButtonSegment<MobileClipBackend>(
+                            value: MobileClipBackend.mobileclip2Onnx,
+                            label: Text('MobileCLIP2 ONNX'),
+                            icon: Icon(Icons.auto_awesome_outlined),
+                          ),
+                          ButtonSegment<MobileClipBackend>(
+                            value: MobileClipBackend.ncnn,
+                            label: Text('NCNN'),
+                            icon: Icon(Icons.flash_on_outlined),
+                          ),
+                        ],
+                        selected: <MobileClipBackend>{selected},
+                        onSelectionChanged: (selection) {
+                          setSheetState(() {
+                            selected = selection.first;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '当前选择: ${selected.label} · ${selected.description}',
+                        style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                      ),
+                      const SizedBox(height: 20),
+                      
+                      // 自动恢复开关
+                      Divider(color: Colors.grey[300]),
+                      const SizedBox(height: 12),
+                      Text(
+                        '启动行为',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 10),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('启动时自动恢复'),
+                        subtitle: const Text('应用启动时自动继续未完成的 AI 打标任务'),
+                        value: _autoResumeEnabled,
+                        onChanged: (value) {
+                          setSheetState(() {
+                            _autoResumeEnabled = value;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      const SizedBox(height: 24),
+                      
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('取消'),
+                          ),
+                          const Spacer(),
+                          FilledButton(
+                            onPressed: () async {
+                              await _backendPreferenceService.setSelectedBackend(
+                                selected,
+                              );
+                              await AIService().setAutoResume(_autoResumeEnabled);
+                              if (!context.mounted) {
+                                return;
+                              }
+                              Navigator.pop(context);
+                            },
+                            child: const Text('保存'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -144,7 +182,7 @@ class _ProfilePageState extends State<ProfilePage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
-        content: Text('已设置模型类型为 ${latest.label}，后续任务按需加载。'),
+        content: Text('已设置模型类型为 ${latest.label}，自动恢复 ${_autoResumeEnabled ? '已启用' : '已禁用'}'),
       ),
     );
   }

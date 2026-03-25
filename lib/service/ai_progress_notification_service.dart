@@ -109,9 +109,14 @@ class AIProgressNotificationService {
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       await AIForegroundService().sync(
         shouldRun: isVisible,
+        isPaused: isPaused,
         title: title,
         text: '$progressPercent% · $body',
       );
+
+      // Android 前台保活时仅保留前台服务通知，避免双通知互相覆盖。
+      await _plugin.cancel(_notificationId);
+      return;
     }
 
     if (!isVisible) {

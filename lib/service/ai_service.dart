@@ -19,6 +19,7 @@ import 'mobileclip_embedding_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'ocr_service.dart';
 import 'photo_caption_service.dart';
+import 'ai_foreground_service.dart';
 import 'ai_progress_notification_service.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
@@ -29,6 +30,7 @@ class AIService {
   factory AIService() => _instance;
   AIService._internal() {
     _progressNotifier.addListener(_syncProgressNotification);
+    AIForegroundService().bindActionHandler(_handleForegroundAction);
     AIProgressNotificationService().bindActionHandler(_handleForegroundAction);
   }
 
@@ -105,11 +107,13 @@ class AIService {
   }
 
   void _handleForegroundAction(String action) {
-    if (action == AIProgressNotificationService.actionPause) {
+    if (action == AIProgressNotificationService.actionPause ||
+        action == AIForegroundService.actionPause) {
       pauseAnalysis();
       return;
     }
-    if (action == AIProgressNotificationService.actionResume) {
+    if (action == AIProgressNotificationService.actionResume ||
+        action == AIForegroundService.actionResume) {
       resumeAnalysis();
     }
   }

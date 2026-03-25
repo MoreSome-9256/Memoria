@@ -10,7 +10,7 @@ class CognitoAuthService {
     try {
       final session = await Amplify.Auth
           .fetchAuthSession()
-          .timeout(const Duration(seconds: 4));
+          .timeout(const Duration(seconds: 10));
       return session.isSignedIn;
     } catch (error) {
       debugPrint('⚠️ fetchAuthSession 超时或失败，按未登录处理: $error');

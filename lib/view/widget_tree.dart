@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../service/ai_progress_notification_service.dart';
 import '../service/ai_service.dart';
 import '../service/album_refresh_service.dart';
 import 'pages/home_page.dart'; // 🌟 导入刚才新写的首页
@@ -40,6 +41,7 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    AIProgressNotificationService().bindNavigationHandler(_handleNavigationTarget);
     _bindNotificationNavigation();
   }
 
@@ -67,7 +69,8 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
     if (!mounted || target is! String) {
       return;
     }
-    if (target == 'album') {
+    if (target == 'album' ||
+        target == AIProgressNotificationService.navigationAlbum) {
       setState(() {
         _currentIndex = 1;
         _progressBannerHidden = false;

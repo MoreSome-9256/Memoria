@@ -280,6 +280,7 @@ class AIService {
         .isAiAnalyzedEqualTo(false)
         .count();
     if (pending <= 0) {
+      await AIProgressNotificationService().clearProgressNotificationSurfaces();
       await _persistRuntimeState(isActive: false);
       return;
     }

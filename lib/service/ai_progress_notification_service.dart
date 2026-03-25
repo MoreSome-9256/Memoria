@@ -16,6 +16,7 @@ class AIProgressNotificationService {
   static const int _notificationId = 43001;
   static const String actionPause = 'pause';
   static const String actionResume = 'resume';
+  static const String navigationAlbum = 'album';
 
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
@@ -25,6 +26,7 @@ class AIProgressNotificationService {
   String _lastSignature = '';
 
   ValueChanged<String>? _actionHandler;
+  ValueChanged<String>? _navigationHandler;
 
   Future<void> initialize() async {
     if (_initialized) {
@@ -44,6 +46,12 @@ class AIProgressNotificationService {
       onDidReceiveNotificationResponse: _onForegroundResponse,
       onDidReceiveBackgroundNotificationResponse: _onBackgroundResponse,
     );
+
+    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    final launchResponse = launchDetails?.notificationResponse;
+    if (launchDetails?.didNotificationLaunchApp == true && launchResponse != null) {
+      _handleNotificationResponse(launchResponse);
+    }
 
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       final androidImpl = _plugin
@@ -66,21 +74,36 @@ class AIProgressNotificationService {
     _actionHandler = handler;
   }
 
+  void bindNavigationHandler(ValueChanged<String> handler) {
+    _navigationHandler = handler;
+  }
+
   @pragma('vm:entry-point')
   static void _onBackgroundResponse(NotificationResponse response) {
-    final actionId = response.actionId ?? '';
-    if (actionId.isEmpty) {
-      return;
-    }
-    _instance._actionHandler?.call(actionId);
+    _instance._handleNotificationResponse(response);
   }
 
   void _onForegroundResponse(NotificationResponse response) {
+    _handleNotificationResponse(response);
+  }
+
+  void _handleNotificationResponse(NotificationResponse response) {
     final actionId = response.actionId ?? '';
-    if (actionId.isEmpty) {
+    if (actionId.isNotEmpty) {
+      _actionHandler?.call(actionId);
       return;
     }
-    _actionHandler?.call(actionId);
+
+    final payload = response.payload ?? '';
+    if (payload.isNotEmpty) {
+      _navigationHandler?.call(payload);
+    }
+  }
+
+  Future<void> clearProgressNotificationSurfaces() async {
+    await initialize();
+    await _plugin.cancel(_notificationId);
+    await AIForegroundService().stop();
   }
 
   Future<void> syncProgress({
@@ -314,6 +337,7 @@ class AIProgressNotificationService {
       title,
       body,
       NotificationDetails(android: androidDetails, iOS: iosDetails),
+      payload: navigationAlbum,
     );
   }
 }

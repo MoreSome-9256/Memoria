@@ -216,7 +216,6 @@ class AlbumRefreshService {
     try {
       await Future<void>.delayed(const Duration(milliseconds: 300));
       await AIService().analyzePhotosInBackground(maxPhotos: maxPhotos);
-      await AIService().backfillMissingCaptionsInBackground(maxPhotos: maxPhotos);
     } catch (error) {
       debugPrint('❌ 后台相册 AI 管线执行失败: $error');
     }

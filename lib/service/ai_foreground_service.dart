@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:flutter/services.dart';
 
 class AIForegroundService {
   AIForegroundService._internal();
@@ -8,9 +8,10 @@ class AIForegroundService {
 
   factory AIForegroundService() => _instance;
 
-  static const String channelId = 'ai_progress_channel';
-  static const String channelName = 'AI 打标进度';
-  static const int notificationId = 43001;
+    static const MethodChannel _methodChannel =
+      MethodChannel('memoria/ai_foreground_notification');
+    static const EventChannel _eventChannel =
+      EventChannel('memoria/ai_foreground_actions');
   static const String actionPause = 'pause';
   static const String actionResume = 'resume';
 
@@ -22,31 +23,11 @@ class AIForegroundService {
       return;
     }
 
-    FlutterForegroundTask.init(
-      androidNotificationOptions: AndroidNotificationOptions(
-        channelId: channelId,
-        channelName: channelName,
-        channelDescription: '用于保持 AI 打标任务在后台持续处理',
-        channelImportance: NotificationChannelImportance.LOW,
-        priority: NotificationPriority.LOW,
-        onlyAlertOnce: true,
-      ),
-      iosNotificationOptions: const IOSNotificationOptions(
-        showNotification: false,
-        playSound: false,
-      ),
-      foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.nothing(),
-        autoRunOnBoot: false,
-        autoRunOnMyPackageReplaced: false,
-        allowWakeLock: true,
-        allowWifiLock: true,
-      ),
-    );
-
-    FlutterForegroundTask.initCommunicationPort();
-    FlutterForegroundTask.removeTaskDataCallback(_onTaskData);
-    FlutterForegroundTask.addTaskDataCallback(_onTaskData);
+    _eventChannel.receiveBroadcastStream().listen((dynamic data) {
+      if (data is String && data.isNotEmpty) {
+        _actionHandler?.call(data);
+      }
+    });
 
     _initialized = true;
   }
@@ -55,24 +36,10 @@ class AIForegroundService {
     _actionHandler = handler;
   }
 
-  void _onTaskData(Object data) {
-    if (data is! String) {
-      return;
-    }
-    const prefix = 'ai_action:';
-    if (!data.startsWith(prefix)) {
-      return;
-    }
-    final action = data.substring(prefix.length).trim();
-    if (action.isEmpty) {
-      return;
-    }
-    _actionHandler?.call(action);
-  }
-
   Future<void> sync({
     required bool shouldRun,
     required bool isPaused,
+    required int progress,
     required String title,
     required String text,
   }) async {
@@ -81,67 +48,12 @@ class AIForegroundService {
       return;
     }
 
-    final running = await FlutterForegroundTask.isRunningService;
-
-    if (!shouldRun) {
-      if (running) {
-        await FlutterForegroundTask.stopService();
-      }
-      return;
-    }
-
-    final buttons = <NotificationButton>[
-      NotificationButton(
-        id: isPaused ? actionResume : actionPause,
-        text: isPaused ? '继续' : '暂停',
-      ),
-    ];
-
-    if (running) {
-      await FlutterForegroundTask.updateService(
-        notificationTitle: title,
-        notificationText: text,
-        notificationButtons: buttons,
-      );
-      return;
-    }
-
-    await FlutterForegroundTask.startService(
-      serviceId: notificationId,
-      notificationTitle: title,
-      notificationText: text,
-      notificationButtons: buttons,
-      callback: _startCallback,
-    );
+    await _methodChannel.invokeMethod<void>('sync', <String, dynamic>{
+      'shouldRun': shouldRun,
+      'isPaused': isPaused,
+      'progress': progress.clamp(0, 100),
+      'title': title,
+      'text': text,
+    });
   }
-}
-
-@pragma('vm:entry-point')
-void _startCallback() {
-  FlutterForegroundTask.setTaskHandler(_AIForegroundTaskHandler());
-}
-
-class _AIForegroundTaskHandler extends TaskHandler {
-  @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
-
-  @override
-  void onRepeatEvent(DateTime timestamp) {}
-
-  @override
-  Future<void> onDestroy(DateTime timestamp) async {}
-
-  @override
-  void onReceiveData(Object data) {}
-
-  @override
-  void onNotificationButtonPressed(String id) {
-    FlutterForegroundTask.sendDataToMain('ai_action:$id');
-  }
-
-  @override
-  void onNotificationPressed() {}
-
-  @override
-  void onNotificationDismissed() {}
 }

@@ -35,7 +35,7 @@
 
         <service android:name="com.amap.api.location.APSService" />
         <service
-            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:name=".AIForegroundNotificationService"
             android:foregroundServiceType="dataSync"
             android:exported="false" />
 

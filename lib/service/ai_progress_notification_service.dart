@@ -106,24 +106,6 @@ class AIProgressNotificationService {
     final progressPercent = (fraction.clamp(0, 1) * 100).round();
     final body = '$bodyBase · $currentStep';
 
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      await AIForegroundService().sync(
-        shouldRun: isVisible,
-        isPaused: isPaused,
-        title: title,
-        text: '$progressPercent% · $body',
-      );
-
-      // Android 前台保活时仅保留前台服务通知，避免双通知互相覆盖。
-      await _plugin.cancel(_notificationId);
-      return;
-    }
-
-    if (!isVisible) {
-      await _plugin.cancel(_notificationId);
-      return;
-    }
-
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final signature =
         '$isRunning|$isPaused|$isStopping|$completed|$total|$failed|$progressPercent|$currentStep';
@@ -133,6 +115,159 @@ class AIProgressNotificationService {
     }
     _lastSignature = signature;
     _lastShownAtMs = nowMs;
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      return _syncAndroidForegroundProgress(
+        isVisible: isVisible,
+        isPaused: isPaused,
+        progressPercent: progressPercent,
+        title: title,
+        body: body,
+      );
+    }
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      return _syncIosProgressToBeImplemented(
+        isVisible: isVisible,
+        isRunning: isRunning,
+        isPaused: isPaused,
+        isStopping: isStopping,
+        progressPercent: progressPercent,
+        title: title,
+        body: body,
+      );
+    }
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS) {
+      return _syncMacosProgressToBeImplemented(
+        isVisible: isVisible,
+        isRunning: isRunning,
+        isPaused: isPaused,
+        isStopping: isStopping,
+        progressPercent: progressPercent,
+        title: title,
+        body: body,
+      );
+    }
+
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+      return _syncWindowsProgressToBeImplemented(
+        isVisible: isVisible,
+        isRunning: isRunning,
+        isPaused: isPaused,
+        isStopping: isStopping,
+        progressPercent: progressPercent,
+        title: title,
+        body: body,
+      );
+    }
+
+    return _syncFallbackLocalProgressNotification(
+      isVisible: isVisible,
+      isRunning: isRunning,
+      isPaused: isPaused,
+      isStopping: isStopping,
+      progressPercent: progressPercent,
+      title: title,
+      body: body,
+    );
+  }
+
+  Future<void> _syncAndroidForegroundProgress({
+    required bool isVisible,
+    required bool isPaused,
+    required int progressPercent,
+    required String title,
+    required String body,
+  }) async {
+    await AIForegroundService().sync(
+      shouldRun: isVisible,
+      isPaused: isPaused,
+      progress: progressPercent,
+      title: title,
+      text: '$progressPercent% · $body',
+    );
+
+    // Android 前台保活时仅保留前台服务通知，避免双通知互相覆盖。
+    await _plugin.cancel(_notificationId);
+  }
+
+  Future<void> _syncIosProgressToBeImplemented({
+    required bool isVisible,
+    required bool isRunning,
+    required bool isPaused,
+    required bool isStopping,
+    required int progressPercent,
+    required String title,
+    required String body,
+  }) async {
+    // TO BE IMPLEMENTED: iOS 专用通知策略（例如 Live Activities / BGTask 对接）。
+    return _syncFallbackLocalProgressNotification(
+      isVisible: isVisible,
+      isRunning: isRunning,
+      isPaused: isPaused,
+      isStopping: isStopping,
+      progressPercent: progressPercent,
+      title: title,
+      body: body,
+    );
+  }
+
+  Future<void> _syncMacosProgressToBeImplemented({
+    required bool isVisible,
+    required bool isRunning,
+    required bool isPaused,
+    required bool isStopping,
+    required int progressPercent,
+    required String title,
+    required String body,
+  }) async {
+    // TO BE IMPLEMENTED: macOS 原生通知/菜单栏进度同步实现。
+    return _syncFallbackLocalProgressNotification(
+      isVisible: isVisible,
+      isRunning: isRunning,
+      isPaused: isPaused,
+      isStopping: isStopping,
+      progressPercent: progressPercent,
+      title: title,
+      body: body,
+    );
+  }
+
+  Future<void> _syncWindowsProgressToBeImplemented({
+    required bool isVisible,
+    required bool isRunning,
+    required bool isPaused,
+    required bool isStopping,
+    required int progressPercent,
+    required String title,
+    required String body,
+  }) async {
+    // TO BE IMPLEMENTED: Windows toast progress bar / app notification manager。
+    return _syncFallbackLocalProgressNotification(
+      isVisible: isVisible,
+      isRunning: isRunning,
+      isPaused: isPaused,
+      isStopping: isStopping,
+      progressPercent: progressPercent,
+      title: title,
+      body: body,
+    );
+  }
+
+  Future<void> _syncFallbackLocalProgressNotification({
+    required bool isVisible,
+    required bool isRunning,
+    required bool isPaused,
+    required bool isStopping,
+    required int progressPercent,
+    required String title,
+    required String body,
+  }) async {
+    if (!isVisible) {
+      await _plugin.cancel(_notificationId);
+      return;
+    }
 
     final actions = <AndroidNotificationAction>[
       AndroidNotificationAction(

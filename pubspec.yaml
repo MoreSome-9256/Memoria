@@ -71,6 +71,7 @@ dependencies:
   intl: ^0.20.2
   riverpod_annotation: ^2.6.1
   uuid: ^4.5.3
+  llamadart: ^0.6.8
 #  runanywhere: ^0.16.0
 #  runanywhere_onnx: ^0.16.0      # STT, TTS, VAD
 #  runanywhere_llamacpp: ^0.16.0  # LLM text generation
@@ -121,6 +122,7 @@ flutter:
     - assets/ncnn/mobileclip_s2/projection_layer.ncnn.bin
     - assets/mobileclip2/s2/vision_model.onnx
     - assets/mobileclip2/s2/text_model.onnx
+    - assets/local_vlm/
     - assets/face/   
     - ai_tools/test_student.png
     - ai_tools/test1.png

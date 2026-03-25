@@ -111,6 +111,46 @@ flutter run --dart-define-from-file=config/profiles/dev.json
 
 运行参数统一放在 profile 文件中，由 `--dart-define-from-file` 一次性注入。
 
+## 本地 Qwen3.5-0.8B（APK 内置）
+
+当前项目本地多模态推理已切到 Qwen3.5-0.8B + llamadart，配置为单文件 GGUF（不需要单独 mmproj 配置）。
+
+### 1) 下载量化模型（推荐来源）
+
+- 基座官方：`Qwen/Qwen3.5-0.8B`
+- 量化发布者：`bartowski`
+- 推荐仓库：`bartowski/Qwen_Qwen3.5-0.8B-GGUF`
+
+推荐默认量化：`Q4_K_M`
+
+```bash
+huggingface-cli download bartowski/Qwen_Qwen3.5-0.8B-GGUF Qwen_Qwen3.5-0.8B-Q4_K_M.gguf --local-dir assets/local_vlm --local-dir-use-symlinks False
+```
+
+### 2) 放置路径
+
+将模型文件放到：
+
+- `assets/local_vlm/Qwen_Qwen3.5-0.8B-Q4_K_M.gguf`
+
+### 3) 打包 APK（随包内置）
+
+```bash
+flutter pub get
+flutter build apk --release --target-platform android-arm64
+```
+
+### 4) 运行时覆盖（可选）
+
+- 覆盖资产文件名：`LOCAL_QWEN35_08B_GGUF_ASSET=assets/local_vlm/<file>.gguf`
+- 使用绝对路径文件：`LOCAL_QWEN35_08B_GGUF_PATH=/absolute/path/to/model.gguf`
+
+### 5) 量化选择建议
+
+- `Q4_K_M`：默认首选，手机端最稳。
+- `Q3_K_M`：内存更省，质量会下降，适合低端机兜底。
+- `Q5_K_M`：质量更好，内存与耗时更高，适合中高端机。
+
 ## App 内使用说明
 
 - 首次进入后点击右上角刷新按钮，可选择“先跑最近 100 / 300 / 500 张”或“全部运行”。

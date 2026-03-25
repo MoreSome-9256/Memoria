@@ -113,7 +113,7 @@ flutter run --dart-define-from-file=config/profiles/dev.json
 
 ## 本地 Qwen3.5-0.8B（APK 内置）
 
-当前项目本地多模态推理已切到 Qwen3.5-0.8B + llamadart，配置为单文件 GGUF（不需要单独 mmproj 配置）。
+当前项目本地多模态推理已切到 Qwen3.5-0.8B + llamadart，配置为双文件（模型 GGUF + mmproj GGUF）。
 
 ### 1) 下载量化模型（推荐来源）
 
@@ -125,6 +125,7 @@ flutter run --dart-define-from-file=config/profiles/dev.json
 
 ```bash
 huggingface-cli download bartowski/Qwen_Qwen3.5-0.8B-GGUF Qwen_Qwen3.5-0.8B-Q4_K_M.gguf --local-dir assets/local_vlm --local-dir-use-symlinks False
+huggingface-cli download bartowski/Qwen_Qwen3.5-0.8B-GGUF mmproj-Qwen_Qwen3.5-0.8B-f16.gguf --local-dir assets/local_vlm --local-dir-use-symlinks False
 ```
 
 ### 2) 放置路径
@@ -132,6 +133,7 @@ huggingface-cli download bartowski/Qwen_Qwen3.5-0.8B-GGUF Qwen_Qwen3.5-0.8B-Q4_K
 将模型文件放到：
 
 - `assets/local_vlm/Qwen_Qwen3.5-0.8B-Q4_K_M.gguf`
+- `assets/local_vlm/mmproj-Qwen_Qwen3.5-0.8B-f16.gguf`
 
 ### 3) 打包 APK（随包内置）
 
@@ -143,7 +145,9 @@ flutter build apk --release --target-platform android-arm64
 ### 4) 运行时覆盖（可选）
 
 - 覆盖资产文件名：`LOCAL_QWEN35_08B_GGUF_ASSET=assets/local_vlm/<file>.gguf`
+- 覆盖 mmproj 资产文件名：`LOCAL_QWEN35_08B_MMPROJ_ASSET=assets/local_vlm/<file>.gguf`
 - 使用绝对路径文件：`LOCAL_QWEN35_08B_GGUF_PATH=/absolute/path/to/model.gguf`
+- 使用绝对路径 mmproj：`LOCAL_QWEN35_08B_MMPROJ_PATH=/absolute/path/to/mmproj.gguf`
 
 ### 5) 量化选择建议
 

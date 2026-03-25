@@ -102,3 +102,5 @@ CLAUDE.md
 # --- Runtime profile files (local secrets) ---
 /config/profiles/*.json
 !/config/profiles/*.example.json
+assets/local_vlm/mmproj-Qwen_Qwen3.5-0.8B-f16.gguf
+assets/local_vlm/Qwen_Qwen3.5-0.8B-Q4_K_M.gguf

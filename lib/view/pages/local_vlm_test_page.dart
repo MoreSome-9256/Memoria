@@ -195,6 +195,7 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
         'saved_at': DateTime.now().toUtc().toIso8601String(),
         'model': QwenLlamacppService.qwenModelAlias,
         'model_path': _qwenService.modelPath,
+        'mmproj_path': _qwenService.mmprojPath,
         'engine': 'llamadart/llama.cpp',
         'images': _selectedImages
             .asMap()
@@ -377,6 +378,7 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
             const SizedBox(height: 10),
             Text('模型: ${_modelNameText()}'),
             const Text('执行方式: 纯本地 llamadart / llama.cpp（无 localhost 服务）'),
+            Text('mmproj: ${_qwenService.mmprojPath.isEmpty ? '未配置' : p.basename(_qwenService.mmprojPath)}'),
           ],
         ),
       ),

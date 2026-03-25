@@ -7,9 +7,11 @@ import 'package:path_provider/path_provider.dart';
 class LocalQwenBundledModelPaths {
   const LocalQwenBundledModelPaths({
     required this.modelPath,
+    required this.mmprojPath,
   });
 
   final String modelPath;
+  final String mmprojPath;
 }
 
 class LocalQwenBundledModelService {
@@ -24,9 +26,12 @@ class LocalQwenBundledModelService {
 
   Future<LocalQwenBundledModelPaths> ensureReady({
     required String modelAssetPath,
+    required String mmprojAssetPath,
   }) async {
     final cached = _cached;
-    if (cached != null && File(cached.modelPath).existsSync()) {
+    if (cached != null &&
+        File(cached.modelPath).existsSync() &&
+        File(cached.mmprojPath).existsSync()) {
       return cached;
     }
 
@@ -34,11 +39,19 @@ class LocalQwenBundledModelService {
     final modelFile = File(
       p.join(supportDir.path, 'local_vlm_models', p.basename(modelAssetPath)),
     );
+    final mmprojFile = File(
+      p.join(supportDir.path, 'local_vlm_models', p.basename(mmprojAssetPath)),
+    );
 
     await _stageAssetIfNeeded(assetPath: modelAssetPath, destination: modelFile);
+    await _stageAssetIfNeeded(
+      assetPath: mmprojAssetPath,
+      destination: mmprojFile,
+    );
 
     final resolved = LocalQwenBundledModelPaths(
       modelPath: modelFile.path,
+      mmprojPath: mmprojFile.path,
     );
     _cached = resolved;
     return resolved;

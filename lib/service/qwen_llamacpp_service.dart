@@ -61,20 +61,38 @@ class QwenLlamacppService {
     'LOCAL_GGUF_MODEL_PATH',
     defaultValue: '',
   );
+  static const String _qwenMmprojPath = String.fromEnvironment(
+    'LOCAL_QWEN35_08B_MMPROJ_PATH',
+    defaultValue: '',
+  );
+  static const String _legacyMmprojPath = String.fromEnvironment(
+    'LOCAL_GGUF_MMPROJ_PATH',
+    defaultValue: '',
+  );
   static const String _qwenModelAsset = String.fromEnvironment(
     'LOCAL_QWEN35_08B_GGUF_ASSET',
     defaultValue: 'assets/local_vlm/Qwen_Qwen3.5-0.8B-Q4_K_M.gguf',
+  );
+  static const String _qwenMmprojAsset = String.fromEnvironment(
+    'LOCAL_QWEN35_08B_MMPROJ_ASSET',
+    defaultValue: 'assets/local_vlm/mmproj-Qwen_Qwen3.5-0.8B-f16.gguf',
   );
 
   final LlamadartLocalEngineService _engine;
   final LocalQwenBundledModelService _bundledModelService =
       LocalQwenBundledModelService();
   String? _activeModelPath;
+  String? _activeMmprojPath;
 
   String get configuredModelPath =>
       _qwenModelPath.trim().isNotEmpty ? _qwenModelPath.trim() : _legacyModelPath.trim();
 
+    String get configuredMmprojPath =>
+      _qwenMmprojPath.trim().isNotEmpty ? _qwenMmprojPath.trim() : _legacyMmprojPath.trim();
+
   String get modelPath => _activeModelPath ?? configuredModelPath;
+
+    String get mmprojPath => _activeMmprojPath ?? configuredMmprojPath;
 
   Future<LocalVlmStructuredResponse> analyzeImagesStructured({
     required String prompt,
@@ -86,9 +104,12 @@ class QwenLlamacppService {
       throw ArgumentError('至少需要一张图片');
     }
 
-    final resolvedModelPath = await _resolveRuntimeModelPath();
+    final runtimePaths = await _resolveRuntimeModelPaths();
+    final resolvedModelPath = runtimePaths.modelPath;
+    final resolvedMmprojPath = runtimePaths.mmprojPath;
 
     _activeModelPath = resolvedModelPath;
+    _activeMmprojPath = resolvedMmprojPath;
 
     for (final image in images) {
       if (!File(image.path).existsSync()) {
@@ -96,7 +117,10 @@ class QwenLlamacppService {
       }
     }
 
-    await _engine.ensureLoaded(modelPath: resolvedModelPath);
+    await _engine.ensureLoaded(
+      modelPath: resolvedModelPath,
+      mmprojPath: resolvedMmprojPath,
+    );
 
     final raw = await _engine.generateVisionText(
       prompt: prompt,
@@ -120,20 +144,35 @@ class QwenLlamacppService {
     );
   }
 
-  Future<String> _resolveRuntimeModelPath() async {
+  Future<LocalQwenBundledModelPaths> _resolveRuntimeModelPaths() async {
     final configuredModel = configuredModelPath;
+    final configuredMmproj = configuredMmprojPath;
 
-    if (configuredModel.isNotEmpty) {
+    if (configuredModel.isNotEmpty && configuredMmproj.isNotEmpty) {
       if (!File(configuredModel).existsSync()) {
         throw StateError('模型文件不存在: $configuredModel');
       }
-      return configuredModel;
+      if (!File(configuredMmproj).existsSync()) {
+        throw StateError('mmproj 文件不存在: $configuredMmproj');
+      }
+      return LocalQwenBundledModelPaths(
+        modelPath: configuredModel,
+        mmprojPath: configuredMmproj,
+      );
     }
 
-    final bundled = await _bundledModelService.ensureReady(
+    if (configuredModel.isNotEmpty && configuredMmproj.isEmpty) {
+      throw StateError('已配置模型路径但缺少 LOCAL_QWEN35_08B_MMPROJ_PATH');
+    }
+
+    if (configuredModel.isEmpty && configuredMmproj.isNotEmpty) {
+      throw StateError('已配置 mmproj 路径但缺少 LOCAL_QWEN35_08B_GGUF_PATH');
+    }
+
+    return _bundledModelService.ensureReady(
       modelAssetPath: _qwenModelAsset,
+      mmprojAssetPath: _qwenMmprojAsset,
     );
-    return bundled.modelPath;
   }
 
   Map<String, dynamic> _normalize(

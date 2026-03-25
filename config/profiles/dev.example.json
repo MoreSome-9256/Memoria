@@ -16,5 +16,9 @@
   "COGNITO_APP_CLIENT_ID": "XXXXXXXXXXXXXXXXXXXXXXXXXX",
   "COGNITO_IDENTITY_POOL_ID": "ap-southeast-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "AUDIO_API_BASE_URL": "http://127.0.0.1:8000",
-  "AUDIO_API_ENDPOINT": "/api/analyze_beats"
+  "AUDIO_API_ENDPOINT": "/api/analyze_beats",
+  "LOCAL_QWEN35_08B_GGUF_ASSET": "assets/local_vlm/Qwen_Qwen3.5-0.8B-Q4_K_M.gguf",
+  "LOCAL_QWEN35_08B_MMPROJ_ASSET": "assets/local_vlm/mmproj-Qwen_Qwen3.5-0.8B-f16.gguf",
+  "LOCAL_QWEN35_08B_GGUF_PATH": "",
+  "LOCAL_QWEN35_08B_MMPROJ_PATH": ""
 }

@@ -254,134 +254,248 @@ class AIService {
 
     var totalAnalyzed = 0;
     final affectedEventIds = <int>{};
-    var remainingPhotos = maxPhotos;
     var failedCount = 0;
     var processedCount = 0;
+    var scheduledCount = 0;
     final junkCandidates = <JunkPhotoCleanupCandidate>[];
     final attemptedPhotoIds = <Id>{};
+    final queuedPhotoIds = <Id>{};
+    final queue = ListQueue<PhotoEntity>();
+    final recentDurationsMs = ListQueue<int>();
+    var producerDone = false;
+    var inflightCount = 0;
+    var activeWorkerCount = 1;
     var engineBootstrapped = false;
+    final baselineWorkItems = math.max(1, math.min(batchSize, targetTotal));
+    final maxWorkerCount = _resolveWorkerCount(
+      math.max(baselineWorkItems, targetTotal),
+    );
 
     try {
-      while (true) {
-        final shouldContinue = await _waitIfPaused();
-        if (!shouldContinue || _stopRequested) {
-          break;
-        }
+      if (!engineBootstrapped) {
+        _progressNotifier.value = AIAnalysisProgress.running(
+          total: targetTotal,
+          completed: processedCount,
+          failed: failedCount,
+          currentStep: '正在预热引擎 (1/3)：加载图像模型 ${selectedBackend.label}',
+          elapsedMs: _elapsedMs(),
+        );
+        await mobileClipEmbeddingService.warmUpBackend(selectedBackend);
 
-        if (remainingPhotos != null && remainingPhotos! <= 0) {
-          break;
-        }
+        _progressNotifier.value = AIAnalysisProgress.running(
+          total: targetTotal,
+          completed: processedCount,
+          failed: failedCount,
+          currentStep: '正在预热引擎 (2/3)：加载标签语义模型',
+          elapsedMs: _elapsedMs(),
+        );
+        await mobileClipTagService.warmUp();
 
-        final currentBatchSize = remainingPhotos == null
-            ? batchSize
-            : math.min(batchSize, remainingPhotos!);
+        _progressNotifier.value = AIAnalysisProgress.running(
+          total: targetTotal,
+          completed: processedCount,
+          failed: failedCount,
+          currentStep: '正在预热引擎 (3/3)：加载低价值过滤模板',
+          elapsedMs: _elapsedMs(),
+        );
+        await _junkPhotoFilterService.warmUp();
 
-        final photosToAnalyze = await isar
-            .collection<PhotoEntity>()
-            .filter()
-            .isAiAnalyzedEqualTo(false)
-            .sortByTimestampDesc()
-            .limit(currentBatchSize * 3)
-            .findAll()
-            .then(
-              (photos) => photos
-                  .where((photo) => !attemptedPhotoIds.contains(photo.id))
-                  .take(currentBatchSize)
-                  .toList(growable: false),
-            );
-
-        if (photosToAnalyze.isEmpty) {
-          break;
-        }
-
-        final workerCount = _resolveWorkerCount(photosToAnalyze.length);
-        if (!engineBootstrapped) {
-          _progressNotifier.value = AIAnalysisProgress.running(
-            total: targetTotal,
-            completed: processedCount,
-            failed: failedCount,
-            currentStep: '正在预热引擎 (1/3)：加载图像模型 ${selectedBackend.label}',
-            elapsedMs: _elapsedMs(),
-          );
-          await mobileClipEmbeddingService.warmUpBackend(selectedBackend);
-
-          _progressNotifier.value = AIAnalysisProgress.running(
-            total: targetTotal,
-            completed: processedCount,
-            failed: failedCount,
-            currentStep: '正在预热引擎 (2/3)：加载标签语义模型',
-            elapsedMs: _elapsedMs(),
-          );
-          await mobileClipTagService.warmUp();
-
-          _progressNotifier.value = AIAnalysisProgress.running(
-            total: targetTotal,
-            completed: processedCount,
-            failed: failedCount,
-            currentStep: '正在预热引擎 (3/3)：加载低价值过滤模板',
-            elapsedMs: _elapsedMs(),
-          );
-          await _junkPhotoFilterService.warmUp();
-
-          final readyWorkers = <int>[];
-          for (var index = 1; index <= workerCount; index++) {
-            readyWorkers.add(index);
-            _progressNotifier.value = AIAnalysisProgress.running(
-              total: targetTotal,
-              completed: processedCount,
-              failed: failedCount,
-              currentStep:
-                  '正在预热并行引擎：${_formatWorkerWarmupStatus(readyWorkers, workerCount)}',
-              elapsedMs: _elapsedMs(),
-            );
-            await Future<void>.delayed(const Duration(milliseconds: 60));
-          }
-
+        final readyWorkers = <int>[];
+        for (var index = 1; index <= maxWorkerCount; index++) {
+          readyWorkers.add(index);
           _progressNotifier.value = AIAnalysisProgress.running(
             total: targetTotal,
             completed: processedCount,
             failed: failedCount,
             currentStep:
-                '引擎预热完成：${_formatWorkerWarmupStatus(readyWorkers, workerCount)}，开始分配任务',
+                '正在预热并行引擎：${_formatWorkerWarmupStatus(readyWorkers, maxWorkerCount)}',
             elapsedMs: _elapsedMs(),
           );
-          engineBootstrapped = true;
+          await Future<void>.delayed(const Duration(milliseconds: 60));
         }
 
-        debugPrint(
-          '🤖 开始 AI 并行分析，本批次: ${photosToAnalyze.length} 张，worker=$workerCount',
+        activeWorkerCount = math.min(math.max(1, maxWorkerCount ~/ 2), maxWorkerCount);
+
+        _progressNotifier.value = AIAnalysisProgress.running(
+          total: targetTotal,
+          completed: processedCount,
+          failed: failedCount,
+          currentStep:
+              '引擎预热完成：${_formatWorkerWarmupStatus(readyWorkers, maxWorkerCount)}，初始并发 $activeWorkerCount / $maxWorkerCount',
+          elapsedMs: _elapsedMs(),
         );
+        engineBootstrapped = true;
+      }
 
-        final queue = ListQueue<PhotoEntity>.of(photosToAnalyze);
-        final workers = List<Future<void>>.generate(workerCount, (
-          workerIndex,
-        ) async {
-          final faceDetector = FaceDetector(options: faceOptions);
-          try {
-            while (true) {
-              final shouldContinue = await _waitIfPaused();
-              if (!shouldContinue || _stopRequested) {
+      debugPrint('🤖 启动常驻 worker pool，max=$maxWorkerCount，active=$activeWorkerCount，目标=$targetTotal');
+
+      Future<void> produceWork() async {
+        try {
+          while (true) {
+            final shouldContinue = await _waitIfPaused();
+            if (!shouldContinue || _stopRequested) {
+              break;
+            }
+
+            if (scheduledCount >= targetTotal) {
+              break;
+            }
+
+            final remainingToSchedule = targetTotal - scheduledCount;
+            final currentBatchSize = math.min(batchSize, remainingToSchedule);
+            final maxBuffered = math.max(maxWorkerCount * 2, currentBatchSize * 2);
+            if (queue.length >= maxBuffered) {
+              await Future<void>.delayed(const Duration(milliseconds: 35));
+              continue;
+            }
+
+            final photosToAnalyze = await isar
+                .collection<PhotoEntity>()
+                .filter()
+                .isAiAnalyzedEqualTo(false)
+                .sortByTimestampDesc()
+                .limit(currentBatchSize * 4)
+                .findAll()
+                .then(
+                  (photos) => photos
+                      .where(
+                        (photo) =>
+                            !attemptedPhotoIds.contains(photo.id) &&
+                            !queuedPhotoIds.contains(photo.id),
+                      )
+                      .take(currentBatchSize)
+                      .toList(growable: false),
+                );
+
+            if (photosToAnalyze.isEmpty) {
+              break;
+            }
+
+            for (final photo in photosToAnalyze) {
+              queue.addLast(photo);
+              queuedPhotoIds.add(photo.id);
+            }
+            scheduledCount += photosToAnalyze.length;
+
+            _progressNotifier.value = AIAnalysisProgress.running(
+              total: targetTotal,
+              completed: processedCount,
+              failed: failedCount,
+              currentStep:
+                  '任务已入队 $scheduledCount / $targetTotal，等待 workers 处理',
+              elapsedMs: _elapsedMs(),
+            );
+          }
+        } finally {
+          producerDone = true;
+        }
+      }
+
+      Future<void> tuneActiveWorkerCount() async {
+        var lastAdjustedAtMs = 0;
+        while (true) {
+          if (_stopRequested) {
+            break;
+          }
+
+          if (producerDone && queue.isEmpty && inflightCount <= 0) {
+            break;
+          }
+
+          await Future<void>.delayed(const Duration(milliseconds: 450));
+
+          final nowMs = DateTime.now().millisecondsSinceEpoch;
+          if (nowMs - lastAdjustedAtMs < 900) {
+            continue;
+          }
+
+          final backlog = queue.length;
+          final currentActive = activeWorkerCount;
+          final averageDurationMs = recentDurationsMs.isEmpty
+              ? null
+              : (recentDurationsMs.reduce((a, b) => a + b) /
+                        recentDurationsMs.length)
+                    .round();
+
+          var nextActive = currentActive;
+          final canScaleUp = currentActive < maxWorkerCount;
+          final canScaleDown = currentActive > 1;
+
+          if (backlog >= currentActive * 2 && canScaleUp) {
+            nextActive = currentActive + 1;
+          } else if (backlog == 0 && inflightCount <= currentActive - 1 && canScaleDown) {
+            nextActive = currentActive - 1;
+          } else if (averageDurationMs != null &&
+              averageDurationMs > 5200 &&
+              backlog <= currentActive &&
+              canScaleDown) {
+            nextActive = currentActive - 1;
+          } else if (averageDurationMs != null &&
+              averageDurationMs < 1800 &&
+              backlog > currentActive &&
+              canScaleUp) {
+            nextActive = currentActive + 1;
+          }
+
+          if (nextActive == currentActive) {
+            continue;
+          }
+
+          activeWorkerCount = nextActive;
+          lastAdjustedAtMs = nowMs;
+          debugPrint(
+            '⚙️ 自适应并发调节: active=$activeWorkerCount/$maxWorkerCount backlog=$backlog inflight=$inflightCount avgMs=${averageDurationMs ?? -1}',
+          );
+        }
+      }
+
+      final workers = List<Future<void>>.generate(maxWorkerCount, (workerIndex) async {
+        final faceDetector = FaceDetector(options: faceOptions);
+        try {
+          while (true) {
+            final shouldContinue = await _waitIfPaused();
+            if (!shouldContinue || _stopRequested) {
+              break;
+            }
+
+            if (workerIndex >= activeWorkerCount) {
+              if (producerDone && queue.isEmpty && inflightCount <= 0) {
                 break;
               }
+              await Future<void>.delayed(const Duration(milliseconds: 45));
+              continue;
+            }
 
-              if (queue.isEmpty) {
-                break;
-              }
-              final photo = queue.removeFirst();
+            PhotoEntity? photo;
+            if (queue.isNotEmpty) {
+              photo = queue.removeFirst();
+              queuedPhotoIds.remove(photo.id);
               attemptedPhotoIds.add(photo.id);
-              processingStartedAtMs ??=
-                  DateTime.now().millisecondsSinceEpoch;
-                final skipJunkFilter = _consumeJunkFilterBypassForPhoto(photo.id);
+            }
 
-              _progressNotifier.value = AIAnalysisProgress.running(
-                total: targetTotal,
-                completed: processedCount,
-                failed: failedCount,
-                currentStep:
-                    '并行处理中 (worker ${workerIndex + 1}) 第 ${processedCount + 1} / $targetTotal 张',
-                elapsedMs: _elapsedMs(),
-              );
+            if (photo == null) {
+              if (producerDone) {
+                break;
+              }
+              await Future<void>.delayed(const Duration(milliseconds: 30));
+              continue;
+            }
 
+            processingStartedAtMs ??= DateTime.now().millisecondsSinceEpoch;
+            final skipJunkFilter = _consumeJunkFilterBypassForPhoto(photo.id);
+            final photoStartedAtMs = DateTime.now().millisecondsSinceEpoch;
+            inflightCount++;
+
+            _progressNotifier.value = AIAnalysisProgress.running(
+              total: targetTotal,
+              completed: processedCount,
+              failed: failedCount,
+              currentStep:
+                  '并行处理中 (worker ${workerIndex + 1}) 第 ${processedCount + 1} / $targetTotal 张',
+              elapsedMs: _elapsedMs(),
+            );
+
+            try {
               final result = await _processSinglePhoto(
                 photo: photo,
                 isar: isar,
@@ -394,6 +508,13 @@ class AIService {
                 faceDetector: faceDetector,
                 skipJunkFilter: skipJunkFilter,
               );
+
+              final spentMs =
+                  DateTime.now().millisecondsSinceEpoch - photoStartedAtMs;
+              if (recentDurationsMs.length >= 18) {
+                recentDurationsMs.removeFirst();
+              }
+              recentDurationsMs.addLast(spentMs);
 
               if (result.didSucceed) {
                 totalAnalyzed++;
@@ -408,53 +529,48 @@ class AIService {
               }
 
               processedCount++;
-              if (remainingPhotos != null) {
-                remainingPhotos = remainingPhotos! - 1;
-              }
-
-              if (_stopRequested) {
-                _progressNotifier.value = AIAnalysisProgress.stopping(
-                  total: targetTotal,
-                  completed: processedCount,
-                  failed: failedCount,
-                  currentStep: '正在结束本轮打标…',
-                  elapsedMs: _elapsedMs(),
-                );
-              } else if (_pauseRequested) {
-                _progressNotifier.value = AIAnalysisProgress.paused(
-                  total: targetTotal,
-                  completed: processedCount,
-                  failed: failedCount,
-                  currentStep: '已暂停，随时可以继续',
-                  elapsedMs: _elapsedMs(),
-                );
-              } else {
-                _progressNotifier.value = AIAnalysisProgress.running(
-                  total: targetTotal,
-                  completed: processedCount,
-                  failed: failedCount,
-                  currentStep: processedCount >= targetTotal
-                      ? '正在收尾整理结果'
-                      : '已完成 $processedCount / $targetTotal 张',
-                  elapsedMs: _elapsedMs(),
-                );
-              }
-
-              if (_stopRequested) {
-                break;
-              }
+            } finally {
+              inflightCount = math.max(0, inflightCount - 1);
             }
-          } finally {
-            await faceDetector.close();
+
+            if (_stopRequested) {
+              _progressNotifier.value = AIAnalysisProgress.stopping(
+                total: targetTotal,
+                completed: processedCount,
+                failed: failedCount,
+                currentStep: '正在结束本轮打标…',
+                elapsedMs: _elapsedMs(),
+              );
+            } else if (_pauseRequested) {
+              _progressNotifier.value = AIAnalysisProgress.paused(
+                total: targetTotal,
+                completed: processedCount,
+                failed: failedCount,
+                currentStep: '已暂停，随时可以继续',
+                elapsedMs: _elapsedMs(),
+              );
+            } else {
+              _progressNotifier.value = AIAnalysisProgress.running(
+                total: targetTotal,
+                completed: processedCount,
+                failed: failedCount,
+                currentStep: processedCount >= targetTotal
+                    ? '正在收尾整理结果'
+                    : '已完成 $processedCount / $targetTotal 张 (并发 $activeWorkerCount / $maxWorkerCount)',
+                elapsedMs: _elapsedMs(),
+              );
+            }
+
+            if (_stopRequested) {
+              break;
+            }
           }
-        });
-
-        await Future.wait(workers);
-
-        if (_stopRequested) {
-          break;
+        } finally {
+          await faceDetector.close();
         }
-      }
+      });
+
+      await Future.wait(<Future<void>>[produceWork(), tuneActiveWorkerCount(), ...workers]);
 
       if (junkCandidates.isNotEmpty) {
         replacePendingJunkCleanupReport(

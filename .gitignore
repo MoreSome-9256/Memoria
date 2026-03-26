@@ -103,3 +103,4 @@ CLAUDE.md
 /config/profiles/*.json
 !/config/profiles/*.example.json
 assets/local_vlm/*.gguf
+assets/ncnn/qwen3.5_0.8/*

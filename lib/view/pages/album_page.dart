@@ -22,6 +22,18 @@ import '../widgets/junk_photo_cleanup_dialog.dart';
 import '../widgets/path_image.dart';
 import 'album_search_page.dart';
 
+const int _albumTagBrowserPhotoSoftLimit = 1200;
+
+// Keep the tag overview and detail sheet on the same snapshot window so a
+// fireImmediately refresh cannot overwrite a non-empty cluster with a narrower query.
+Future<List<PhotoEntity>> _loadAlbumTagBrowserSourcePhotos() {
+  return PhotoService().isar.photoEntitys
+      .where()
+      .sortByTimestampDesc()
+      .limit(_albumTagBrowserPhotoSoftLimit)
+      .findAll();
+}
+
 class AlbumPage extends StatefulWidget {
   const AlbumPage({super.key});
 
@@ -33,7 +45,6 @@ enum _AlbumViewMode { tags, moments }
 
 class _AlbumPageState extends State<AlbumPage> {
   static const double _contentBottomInset = 118;
-  static const int _tagBrowserPhotoSoftLimit = 1200;
   static const int _tagBrowserYieldChunk = 120;
   bool _isClearingCache = false;
   String? _lastPromptedJunkCleanupReportId;
@@ -110,7 +121,7 @@ class _AlbumPageState extends State<AlbumPage> {
 
     final scopeLabel = recentPhotoLimit == null
         ? '全部照片'
-      : '下一批 $recentPhotoLimit 张';
+        : '下一批 $recentPhotoLimit 张';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
@@ -139,7 +150,7 @@ class _AlbumPageState extends State<AlbumPage> {
                 : result.requeuedCount > 0
                 ? result.recentPhotoLimit == null
                       ? '相册已更新，并将 ${result.requeuedCount} 张旧照片重新加入中文打标队列。'
-                  : '已刷新下一批 ${result.recentPhotoLimit} 张照片，并将新增的 ${result.requeuedCount} 张加入中文打标队列。'
+                      : '已刷新下一批 ${result.recentPhotoLimit} 张照片，并将新增的 ${result.requeuedCount} 张加入中文打标队列。'
                 : result.recentPhotoLimit == null
                 ? '相册已更新。$handoffText'
                 : '下一批 ${result.recentPhotoLimit} 张照片已刷新。$handoffText';
@@ -284,7 +295,7 @@ class _AlbumPageState extends State<AlbumPage> {
                   final label = isFull ? '全部运行' : '跑下一批 $option 张';
                   final subtitle = isFull
                       ? '扫描全部照片并对全部待处理照片后台打标'
-                    : '按窗口滚动扫描下一批，并仅重排本批新增照片的 AI 打标';
+                      : '按窗口滚动扫描下一批，并仅重排本批新增照片的 AI 打标';
                   return ListTile(
                     leading: Icon(
                       isFull ? Icons.all_inclusive : Icons.flash_on,
@@ -433,13 +444,16 @@ class _AlbumPageState extends State<AlbumPage> {
         .asyncMap((eventEntities) => _groupEvents(eventEntities))
         .asBroadcastStream();
 
-    _albumTagBrowserStream = _debounceStream<void>(
-          PhotoService().isar.collection<PhotoEntity>().watchLazy(fireImmediately: true),
-          const Duration(milliseconds: 700),
-        )
-        .asyncMap((_) => _loadAllPhotosForTagBrowser())
-        .asyncMap(_buildAlbumTagBrowserData)
-        .asBroadcastStream();
+    _albumTagBrowserStream =
+        _debounceStream<void>(
+              PhotoService().isar.collection<PhotoEntity>().watchLazy(
+                fireImmediately: true,
+              ),
+              const Duration(milliseconds: 700),
+            )
+            .asyncMap((_) => _loadAllPhotosForTagBrowser())
+            .asyncMap(_buildAlbumTagBrowserData)
+            .asBroadcastStream();
   }
 
   Future<_AlbumTagBrowserData> _buildAlbumTagBrowserData(
@@ -512,11 +526,7 @@ class _AlbumPageState extends State<AlbumPage> {
 
   Future<List<PhotoEntity>> _loadAllPhotosForTagBrowser() async {
     // 仅加载最近一段数据，避免大图库每次变更都触发全量排序。
-    return PhotoService().isar.photoEntitys
-        .where()
-        .sortByTimestampDesc()
-        .limit(_tagBrowserPhotoSoftLimit)
-        .findAll();
+    return _loadAlbumTagBrowserSourcePhotos();
   }
 
   Stream<T> _debounceStream<T>(Stream<T> source, Duration delay) {
@@ -1022,10 +1032,7 @@ class _AlbumPageState extends State<AlbumPage> {
         const LinearProgressIndicator(minHeight: 2.5),
         Expanded(
           child: Center(
-            child: Text(
-              '正在加载相册...',
-              style: TextStyle(color: Colors.grey[600]),
-            ),
+            child: Text('正在加载相册...', style: TextStyle(color: Colors.grey[600])),
           ),
         ),
       ],
@@ -1167,19 +1174,17 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
   String? _selectedFineTag;
   static const int _secondaryFilterTopK = 12;
   static const double _sheetBottomInset = 110;
-  static const int _sheetPhotoSoftLimit = 800;
   late final Stream<List<PhotoEntity>> _photosStream;
 
   @override
   void initState() {
     super.initState();
     _photosStream = _debounceStream<void>(
-          PhotoService().isar
-              .collection<PhotoEntity>()
-              .watchLazy(fireImmediately: true),
-          const Duration(milliseconds: 650),
-        )
-        .asyncMap((_) => _loadCurrentPhotos());
+      PhotoService().isar.collection<PhotoEntity>().watchLazy(
+        fireImmediately: true,
+      ),
+      const Duration(milliseconds: 650),
+    ).asyncMap((_) => _loadCurrentPhotos());
   }
 
   Stream<T> _debounceStream<T>(Stream<T> source, Duration delay) {
@@ -1379,11 +1384,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
       return widget.allPhotos;
     }
 
-    return PhotoService().isar.photoEntitys
-        .where()
-        .sortByTimestampDesc()
-        .limit(_sheetPhotoSoftLimit)
-        .findAll();
+    return _loadAlbumTagBrowserSourcePhotos();
   }
 
   List<_AlbumPhotoMonthGroup> _groupPhotosByMonth(List<PhotoEntity> photos) {
@@ -1430,8 +1431,9 @@ class _DeferredImageTicket {
 
 class _DeferredImageLoadScheduler {
   static const int _maxConcurrent = 4;
-  static final ValueNotifier<int> pendingCountListenable =
-      ValueNotifier<int>(0);
+  static final ValueNotifier<int> pendingCountListenable = ValueNotifier<int>(
+    0,
+  );
   static final Queue<(_DeferredImageTicket, VoidCallback)> _queue =
       Queue<(_DeferredImageTicket, VoidCallback)>();
   static int _active = 0;

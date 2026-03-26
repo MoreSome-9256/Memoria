@@ -22,6 +22,7 @@ import 'package:gal/gal.dart';
 import 'publish_page.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
+import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
 
 class StoryVideoPage extends StatefulWidget {
   final String title;
@@ -507,7 +508,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                   // 🎭 核心新增：预览专属的转场替身！
                   // ⚠️ 注意条件：只在规定的时间显示，并且导出时绝对不显示！
                   // ==========================================
-                  if (_showPreviewTransition && !_isExporting)
+                  /*if (_showPreviewTransition && !_isExporting)
                     Positioned.fill(
                       child: IgnorePointer(
                         // 用 BoxFit.cover 撑满整个屏幕
@@ -525,7 +526,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                           shadowColor: Color(0x80EAD9EC),
                         ),
                       ),
-                    ),
+                    ),*/
                 ],
               ),
             ),
@@ -560,7 +561,15 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         );
       }
     } else {
-      screenBody = RepaintBoundary(key: _renderKey, child: videoContent);
+      // 用 SizedBox 或 AspectRatio 给它一个绝对偶数的逻辑容器
+screenBody = Center(
+  child: SizedBox(
+    // 取决于你手机的逻辑分辨率，这里给一个标准的 9:16 偶数容器
+    width: 360,  // 360 * pixelRatio(2.0) = 720 (偶数)
+    height: 640, // 640 * pixelRatio(2.0) = 1280 (偶数)
+    child: RepaintBoundary(key: _renderKey, child: videoContent),
+  ),
+);
     }
 
     return Scaffold(
@@ -1285,38 +1294,52 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       _currentLyricText = widget.sections[_currentIndex].text;
     });
   }
-
-  Future<Uint8List?> _captureFrame() async {
+  // 📸 全新：直接抓取 RGBA 原始像素，并强制裁剪为偶数分辨率
+  Future<(Uint8List?, int, int)> _captureFrameRgba() async {
     try {
-      // 找到那根“虚拟取景器”的边界
       RenderRepaintBoundary boundary =
           _renderKey.currentContext!.findRenderObject()
               as RenderRepaintBoundary;
 
-      // 🚀 提速点 1：把 pixelRatio 从 2.0 降回 1.0 (测试时甚至可改 0.5)
-      ui.Image image = await boundary.toImage(pixelRatio: 1.0);
+      // 这里的 pixelRatio 控制清晰度，2.0 大约等于 1080p。如果想要更快，可以改成 1.5。
+      ui.Image rawImage = await boundary.toImage(pixelRatio: 2.0);
 
-      // 洗出相片：转成 PNG 格式的字节流
-      ByteData? byteData = await image.toByteData(
-        format: ui.ImageByteFormat.png,
+      int width = rawImage.width;
+      int height = rawImage.height;
+
+      // 🌟 核心保命机制：硬件编码器强制要求长宽为偶数！
+      if (width % 2 != 0) width -= 1;
+      if (height % 2 != 0) height -= 1;
+
+      ui.Image finalImage = rawImage;
+
+      // 如果原图有奇数边，我们在内存里用画布把它强行切成偶数
+      if (width != rawImage.width || height != rawImage.height) {
+        final recorder = ui.PictureRecorder();
+        final canvas = ui.Canvas(recorder);
+        canvas.drawImageRect(
+          rawImage,
+          Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+          Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+          Paint(),
+        );
+        finalImage = await recorder.endRecording().toImage(width, height);
+      }
+
+      // 洗出相片：直接输出原始内存像素 RGBA！彻底告别 PNG 压缩和硬盘 I/O！
+      ByteData? byteData = await finalImage.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
       );
-      return byteData?.buffer.asUint8List();
+      return (byteData?.buffer.asUint8List(), width, height);
     } catch (e) {
       debugPrint("❌ 抓拍当前帧失败: $e");
-      return null;
+      return (null, 0, 0);
     }
   }
-
-  // 🌟 新增一个变量，用来装这个“未来的文案”
-  Future<String>? _aiCopyFuture;
-
   Future<void> _startExport() async {
     if (_isPlaying) await _togglePlay();
 
-    // ==========================================
-    // 🚀 核心优化：提前呼叫 AI，让它在后台默默写小作文
-    // 注意这里千万别加 await，我们不要等它，让它自己跑！
-    // ==========================================
+    // 🚀 保持 AI 自动写文案在后台运行
     List<String> currentCaptions = widget.sections.map((s) => s.text).toList();
     _aiCopyFuture = LLMService().generateSocialMediaCopy(
       platform: widget.targetPlatform,
@@ -1325,89 +1348,125 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       captions: currentCaptions,
     );
 
-    // ==========================================
-    // 🌟 彻底以图片数量为准计算最终视频时长
-    // ==========================================
-
-    // 1. 算人头：每张图固定展示 8 拍，算出总共需要多少拍
+    // 计算最终毫秒数
     int totalBeatsNeeded = widget.sections.length * 8;
-
-    // 2. 算基础时间：需要的拍数 × 每一拍的平均毫秒数
     int finalExportDurationMs = totalBeatsNeeded * _beatIntervalMs;
-
-    // 3. 追求极致卡点：去我们那本“无限繁衍的节拍字典”里查准确的毫秒时间！
     if (_beatData.length > totalBeatsNeeded) {
-      // 完美命中：直接取第 totalBeatsNeeded 拍的绝对真实时间
       finalExportDurationMs = (_beatData[totalBeatsNeeded]['ms'] as num)
           .toInt();
     } else if (_beatData.isNotEmpty) {
-      // 极端兜底：万一用户丧心病狂选了 300 张图，超出了我们复制 20 遍的节拍本
-      // 那就在字典最后一页的时间基础上，加上缺失的平均时间
       int missingBeats = totalBeatsNeeded - _beatData.length;
       finalExportDurationMs =
           (_beatData.last['ms'] as num).toInt() +
           (missingBeats * _beatIntervalMs);
     }
-
-    // 🌟 彻底砸掉以前那把 `math.min(visual, audio)` 的锁！
-    // 4. 直接把算出的话事权（精确到秒）交给 FFmpeg！
     double exactExportSeconds = finalExportDurationMs / 1000.0;
-
-    final directory = await getTemporaryDirectory();
-    final frameDir = Directory('${directory.path}/story_frames');
-    if (frameDir.existsSync()) {
-      frameDir.deleteSync(recursive: true);
-    }
-    frameDir.createSync();
 
     setState(() {
       _isExporting = true;
       _exportProgress = 0.0;
     });
 
-    // 4. 按 24 FPS 算出到底需要截多少帧
+    // 🎬 1. 抓取第0帧，主要是为了获取屏幕真正的硬件像素分辨率
+    _updateStateForFrame(0);
+    await Future.delayed(const Duration(milliseconds: 50)); // 给UI一点时间渲染第一帧
+    var firstFrame = await _captureFrameRgba();
+    if (firstFrame.$1 == null) {
+      debugPrint("❌ 无法获取初始帧尺寸，导出终止");
+      setState(() => _isExporting = false);
+      return;
+    }
+
+    int videoWidth = firstFrame.$2;
+    int videoHeight = firstFrame.$3;
+
+    final docDir = await getApplicationDocumentsDirectory();
+    final String silentVideoPath =
+        "${docDir.path}/silent_temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
+
+    // 🎬 2. 轰鸣启动硬件编码器引擎！
+    try {
+      FlutterQuickVideoEncoder.setLogLevel(LogLevel.none); // 保持控制台清爽
+      await FlutterQuickVideoEncoder.setup(
+        width: videoWidth,
+        height: videoHeight,
+        fps: 24,
+        videoBitrate: 4000000, // 4Mbps 码率，保障画质不糊
+        profileLevel: ProfileLevel.any,
+        filepath: silentVideoPath,
+        // 👇 新增这三个必填的音频占位参数
+        audioBitrate: 64000, // 随便给个 64kbps
+        audioChannels: 2, // 双声道立体声
+        sampleRate: 44100, // 标准的 44.1kHz 采样率
+      );
+    } catch (e) {
+      debugPrint("❌ 硬件编码器启动失败: $e");
+      setState(() => _isExporting = false);
+      return;
+    }
+
     int fps = 24;
     int totalFrames = (finalExportDurationMs / 1000 * fps).floor();
-    // 🌟 新增：准备一个篮子，装所有的写入任务
-    List<Future> writeTasks = [];
 
+    // 🌟 新增：计算每一帧视频对应的音频字节数
+    // 公式：采样率(44100) * 通道数(2) * 每个采样点的字节数(16-bit = 2字节) / 帧率(24)
+    final int bytesPerAudioFrame = (44100 * 2 * 2) ~/ fps;
+    // 生成一包全为 0 的静音数据（相当于这段时间的纯静音）
+    final Uint8List silentAudioChunk = Uint8List(bytesPerAudioFrame);
+
+    // 在 for 循环外面，新增一个变量，用来装“上一帧的编码任务”
+    Future<void>? _previousEncodeTask;
+
+    // 🎬 3. 流水线作业：渲染UI -> 抓像素 -> 塞进芯片
     for (int i = 0; i < totalFrames; i++) {
-      _updateStateForFrame(i); // ⚠️ 记得去把 _updateStateForFrame 里的 30.0 改成 24.0
+      _updateStateForFrame(i);
 
-      setState(() => _exportProgress = i / totalFrames);
+      if (i % 5 == 0) {
+        // UI 节流，不要每帧都 setState
+        setState(() => _exportProgress = (i / totalFrames) * 0.85);
+      }
 
-      await Future.delayed(const Duration(milliseconds: 16));
+      // 等待 Flutter 把这帧画面画出来
+      await WidgetsBinding.instance.endOfFrame;
 
-      final frameBytes = await _captureFrame();
-      if (frameBytes != null) {
-        final file = File(
-          '${frameDir.path}/frame_${i.toString().padLeft(5, '0')}.png',
-        );
-        // 🌟 把写入任务丢进篮子里，不要在这里死等
-        writeTasks.add(file.writeAsBytes(frameBytes));
+      final frameData = await _captureFrameRgba();
+
+      if (frameData.$1 != null) {
+        // 🚀 核心黑魔法：在开启当前帧的编码前，确保上一帧已经塞进去了
+        if (_previousEncodeTask != null) {
+          await _previousEncodeTask;
+        }
+
+        // 🚀 开启当前帧的编码，但是【不要 await】它！
+        // 把任务存起来，让原生层自己去慢慢压制，Dart 立刻进入下一次循环去截下一张图！
+        _previousEncodeTask = Future.microtask(() async {
+          await FlutterQuickVideoEncoder.appendVideoFrame(frameData.$1!);
+          await FlutterQuickVideoEncoder.appendAudioFrame(silentAudioChunk);
+        });
       }
     }
-    setState(() => _exportProgress = 0.95); // 给用户一点心理安慰
+    // 循环结束后，确保最后一帧被顺利吃进去
+    if (_previousEncodeTask != null) {
+      await _previousEncodeTask;
+    }
 
-    // 🌟 修复：强行等篮子里的所有图片确确实实全都写进硬盘了，再往下走！
-    await Future.wait(writeTasks);
+    // 🎬 4. 封口！此时无声的高清视频已经生成完毕
+    await FlutterQuickVideoEncoder.finish();
 
-    await _runFFmpegCombine(frameDir.path, exactExportSeconds);
+    // 🎬 5. 移交接力棒，让 FFmpeg 做最后的极速音视频缝合
+    await _fastMuxAudio(silentVideoPath, exactExportSeconds);
   }
-
-  Future<void> _runFFmpegCombine(
-    String frameDirPath,
+  Future<void> _fastMuxAudio(
+    String silentVideoPath,
     double exactSeconds,
   ) async {
-    setState(() {
-      _exportProgress = 0.99;
-    });
+    setState(() => _exportProgress = 0.95); // 进度来到最后一步
 
     try {
       final docDir = await getApplicationDocumentsDirectory();
       String audioPath;
 
-      // 1. 准备音频路径
+      // 准备音频 (和你之前的逻辑完全一样)
       if (widget.customMusicPath != null) {
         File originalAudio = File(widget.customMusicPath!);
         File safeAudioFile = File('${docDir.path}/safe_custom_audio.mp3');
@@ -1423,84 +1482,37 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         audioPath = tempAudioFile.path;
       }
 
-      // 2. 定义最终输出路径
       final String outputPath =
           "${docDir.path}/FINAL_STORY_${DateTime.now().millisecondsSinceEpoch}.mp4";
 
-      String command;
+      // 🚀 FFmpeg 终极魔法：精准音视频映射
+      String command = [
+        "-y",
+        "-i", "'$silentVideoPath'", // 输入 0：静音视频
+        "-stream_loop", "-1", // 音频无限循环
+        "-i", "'$audioPath'", // 输入 1：背景音乐
+        "-map", "0:v:0", // 🌟 强行指定：只拿第1个输入的视频流
+        "-map", "1:a:0", // 🌟 强行指定：只拿第2个输入的音频流
+        "-c:v", "copy", // 视频流直接复制
+        "-c:a", "aac", // 音频流压成 aac
+        "-shortest", // 🌟 关键：以最短的流（通常是视频）为准结束
+        "'$outputPath'",
+      ].join(" ");
 
-      // ==========================================
-      // 🌟 核心分流逻辑：判断用户是否选择了带有转场的特效
-      // ==========================================
-      if (_currentTransition.id != 'none') {
-        // 🎬 走【带转场】的高级合成通道
+      debugPrint("🎬 FFmpeg 光速混音开始: $command");
 
-        // 提取对应的转场素材路径
-        String transitionPath = await _extractAssetForFFmpeg(
-          _currentTransition.movPath,
-          '${_currentTransition.id}.mov',
-        );
-
-        // 动态计算转场开始的时间
-        double firstCutTimeMs = 8 * _beatIntervalMs.toDouble();
-        double transitionStartTime =
-            (firstCutTimeMs - _currentTransition.offsetMs) / 1000.0;
-        if (transitionStartTime < 0) transitionStartTime = 0;
-
-        // 构造带 overlay 滤镜的合并咒语
-        command = [
-          "-y",
-          "-framerate", "24",
-          "-start_number", "0",
-          "-i", "'$frameDirPath/frame_%05d.png'", // 0: 帧序列
-          "-i", "'$transitionPath'", // 1: 动态转场 MOV
-          "-stream_loop", "-1", // 🌟 核心魔法：让紧跟在后面的音频无限循环！
-          "-i", "'$audioPath'", // 2: 音频
-          "-t", "$exactSeconds",
-          "-filter_complex",
-          "[1:v]setpts=PTS-STARTPTS+($transitionStartTime/TB)[trans];" +
-              "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg];" +
-              "[bg][trans]overlay=eof_action=pass[outv]",
-          "-map", "[outv]",
-          "-map", "2:a", // 用第3个输入的声音
-          "-c:v", "libx264",
-          "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "'$outputPath'",
-        ].join(" ");
-
-        debugPrint("🎬 FFmpeg 带转场合成开始 [${_currentTransition.name}]: $command");
-      } else {
-        // 🎞️ 走【无转场】的极速合成通道
-
-        // 最基础的序列帧+音频合并咒语，去掉复杂的滤镜叠加
-        command = [
-          "-y",
-          "-framerate", "24",
-          "-start_number", "0",
-          "-i", "'$frameDirPath/frame_%05d.png'",
-          "-stream_loop", "-1", // 🌟 核心魔法：让紧跟在后面的音频无限循环！
-          "-i", "'$audioPath'",
-          "-t", "$exactSeconds",
-          "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", // 确保宽度高度为偶数
-          "-c:v", "libx264",
-          "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "'$outputPath'",
-        ].join(" ");
-
-        debugPrint("🎬 FFmpeg 普通合成开始 (无片头转场): $command");
-      }
-
-      // 4. 执行命令
       await FFmpegKit.execute(command).then((session) async {
         final returnCode = await session.getReturnCode();
         if (ReturnCode.isSuccess(returnCode)) {
-          debugPrint("✅✅✅ 完美导出！");
+          debugPrint("✅✅✅ 硬件直出+极速混音，完美结束！");
+
+          // 顺手做个垃圾回收，删掉那个无声视频
+          File(silentVideoPath).delete().catchError((_) {});
+
           _handleExportSuccess(outputPath);
         } else {
           final logs = await session.getLogsAsString();
-          debugPrint("❌ FFmpeg 失败原因:\n$logs");
+          debugPrint("❌ FFmpeg 混音失败:\n$logs");
         }
       });
     } finally {
@@ -1512,6 +1524,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       }
     }
   }
+
+  // 🌟 新增一个变量，用来装这个“未来的文案”
+  Future<String>? _aiCopyFuture;
 
   // 辅助方法：处理成功后的跳转（提取出你原有的逻辑）
   void _handleExportSuccess(String outputPath) async {

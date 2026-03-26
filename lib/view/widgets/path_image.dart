@@ -102,9 +102,11 @@ class _PathImageState extends State<PathImage> {
     }
 
     final dpr = MediaQuery.of(context).devicePixelRatio;
-    final logicalWidth = widget.width ??
+    final logicalWidth =
+        widget.width ??
         (constraints.hasBoundedWidth ? constraints.maxWidth : null);
-    final logicalHeight = widget.height ??
+    final logicalHeight =
+        widget.height ??
         (constraints.hasBoundedHeight ? constraints.maxHeight : null);
 
     int? toCache(double? logical) {
@@ -115,7 +117,22 @@ class _PathImageState extends State<PathImage> {
       return math.max(80, math.min(2200, pixels));
     }
 
-    return (toCache(logicalWidth), toCache(logicalHeight));
+    final cw = toCache(logicalWidth);
+    final ch = toCache(logicalHeight);
+
+    // ==========================================
+    // 🌟 核心修复补丁：绝不能同时限制宽高！
+    // ==========================================
+    if (cw != null && ch != null) {
+      // 取较长的一边作为缓存基准，另一边传 null，完美保持原图比例！
+      if (cw > ch) {
+        return (cw, null);
+      } else {
+        return (null, ch);
+      }
+    }
+
+    return (cw, ch);
   }
 
   File _resolveLocalFile(Uri? uri) {

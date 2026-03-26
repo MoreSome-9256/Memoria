@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.example.photo_album"
-    compileSdk = 34
+    compileSdk = 35
     ndkVersion = flutter.ndkVersion
 
     externalNativeBuild {
@@ -36,7 +36,7 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        targetSdk = 34
+        targetSdk = 35
         // minSdk = flutter.minSdkVersion  // Required for photo_manager
         // targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode.toInt()

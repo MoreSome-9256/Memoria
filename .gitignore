@@ -91,6 +91,7 @@ CLAUDE.md
 # --- NCNN large runtime assets ---
 # 团队协作约定：超过几十 MB 的大文件不进 Git，统一通过群文件/网盘同步。
 /assets/ncnn/mobileclip_s2/
+/assets/face/arcface.onnx
 /third_party/mobileclip_s2_export/
 /third_party/ncnn-android/
 /third_party/ncnn-windows/

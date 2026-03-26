@@ -229,13 +229,24 @@ class _ProfilePageState extends State<ProfilePage> {
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8.0),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        // 如果文字换行了，让它们顶部对齐会更好看
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             _getAttributeLabel(attr.userAttributeKey.key),
                             style: const TextStyle(fontWeight: FontWeight.w500),
                           ),
-                          Text(attr.value),
+                          const SizedBox(width: 16), // 给 Key 和 Value 之间留点呼吸空间
+                          // 🌟 核心修复：用 Expanded 占据剩余所有空间，防止溢出
+                          Expanded(
+                            child: Text(
+                              attr.value,
+                              textAlign: TextAlign.right, // 保持靠右对齐的视觉效果
+                              // 如果你不想让它换行，而是想显示省略号，可以解开下面两行的注释：
+                              // overflow: TextOverflow.ellipsis,
+                              // maxLines: 1,
+                            ),
+                          ),
                         ],
                       ),
                     );
@@ -324,6 +335,7 @@ class _ProfilePageState extends State<ProfilePage> {
               // 对比性能和提取示例向量两个功能 entry point，后续可以扩展更多开发者工具
               showModalBottomSheet(
                 context: context,
+                isScrollControlled: true,
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                 ),
@@ -331,79 +343,84 @@ class _ProfilePageState extends State<ProfilePage> {
                   return SafeArea(
                     child: Padding(
                       padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '开发者工具',
-                            style: Theme.of(context).textTheme.headlineSmall
-                                ?.copyWith(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 20),
-                          ListTile(
-                            leading: const Icon(Icons.smart_toy_outlined),
-                            title: const Text('本地 VLM 测试'),
-                            subtitle: const Text(
-                              '使用手机本地 Qwen3.5-0.8B 生成 caption 或多图故事',
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '开发者工具',
+                              style: Theme.of(context).textTheme.headlineSmall
+                                  ?.copyWith(fontWeight: FontWeight.bold),
                             ),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () {
-                              Navigator.of(context).pop();
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (context) =>
-                                      const LocalVlmTestPage(),
-                                ),
-                              );
-                            },
-                          ),
-                          ListTile(
-                            leading: const Icon(Icons.analytics_outlined),
-                            title: const Text('MobileCLIP Benchmark'),
-                            subtitle: const Text('对比 ONNX 基线与未来 ncnn 接入'),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (context) =>
-                                      const MobileClipBenchmarkPage(),
-                                ),
-                              );
-                            },
-                          ),
-                          ListTile(
-                            leading: const Icon(Icons.science_outlined),
-                            title: const Text('MobileCLIP Vector Probe'),
-                            subtitle: const Text('检查示例图片在手机端 ONNX / NCNN 的向量'),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (context) =>
-                                      const MobileClipVectorProbePage(),
-                                ),
-                              );
-                            },
-                          ),
-                          ListTile(
-                            leading: const Icon(
-                              Icons.face_retouching_natural_outlined,
+                            const SizedBox(height: 20),
+                            ListTile(
+                              leading: const Icon(Icons.smart_toy_outlined),
+                              title: const Text('本地 VLM 测试'),
+                              subtitle: const Text(
+                                '使用手机本地 Qwen3.5-0.8B 生成 caption 或多图故事',
+                              ),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).pop();
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (context) =>
+                                        const LocalVlmTestPage(),
+                                  ),
+                                );
+                              },
                             ),
-                            title: const Text('Face Cluster Debug'),
-                            subtitle: const Text('观察按脸聚类结果，不影响主题主链路'),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (context) =>
-                                      const FaceClusterDebugPage(),
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
+                            ListTile(
+                              leading: const Icon(Icons.analytics_outlined),
+                              title: const Text('MobileCLIP Benchmark'),
+                              subtitle: const Text('对比 ONNX 基线与未来 ncnn 接入'),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (context) =>
+                                        const MobileClipBenchmarkPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.science_outlined),
+                              title: const Text('MobileCLIP Vector Probe'),
+                              subtitle: const Text(
+                                '检查示例图片在手机端 ONNX / NCNN 的向量',
+                              ),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (context) =>
+                                        const MobileClipVectorProbePage(),
+                                  ),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(
+                                Icons.face_retouching_natural_outlined,
+                              ),
+                              title: const Text('Face Cluster Debug'),
+                              subtitle: const Text('观察按脸聚类结果，不影响主题主链路'),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (context) =>
+                                        const FaceClusterDebugPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      )
+                      
                     ),
                   );
                 },

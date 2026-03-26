@@ -47,6 +47,20 @@ class LocalVlmStructuredResponse {
   }
 }
 
+enum QwenLocalBackendOption {
+  vulkan,
+  cpu,
+}
+
+extension QwenLocalBackendOptionX on QwenLocalBackendOption {
+  String get label => this == QwenLocalBackendOption.vulkan ? 'Vulkan GPU' : 'CPU';
+
+  LocalVlmComputeBackend get engineBackend =>
+      this == QwenLocalBackendOption.vulkan
+          ? LocalVlmComputeBackend.vulkan
+          : LocalVlmComputeBackend.cpu;
+}
+
 class QwenLlamacppService {
   QwenLlamacppService({LlamadartLocalEngineService? engine})
     : _engine = engine ?? LlamadartLocalEngineService();
@@ -77,6 +91,10 @@ class QwenLlamacppService {
     'LOCAL_QWEN35_08B_MMPROJ_ASSET',
     defaultValue: 'assets/local_vlm/mmproj-Qwen_Qwen3.5-0.8B-f16.gguf',
   );
+  static const bool _keepModelResident = bool.fromEnvironment(
+    'LOCAL_VLM_KEEP_MODEL_RESIDENT',
+    defaultValue: false,
+  );
 
   final LlamadartLocalEngineService _engine;
   final LocalQwenBundledModelService _bundledModelService =
@@ -94,11 +112,15 @@ class QwenLlamacppService {
 
     String get mmprojPath => _activeMmprojPath ?? configuredMmprojPath;
 
+  LocalVlmGenerationStats? get lastGenerationStats => _engine.lastGenerationStats;
+
   Future<LocalVlmStructuredResponse> analyzeImagesStructured({
     required String prompt,
     required List<LocalVlmImagePayload> images,
     int maxTokens = 384,
     double temperature = 0.35,
+    QwenLocalBackendOption backend = QwenLocalBackendOption.vulkan,
+    void Function(String delta, String accumulated)? onPartialOutput,
   }) async {
     if (images.isEmpty) {
       throw ArgumentError('至少需要一张图片');
@@ -117,31 +139,51 @@ class QwenLlamacppService {
       }
     }
 
-    await _engine.ensureLoaded(
-      modelPath: resolvedModelPath,
-      mmprojPath: resolvedMmprojPath,
-    );
+    try {
+      await _engine.ensureLoaded(
+        modelPath: resolvedModelPath,
+        mmprojPath: resolvedMmprojPath,
+        backend: backend.engineBackend,
+      );
 
-    final raw = await _engine.generateVisionText(
-      prompt: prompt,
-      imagePaths: images.map((item) => item.path).toList(growable: false),
-      maxTokens: maxTokens,
-      temperature: temperature,
-    );
+      final raw = await _engine.generateVisionText(
+        prompt: prompt,
+        imagePaths: images.map((item) => item.path).toList(growable: false),
+        maxTokens: maxTokens,
+        temperature: temperature,
+        onPartialOutput: onPartialOutput,
+      );
 
-    if (raw.trim().isEmpty) {
-      throw StateError('Qwen3.5-0.8B 未返回可解析文本');
+      if (raw.trim().isEmpty) {
+        throw StateError('Qwen3.5-0.8B 未返回可解析文本');
+      }
+
+      final parsed = _tryParseJsonObject(raw);
+      final usedFallback = parsed == null;
+      final normalized = _normalize(parsed, raw, images.length);
+
+      return LocalVlmStructuredResponse(
+        rawContent: raw,
+        normalizedJson: normalized,
+        usedFallback: usedFallback,
+      );
+    } catch (error) {
+      if (LlamadartLocalEngineService.looksLikeOom(error)) {
+        await _engine.dispose();
+        throw StateError(
+          '本地模型推理疑似触发原生内存不足(OOM)。\n'
+          '建议：在图库大量缩略图加载阶段避免并发触发推理，或分批推理。\n'
+          '当前策略：LOCAL_VLM_KEEP_MODEL_RESIDENT=$_keepModelResident，'
+          '${LlamadartLocalEngineService.describeRuntimeMemory()}\n'
+          '原始错误: $error',
+        );
+      }
+      rethrow;
+    } finally {
+      if (!_keepModelResident && _engine.isLoaded) {
+        await _engine.dispose();
+      }
     }
-
-    final parsed = _tryParseJsonObject(raw);
-    final usedFallback = parsed == null;
-    final normalized = _normalize(parsed, raw, images.length);
-
-    return LocalVlmStructuredResponse(
-      rawContent: raw,
-      normalizedJson: normalized,
-      usedFallback: usedFallback,
-    );
   }
 
   Future<LocalQwenBundledModelPaths> _resolveRuntimeModelPaths() async {

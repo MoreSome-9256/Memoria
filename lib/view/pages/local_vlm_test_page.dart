@@ -38,6 +38,7 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
       LocalVlmOutputArchiveService();
 
   LocalVlmTaskMode _taskMode = LocalVlmTaskMode.captions;
+  QwenLocalBackendOption _backendOption = QwenLocalBackendOption.vulkan;
   List<LocalVlmImagePayload> _selectedImages = const <LocalVlmImagePayload>[];
 
   bool _isRunning = false;
@@ -152,7 +153,7 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
         } else if (_progressValue < 0.8) {
           _progressLabel = '正在进行本地 llama.cpp 推理...';
         } else {
-          _progressLabel = '正在整理 JSON 输出...';
+          _progressLabel = '正在等待模型输出完成...';
         }
       });
     });
@@ -180,13 +181,38 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
 
     try {
       final stopwatch = Stopwatch()..start();
+      final partialPreview = StringBuffer();
+      var lastUiRefreshMs = 0;
 
       final structured = await _qwenService.analyzeImagesStructured(
         prompt: _buildTaskPrompt(),
         images: _selectedImages,
         maxTokens: _taskMode == LocalVlmTaskMode.captions ? 192 : 480,
         temperature: _taskMode == LocalVlmTaskMode.captions ? 0.2 : 0.45,
+        backend: _backendOption,
+        onPartialOutput: (delta, accumulated) {
+          if (!mounted || !_isRunning) {
+            return;
+          }
+          partialPreview.write(delta);
+          final nowMs = DateTime.now().millisecondsSinceEpoch;
+          if (nowMs - lastUiRefreshMs < 120) {
+            return;
+          }
+          lastUiRefreshMs = nowMs;
+          setState(() {
+            _resultPreview = accumulated;
+            _progressLabel = '正在等待模型输出完成...（已输出 ${accumulated.length} 字）';
+          });
+        },
       );
+
+      if (mounted) {
+        setState(() {
+          _progressValue = 0.94;
+          _progressLabel = '正在整理 JSON 输出...';
+        });
+      }
 
       final document = <String, dynamic>{
         'task': _taskMode == LocalVlmTaskMode.captions
@@ -214,6 +240,13 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
 
       final archive = await _archiveService.saveStandardJson(document: document);
       stopwatch.stop();
+        final generationStats = _qwenService.lastGenerationStats;
+        final rateText = generationStats == null
+          ? null
+          : '${generationStats.charsPerSecond.toStringAsFixed(1)} 字/秒';
+        final firstChunkText = generationStats?.firstChunkLatency == null
+          ? null
+          : '${(generationStats!.firstChunkLatency!.inMilliseconds / 1000).toStringAsFixed(2)} 秒';
 
       final preview = structured.narrative;
       _progressTimer?.cancel();
@@ -226,7 +259,10 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
         _runSummaryText =
             '已完成，本次耗时 ${(stopwatch.elapsedMilliseconds / 1000).toStringAsFixed(1)} 秒'
             ' · 输入 ${_selectedImages.length} 张图片'
-            ' · ${structured.usedFallback ? '模型未直接输出 JSON，已做标准化' : '模型已直接输出 JSON'}';
+          ' · ${structured.usedFallback ? '模型未直接输出 JSON，已做标准化' : '模型已直接输出 JSON'}'
+          '${rateText == null ? '' : ' · 平均输出速率 $rateText'}'
+          '${generationStats == null ? '' : ' · 输出 ${generationStats.charCount} 字/${generationStats.chunkCount} 片段'}'
+          '${firstChunkText == null ? '' : ' · 首片延迟 $firstChunkText'}';
         _errorText = null;
         _isRunning = false;
       });
@@ -298,6 +334,39 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
       return '未配置模型路径';
     }
     return p.basename(modelPath);
+  }
+
+  Future<void> _openBackendSettingDialog() async {
+    final selected = await showDialog<QwenLocalBackendOption>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('推理后端设置'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: QwenLocalBackendOption.values
+              .map(
+                (option) => RadioListTile<QwenLocalBackendOption>(
+                  value: option,
+                  groupValue: _backendOption,
+                  title: Text(option.label),
+                  onChanged: (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    Navigator.of(context).pop(value);
+                  },
+                ),
+              )
+              .toList(growable: false),
+        ),
+      ),
+    );
+    if (!mounted || selected == null || selected == _backendOption) {
+      return;
+    }
+    setState(() {
+      _backendOption = selected;
+    });
   }
 
   @override
@@ -379,6 +448,14 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
             Text('模型: ${_modelNameText()}'),
             const Text('执行方式: 纯本地 llamadart / llama.cpp（无 localhost 服务）'),
             Text('mmproj: ${_qwenService.mmprojPath.isEmpty ? '未配置' : p.basename(_qwenService.mmprojPath)}'),
+            const SizedBox(height: 8),
+            Text('当前后端: ${_backendOption.label}'),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _isRunning ? null : _openBackendSettingDialog,
+              icon: const Icon(Icons.tune),
+              label: const Text('设置推理后端'),
+            ),
           ],
         ),
       ),

@@ -123,7 +123,8 @@ flutter:
     - assets/mobileclip2/s2/vision_model.onnx
     - assets/mobileclip2/s2/text_model.onnx
     - assets/local_vlm/
-    - assets/local_vlm/Qwen_Qwen3.5-0.8B-Q4_K_M.gguf
+    - assets/local_vlm/Qwen3.5-0.8B-Q4_K_M.gguf
+    - assets/local_vlm/mmproj-F32.gguf
     - assets/face/   
     - ai_tools/test_student.png
     - ai_tools/test1.png

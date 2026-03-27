@@ -5,6 +5,7 @@ import 'dart:math' as math;
 // import 'dart:math'; // ➕ 新增：用于生成随机的假数据
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:image/image.dart' as img;
 import 'package:isar/isar.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../models/entity/photo_entity.dart';
@@ -44,6 +45,7 @@ class AIService {
   static const ThumbnailSize _mobileClipThumbnailSize = ThumbnailSize.square(
     384,
   );
+  static const int _minFaceDetectorInputSize = 32;
   static const int _maxParallelWorkers = 8;
   static const String _autoResumeKey = 'ai_auto_resume';
   static const String _runtimeActiveKey = 'ai_runtime_active';
@@ -175,9 +177,7 @@ class AIService {
       _progressNotifier.value = current.copyWith(
         isRunning: false,
         isPaused: true,
-        currentStep: inflight > 0
-            ? '暂停中，等待当前 $inflight 个任务收尾…'
-            : '已暂停，随时可以继续',
+        currentStep: inflight > 0 ? '暂停中，等待当前 $inflight 个任务收尾…' : '已暂停，随时可以继续',
       );
       debugPrint('⏸️ 已进入暂停请求态，当前在途任务: $inflight');
     }
@@ -297,13 +297,11 @@ class AIService {
         currentStep: '检测到上次打标任务，正在重连并恢复…',
         elapsedMs: 0,
       );
-      debugPrint(
-        '🔁 检测到历史运行态(runtime=$runtimeActive)，尝试恢复 AI 打标',
-      );
+      debugPrint('🔁 检测到历史运行态(runtime=$runtimeActive)，尝试恢复 AI 打标');
       unawaited(_runFullAiPipelineInBackground());
       return;
     }
-    
+
     debugPrint('🔁 检测到 $pending 张未完成照片，自动续跑 AI 打标任务');
     unawaited(_runFullAiPipelineInBackground());
   }
@@ -462,7 +460,10 @@ class AIService {
           await Future<void>.delayed(const Duration(milliseconds: 60));
         }
 
-        activeWorkerCount = math.min(math.max(1, maxWorkerCount ~/ 2), maxWorkerCount);
+        activeWorkerCount = math.min(
+          math.max(1, maxWorkerCount ~/ 2),
+          maxWorkerCount,
+        );
 
         _progressNotifier.value = AIAnalysisProgress.running(
           total: targetTotal,
@@ -475,7 +476,9 @@ class AIService {
         engineBootstrapped = true;
       }
 
-      debugPrint('🤖 启动常驻 worker pool，max=$maxWorkerCount，active=$activeWorkerCount，目标=$targetTotal');
+      debugPrint(
+        '🤖 启动常驻 worker pool，max=$maxWorkerCount，active=$activeWorkerCount，目标=$targetTotal',
+      );
 
       Future<void> produceWork() async {
         try {
@@ -491,7 +494,10 @@ class AIService {
 
             final remainingToSchedule = targetTotal - scheduledCount;
             final currentBatchSize = math.min(batchSize, remainingToSchedule);
-            final maxBuffered = math.max(maxWorkerCount * 2, currentBatchSize * 2);
+            final maxBuffered = math.max(
+              maxWorkerCount * 2,
+              currentBatchSize * 2,
+            );
             if (queue.length >= maxBuffered) {
               await Future<void>.delayed(const Duration(milliseconds: 35));
               continue;
@@ -529,8 +535,7 @@ class AIService {
               total: targetTotal,
               completed: processedCount,
               failed: failedCount,
-              currentStep:
-                  '任务已入队 $scheduledCount / $targetTotal，等待 workers 处理',
+              currentStep: '任务已入队 $scheduledCount / $targetTotal，等待 workers 处理',
               elapsedMs: elapsedMs(),
             );
           }
@@ -571,7 +576,9 @@ class AIService {
 
           if (backlog >= currentActive * 2 && canScaleUp) {
             nextActive = currentActive + 1;
-          } else if (backlog == 0 && inflightCount <= currentActive - 1 && canScaleDown) {
+          } else if (backlog == 0 &&
+              inflightCount <= currentActive - 1 &&
+              canScaleDown) {
             nextActive = currentActive - 1;
           } else if (averageDurationMs != null &&
               averageDurationMs > 5200 &&
@@ -597,7 +604,9 @@ class AIService {
         }
       }
 
-      final workers = List<Future<void>>.generate(maxWorkerCount, (workerIndex) async {
+      final workers = List<Future<void>>.generate(maxWorkerCount, (
+        workerIndex,
+      ) async {
         final faceDetector = FaceDetector(options: faceOptions);
         try {
           while (true) {
@@ -720,7 +729,11 @@ class AIService {
         }
       });
 
-      await Future.wait(<Future<void>>[produceWork(), tuneActiveWorkerCount(), ...workers]);
+      await Future.wait(<Future<void>>[
+        produceWork(),
+        tuneActiveWorkerCount(),
+        ...workers,
+      ]);
 
       if (junkCandidates.isNotEmpty) {
         replacePendingJunkCleanupReport(
@@ -803,7 +816,8 @@ class AIService {
     final active = prefs.getBool(_runtimeActiveKey) ?? false;
     final heartbeatAtMs = prefs.getInt(_runtimeHeartbeatAtKey) ?? 0;
     final ageMs = DateTime.now().millisecondsSinceEpoch - heartbeatAtMs;
-    final recent = heartbeatAtMs > 0 && ageMs <= const Duration(hours: 1).inMilliseconds;
+    final recent =
+        heartbeatAtMs > 0 && ageMs <= const Duration(hours: 1).inMilliseconds;
     return _RuntimeSnapshot(
       isActive: active && recent,
       total: prefs.getInt(_runtimeTotalKey) ?? 0,
@@ -856,11 +870,15 @@ class AIService {
         return const _PhotoProcessResult.failed();
       }
 
-      final embedding = await mobileClipEmbeddingService
-          .embedImageBytesWithBackend(
-            prepared.mobileClipBytes,
-            selectedBackend,
-          );
+      await mobileClipEmbeddingService.resolvePhotoEmbedding(
+        photo: photo,
+        preferredImageBytes: prepared.mobileClipBytes,
+        backend: selectedBackend,
+      );
+      final embedding = photo.imageEmbedding ?? const <double>[];
+      if (embedding.isEmpty) {
+        return const _PhotoProcessResult.failed();
+      }
 
       if (!skipJunkFilter) {
         final junkDecision = await _junkPhotoFilterService.evaluatePhoto(
@@ -907,7 +925,25 @@ class AIService {
         ocrResult = await ocrService.analyzeImageFile(analysisFile);
       }
 
-      final faces = await faceDetector.processImage(inputImage);
+      final analysisDimensions = await _readImageDimensions(analysisFile);
+      final canRunFaceDetection =
+          analysisDimensions != null &&
+          analysisDimensions.$1 >= _minFaceDetectorInputSize &&
+          analysisDimensions.$2 >= _minFaceDetectorInputSize;
+      if (!canRunFaceDetection) {
+        final sizeLabel = analysisDimensions == null
+            ? 'unknown'
+            : '${analysisDimensions.$1}x${analysisDimensions.$2}';
+        debugPrint(
+          '⏭️ 跳过人脸检测 photoId=${photo.id} '
+          'dbSize=${photo.width}x${photo.height} analysisSize=$sizeLabel '
+          'path=${analysisFile.path}',
+        );
+      }
+
+      final faces = canRunFaceDetection
+          ? await faceDetector.processImage(inputImage)
+          : const <Face>[];
       final faceCount = faces.length;
       final maxSmileProb = faces.isNotEmpty
           ? faces
@@ -1233,6 +1269,21 @@ class AIAnalysisProgress {
   }
 
   bool get isVisible => (isRunning || isPaused || isStopping) && total > 0;
+}
+
+Future<(int, int)?> _readImageDimensions(File imageFile) async {
+  try {
+    final bytes = await imageFile.readAsBytes();
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) {
+      return null;
+    }
+    final baked = img.bakeOrientation(decoded);
+    return (baked.width, baked.height);
+  } catch (error) {
+    debugPrint('⚠️ 读取分析图尺寸失败 path=${imageFile.path}: $error');
+    return null;
+  }
 }
 
 class _PreparedAnalysisInput {

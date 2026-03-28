@@ -51,6 +51,8 @@ CLAUDE.md
 *.g.dart
 *.freezed.dart
 *.config.dart
+!lib/objectbox.g.dart
+!lib/objectbox-model.json
 
 # open code
 /doc/
@@ -99,6 +101,14 @@ CLAUDE.md
 /third_party/*.zip
 /third_party/*.exe
 /third_party/mobileclip2-onnx/open_clip/
+
+# Local model artifacts synced outside Git
+*.onnx
+*.onnx.data
+/assets/expanded_tags_vectors.json
+/third_party/mobileclip2-onnx/onnx/
+/third_party/mobileclip2-onnx/my_custom_onnx/
+/third_party/ncnn-android-vulkan/
 
 # --- Runtime profile files (local secrets) ---
 /config/profiles/*.json

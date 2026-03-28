@@ -7,20 +7,22 @@ import 'package:isar/isar.dart';
 
 import '../models/entity/face_entity.dart';
 import '../models/entity/photo_entity.dart';
+import '../storage/vector_index/face_embedding_index_repository.dart';
 import '../utils/face_crop_util.dart';
 import 'face_embedding_service.dart';
 import 'onnx_face_embedding_service.dart';
 
 class FacePipelineService {
-  FacePipelineService({
-    FaceEmbeddingService? embeddingService,
-  }) : _embeddingService =
-           embeddingService ??
-           OnnxFaceEmbeddingService(
-             fallbackService: MobileClipFaceEmbeddingService(),
-           );
+  FacePipelineService({FaceEmbeddingService? embeddingService})
+    : _embeddingService =
+          embeddingService ??
+          OnnxFaceEmbeddingService(
+            fallbackService: MobileClipFaceEmbeddingService(),
+          );
 
   final FaceEmbeddingService _embeddingService;
+  final FaceEmbeddingIndexRepository _faceEmbeddingIndexRepository =
+      FaceEmbeddingIndexRepository();
 
   Future<void> rebuildFacesForPhoto({
     required Isar isar,
@@ -40,6 +42,7 @@ class FacePipelineService {
         await isar.writeTxn(() async {
           await isar.collection<FaceEntity>().deleteAll(existingIds);
         });
+        _faceEmbeddingIndexRepository.deleteByPhotoIds(<int>[photo.id]);
       }
       _deleteDebugCropFiles(existingFaces);
       return;
@@ -82,7 +85,9 @@ class FacePipelineService {
       try {
         embeddingResult = await _embeddingService.embedFaceCrop(cropFile);
       } catch (error) {
-        debugPrint('⚠️ face embedding 失败 photo=${photo.id} face=$index: $error');
+        debugPrint(
+          '⚠️ face embedding 失败 photo=${photo.id} face=$index: $error',
+        );
       } finally {
         if (cropFile.existsSync()) {
           cropFile.deleteSync();
@@ -127,6 +132,10 @@ class FacePipelineService {
       }
       await isar.collection<FaceEntity>().putAll(results);
     });
+    _faceEmbeddingIndexRepository.replaceForPhoto(
+      photoId: photo.id,
+      faces: results,
+    );
     _deleteDebugCropFiles(existingFaces);
   }
 

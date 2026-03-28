@@ -25,6 +25,9 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../storage/vector_index/photo_embedding_index_repository.dart';
+import '../storage/vector_index/vector_index_constants.dart';
+
 class AIService {
   static final AIService _instance = AIService._internal();
   factory AIService() => _instance;
@@ -61,6 +64,8 @@ class AIService {
       ValueNotifier<JunkPhotoCleanupReport?>(null);
   final JunkPhotoFilterService _junkPhotoFilterService =
       JunkPhotoFilterService();
+  final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
+      PhotoEmbeddingIndexRepository();
   final Set<Id> _junkFilterBypassPhotoIds = <Id>{};
 
   bool _autoResumeEnabled = false;
@@ -924,6 +929,7 @@ class AIService {
             0.0,
             0.0,
             isar,
+            selectedBackend,
           );
           return _PhotoProcessResult.success(
             eventId: photo.eventId,
@@ -1016,6 +1022,7 @@ class AIService {
         maxSmileProb,
         joyScore,
         isar,
+        selectedBackend,
       );
 
       return _PhotoProcessResult.success(eventId: photo.eventId);
@@ -1123,6 +1130,7 @@ class AIService {
     double smileProb,
     double joyScore,
     Isar isar,
+    MobileClipBackend selectedBackend,
   ) async {
     await isar.writeTxn(() async {
       final p = await isar.collection<PhotoEntity>().get(id);
@@ -1139,6 +1147,16 @@ class AIService {
         await isar.collection<PhotoEntity>().put(p);
       }
     });
+
+    if (imageEmbedding.isEmpty) {
+      _photoEmbeddingIndexRepository.deleteByPhotoIds(<int>[id]);
+      return;
+    }
+    _photoEmbeddingIndexRepository.upsertEmbedding(
+      photoId: id,
+      vector: imageEmbedding,
+      modelVersion: buildPhotoEmbeddingModelVersion(selectedBackend),
+    );
   }
 
   // 📊 工具方法：获取 AI 分析进度

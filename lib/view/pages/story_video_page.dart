@@ -24,6 +24,7 @@ import 'export_manager.dart';
 import 'offscreen_render_worker.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
+import '../widgets/path_image.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
 
 class StoryVideoPage extends StatefulWidget {
@@ -734,7 +735,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         screenBody = Stack(
           fit: StackFit.expand,
           children: [
-            Image.file(File(currentSection.photo.path), fit: BoxFit.cover),
+            PathImage(path: currentSection.photo.path, fit: BoxFit.cover),
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
               child: Container(color: Colors.black.withValues(alpha: 0.6)),
@@ -780,8 +781,8 @@ screenBody = Center(
         return Transform.scale(
           scale: scale,
           child: file.existsSync()
-              ? Image.file(
-                  file,
+              ? PathImage(
+                  path: file.path,
                   fit: BoxFit.cover,
                   width: double.infinity,
                   height: double.infinity,
@@ -804,8 +805,8 @@ screenBody = Center(
         return Transform.scale(
           scale: scale,
           child: file.existsSync()
-              ? Image.file(
-                  file,
+              ? PathImage(
+                  path: file.path,
                   fit: BoxFit.cover,
                   width: double.infinity,
                   height: double.infinity,
@@ -839,7 +840,7 @@ screenBody = Center(
         fit: StackFit.expand,
         children: [
           // 底层模糊背景
-          if (file.existsSync()) Image.file(file, fit: BoxFit.cover),
+          if (file.existsSync()) PathImage(path: file.path, fit: BoxFit.cover),
           BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
             child: Container(color: Colors.black.withValues(alpha: 0.6)),
@@ -1759,8 +1760,8 @@ screenBody = Center(
             return Transform.scale(
               scale: scale,
               child: file.existsSync()
-                  ? Image.file(
-                      file,
+                  ? PathImage(
+                      path: file.path,
                       fit: BoxFit.cover,
                       width: double.infinity,
                       height: double.infinity,

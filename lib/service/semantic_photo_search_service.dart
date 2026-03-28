@@ -4,7 +4,9 @@ import 'package:isar/isar.dart';
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/vo/semantic_search_models.dart';
+import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../utils/tag_sanitizer.dart';
+import 'mobileclip_embedding_service.dart';
 import 'photo_service.dart';
 import 'semantic_matching_service.dart';
 import 'semantic_query_parser_service.dart';
@@ -19,6 +21,10 @@ class SemanticPhotoSearchService {
 
   final SemanticMatchingService _semanticService = SemanticMatchingService();
   final SemanticQueryParserService _queryParser = SemanticQueryParserService();
+  final MobileClipEmbeddingService _mobileClipEmbeddingService =
+      MobileClipEmbeddingService();
+  final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
+      PhotoEmbeddingIndexRepository();
 
   static const double _positiveSemanticParticipationThreshold = 0.20;
   static const double _exactPositiveThreshold = 0.24;
@@ -45,6 +51,8 @@ class SemanticPhotoSearchService {
 
   Future<SemanticSearchResult> search(String rawQuery) async {
     final photos = await _loadAnalyzedPhotos();
+    final activeModelVersion = await _mobileClipEmbeddingService
+        .getSelectedModelVersion();
     final query = await _queryParser.parseQuery(
       rawQuery,
       locationDictionary: _cachedLocations ?? const <String>{},
@@ -101,6 +109,7 @@ class SemanticPhotoSearchService {
 
     final primaryScores = _scoreCandidates(
       primaryTagCandidates,
+      activeModelVersion: activeModelVersion,
       positiveVectors: vectors.positiveVectors,
       negativeVectors: vectors.negativeVectors,
       coarseTags: query.coarseTags,
@@ -138,6 +147,7 @@ class SemanticPhotoSearchService {
         strictMetadataCandidates: strictMetadataCandidates,
         query: query,
         vectors: vectors,
+        activeModelVersion: activeModelVersion,
       );
       usedFallback = fallback.usedFallback;
       relaxationMessage = fallback.message;
@@ -381,6 +391,7 @@ class SemanticPhotoSearchService {
 
   _ScoreCandidatesResult _scoreCandidates(
     List<PhotoEntity> candidates, {
+    required String activeModelVersion,
     required List<_SemanticVector> positiveVectors,
     required List<_SemanticVector> negativeVectors,
     required List<SemanticSearchCoarseTag> coarseTags,
@@ -392,6 +403,7 @@ class SemanticPhotoSearchService {
     for (final photo in candidates) {
       final hit = _scorePhoto(
         photo,
+        activeModelVersion: activeModelVersion,
         positiveVectors: positiveVectors,
         negativeVectors: negativeVectors,
         coarseTags: coarseTags,
@@ -409,6 +421,7 @@ class SemanticPhotoSearchService {
 
   SemanticSearchHit? _scorePhoto(
     PhotoEntity photo, {
+    required String activeModelVersion,
     required List<_SemanticVector> positiveVectors,
     required List<_SemanticVector> negativeVectors,
     required List<SemanticSearchCoarseTag> coarseTags,
@@ -420,7 +433,10 @@ class SemanticPhotoSearchService {
       return null;
     }
 
-    final imageEmbedding = photo.imageEmbedding;
+    final imageEmbedding = _photoEmbeddingIndexRepository.readEmbeddingForPhoto(
+      photo,
+      modelVersion: activeModelVersion,
+    );
     if (imageEmbedding == null || imageEmbedding.isEmpty) {
       return null;
     }
@@ -552,6 +568,7 @@ class SemanticPhotoSearchService {
     required List<PhotoEntity> strictMetadataCandidates,
     required SemanticSearchQuery query,
     required _SemanticVectorBundle vectors,
+    required String activeModelVersion,
   }) {
     final hits = <int, SemanticSearchHit>{};
     var usedFallback = false;
@@ -576,6 +593,7 @@ class SemanticPhotoSearchService {
     tagCandidateCount = levelOneCandidates.length;
     final levelOneScores = _scoreCandidates(
       levelOneCandidates,
+      activeModelVersion: activeModelVersion,
       positiveVectors: vectors.positiveVectors,
       negativeVectors: vectors.negativeVectors,
       coarseTags: query.coarseTags,
@@ -596,6 +614,7 @@ class SemanticPhotoSearchService {
       }
       final levelTwoScores = _scoreCandidates(
         levelTwoCandidates,
+        activeModelVersion: activeModelVersion,
         positiveVectors: vectors.positiveVectors,
         negativeVectors: vectors.negativeVectors,
         coarseTags: const <SemanticSearchCoarseTag>[],
@@ -625,6 +644,7 @@ class SemanticPhotoSearchService {
           : relaxedMetadata.photos;
       final recallScores = _scoreCandidates(
         recallCandidates,
+        activeModelVersion: activeModelVersion,
         positiveVectors: vectors.recallVectors,
         negativeVectors: vectors.negativeVectors,
         coarseTags: const <SemanticSearchCoarseTag>[],

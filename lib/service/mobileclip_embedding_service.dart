@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../models/entity/photo_entity.dart';
+import '../storage/vector_index/photo_embedding_index_repository.dart';
+import '../storage/vector_index/vector_index_constants.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_vision_service.dart';
 import 'ncnn_mobileclip_native_service.dart';
@@ -21,14 +23,34 @@ class MobileClipEmbeddingService {
       NcnnMobileClipNativeService();
   final MobileClipBackendPreferenceService _preferenceService =
       MobileClipBackendPreferenceService();
+  final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
+      PhotoEmbeddingIndexRepository();
 
   static const int expectedEmbeddingDim = 512;
   static const Duration _defaultIdleDisposeDelay = Duration(minutes: 3);
   int _workflowLeaseCount = 0;
   Timer? _idleDisposeTimer;
 
-  bool hasReusableEmbedding(PhotoEntity photo) {
-    final embedding = photo.imageEmbedding;
+  Future<String> getSelectedModelVersion({MobileClipBackend? backend}) async {
+    final effectiveBackend = backend ?? await getSelectedBackend();
+    return buildPhotoEmbeddingModelVersion(effectiveBackend);
+  }
+
+  List<double>? readIndexedEmbeddingForPhoto({
+    required PhotoEntity photo,
+    required String modelVersion,
+  }) {
+    return _photoEmbeddingIndexRepository.readEmbeddingForPhoto(
+      photo,
+      modelVersion: modelVersion,
+    );
+  }
+
+  bool hasReusableEmbedding(PhotoEntity photo, {required String modelVersion}) {
+    final embedding = readIndexedEmbeddingForPhoto(
+      photo: photo,
+      modelVersion: modelVersion,
+    );
     return embedding != null && embedding.length == expectedEmbeddingDim;
   }
 
@@ -39,12 +61,19 @@ class MobileClipEmbeddingService {
   }) async {
     _touchUsage();
 
-    final existing = photo.imageEmbedding;
+    final effectiveBackend = backend ?? await getSelectedBackend();
+    final activeModelVersion = await getSelectedModelVersion(
+      backend: effectiveBackend,
+    );
+    final existing = _photoEmbeddingIndexRepository.readEmbeddingForPhoto(
+      photo,
+      modelVersion: activeModelVersion,
+    );
     if (existing != null && existing.length == expectedEmbeddingDim) {
+      photo.imageEmbedding = existing;
       return const MobileClipEmbeddingResolution(reusedCache: true);
     }
 
-    final effectiveBackend = backend ?? await getSelectedBackend();
     final embedding =
         preferredImageBytes != null && preferredImageBytes.isNotEmpty
         ? await embedImageBytesWithBackend(
@@ -60,6 +89,11 @@ class MobileClipEmbeddingService {
     }
 
     photo.imageEmbedding = embedding;
+    _photoEmbeddingIndexRepository.upsertEmbedding(
+      photoId: photo.id,
+      vector: embedding,
+      modelVersion: activeModelVersion,
+    );
     return const MobileClipEmbeddingResolution(reusedCache: false);
   }
 

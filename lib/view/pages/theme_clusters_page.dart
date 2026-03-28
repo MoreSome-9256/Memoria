@@ -133,14 +133,13 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
             valueListenable:
                 _DeferredThemeImageScheduler.pendingCountListenable,
             builder: (context, pendingCount, _) {
-              return AnimatedSwitcher(
-                duration: const Duration(milliseconds: 180),
-                child: pendingCount > 0
-                    ? const LinearProgressIndicator(
-                        key: ValueKey<String>('theme-images-loading'),
-                        minHeight: 2.5,
-                      )
-                    : const SizedBox.shrink(),
+              return SizedBox(
+                height: 2.5,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 180),
+                  opacity: pendingCount > 0 ? 1 : 0,
+                  child: const LinearProgressIndicator(minHeight: 2.5),
+                ),
               );
             },
           ),

@@ -1,0 +1,134 @@
+{
+  "_note1": "KEEP THIS FILE! Check it into a version control system (VCS) like git.",
+  "_note2": "ObjectBox manages crucial IDs for your object model. See docs for details.",
+  "_note3": "If you have VCS merge conflicts, you must resolve them according to ObjectBox docs.",
+  "entities": [
+    {
+      "id": "1:8370563462794805516",
+      "lastPropertyId": "9:6750648057042900395",
+      "name": "FaceEmbeddingIndexEntity",
+      "properties": [
+        {
+          "id": "1:8843737281638857806",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:3267451317628674720",
+          "name": "lookupKey",
+          "type": 9,
+          "flags": 34848,
+          "indexId": "1:8600724477751288479"
+        },
+        {
+          "id": "3:3933032177763013511",
+          "name": "faceId",
+          "type": 6,
+          "flags": 8,
+          "indexId": "2:3837454356930359201"
+        },
+        {
+          "id": "4:294085512296946356",
+          "name": "photoId",
+          "type": 6,
+          "flags": 8,
+          "indexId": "3:6557949488033671988"
+        },
+        {
+          "id": "5:4541208934521601897",
+          "name": "modelVersion",
+          "type": 9,
+          "flags": 2048,
+          "indexId": "4:2056787761425532404"
+        },
+        {
+          "id": "6:4936296631951580656",
+          "name": "updatedAtMillis",
+          "type": 6
+        },
+        {
+          "id": "7:1304280626013516244",
+          "name": "isStale",
+          "type": 1
+        },
+        {
+          "id": "8:3446556576835000235",
+          "name": "qualityScore",
+          "type": 8
+        },
+        {
+          "id": "9:6750648057042900395",
+          "name": "vector",
+          "type": 28,
+          "flags": 8,
+          "indexId": "5:4756014183495336155"
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "2:8545569770623572711",
+      "lastPropertyId": "7:1369084111896358290",
+      "name": "PhotoEmbeddingIndexEntity",
+      "properties": [
+        {
+          "id": "1:2606934105691962462",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:3233694135508193574",
+          "name": "lookupKey",
+          "type": 9,
+          "flags": 34848,
+          "indexId": "6:214909983476304403"
+        },
+        {
+          "id": "3:7079421070950175234",
+          "name": "photoId",
+          "type": 6,
+          "flags": 8,
+          "indexId": "7:527425103259854012"
+        },
+        {
+          "id": "4:5838416942170268119",
+          "name": "modelVersion",
+          "type": 9,
+          "flags": 2048,
+          "indexId": "8:8501660533990213362"
+        },
+        {
+          "id": "5:2195784073689755980",
+          "name": "updatedAtMillis",
+          "type": 6
+        },
+        {
+          "id": "6:2095394697055809540",
+          "name": "isStale",
+          "type": 1
+        },
+        {
+          "id": "7:1369084111896358290",
+          "name": "vector",
+          "type": 28,
+          "flags": 8,
+          "indexId": "9:513319743638822687"
+        }
+      ],
+      "relations": []
+    }
+  ],
+  "lastEntityId": "2:8545569770623572711",
+  "lastIndexId": "9:513319743638822687",
+  "lastRelationId": "0:0",
+  "lastSequenceId": "0:0",
+  "modelVersion": 5,
+  "modelVersionParserMinimum": 5,
+  "retiredEntityUids": [],
+  "retiredIndexUids": [],
+  "retiredPropertyUids": [],
+  "retiredRelationUids": [],
+  "version": 1
+}

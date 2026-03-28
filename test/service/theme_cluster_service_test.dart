@@ -23,10 +23,7 @@ PhotoEntity _photo({
     ..aiTags = aiTags;
 }
 
-ThemeDefinition _theme({
-  required String id,
-  double minSimilarity = 0.0,
-}) {
+ThemeDefinition _theme({required String id, double minSimilarity = 0.0}) {
   return ThemeDefinition(
     id: id,
     title: id,
@@ -117,51 +114,66 @@ void main() {
       expect(genericSubclusterer.calls.first.length, 3);
     });
 
-    test('hybrid mode keeps people theme face filter, pure mode disables it', () async {
-      final photos = <PhotoEntity>[
-        _photo(id: 1, ts: 1, faceCount: 0, aiTags: const <String>['cat']),
-        _photo(id: 2, ts: 2, faceCount: 2, aiTags: const <String>['cat']),
-      ];
+    test(
+      'hybrid mode keeps people theme face filter, pure mode disables it',
+      () async {
+        final photos = <PhotoEntity>[
+          _photo(id: 1, ts: 1, faceCount: 0, aiTags: const <String>['cat']),
+          _photo(id: 2, ts: 2, faceCount: 2, aiTags: const <String>['cat']),
+        ];
 
-      Future<Map<int, List<double>>> embeddingPreparer(List<PhotoEntity> items) async {
-        return <int, List<double>>{
-          for (final p in items) p.id: const <double>[1.0, 0.0],
-        };
-      }
+        Future<Map<int, List<double>>> embeddingPreparer(
+          List<PhotoEntity> items,
+        ) async {
+          return <int, List<double>>{
+            for (final p in items) p.id: const <double>[1.0, 0.0],
+          };
+        }
 
-      Future<Map<String, List<double>>> prototypeBuilder() async {
-        return <String, List<double>>{
-          'people': const <double>[1.0, 0.0],
-        };
-      }
+        Future<Map<String, List<double>>> prototypeBuilder() async {
+          return <String, List<double>>{
+            'people': const <double>[1.0, 0.0],
+          };
+        }
 
-      final peopleHybrid = _RecordingSubclusterer('people');
-      final serviceHybrid = ThemeClusterService.forTest(
-        definitions: <ThemeDefinition>[_theme(id: 'people', minSimilarity: 0.0)],
-        photosLoader: () async => photos,
-        embeddingPreparer: embeddingPreparer,
-        prototypeBuilder: prototypeBuilder,
-        peopleSubclusterer: peopleHybrid,
-      );
-      await serviceHybrid.loadClusters(minPhotosPerTheme: 1, pureEmbeddingOnly: false);
-      expect(peopleHybrid.calls.single.length, 1);
-      expect(peopleHybrid.calls.single.single.photo.id, 2);
+        final peopleHybrid = _RecordingSubclusterer('people');
+        final serviceHybrid = ThemeClusterService.forTest(
+          definitions: <ThemeDefinition>[
+            _theme(id: 'people', minSimilarity: 0.0),
+          ],
+          photosLoader: () async => photos,
+          embeddingPreparer: embeddingPreparer,
+          prototypeBuilder: prototypeBuilder,
+          peopleSubclusterer: peopleHybrid,
+        );
+        await serviceHybrid.loadClusters(
+          minPhotosPerTheme: 1,
+          pureEmbeddingOnly: false,
+        );
+        expect(peopleHybrid.calls.single.length, 1);
+        expect(peopleHybrid.calls.single.single.photo.id, 2);
 
-      final peoplePure = _RecordingSubclusterer('people');
-      final servicePure = ThemeClusterService.forTest(
-        definitions: <ThemeDefinition>[_theme(id: 'people', minSimilarity: 0.0)],
-        photosLoader: () async => photos,
-        embeddingPreparer: embeddingPreparer,
-        prototypeBuilder: prototypeBuilder,
-        peopleSubclusterer: peoplePure,
-      );
-      await servicePure.loadClusters(minPhotosPerTheme: 1, pureEmbeddingOnly: true);
-      expect(peoplePure.calls.single.length, 2);
-    });
+        final peoplePure = _RecordingSubclusterer('people');
+        final servicePure = ThemeClusterService.forTest(
+          definitions: <ThemeDefinition>[
+            _theme(id: 'people', minSimilarity: 0.0),
+          ],
+          photosLoader: () async => photos,
+          embeddingPreparer: embeddingPreparer,
+          prototypeBuilder: prototypeBuilder,
+          peopleSubclusterer: peoplePure,
+        );
+        await servicePure.loadClusters(
+          minPhotosPerTheme: 1,
+          pureEmbeddingOnly: true,
+        );
+        expect(peoplePure.calls.single.length, 2);
+      },
+    );
 
     test('screenshots are always filtered before scoring', () async {
       final photos = <PhotoEntity>[
-        _photo(id: 1, ts: 1, width: 3000, height: 1000), // screenshot-like
+        _photo(id: 1, ts: 1, width: 1000, height: 3000), // screenshot-like
         _photo(id: 2, ts: 2, width: 1000, height: 1000),
       ];
 

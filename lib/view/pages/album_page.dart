@@ -33,7 +33,8 @@ Future<List<PhotoEntity>> _loadAlbumTagBrowserSourcePhotos() {
       .where()
       .sortByTimestampDesc()
       .limit(_albumTagBrowserPhotoSoftLimit)
-      .findAll();
+      .findAll()
+      .then(PhotoService().reconcileAccessiblePhotos);
 }
 
 class AlbumPage extends StatefulWidget {

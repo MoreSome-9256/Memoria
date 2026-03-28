@@ -37,6 +37,8 @@ dependencies:
   photo_manager: ^3.8.3
   isar: ^3.1.0+1
   isar_flutter_libs: ^3.1.0+1
+  objectbox: ^4.1.0
+  objectbox_flutter_libs: ^4.1.0
   path_provider: ^2.1.5
   dio: ^5.9.0
   google_mlkit_image_labeling: ^0.14.2
@@ -92,6 +94,7 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   isar_generator: ^3.1.0+1
+  objectbox_generator: ^4.1.0
   build_runner: ^2.4.13
   flutter_launcher_icons: ^0.14.4
   riverpod_generator: ^2.3.3

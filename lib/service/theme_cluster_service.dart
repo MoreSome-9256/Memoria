@@ -9,7 +9,7 @@ import '../models/entity/photo_entity.dart';
 import '../models/theme_cluster_models.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/theme_subclustering.dart';
-import 'mobileclip_vision_service.dart';
+import 'mobileclip_embedding_service.dart';
 import 'photo_service.dart';
 import 'semantic_matching_service.dart';
 import 'theme_cluster_compute_helpers.dart';
@@ -75,15 +75,17 @@ class ThemeClusterService {
     ThemeSubclusterer? peopleSubclusterer,
     ThemeSubclusterer? genericSubclusterer,
     SemanticMatchingService? semanticService,
-    MobileClipVisionService? visionService,
+    MobileClipEmbeddingService? embeddingService,
     List<ThemeDefinition>? definitions,
     ThemePhotosLoader? photosLoader,
     ThemeEmbeddingPreparer? embeddingPreparer,
     ThemePrototypeBuilder? prototypeBuilder,
-  }) : _peopleSubclusterer = peopleSubclusterer ?? const PeopleThemeSubclusterer(),
-       _genericSubclusterer = genericSubclusterer ?? const GenericThemeSubclusterer(),
+  }) : _peopleSubclusterer =
+           peopleSubclusterer ?? const PeopleThemeSubclusterer(),
+       _genericSubclusterer =
+           genericSubclusterer ?? const GenericThemeSubclusterer(),
        _semanticService = semanticService ?? SemanticMatchingService(),
-          _visionService = visionService ?? MobileClipVisionService(),
+       _embeddingService = embeddingService ?? MobileClipEmbeddingService(),
        _definitions = definitions ?? _defaultDefinitions,
        _photosLoader = photosLoader,
        _embeddingPreparer = embeddingPreparer,
@@ -93,7 +95,7 @@ class ThemeClusterService {
   final ThemeSubclusterer _peopleSubclusterer;
   final ThemeSubclusterer _genericSubclusterer;
   final SemanticMatchingService _semanticService;
-  final MobileClipVisionService _visionService;
+  final MobileClipEmbeddingService _embeddingService;
   final List<ThemeDefinition> _definitions;
   final ThemePhotosLoader? _photosLoader;
   final ThemeEmbeddingPreparer? _embeddingPreparer;
@@ -120,7 +122,8 @@ class ThemeClusterService {
     );
   }
 
-  static const int _embeddingDim = 512;
+  static const int _embeddingDim =
+      MobileClipEmbeddingService.expectedEmbeddingDim;
   static const int _defaultMaxNewEmbeddingsPerRun = 400;
   static const int _defaultMaxPhotosToScan = 2400;
   static const int _yieldEveryEmbeddingItems = 24;
@@ -399,11 +402,7 @@ class ThemeClusterService {
         );
         if (score >= definition.minSimilarity) {
           matches.add(
-            ScoredThemePhoto(
-              photo: photo,
-              score: score,
-              embedding: embedding,
-            ),
+            ScoredThemePhoto(photo: photo, score: score, embedding: embedding),
           );
         }
 
@@ -436,10 +435,7 @@ class ThemeClusterService {
       }
 
       clusters.add(
-        ThemeCluster(
-          definition: definition,
-          subclusters: subclusters,
-        ),
+        ThemeCluster(definition: definition, subclusters: subclusters),
       );
 
       _updateProgress(
@@ -485,11 +481,9 @@ class ThemeClusterService {
   }
 
   Future<Map<int, List<double>>> _prepareMobileClip2Embeddings(
-    List<PhotoEntity> photos,
-    {
+    List<PhotoEntity> photos, {
     required int maxNewEmbeddingsPerRun,
-  }
-  ) async {
+  }) async {
     if (_embeddingPreparer != null) {
       return _embeddingPreparer(photos);
     }
@@ -515,63 +509,14 @@ class ThemeClusterService {
       ),
     );
 
-    for (final photo in photos) {
-      processed++;
+    await _embeddingService.beginWorkflowSession();
+    try {
+      for (final photo in photos) {
+        processed++;
 
-      // Keep screenshot-like UI captures out of visual-theme retrieval.
-      if (photo.isProbablyScreenshot) {
-        skippedScreenshots++;
-        _emitEmbeddingProgress(
-          processed: processed,
-          total: total,
-          newEmbeddings: newEmbeddings,
-          cachedEmbeddings: cachedEmbeddings,
-        );
-        continue;
-      }
-
-      final existing = photo.imageEmbedding;
-      if (existing != null && existing.length == _embeddingDim) {
-        cached[photo.id] = existing;
-        cachedEmbeddings++;
-        _emitEmbeddingProgress(
-          processed: processed,
-          total: total,
-          newEmbeddings: newEmbeddings,
-          cachedEmbeddings: cachedEmbeddings,
-        );
-        continue;
-      }
-
-      if (newEmbeddings >= maxNewEmbeddingsPerRun) {
-        _emitEmbeddingProgress(
-          processed: processed,
-          total: total,
-          newEmbeddings: newEmbeddings,
-          cachedEmbeddings: cachedEmbeddings,
-          hitLimit: true,
-          force: true,
-        );
-        continue;
-      }
-
-      final file = File(photo.path);
-      if (!await file.exists()) {
-        skippedMissingFiles++;
-        _emitEmbeddingProgress(
-          processed: processed,
-          total: total,
-          newEmbeddings: newEmbeddings,
-          cachedEmbeddings: cachedEmbeddings,
-        );
-        continue;
-      }
-
-      try {
-        final embedding = await _visionService
-            .embedImageFile(file)
-            .timeout(_embeddingTimeout);
-        if (embedding.length != _embeddingDim) {
+        // Keep screenshot-like UI captures out of visual-theme retrieval.
+        if (photo.isProbablyScreenshot) {
+          skippedScreenshots++;
           _emitEmbeddingProgress(
             processed: processed,
             total: total,
@@ -581,39 +526,96 @@ class ThemeClusterService {
           continue;
         }
 
-        cached[photo.id] = embedding;
-        photo.imageEmbedding = embedding;
-        updated.add(photo);
-        newEmbeddings++;
-      } on TimeoutException {
+        if (_embeddingService.hasReusableEmbedding(photo)) {
+          cached[photo.id] = photo.imageEmbedding!;
+          cachedEmbeddings++;
+          _emitEmbeddingProgress(
+            processed: processed,
+            total: total,
+            newEmbeddings: newEmbeddings,
+            cachedEmbeddings: cachedEmbeddings,
+          );
+          continue;
+        }
+
+        if (newEmbeddings >= maxNewEmbeddingsPerRun) {
+          _emitEmbeddingProgress(
+            processed: processed,
+            total: total,
+            newEmbeddings: newEmbeddings,
+            cachedEmbeddings: cachedEmbeddings,
+            hitLimit: true,
+            force: true,
+          );
+          continue;
+        }
+
+        final file = File(photo.path);
+        if (!await file.exists()) {
+          skippedMissingFiles++;
+          _emitEmbeddingProgress(
+            processed: processed,
+            total: total,
+            newEmbeddings: newEmbeddings,
+            cachedEmbeddings: cachedEmbeddings,
+          );
+          continue;
+        }
+
+        try {
+          final resolution = await _embeddingService
+              .resolvePhotoEmbedding(photo: photo)
+              .timeout(_embeddingTimeout);
+          final embedding = photo.imageEmbedding;
+          if (embedding == null || embedding.length != _embeddingDim) {
+            _emitEmbeddingProgress(
+              processed: processed,
+              total: total,
+              newEmbeddings: newEmbeddings,
+              cachedEmbeddings: cachedEmbeddings,
+            );
+            continue;
+          }
+
+          cached[photo.id] = embedding;
+          if (resolution.reusedCache) {
+            cachedEmbeddings++;
+          } else {
+            updated.add(photo);
+            newEmbeddings++;
+          }
+        } on TimeoutException {
+          _emitEmbeddingProgress(
+            processed: processed,
+            total: total,
+            newEmbeddings: newEmbeddings,
+            cachedEmbeddings: cachedEmbeddings,
+            force: true,
+          );
+          continue;
+        } catch (_) {
+          _emitEmbeddingProgress(
+            processed: processed,
+            total: total,
+            newEmbeddings: newEmbeddings,
+            cachedEmbeddings: cachedEmbeddings,
+          );
+          continue;
+        }
+
         _emitEmbeddingProgress(
           processed: processed,
           total: total,
           newEmbeddings: newEmbeddings,
           cachedEmbeddings: cachedEmbeddings,
-          force: true,
         );
-        continue;
-      } catch (_) {
-        _emitEmbeddingProgress(
-          processed: processed,
-          total: total,
-          newEmbeddings: newEmbeddings,
-          cachedEmbeddings: cachedEmbeddings,
-        );
-        continue;
-      }
 
-      _emitEmbeddingProgress(
-        processed: processed,
-        total: total,
-        newEmbeddings: newEmbeddings,
-        cachedEmbeddings: cachedEmbeddings,
-      );
-
-      if (processed % _yieldEveryEmbeddingItems == 0) {
-        await Future<void>.delayed(Duration.zero);
+        if (processed % _yieldEveryEmbeddingItems == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
       }
+    } finally {
+      await _embeddingService.endWorkflowSession();
     }
 
     if (updated.isNotEmpty) {
@@ -666,13 +668,14 @@ class ThemeClusterService {
     PhotoEntity photo,
     ThemeDefinition definition, {
     required bool pureEmbeddingOnly,
-  }
-  ) {
+  }) {
     if (photo.isProbablyScreenshot) {
       return true;
     }
 
-    if (!pureEmbeddingOnly && definition.id == 'people' && photo.faceCount <= 0) {
+    if (!pureEmbeddingOnly &&
+        definition.id == 'people' &&
+        photo.faceCount <= 0) {
       return true;
     }
 
@@ -762,5 +765,4 @@ class ThemeClusterService {
 
     return score;
   }
-
 }

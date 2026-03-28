@@ -21,17 +21,21 @@ Future<void> showFullscreenPhotoViewer(
 }
 
 class _FullscreenPhotoViewer extends StatelessWidget {
-  const _FullscreenPhotoViewer({
-    required this.path,
-    required this.heroTag,
-  });
+  const _FullscreenPhotoViewer({required this.path, required this.heroTag});
 
   final String path;
   final String? heroTag;
 
   @override
   Widget build(BuildContext context) {
-    final image = PathImage(path: path, fit: BoxFit.contain);
+    // Fullscreen viewing should preserve the photo's intrinsic aspect ratio.
+    // Smart cache sizing can provide both width and height hints from the
+    // viewport, which may distort the decoded bitmap for some images.
+    final image = PathImage(
+      path: path,
+      fit: BoxFit.contain,
+      enableSmartCache: false,
+    );
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(

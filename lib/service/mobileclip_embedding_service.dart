@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../models/entity/photo_entity.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_vision_service.dart';
 import 'ncnn_mobileclip_native_service.dart';
@@ -21,9 +22,46 @@ class MobileClipEmbeddingService {
   final MobileClipBackendPreferenceService _preferenceService =
       MobileClipBackendPreferenceService();
 
+  static const int expectedEmbeddingDim = 512;
   static const Duration _defaultIdleDisposeDelay = Duration(minutes: 3);
   int _workflowLeaseCount = 0;
   Timer? _idleDisposeTimer;
+
+  bool hasReusableEmbedding(PhotoEntity photo) {
+    final embedding = photo.imageEmbedding;
+    return embedding != null && embedding.length == expectedEmbeddingDim;
+  }
+
+  Future<MobileClipEmbeddingResolution> resolvePhotoEmbedding({
+    required PhotoEntity photo,
+    Uint8List? preferredImageBytes,
+    MobileClipBackend? backend,
+  }) async {
+    _touchUsage();
+
+    final existing = photo.imageEmbedding;
+    if (existing != null && existing.length == expectedEmbeddingDim) {
+      return const MobileClipEmbeddingResolution(reusedCache: true);
+    }
+
+    final effectiveBackend = backend ?? await getSelectedBackend();
+    final embedding =
+        preferredImageBytes != null && preferredImageBytes.isNotEmpty
+        ? await embedImageBytesWithBackend(
+            preferredImageBytes,
+            effectiveBackend,
+          )
+        : await embedImageFileWithBackend(File(photo.path), effectiveBackend);
+
+    if (embedding.length != expectedEmbeddingDim) {
+      throw StateError(
+        'MobileCLIP 向量维度异常: ${embedding.length} (expected=$expectedEmbeddingDim)',
+      );
+    }
+
+    photo.imageEmbedding = embedding;
+    return const MobileClipEmbeddingResolution(reusedCache: false);
+  }
 
   Future<void> beginWorkflowSession() async {
     _workflowLeaseCount++;
@@ -162,4 +200,10 @@ class MobileClipEmbeddingService {
         return _ncnnService.encodeImageBytes(imageBytes);
     }
   }
+}
+
+class MobileClipEmbeddingResolution {
+  const MobileClipEmbeddingResolution({required this.reusedCache});
+
+  final bool reusedCache;
 }

@@ -20,6 +20,8 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:gal/gal.dart';
 import 'publish_page.dart';
+import 'export_manager.dart';
+import 'offscreen_render_worker.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
@@ -900,8 +902,43 @@ screenBody = Center(
                     color: Colors.pinkAccent,
                   ),
                   onPressed: () {
-                    // 点击后直接执行我们写的那个硬核导出循环
-                    _startExport();
+                    // 🌟 核心改变：把任务外包给 ExportManager，然后直接关掉当前页面！
+                    ExportManager.instance.startBackgroundExport(
+                      context: context,
+                      title: widget.title,
+                      subtitle: widget.subtitle,
+                      sections: widget.sections,
+                      customMusicPath: widget.customMusicPath,
+                      dynamicBeatData: _beatData.isNotEmpty
+                          ? {'data': _beatData, 'bpm': 60000 / _beatIntervalMs}
+                          : null,
+                      targetPlatform: widget.targetPlatform,
+                      isHorizontal: widget.isHorizontal, // 解决画幅不对的问题
+                      currentTextStyle: _currentTextStyle,
+                      textYPosition: _textYPosition,
+                      textSize: _textSize,
+                      textBlurIntensity: _textBlurIntensity,
+                      shakeIntensity: _shakeIntensity,
+                      shakeFrequency: _shakeFrequency,
+                      glitchIntensity: _glitchIntensity,
+                      enableFlash: _enableFlash,
+                      useVignette: _useVignette,
+                      useGrain: _useGrain,
+                      useCameraFrame: _useCameraFrame,
+                      useGlowRing: _useGlowRing,
+                      useCloudBorder: _useCloudBorder,
+                    );
+
+                    // 弹个 Toast 安抚用户
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('🚀 正在后台静默加速渲染中，您可以去干点别的，完成后将通知您~'),
+                        backgroundColor: Colors.pinkAccent,
+                      ),
+                    );
+
+                    // 潇洒离场，回首页！
+                    Navigator.pop(context);
                   },
                 ),
               ],

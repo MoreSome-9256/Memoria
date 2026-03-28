@@ -134,6 +134,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       duration: const Duration(seconds: 2),
     )..repeat(); // 无限重复！
 
+    _autoConfigVFXAndSubtitles();
+
     // 先给一个最小可播放节拍，随后异步替换为后端分析结果。
     _beatData = [
       {"ms": 0, "energy": 0.1},
@@ -368,6 +370,187 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       setState(() {
         _isPlaying = !_isPlaying;
       });
+    }
+  }
+  // ==========================================
+  // 🤖 智能导演：自动分配字幕样式与画面特效
+  // ==========================================
+  void _autoConfigVFXAndSubtitles() {
+    // 1. 🎲 盲盒抽取：随机字幕样式
+    final subtitleStyles = [
+      'standard',
+      'hero',
+      'cards',
+      'layered',
+      'outline',
+      'typewriter',
+    ];
+    _currentTextStyle =
+        subtitleStyles[math.Random().nextInt(subtitleStyles.length)];
+
+    // 2. 🎬 阅卷打分：根据视频风格选择【唯一】特效
+    // 我们把标题和副标题拼起来，转成小写，方便检索
+    final combinedText = "${widget.title} ${widget.subtitle}".toLowerCase();
+
+    // 先把所有特效重置为 false（一票否决制）
+    _useVignette = false;
+    _useGrain = false;
+    _useCameraFrame = false;
+    _useGlowRing = false;
+    _useCloudBorder = false;
+
+    // 根据关键词计算各特效的契合度
+    int vignetteScore = [
+      '怀旧',
+      '老照片',
+      '记忆',
+      '过去',
+      '伤感',
+      '历史',
+      'nostalgic',
+      'memory',
+      'sad',
+    ].where((w) => combinedText.contains(w)).length;
+    int grainScore = [
+      '胶片',
+      '电影',
+      '质感',
+      '艺术',
+      '故事',
+      'film',
+      'cinematic',
+      'art',
+      'story',
+    ].where((w) => combinedText.contains(w)).length;
+    int cameraScore = [
+      '摄影',
+      '记录',
+      '旅途',
+      '游记',
+      '拍',
+      'vlog',
+      'travel',
+      'photo',
+      'trip',
+    ].where((w) => combinedText.contains(w)).length;
+    int glowScore = [
+      '派对',
+      '赛博',
+      '夜晚',
+      '科技',
+      '炫酷',
+      'party',
+      'night',
+      'cyber',
+      'cool',
+      'neon',
+    ].where((w) => combinedText.contains(w)).length;
+    int cloudScore = [
+      '可爱',
+      '治愈',
+      '宝宝',
+      '宠物',
+      '温暖',
+      '天空',
+      'cute',
+      'warm',
+      'baby',
+      'pet',
+      'sweet',
+    ].where((w) => combinedText.contains(w)).length;
+
+    Map<String, int> scores = {
+      'vignette': vignetteScore,
+      'grain': grainScore,
+      'camera': cameraScore,
+      'glow': glowScore,
+      'cloud': cloudScore,
+    };
+
+    String topVFX = 'camera'; // 兜底默认值
+    int maxScore = 0;
+
+    // 选出得分最高的特效
+    scores.forEach((key, score) {
+      if (score > maxScore) {
+        maxScore = score;
+        topVFX = key;
+      }
+    });
+
+    // 如果标题完全没有命中关键词 (maxScore == 0)，就在适合大众的几个特效里随机抽一个
+    if (maxScore == 0) {
+      final fallbackVFX = ['vignette', 'grain', 'camera', 'cloud'];
+      topVFX = fallbackVFX[math.Random().nextInt(fallbackVFX.length)];
+    }
+
+    // 正式激活当选的特效
+    switch (topVFX) {
+      case 'vignette':
+        _useVignette = true;
+        debugPrint("🎬 智能分配特效：复古暗角 (vignette)");
+        break;
+      case 'grain':
+        _useGrain = true;
+        debugPrint("🎬 智能分配特效：胶片噪点 (grain)");
+        break;
+      case 'camera':
+        _useCameraFrame = true;
+        debugPrint("🎬 智能分配特效：相机取景器 (camera)");
+        break;
+      case 'glow':
+        _useGlowRing = true;
+        debugPrint("🎬 智能分配特效：霓虹光圈 (glow)");
+        break;
+      case 'cloud':
+        _useCloudBorder = true;
+        debugPrint("🎬 智能分配特效：云朵边框 (cloud)");
+        break;
+    }
+    debugPrint("🔤 智能分配字幕：$_currentTextStyle");
+
+    // ==========================================
+    // 3. 💥 智能白光闪烁 (Flash) 双重鉴权
+    // ==========================================
+
+    // 第一重：计算这首歌的“暴力指数”（平均能量和暴击率）
+    double totalEnergy = 0.0;
+    int highEnergyBeats = 0;
+
+    if (_beatData.isNotEmpty) {
+      for (var beat in _beatData) {
+        double e = (beat['energy'] as num?)?.toDouble() ?? 0.0;
+        totalEnergy += e;
+        if (e > 0.3) highEnergyBeats++; // 记录出现过多少次重击
+      }
+
+      double avgEnergy = totalEnergy / _beatData.length;
+      double highEnergyRatio = highEnergyBeats / _beatData.length;
+
+      // 综合判断：如果得分偏高，说明是真·动感音乐
+      bool isAudioViolent = (avgEnergy > 0.2) || (highEnergyRatio > 0.15);
+
+      // 第二重：语义一票否决权
+      bool isVisualViolent = glowScore > 0; // 只要带有赛博/派对/夜晚属性
+      bool isVisualPeaceful = cloudScore > 0 || vignetteScore > 0; // 治愈/怀旧属性
+
+      if (isVisualPeaceful) {
+        // 如果主题是治愈或怀旧，哪怕配了动感音乐，也绝对不许瞎闪！
+        _enableFlash = false;
+        debugPrint("💥 智能闪光：强制关闭 (触发治愈/怀旧保护机制)");
+      } else if (isVisualViolent || isAudioViolent) {
+        // 如果主题是狂欢，或者音乐本身的重低音足够猛，那就闪起来！
+        _enableFlash = true;
+        debugPrint(
+          "💥 智能闪光：开启 (Audio暴力指数: ${avgEnergy.toStringAsFixed(2)}, Visual: $glowScore)",
+        );
+      } else {
+        // 兜底：既不猛烈也不治愈的普通照片，默认不开
+        _enableFlash = false;
+        debugPrint("💥 智能闪光：关闭 (日常平淡模式)");
+      }
+    } else {
+      _enableFlash = false; // 没拿到音频数据就不开
     }
   }
 
@@ -1102,36 +1285,6 @@ screenBody = Center(
                                         setState(() {});
                                       },
                                     ),
-                                  ),
-                                ],
-                              ),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text(
-                                    '片头转场',
-                                    style: TextStyle(color: Colors.white70),
-                                  ),
-                                  DropdownButton<TransitionMaterial>(
-                                    value: _currentTransition,
-                                    dropdownColor: Colors.grey[900],
-                                    style: const TextStyle(
-                                      color: Colors.orangeAccent,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                    underline: const SizedBox(),
-                                    items: _transitions.map((material) {
-                                      return DropdownMenuItem(
-                                        value: material,
-                                        child: Text(material.name),
-                                      );
-                                    }).toList(),
-                                    onChanged: (val) {
-                                      if (val != null) {
-                                        setModalState(() => _currentTransition = val);
-                                        setState(() {});
-                                      }
-                                    },
                                   ),
                                 ],
                               ),

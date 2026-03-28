@@ -632,118 +632,107 @@ class _AlbumPageState extends State<AlbumPage> {
         builder: (context, progress, _) {
           return Column(
             children: [
-              // 🌟 核心修复：用 Flexible + SingleChildScrollView 包裹头部的所有组件
-              Flexible(
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min, // 极其重要：根据内容收缩高度
-                    children: [
-                      ValueListenableBuilder<int>(
-                        valueListenable:
-                            _DeferredImageLoadScheduler.pendingCountListenable,
-                        builder: (context, pendingCount, _) {
-                          return AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 180),
-                            child: pendingCount > 0
-                                ? const LinearProgressIndicator(
-                                    key: ValueKey<String>(
-                                      'deferred-images-loading',
-                                    ),
-                                    minHeight: 2.5,
-                                  )
-                                : const SizedBox.shrink(),
-                          );
-                        },
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                        child: TextField(
-                          controller: _semanticSearchController,
-                          focusNode: _semanticSearchFocusNode,
-                          textInputAction: TextInputAction.search,
-                          onSubmitted: (_) => _submitSemanticSearch(),
-                          decoration: InputDecoration(
-                            hintText: '语义搜索',
-                            suffixIcon: IconButton(
-                              onPressed: _submitSemanticSearch,
-                              icon: const Icon(Icons.search),
-                              tooltip: '开始搜索',
-                            ),
-                            filled: true,
-                            fillColor: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest
-                                .withValues(alpha: 0.45),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(18),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 14,
-                            ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                        child: SegmentedButton<_AlbumViewMode>(
-                          segments: const <ButtonSegment<_AlbumViewMode>>[
-                            ButtonSegment<_AlbumViewMode>(
-                              value: _AlbumViewMode.tags,
-                              icon: Icon(Icons.sell_outlined),
-                              label: Text('标签浏览'),
-                            ),
-                            ButtonSegment<_AlbumViewMode>(
-                              value: _AlbumViewMode.moments,
-                              icon: Icon(Icons.auto_awesome_mosaic_outlined),
-                              label: Text('时刻分组'),
-                            ),
-                          ],
-                          selected: <_AlbumViewMode>{_viewMode},
-                          onSelectionChanged: (selection) {
-                            if (selection.isEmpty) {
-                              return;
-                            }
-                            setState(() {
-                              _viewMode = selection.first;
-                            });
-                          },
-                        ),
-                      ),
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 250),
-                        child: progress.isVisible
-                            ? _buildAnalysisProgressBanner(progress)
-                            : const SizedBox.shrink(),
-                      ),
-                      ValueListenableBuilder<JunkPhotoCleanupReport?>(
-                        valueListenable:
-                            AIService().junkCleanupReportListenable,
-                        builder: (context, report, _) {
-                          return AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 250),
-                            child: report == null || !report.hasCandidates
-                                ? const SizedBox.shrink()
-                                : JunkPhotoCleanupBanner(
-                                    key: ValueKey<String>(report.reportId),
-                                    report: report,
-                                    onReview: () =>
-                                        _showJunkCleanupDialog(report),
-                                    onDismiss: _dismissJunkCleanupBanner,
-                                  ),
-                          );
-                        },
-                      ),
-                    ],
+              ValueListenableBuilder<int>(
+                valueListenable:
+                    _DeferredImageLoadScheduler.pendingCountListenable,
+                builder: (context, pendingCount, _) {
+                  return AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: pendingCount > 0
+                        ? const LinearProgressIndicator(
+                            key: ValueKey<String>('deferred-images-loading'),
+                            minHeight: 2.5,
+                          )
+                        : const SizedBox.shrink(),
+                  );
+                },
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: TextField(
+                  controller: _semanticSearchController,
+                  focusNode: _semanticSearchFocusNode,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (_) => _submitSemanticSearch(),
+                  decoration: InputDecoration(
+                    hintText: '语义搜索',
+                    suffixIcon: IconButton(
+                      onPressed: _submitSemanticSearch,
+                      icon: const Icon(Icons.search),
+                      tooltip: '开始搜索',
+                    ),
+                    filled: true,
+                    fillColor: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest
+                        .withValues(alpha: 0.45),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(18),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
                   ),
                 ),
               ),
-              // 🌟 这里的 Expanded 会稳稳地占据屏幕剩下的空间
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: SegmentedButton<_AlbumViewMode>(
+                  segments: const <ButtonSegment<_AlbumViewMode>>[
+                    ButtonSegment<_AlbumViewMode>(
+                      value: _AlbumViewMode.tags,
+                      icon: Icon(Icons.sell_outlined),
+                      label: Text('标签浏览'),
+                    ),
+                    ButtonSegment<_AlbumViewMode>(
+                      value: _AlbumViewMode.moments,
+                      icon: Icon(Icons.auto_awesome_mosaic_outlined),
+                      label: Text('时刻分组'),
+                    ),
+                  ],
+                  selected: <_AlbumViewMode>{_viewMode},
+                  onSelectionChanged: (selection) {
+                    if (selection.isEmpty) {
+                      return;
+                    }
+                    setState(() {
+                      _viewMode = selection.first;
+                    });
+                  },
+                ),
+              ),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                child: progress.isVisible
+                    ? _buildAnalysisProgressBanner(progress)
+                    : const SizedBox.shrink(),
+              ),
+              ValueListenableBuilder<JunkPhotoCleanupReport?>(
+                valueListenable: AIService().junkCleanupReportListenable,
+                builder: (context, report, _) {
+                  return AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 250),
+                    child: report == null || !report.hasCandidates
+                        ? const SizedBox.shrink()
+                        : JunkPhotoCleanupBanner(
+                            key: ValueKey<String>(report.reportId),
+                            report: report,
+                            onReview: () => _showJunkCleanupDialog(report),
+                            onDismiss: _dismissJunkCleanupBanner,
+                          ),
+                  );
+                },
+              ),
               Expanded(
-                child: _viewMode == _AlbumViewMode.tags
-                    ? _buildAlbumTagBrowserView()
-                    : _buildMomentsView(),
+                child: IndexedStack(
+                  index: _viewMode == _AlbumViewMode.tags ? 0 : 1,
+                  children: [
+                    _buildAlbumTagBrowserView(), // index 0: 标签浏览
+                    _buildMomentsView(), // index 1: 时刻分组
+                  ],
+                ),
               ),
             ],
           );

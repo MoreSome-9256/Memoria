@@ -6,10 +6,12 @@ import '../../models/ai_theme.dart';
 import '../../models/entity/event_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/entity/story_entity.dart';
+import '../../models/vo/story_generation_models.dart';
 import '../../service/photo_service.dart';
 import '../../service/llm_service.dart';
 import '../../utils/ocr_policy.dart';
 import 'story_result_page.dart';
+import 'story_generation_progress_page.dart';
 import 'package:file_picker/file_picker.dart'; // 🌟 新增
 import '../../service/music_service.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -29,12 +31,14 @@ class ConfigPage extends StatefulWidget {
   final Event event;
   final List<Photo> selectedPhotos;
   final AITheme selectedTheme;
+  final String? semanticSearchQuery;
 
   const ConfigPage({
     super.key,
     required this.event,
     required this.selectedPhotos,
     required this.selectedTheme,
+    this.semanticSearchQuery,
   });
 
   @override
@@ -48,6 +52,7 @@ class _ConfigPageState extends State<ConfigPage> {
   // 🌟 替换掉原来的 StoryLength，改为新的配置项并给默认值
   VideoAspectRatio _selectedAspectRatio = VideoAspectRatio.vertical;
   PublishingPlatform _selectedPlatform = PublishingPlatform.xiaohongshu;
+  StoryGenerationMode _selectedStoryMode = StoryGenerationMode.deepseekTags;
   // 🌟 新增：音乐相关状态
   MusicSource _selectedMusicSource = MusicSource.aiGenerated;
   String? _customMusicPath;
@@ -56,7 +61,7 @@ class _ConfigPageState extends State<ConfigPage> {
   bool _isGenerating = false;
 
   // 🌟 新增：动态加载提示文本
-  String _loadingText = '开始生成';
+  String _loadingText = '生成视频';
   // 🌟 新增：是否自动生成台词开关
   bool _enableAutoCaptions = true;
   late TextEditingController _manualCaptionsController; // 🌟 新增：手动字幕控制器
@@ -92,6 +97,54 @@ class _ConfigPageState extends State<ConfigPage> {
     super.dispose();
   }
 
+  bool _validateCommonThemeInput() {
+    if (_themeController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请输入故事主题')));
+      return false;
+    }
+    return true;
+  }
+
+  String _currentPlatformName() {
+    switch (_selectedPlatform) {
+      case PublishingPlatform.xiaohongshu:
+        return '小红书';
+      case PublishingPlatform.moments:
+        return '朋友圈';
+      case PublishingPlatform.bilibili:
+        return 'B站';
+      case PublishingPlatform.tiktok:
+        return '抖音';
+    }
+  }
+
+  void _openStoryGenerationFlow() {
+    if (!_validateCommonThemeInput()) {
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => StoryGenerationProgressPage(
+          request: StoryGenerationRequest(
+            event: widget.event,
+            selectedPhotos: widget.selectedPhotos,
+            selectedTheme: widget.selectedTheme,
+            title: _themeController.text.trim(),
+            subtitle: (_selectedSubtitle ?? '').trim(),
+            mode: _selectedStoryMode,
+            isHorizontal: _selectedAspectRatio == VideoAspectRatio.horizontal,
+            targetPlatform: _currentPlatformName(),
+            semanticSearchQuery: widget.semanticSearchQuery?.trim(),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _generateStory() async {
     // 校验：如果选择了手动导入但没选文件
     if (_selectedMusicSource == MusicSource.manualImport &&
@@ -101,10 +154,7 @@ class _ConfigPageState extends State<ConfigPage> {
       ).showSnackBar(const SnackBar(content: Text('请先选择一段本地音乐')));
       return;
     }
-    if (_themeController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请输入故事主题')));
+    if (!_validateCommonThemeInput()) {
       return;
     }
 
@@ -239,21 +289,7 @@ class _ConfigPageState extends State<ConfigPage> {
       // ==========================================
       // 🌟 平台名称转换 (供最终发布页文案生成使用)
       // ==========================================
-      String platformName = '小红书'; // 默认值
-      switch (_selectedPlatform) {
-        case PublishingPlatform.xiaohongshu:
-          platformName = '小红书';
-          break;
-        case PublishingPlatform.moments:
-          platformName = '朋友圈';
-          break;
-        case PublishingPlatform.bilibili:
-          platformName = 'B站';
-          break;
-        case PublishingPlatform.tiktok:
-          platformName = '抖音';
-          break;
-      }
+      final platformName = _currentPlatformName();
       // ==========================================
       // 🌟 第一步：呼叫 VLM 接口生成剧本大纲
       // ==========================================
@@ -373,7 +409,7 @@ Sandal Leap
 
       setState(() {
         _isGenerating = false;
-        _loadingText = '开始生成';
+        _loadingText = '生成视频';
       });
 
       if (story != null) {
@@ -402,7 +438,7 @@ Sandal Leap
     } catch (e) {
       setState(() {
         _isGenerating = false;
-        _loadingText = '开始生成';
+        _loadingText = '生成视频';
       });
 
       if (mounted) {
@@ -606,6 +642,8 @@ Sandal Leap
           const SizedBox(height: 24),
           _buildMusicSection(),
           const Divider(height: 48),
+          _buildStoryModeSection(),
+          const SizedBox(height: 24),
 
           // 🌟 AI 台词生成开关
           SwitchListTile(
@@ -645,7 +683,26 @@ Sandal Leap
 
           const SizedBox(height: 24),
 
-          // Generate button
+          OutlinedButton.icon(
+            onPressed: _isGenerating ? null : _openStoryGenerationFlow,
+            icon: const Icon(Icons.auto_stories_rounded),
+            label: Text(
+              '生成故事',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 15),
+              side: BorderSide(
+                color: Theme.of(context).colorScheme.primary,
+                width: 1.3,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Generate video button
           FilledButton(
             onPressed: _isGenerating ? null : _generateStory,
             style: FilledButton.styleFrom(
@@ -750,6 +807,97 @@ Sandal Leap
             ),
           ),
         ],
+      ],
+    );
+  }
+
+  Widget _buildStoryModeSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '生成故事方式',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '默认使用 DeepSeek 根据标签、时间和地点生成；如果想更贴近画面细节，可以切换到本地 VLM 模式。',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: Colors.grey[600], height: 1.4),
+        ),
+        const SizedBox(height: 12),
+        Column(
+          children: StoryGenerationMode.values.map((mode) {
+            final selected = _selectedStoryMode == mode;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: () {
+                  setState(() {
+                    _selectedStoryMode = mode;
+                  });
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? Theme.of(
+                            context,
+                          ).colorScheme.primaryContainer.withValues(alpha: 0.92)
+                        : Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.outlineVariant,
+                      width: selected ? 1.6 : 1.0,
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        selected
+                            ? Icons.check_circle_rounded
+                            : Icons.radio_button_unchecked_rounded,
+                        color: selected
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.grey[500],
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              mode.title,
+                              style: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              mode.subtitle,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Colors.grey[700],
+                                    height: 1.4,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }).toList(growable: false),
+        ),
       ],
     );
   }

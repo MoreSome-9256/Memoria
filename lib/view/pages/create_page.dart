@@ -576,6 +576,7 @@ class _CreatePageState extends State<CreatePage> {
           event: virtualEvent,
           selectedPhotos: virtualEvent.photos,
           selectedTheme: virtualTheme,
+          semanticSearchQuery: _searchController.text.trim(),
         ),
       ),
     );

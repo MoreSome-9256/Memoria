@@ -1,10 +1,23 @@
+﻿import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:isar/isar.dart';
+import 'package:photo_manager/photo_manager.dart';
 
 import '../../models/event.dart';
+import '../../models/entity/photo_entity.dart';
 import '../../models/vo/photo.dart';
+import '../../service/junk_photo_cleanup_service.dart';
+import '../../service/photo_service.dart';
+import '../../service/story_queue_service.dart';
 import '../../utils/ocr_policy.dart';
+import '../widgets/deferred_path_image.dart';
+import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/path_image.dart';
-import 'config_page.dart';
+import 'story_queue_page.dart';
+
+enum _EventSelectionMenuAction { selectAll, clear, cancel }
+enum _EventActionMode { none, story, delete }
 
 class EventDetailPage extends StatefulWidget {
   final Event event;
@@ -18,8 +31,11 @@ class EventDetailPage extends StatefulWidget {
 class _EventDetailPageState extends State<EventDetailPage> {
   final Set<String> _selectedPhotoIds = {};
   String? _selectedThemeId;
+  _EventActionMode _actionMode = _EventActionMode.none;
+  late List<Photo> _photos;
+  bool _isLoadingPhotos = false;
 
-  List<Photo> get _selectedPhotos => widget.event.photos
+  List<Photo> get _selectedPhotos => _photos
       .where((photo) => _selectedPhotoIds.contains(photo.id))
       .toList(growable: false);
 
@@ -35,12 +51,75 @@ class _EventDetailPageState extends State<EventDetailPage> {
   @override
   void initState() {
     super.initState();
-    // Select all photos by default
-    _selectedPhotoIds.addAll(widget.event.photos.map((p) => p.id));
+    _photos = List<Photo>.from(widget.event.photos);
+    _isLoadingPhotos = _photos.isEmpty;
     // Select first theme by default
     if (widget.event.aiThemes.isNotEmpty) {
       _selectedThemeId = widget.event.aiThemes.first.id;
     }
+    if (_isLoadingPhotos) {
+      unawaited(_hydratePhotosFromLocalIndex());
+    }
+  }
+
+  bool get _isSelectionMode => _actionMode != _EventActionMode.none;
+  bool get _isDeleteMode => _actionMode == _EventActionMode.delete;
+
+  Future<void> _hydratePhotosFromLocalIndex() async {
+    final eventId = int.tryParse(widget.event.id);
+    if (eventId == null || eventId < 0) {
+      if (mounted) {
+        setState(() => _isLoadingPhotos = false);
+      }
+      return;
+    }
+
+    final entities = await PhotoService().isar
+        .collection<PhotoEntity>()
+        .filter()
+        .eventIdEqualTo(eventId)
+        .sortByTimestamp()
+        .findAll();
+
+    final hydrated = <Photo>[];
+    for (final entity in entities) {
+      hydrated.add(
+        Photo(
+          id: entity.assetId,
+          path: await _resolvePhotoPath(entity),
+          dateTaken: DateTime.fromMillisecondsSinceEpoch(entity.timestamp),
+          tags: entity.aiTags ?? const <String>[],
+          caption: entity.aiCaption?.trim(),
+          ocrSummary: OcrPolicy.effectiveSummary(
+            tags: entity.ocrTags ?? const <String>[],
+            text: entity.ocrText,
+          ),
+          ocrTags: OcrPolicy.effectiveTags(entity.ocrTags ?? const <String>[]),
+          location:
+              entity.locationName ??
+              entity.district ??
+              entity.city ??
+              entity.province,
+        ),
+      );
+    }
+
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _photos = hydrated;
+      _isLoadingPhotos = false;
+    });
+  }
+
+  Future<String> _resolvePhotoPath(PhotoEntity entity) async {
+    if (entity.path.trim().isNotEmpty) {
+      return entity.path;
+    }
+    final asset = await AssetEntity.fromId(entity.assetId);
+    final file = await asset?.file;
+    return file?.path ?? entity.path;
   }
 
   void _togglePhotoSelection(Photo photo) {
@@ -244,36 +323,245 @@ class _EventDetailPageState extends State<EventDetailPage> {
     );
   }
 
-  void _navigateToConfigPage() {
-    final selectedTheme = widget.event.aiThemes
-        .where((theme) => theme.id == _selectedThemeId)
-        .firstOrNull;
+  void _openStoryQueuePage() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const StoryQueuePage(),
+      ),
+    );
+  }
 
-    if (selectedTheme == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请选择一个主题')));
-      return;
-    }
-
+  void _addSelectionToQueue() {
     if (_selectedPhotoIds.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请至少选择一张照片')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请至少选择一张照片加入故事队列')),
+      );
       return;
     }
 
-    final selectedPhotos = widget.event.photos
+    final selectedPhotos = _photos
         .where((photo) => _selectedPhotoIds.contains(photo.id))
-        .toList();
+        .toList(growable: false);
+    final addedCount = StoryQueueService().addPhotos(selectedPhotos);
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ConfigPage(
-          event: widget.event,
-          selectedPhotos: selectedPhotos,
-          selectedTheme: selectedTheme,
+    setState(() {
+      _actionMode = _EventActionMode.none;
+      _selectedPhotoIds.clear();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          addedCount > 0 ? '已加入故事队列 $addedCount 张' : '这些照片已经在故事队列里了',
+        ),
+      ),
+    );
+    _openStoryQueuePage();
+  }
+
+  Future<void> _deleteSelectionFromLocalIndex() async {
+    if (_selectedPhotoIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请至少选择一张照片再删除')),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('删除本地记录'),
+          content: Text(
+            '将从 App 本地数据库中删除 ${_selectedPhotoIds.length} 张照片记录，不会删除手机系统相册中的原图。是否继续？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    final selectedAssetIds = _selectedPhotoIds.toList(growable: false);
+    final entities = await PhotoService().isar
+        .collection<PhotoEntity>()
+        .filter()
+        .anyOf(
+          selectedAssetIds,
+          (query, assetId) => query.assetIdEqualTo(assetId),
+        )
+        .findAll();
+
+    var removedCount = 0;
+    for (final entity in entities) {
+      await JunkPhotoCleanupService().removeFromLocalIndex(entity);
+      StoryQueueService().removePhoto(entity.assetId);
+      removedCount += 1;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      if (removedCount > 0) {
+        _photos = _photos
+            .where((photo) => !_selectedPhotoIds.contains(photo.id))
+            .toList(growable: false);
+      }
+      _actionMode = _EventActionMode.none;
+      _selectedPhotoIds.clear();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(removedCount > 0 ? '已删除 $removedCount 条本地记录' : '没有删除任何本地记录'),
+      ),
+    );
+  }
+
+  Widget _buildFloatingActions() {
+    return ValueListenableBuilder<List<StoryQueueItem>>(
+      valueListenable: StoryQueueService().queueListenable,
+      builder: (context, items, _) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (items.isNotEmpty) ...[
+              FloatingActionButton.extended(
+                heroTag: 'event-detail-queue',
+                onPressed: _openStoryQueuePage,
+                icon: const Icon(Icons.photo_library_outlined),
+                label: Text('队列 ${items.length}'),
+              ),
+              const SizedBox(height: 10),
+            ],
+            if (_isSelectionMode && _photos.isNotEmpty)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildSelectionMenuButton(
+                    onSelected: (action) {
+                      switch (action) {
+                        case _EventSelectionMenuAction.selectAll:
+                          setState(() {
+                            _selectedPhotoIds.addAll(
+                              _photos.map((photo) => photo.id),
+                            );
+                          });
+                          break;
+                        case _EventSelectionMenuAction.clear:
+                          setState(() {
+                            _selectedPhotoIds.clear();
+                          });
+                          break;
+                        case _EventSelectionMenuAction.cancel:
+                          setState(() {
+                            _actionMode = _EventActionMode.none;
+                            _selectedPhotoIds.clear();
+                          });
+                          break;
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 10),
+                  FloatingActionButton.extended(
+                    heroTag: 'event-detail-story',
+                    onPressed: _isDeleteMode
+                        ? _deleteSelectionFromLocalIndex
+                        : _addSelectionToQueue,
+                    icon: Icon(
+                      _isDeleteMode
+                          ? Icons.delete_outline_rounded
+                          : Icons.playlist_add_rounded,
+                    ),
+                    label: Text(
+                      _selectedPhotoIds.isEmpty
+                          ? (_isDeleteMode ? '删除本地记录' : '加入故事队列')
+                          : (_isDeleteMode
+                              ? '删除本地记录 ${_selectedPhotoIds.length}'
+                              : '加入故事队列 ${_selectedPhotoIds.length}'),
+                    ),
+                  ),
+                ],
+              )
+            else if (!_isLoadingPhotos)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FloatingActionButton.small(
+                    heroTag: 'event-detail-delete',
+                    onPressed: () {
+                      setState(() {
+                        _actionMode = _EventActionMode.delete;
+                        _selectedPhotoIds.clear();
+                      });
+                    },
+                    child: const Icon(Icons.delete_outline_rounded),
+                  ),
+                  const SizedBox(width: 10),
+                  FloatingActionButton.extended(
+                    heroTag: 'event-detail-story',
+                    onPressed: () {
+                      setState(() {
+                        _actionMode = _EventActionMode.story;
+                        _selectedPhotoIds.clear();
+                      });
+                    },
+                    icon: const Icon(Icons.auto_stories_rounded),
+                    label: const Text('生成故事'),
+                  ),
+                ],
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSelectionMenuButton({
+    required ValueChanged<_EventSelectionMenuAction> onSelected,
+  }) {
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      elevation: 4,
+      shadowColor: Colors.black.withValues(alpha: 0.15),
+      shape: const CircleBorder(),
+      child: PopupMenuButton<_EventSelectionMenuAction>(
+        tooltip: '选图操作',
+        onSelected: onSelected,
+        itemBuilder: (context) => const <PopupMenuEntry<_EventSelectionMenuAction>>[
+          PopupMenuItem<_EventSelectionMenuAction>(
+            value: _EventSelectionMenuAction.selectAll,
+            child: Text('全选'),
+          ),
+          PopupMenuItem<_EventSelectionMenuAction>(
+            value: _EventSelectionMenuAction.clear,
+            child: Text('清空'),
+          ),
+          PopupMenuItem<_EventSelectionMenuAction>(
+            value: _EventSelectionMenuAction.cancel,
+            child: Text('取消'),
+          ),
+        ],
+        child: const SizedBox(
+          width: 48,
+          height: 48,
+          child: Icon(Icons.more_horiz_rounded),
         ),
       ),
     );
@@ -309,7 +597,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
                         child: Text(
                           widget.event.location,
                           style: Theme.of(context).textTheme.bodyLarge,
-                          overflow: TextOverflow.ellipsis, // 超出变省略号
+                          overflow: TextOverflow.ellipsis, // 瓒呭嚭鍙樼渷鐣ュ彿
                           maxLines: 1,
                         ),
                       ),
@@ -336,11 +624,11 @@ class _EventDetailPageState extends State<EventDetailPage> {
                           children: [
                             Text(theme.emoji),
                             const SizedBox(width: 4),
-                            // 🌟 修复点 2：用 Flexible 限制 AI 生成的超长标题
+                            // 馃専 淇鐐?2锛氱敤 Flexible 闄愬埗 AI 鐢熸垚鐨勮秴闀挎爣棰?
                             Flexible(
                               child: Text(
                                 theme.title,
-                                overflow: TextOverflow.ellipsis, // 超出变省略号
+                                overflow: TextOverflow.ellipsis, // 瓒呭嚭鍙樼渷鐣ュ彿
                                 maxLines: 1,
                               ),
                             ),
@@ -358,14 +646,22 @@ class _EventDetailPageState extends State<EventDetailPage> {
                   const SizedBox(height: 16),
                   // Photo count info
                   Text(
-                    '照片 (${_selectedPhotoIds.length}/${widget.event.photos.length})',
+                    _isSelectionMode
+                        ? '照片 (${_selectedPhotoIds.length}/${_photos.length})'
+                        : '照片 (${_isLoadingPhotos ? widget.event.photoCount : _photos.length})',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '点按选择照片，长按查看这张照片的完整关键词。',
+                    _isLoadingPhotos
+                        ? '先展示这一组时刻的概要，图片会在滑到这里时继续懒加载。'
+                        : _isSelectionMode
+                        ? (_isDeleteMode
+                            ? '点击图片选择要从 App 本地数据库中删除的记录。'
+                            : '点击图片加入故事队列，再点右下角按钮继续。')
+                        : '先预览照片内容，点击右下角按钮后再进入选图。',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).hintColor,
                     ),
@@ -373,7 +669,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
                   if (_textRichSelectedPhotos.isNotEmpty) ...[
                     const SizedBox(height: 16),
                     Text(
-                      'OCR 摘要',
+                        'OCR 摘要',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
@@ -407,81 +703,118 @@ class _EventDetailPageState extends State<EventDetailPage> {
             ),
           ),
           // Photo grid
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                crossAxisSpacing: 4,
-                mainAxisSpacing: 4,
+          // Photo grid
+          if (_isLoadingPhotos)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 24),
+                child: Center(child: CircularProgressIndicator()),
               ),
-              delegate: SliverChildBuilderDelegate((context, index) {
-                final photo = widget.event.photos[index];
-                final isSelected = _selectedPhotoIds.contains(photo.id);
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  crossAxisSpacing: 4,
+                  mainAxisSpacing: 4,
+                ),
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  final photo = _photos[index];
+                  final isSelected = _selectedPhotoIds.contains(photo.id);
 
-                return GestureDetector(
-                  onTap: () => _togglePhotoSelection(photo),
-                  onLongPress: () => _showPhotoDetail(photo),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      PathImage(path: photo.path, fit: BoxFit.cover),
-                      if (!isSelected)
-                        Container(color: Colors.black.withValues(alpha: 0.5)),
-                      Positioned(
-                        left: 4,
-                        bottom: 4,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.45),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            '${photo.tags.length + (OcrPolicy.mlKitEnabled ? photo.ocrTags.length : 0)}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
+                  return GestureDetector(
+                    onTap: () {
+                      if (_isSelectionMode) {
+                        _togglePhotoSelection(photo);
+                        return;
+                      }
+                      showFullscreenPhotoViewer(
+                        context,
+                        path: photo.path,
+                        heroTag: 'event-photo-${photo.id}',
+                      );
+                    },
+                    onLongPress: () => _showPhotoDetail(photo),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Hero(
+                          tag: 'event-photo-${photo.id}',
+                          child: DeferredPathImage(
+                            path: photo.path,
+                            fit: BoxFit.cover,
                           ),
                         ),
-                      ),
-                      if (isSelected)
+                        if (_isSelectionMode && !isSelected)
+                          Container(color: Colors.black.withValues(alpha: 0.32)),
                         Positioned(
-                          top: 4,
-                          right: 4,
+                          left: 4,
+                          bottom: 4,
                           child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.primary,
-                              shape: BoxShape.circle,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
                             ),
-                            child: const Icon(
-                              Icons.check,
-                              size: 16,
-                              color: Colors.white,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.45),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              '${photo.tags.length + (OcrPolicy.mlKitEnabled ? photo.ocrTags.length : 0)}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
-                    ],
-                  ),
-                );
-              }, childCount: widget.event.photos.length),
+                        if (_isSelectionMode)
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Container(
+                              width: 26,
+                              height: 26,
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? (_isDeleteMode
+                                        ? Theme.of(context).colorScheme.error
+                                        : Theme.of(context).colorScheme.primary)
+                                    : Colors.white.withValues(alpha: 0.88),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.black.withValues(alpha: 0.08),
+                                ),
+                              ),
+                              child: Icon(
+                                isSelected
+                                    ? (_isDeleteMode
+                                        ? Icons.delete_rounded
+                                        : Icons.check_rounded)
+                                    : Icons.add_rounded,
+                                size: 16,
+                                color: isSelected
+                                    ? Colors.white
+                                    : (_isDeleteMode
+                                        ? Theme.of(context).colorScheme.error
+                                        : Theme.of(context).colorScheme.primary),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                }, childCount: _photos.length),
+              ),
             ),
-          ),
           // Bottom spacing for FAB
           const SliverToBoxAdapter(child: SizedBox(height: 80)),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _navigateToConfigPage,
-        icon: const Icon(Icons.edit),
-        label: const Text('生成故事'),
-      ),
+      floatingActionButton: _buildFloatingActions(),
     );
   }
 }

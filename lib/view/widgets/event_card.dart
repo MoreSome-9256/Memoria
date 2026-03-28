@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../../models/event.dart';
 import '../pages/event_detail_page.dart';
+import 'deferred_path_image.dart';
 import 'fullscreen_photo_viewer.dart';
-import 'path_image.dart';
 
 class EventCard extends StatelessWidget {
-  final Event event;
-
   const EventCard({super.key, required this.event});
+
+  final Event event;
 
   @override
   Widget build(BuildContext context) {
@@ -23,7 +23,7 @@ class EventCard extends StatelessWidget {
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(
+                MaterialPageRoute<void>(
                   builder: (context) => EventDetailPage(event: event),
                 ),
               );
@@ -65,21 +65,23 @@ class EventCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        '${event.photos.length} 张照片',
+                        '${event.photoCount} 张照片',
                         style: TextStyle(color: Colors.grey[600]),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    children: event.tags.map((tag) {
-                      return Chip(
-                        label: Text(tag, style: const TextStyle(fontSize: 12)),
-                        visualDensity: VisualDensity.compact,
-                      );
-                    }).toList(),
-                  ),
+                  if (event.tags.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: event.tags.map((tag) {
+                        return Chip(
+                          label: Text(tag, style: const TextStyle(fontSize: 12)),
+                          visualDensity: VisualDensity.compact,
+                        );
+                      }).toList(growable: false),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -91,7 +93,6 @@ class EventCard extends StatelessWidget {
 
   Widget _buildCoverImages(BuildContext context) {
     final coverPhotos = event.coverPhotos;
-
     if (coverPhotos.isEmpty) {
       return Container(
         height: 200,
@@ -111,17 +112,15 @@ class EventCard extends StatelessWidget {
         ),
         child: Hero(
           tag: heroTag,
-          child: PathImage(
-            path: photo.path,
+          child: SizedBox(
             height: 200,
             width: double.infinity,
-            fit: BoxFit.cover,
+            child: DeferredPathImage(path: photo.path, fit: BoxFit.cover),
           ),
         ),
       );
     }
 
-    // Multiple photos - show in grid
     return SizedBox(
       height: 200,
       child: Row(
@@ -139,16 +138,18 @@ class EventCard extends StatelessWidget {
                 ),
                 child: Hero(
                   tag: 'event-cover-${event.id}-${entry.value.id}',
-                  child: PathImage(
-                    path: entry.value.path,
+                  child: SizedBox(
                     height: 200,
-                    fit: BoxFit.cover,
+                    child: DeferredPathImage(
+                      path: entry.value.path,
+                      fit: BoxFit.cover,
+                    ),
                   ),
                 ),
               ),
             ),
           );
-        }).toList(),
+        }).toList(growable: false),
       ),
     );
   }

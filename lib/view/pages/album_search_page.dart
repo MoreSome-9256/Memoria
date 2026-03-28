@@ -1,19 +1,17 @@
 import 'package:flutter/material.dart';
 
-import '../../models/ai_theme.dart';
 import '../../models/entity/photo_entity.dart';
-import '../../models/event.dart';
-import '../../models/vo/photo.dart';
 import '../../models/vo/semantic_search_models.dart';
 import '../../service/album_tag_browser_service.dart';
 import '../../service/semantic_photo_search_service.dart';
-import '../../utils/ocr_policy.dart';
-import '../../utils/tag_sanitizer.dart';
+import '../../service/story_queue_service.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/path_image.dart';
-import 'config_page.dart';
+import 'story_queue_page.dart';
 
 enum _SearchSortMode { score, time }
+
+enum _SelectionMenuAction { selectAll, clear, cancel }
 
 class AlbumSearchPage extends StatefulWidget {
   const AlbumSearchPage({super.key, required this.initialQuery});
@@ -239,23 +237,9 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     );
   }
 
-  Widget? _buildStoryFab(
-    SemanticSearchResult result,
-    List<PhotoEntity> visiblePhotos,
-  ) {
+  Widget? _buildStoryFab(SemanticSearchResult result) {
     if (_allPhotos(result).isEmpty) {
       return null;
-    }
-    if (_selectionMode) {
-      return FloatingActionButton.extended(
-        onPressed: _generateStoryFromSelection,
-        icon: const Icon(Icons.auto_stories_rounded),
-        label: Text(
-          _selectedPhotoIds.isEmpty
-              ? '继续生成'
-              : '继续生成 ${_selectedPhotoIds.length}',
-        ),
-      );
     }
     return FloatingActionButton.extended(
       onPressed: () {
@@ -269,52 +253,118 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     );
   }
 
-  Widget _buildSelectionBar(List<PhotoEntity> visiblePhotos) {
-    return SafeArea(
-      top: false,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          border: Border(
-            top: BorderSide(color: Theme.of(context).dividerColor),
-          ),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                _selectedPhotoIds.isEmpty
-                    ? '已进入选图模式，点击图片即可加入故事生成。'
-                    : '已选择 ${_selectedPhotoIds.length} 张照片',
-                style: const TextStyle(fontWeight: FontWeight.w700),
+  Widget? _buildFloatingStoryActions(SemanticSearchResult result) {
+    final visiblePhotos = _visiblePhotos(result);
+    final storyFab = _selectionMode
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildSelectionMenuButton(
+                onSelected: (action) {
+                  switch (action) {
+                    case _SelectionMenuAction.selectAll:
+                      _selectAllVisible(visiblePhotos);
+                      break;
+                    case _SelectionMenuAction.clear:
+                      setState(() {
+                        _selectedPhotoIds.clear();
+                      });
+                      break;
+                    case _SelectionMenuAction.cancel:
+                      setState(() {
+                        _selectionMode = false;
+                        _selectedPhotoIds.clear();
+                      });
+                      break;
+                  }
+                },
+                enableSelectAll: visiblePhotos.isNotEmpty,
               ),
-            ),
-            TextButton(
-              onPressed: visiblePhotos.isEmpty ? null : () => _selectAllVisible(visiblePhotos),
-              child: const Text('全选'),
-            ),
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  _selectedPhotoIds.clear();
-                });
-              },
-              child: const Text('清空'),
-            ),
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  _selectionMode = false;
-                  _selectedPhotoIds.clear();
-                });
-              },
-              child: const Text('取消'),
-            ),
+              const SizedBox(width: 10),
+              FloatingActionButton.extended(
+                heroTag: 'semantic-search-add-queue',
+                onPressed: _addSelectionToQueue,
+                icon: const Icon(Icons.playlist_add_rounded),
+                label: Text(
+                  _selectedPhotoIds.isEmpty
+                      ? '加入故事队列'
+                      : '加入故事队列 ${_selectedPhotoIds.length}',
+                ),
+              ),
+            ],
+          )
+        : _buildStoryFab(result);
+    if (storyFab == null) {
+      return null;
+    }
+    return ValueListenableBuilder<List<StoryQueueItem>>(
+      valueListenable: StoryQueueService().queueListenable,
+      builder: (context, items, _) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (items.isNotEmpty) ...[
+              FloatingActionButton.extended(
+                heroTag: 'semantic-search-queue',
+                onPressed: _openStoryQueuePage,
+                icon: const Icon(Icons.photo_library_outlined),
+                label: Text('队列 ${items.length}'),
+              ),
+              const SizedBox(height: 10),
+            ],
+            storyFab,
           ],
+        );
+      },
+    );
+  }
+
+  void _openStoryQueuePage() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const StoryQueuePage(),
+      ),
+    );
+  }
+
+  void _addSelectionToQueue() {
+    if (_selectedPhotoIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请至少选择一张照片加入故事队列')),
+      );
+      return;
+    }
+
+    final result = _result;
+    if (result == null) {
+      return;
+    }
+
+    final selectedEntities = _allPhotos(result)
+        .where((photo) => _selectedPhotoIds.contains(photo.id))
+        .toList(growable: false);
+    final addedCount = StoryQueueService().addPhotos(
+      selectedEntities
+          .map(StoryQueueService.mapPhotoEntityToQueuePhoto)
+          .toList(growable: false),
+      semanticSearchQuery: _controller.text.trim(),
+    );
+
+    setState(() {
+      _selectionMode = false;
+      _selectedPhotoIds.clear();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          addedCount > 0 ? '已加入故事队列 $addedCount 张' : '这些照片已经在故事队列里了',
         ),
       ),
     );
+    _openStoryQueuePage();
   }
 
   SliverPadding _buildGridSliver(List<PhotoEntity> photos) {
@@ -498,16 +548,6 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     return '${parts[0]}年${parts[1]}月';
   }
 
-  String _primaryLocationLabel(PhotoEntity photo) {
-    return (photo.locationName ??
-            photo.district ??
-            photo.city ??
-            photo.province ??
-            '')
-        .trim()
-        .ifEmpty('未知地点');
-  }
-
   void _toggleSelection(int photoId) {
     setState(() {
       if (_selectedPhotoIds.contains(photoId)) {
@@ -522,113 +562,6 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     setState(() {
       _selectedPhotoIds.addAll(visiblePhotos.map((photo) => photo.id));
     });
-  }
-
-  void _generateStoryFromSelection() {
-    if (_selectedPhotoIds.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请至少选择一张照片再生成故事')),
-      );
-      return;
-    }
-
-    final result = _result;
-    if (result == null) {
-      return;
-    }
-
-    final selectedEntities = _allPhotos(result)
-        .where((photo) => _selectedPhotoIds.contains(photo.id))
-        .toList(growable: false)
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-
-    if (selectedEntities.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('当前没有可用于生成故事的照片')),
-      );
-      return;
-    }
-
-    final mappedPhotos = selectedEntities.map(_mapPhotoEntityToPhoto).toList();
-    final startDate =
-        DateTime.fromMillisecondsSinceEpoch(selectedEntities.first.timestamp);
-    final endDate =
-        DateTime.fromMillisecondsSinceEpoch(selectedEntities.last.timestamp);
-    final queryTitle = _controller.text.trim().isEmpty ? '我的回忆' : _controller.text.trim();
-    final virtualTheme = AITheme(
-      id: 'semantic_search_theme',
-      emoji: '\u2728',
-      title: queryTitle,
-      subtitle: 'Semantic search picks',
-    );
-    final virtualEvent = Event(
-      id: '-1',
-      title: queryTitle,
-      season: _seasonOf(startDate),
-      year: startDate.year,
-      location: _resolveEventLocation(selectedEntities),
-      startDate: startDate,
-      endDate: endDate,
-      photos: mappedPhotos,
-      aiThemes: <AITheme>[virtualTheme],
-    );
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ConfigPage(
-          event: virtualEvent,
-          selectedPhotos: virtualEvent.photos,
-          selectedTheme: virtualTheme,
-          semanticSearchQuery: _controller.text.trim(),
-        ),
-      ),
-    );
-  }
-
-  Photo _mapPhotoEntityToPhoto(PhotoEntity photo) {
-    return Photo(
-      id: photo.assetId,
-      location: _primaryLocationLabel(photo),
-      path: photo.path,
-      dateTaken: DateTime.fromMillisecondsSinceEpoch(photo.timestamp),
-      tags: TagSanitizer.sanitizeVisualTags(photo.aiTags ?? const <String>[]),
-      caption: photo.aiCaption?.trim(),
-      ocrSummary: OcrPolicy.effectiveSummary(
-        tags: photo.ocrTags ?? const <String>[],
-        text: photo.ocrText,
-      ),
-      ocrTags: OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]),
-      isSelected: true,
-    );
-  }
-
-  String _resolveEventLocation(List<PhotoEntity> photos) {
-    final counts = <String, int>{};
-    for (final photo in photos) {
-      final label = _primaryLocationLabel(photo);
-      counts[label] = (counts[label] ?? 0) + 1;
-    }
-    if (counts.isEmpty) {
-      return '多地回忆';
-    }
-    final sorted = counts.entries.toList(growable: false)
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return sorted.length == 1 ? sorted.first.key : '多地回忆 · ${sorted.first.key}';
-  }
-
-  String _seasonOf(DateTime date) {
-    final month = date.month;
-    if (month >= 3 && month <= 5) {
-      return 'Spring';
-    }
-    if (month >= 6 && month <= 8) {
-      return 'Summer';
-    }
-    if (month >= 9 && month <= 11) {
-      return 'Autumn';
-    }
-    return 'Winter';
   }
 
   Widget _buildIdleState() {
@@ -695,9 +628,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
       floatingActionButton:
-          result == null ? null : _buildStoryFab(result, visiblePhotos),
-      bottomNavigationBar:
-          _selectionMode ? _buildSelectionBar(visiblePhotos) : null,
+          result == null ? null : _buildFloatingStoryActions(result),
       body: DecoratedBox(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -771,6 +702,42 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
       ),
     );
   }
+
+  Widget _buildSelectionMenuButton({
+    required ValueChanged<_SelectionMenuAction> onSelected,
+    required bool enableSelectAll,
+  }) {
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      elevation: 4,
+      shadowColor: Colors.black.withValues(alpha: 0.15),
+      shape: const CircleBorder(),
+      child: PopupMenuButton<_SelectionMenuAction>(
+        tooltip: '选图操作',
+        onSelected: onSelected,
+        itemBuilder: (context) => <PopupMenuEntry<_SelectionMenuAction>>[
+          PopupMenuItem<_SelectionMenuAction>(
+            value: _SelectionMenuAction.selectAll,
+            enabled: enableSelectAll,
+            child: const Text('全选'),
+          ),
+          const PopupMenuItem<_SelectionMenuAction>(
+            value: _SelectionMenuAction.clear,
+            child: Text('清空'),
+          ),
+          const PopupMenuItem<_SelectionMenuAction>(
+            value: _SelectionMenuAction.cancel,
+            child: Text('取消'),
+          ),
+        ],
+        child: const SizedBox(
+          width: 48,
+          height: 48,
+          child: Icon(Icons.more_horiz_rounded),
+        ),
+      ),
+    );
+  }
 }
 
 class _SearchPhotoTile extends StatelessWidget {
@@ -788,6 +755,7 @@ class _SearchPhotoTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final selectionBadgeColor = Theme.of(context).colorScheme.primary;
     return GestureDetector(
       onTap: onTap,
       child: ClipRRect(
@@ -800,22 +768,29 @@ class _SearchPhotoTile extends StatelessWidget {
               child: PathImage(path: photo.path, fit: BoxFit.cover),
             ),
             if (selectionMode)
+              if (!selected)
+                Container(color: Colors.black.withValues(alpha: 0.32)),
+            if (selectionMode)
               Positioned(
                 right: 8,
                 top: 8,
                 child: Container(
-                  width: 24,
-                  height: 24,
+                  width: 26,
+                  height: 26,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: selected
-                        ? Theme.of(context).colorScheme.primary
-                        : Colors.black.withValues(alpha: 0.32),
-                    border: Border.all(color: Colors.white, width: 1.8),
+                        ? selectionBadgeColor
+                        : Colors.white.withValues(alpha: 0.88),
+                    border: Border.all(
+                      color: Colors.black.withValues(alpha: 0.08),
+                    ),
                   ),
-                  child: selected
-                      ? const Icon(Icons.check, size: 15, color: Colors.white)
-                      : null,
+                  child: Icon(
+                    selected ? Icons.check_rounded : Icons.add_rounded,
+                    size: 16,
+                    color: selected ? Colors.white : selectionBadgeColor,
+                  ),
                 ),
               ),
           ],
@@ -830,8 +805,4 @@ class _PhotoMonthGroup {
 
   final String title;
   final List<PhotoEntity> photos;
-}
-
-extension on String {
-  String ifEmpty(String fallback) => trim().isEmpty ? fallback : this;
 }

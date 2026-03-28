@@ -110,6 +110,7 @@ class StoryGenerationRequest {
     required this.isHorizontal,
     required this.targetPlatform,
     this.semanticSearchQuery,
+    this.preserveSelectionOrder = false,
   });
 
   final Event event;
@@ -121,6 +122,7 @@ class StoryGenerationRequest {
   final bool isHorizontal;
   final String targetPlatform;
   final String? semanticSearchQuery;
+  final bool preserveSelectionOrder;
 }
 
 class StoryGenerationOutput {

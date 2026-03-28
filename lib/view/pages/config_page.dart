@@ -32,6 +32,7 @@ class ConfigPage extends StatefulWidget {
   final List<Photo> selectedPhotos;
   final AITheme selectedTheme;
   final String? semanticSearchQuery;
+  final bool preservePhotoOrder;
 
   const ConfigPage({
     super.key,
@@ -39,6 +40,7 @@ class ConfigPage extends StatefulWidget {
     required this.selectedPhotos,
     required this.selectedTheme,
     this.semanticSearchQuery,
+    this.preservePhotoOrder = false,
   });
 
   @override
@@ -139,6 +141,7 @@ class _ConfigPageState extends State<ConfigPage> {
             isHorizontal: _selectedAspectRatio == VideoAspectRatio.horizontal,
             targetPlatform: _currentPlatformName(),
             semanticSearchQuery: widget.semanticSearchQuery?.trim(),
+            preserveSelectionOrder: widget.preservePhotoOrder,
           ),
         ),
       ),

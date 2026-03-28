@@ -99,14 +99,18 @@ class StoryGenerationOrchestrator {
     try {
       activateStep(
         'sort',
-        detail: '正在整理所选图片并按时间排序',
+        detail: request.preserveSelectionOrder
+            ? '正在整理所选图片并保持队列顺序'
+            : '正在整理所选图片并按时间排序',
       );
       final selectedPhotos = await _loadSelectedPhotoEntities(request);
       if (selectedPhotos.isEmpty) {
         throw StateError('当前没有可用于生成故事的照片');
       }
-      final sortedPhotos = List<PhotoEntity>.from(selectedPhotos)
-        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      final sortedPhotos = request.preserveSelectionOrder
+          ? List<PhotoEntity>.from(selectedPhotos)
+          : (List<PhotoEntity>.from(selectedPhotos)
+            ..sort((a, b) => a.timestamp.compareTo(b.timestamp)));
       completeStep(
         'sort',
         detail: '已整理 ${sortedPhotos.length} 张图片',
@@ -475,6 +479,16 @@ class StoryGenerationOrchestrator {
       }
     }
 
+    if (request.preserveSelectionOrder) {
+      final byAssetId = <String, PhotoEntity>{
+        for (final photo in photos) photo.assetId: photo,
+      };
+      return request.selectedPhotos
+          .map((photo) => byAssetId[photo.id])
+          .whereType<PhotoEntity>()
+          .toList(growable: false);
+    }
+
     photos.sort((a, b) => a.timestamp.compareTo(b.timestamp));
     return photos;
   }
@@ -760,13 +774,14 @@ class StoryGenerationOrchestrator {
     required List<Map<String, dynamic>> photoPayload,
   }) {
     final semanticSearchQuery = request.semanticSearchQuery?.trim();
+    final orderingHint = request.preserveSelectionOrder ? '按用户故事队列顺序' : '按时间排序后';
     final semanticHint = semanticSearchQuery == null || semanticSearchQuery.isEmpty
         ? ''
         : '\n用户这次是通过语义搜索选图进入的，原始搜索内容是：$semanticSearchQuery。'
             '\n请把这句话当作用户想表达的主题线索和关注重点，但不要生硬地让每张图片都强行贴合搜索词。';
 
     return '''
-请基于下面这组按时间排序后的图片素材，生成一份适合相册故事页展示的结构化 JSON。
+请基于下面这组$orderingHint的图片素材，生成一份适合相册故事页展示的结构化 JSON。
 
 要求：
 1. 只输出一个 JSON 对象，不要输出解释。

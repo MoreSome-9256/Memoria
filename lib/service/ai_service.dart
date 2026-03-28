@@ -53,6 +53,7 @@ class AIService {
   static const String _runtimeTotalKey = 'ai_runtime_total';
   static const String _runtimeCompletedKey = 'ai_runtime_completed';
   static const String _runtimeFailedKey = 'ai_runtime_failed';
+  static const String _manualStopPendingKey = 'ai_manual_stop_pending';
 
   final ValueNotifier<AIAnalysisProgress> _progressNotifier =
       ValueNotifier<AIAnalysisProgress>(AIAnalysisProgress.idle());
@@ -184,6 +185,7 @@ class AIService {
   }
 
   void resumeAnalysis() {
+    unawaited(_setManualStopPending(false));
     if (_isAnalyzing && !_pauseRequested) {
       debugPrint('▶️ 忽略继续请求：当前任务未暂停');
       return;
@@ -218,12 +220,20 @@ class AIService {
   }
 
   void stopAnalysis() {
+    final current = _progressNotifier.value;
     if (!_isAnalyzing) {
+      if (current.isPaused && current.total > 0) {
+        _pauseRequested = false;
+        _stopRequested = false;
+        _progressNotifier.value = AIAnalysisProgress.idle();
+        unawaited(_persistRuntimeState(isActive: false));
+        unawaited(_setManualStopPending(true));
+      }
       return;
     }
     _stopRequested = true;
     _pauseRequested = false;
-    final current = _progressNotifier.value;
+    unawaited(_setManualStopPending(true));
     if (current.isVisible) {
       _progressNotifier.value = current.copyWith(
         isRunning: false,
@@ -275,6 +285,12 @@ class AIService {
     final runtimeSnapshot = await _readRuntimeSnapshot();
     final runtimeActive = runtimeSnapshot.isActive;
     final restoredCompleted = runtimeSnapshot.completed.clamp(0, pending);
+    final manuallyStopped = await _readManualStopPending();
+
+    if (manuallyStopped) {
+      _progressNotifier.value = AIAnalysisProgress.idle();
+      return;
+    }
 
     // 用户关闭自动恢复时，启动后只展示可手动恢复的暂停态，不自动续跑。
     if (!_autoResumeEnabled) {
@@ -323,6 +339,7 @@ class AIService {
     int batchSize = 10,
     int? maxPhotos,
   }) async {
+    await _setManualStopPending(false);
     if (_isAnalyzing) {
       debugPrint('⏭️ AI 打标任务已在运行，跳过重复启动');
       return;
@@ -754,7 +771,7 @@ class AIService {
           .filter()
           .isAiAnalyzedEqualTo(false)
           .count();
-      if (remainingPending > 0) {
+      if (remainingPending > 0 && !_stopRequested) {
         _progressNotifier.value = AIAnalysisProgress.paused(
           total: remainingPending,
           completed: 0,
@@ -778,6 +795,16 @@ class AIService {
       }
       _analysisCompleter = null;
     }
+  }
+
+  Future<void> _setManualStopPending(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_manualStopPendingKey, value);
+  }
+
+  Future<bool> _readManualStopPending() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_manualStopPendingKey) ?? false;
   }
 
   Future<void> _persistRuntimeState({

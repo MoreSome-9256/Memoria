@@ -8,11 +8,13 @@ class MobileClipBenchmarkPage extends StatefulWidget {
   const MobileClipBenchmarkPage({super.key});
 
   @override
-  State<MobileClipBenchmarkPage> createState() => _MobileClipBenchmarkPageState();
+  State<MobileClipBenchmarkPage> createState() =>
+      _MobileClipBenchmarkPageState();
 }
 
 class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
-  final MobileClipBenchmarkService _benchmarkService = MobileClipBenchmarkService();
+  final MobileClipBenchmarkService _benchmarkService =
+      MobileClipBenchmarkService();
   int _sampleCount = 24;
   bool _isRunning = false;
   MobileClipBenchmarkReport? _report;
@@ -25,7 +27,9 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
     });
 
     try {
-      final report = await _benchmarkService.runBenchmark(sampleCount: _sampleCount);
+      final report = await _benchmarkService.runBenchmark(
+        sampleCount: _sampleCount,
+      );
       if (!mounted) {
         return;
       }
@@ -50,13 +54,23 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
 
   @override
   Widget build(BuildContext context) {
+    final report = _report;
+    final summariesById = report == null
+        ? const <String, MobileClipAdapterSummary>{}
+        : <String, MobileClipAdapterSummary>{
+            for (final summary in report.adapterSummaries)
+              summary.adapterId: summary,
+          };
+    final cpuSummary = summariesById['onnx_cpu'];
+    final npuSummary = summariesById['onnx_nnapi_hardware'];
+
     return Scaffold(
       appBar: AppBar(title: const Text('MobileCLIP Benchmark')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            '在同一批照片上对比手机端 ONNX 与作者提供的 NCNN 导出模型。ONNX 走 Flutter 预处理，NCNN 走 native resize/normalize。',
+            '在同一批照片上对比同一个 MobileCLIP2 ONNX 模型在手机端 CPU 与 NNAPI hardware 上的速度。当前默认会展示 ONNX CPU 与 ONNX NNAPI hardware 两条链路，且共享同一份 Flutter 预处理输入。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -109,24 +123,36 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
               ),
             ),
           ],
-          if (_report != null) ...[
+          if (report != null) ...[
             const SizedBox(height: 16),
-            _ReportOverviewCard(report: _report!),
+            _ReportOverviewCard(report: report),
             const SizedBox(height: 16),
-            ..._report!.warnings.map((warning) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _WarningCard(message: warning),
-                )),
-            ..._report!.adapterSummaries.map(
+            if (cpuSummary != null && npuSummary != null) ...[
+              _SpeedupCard(cpuSummary: cpuSummary, npuSummary: npuSummary),
+              const SizedBox(height: 16),
+            ],
+            ...report.warnings.map(
+              (warning) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _WarningCard(message: warning),
+              ),
+            ),
+            ...report.adapterSummaries.map(
               (summary) => Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: _AdapterSummaryCard(summary: summary),
               ),
             ),
-            ..._report!.comparisons.map(
+            ...report.comparisons.map(
               (comparison) => Padding(
                 padding: const EdgeInsets.only(bottom: 12),
-                child: _ComparisonCard(comparison: comparison),
+                child: _ComparisonCard(
+                  comparison: comparison,
+                  displayNamesById: <String, String>{
+                    for (final summary in report.adapterSummaries)
+                      summary.adapterId: summary.displayName,
+                  },
+                ),
               ),
             ),
           ],
@@ -198,7 +224,10 @@ class _AdapterSummaryCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(summary.displayName, style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              summary.displayName,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             Text('样本数: ${summary.sampleCount}'),
             Text('Warm-up: ${summary.warmUpMs.toStringAsFixed(1)} ms'),
@@ -206,9 +235,13 @@ class _AdapterSummaryCard extends StatelessWidget {
             Text('平均推理: ${summary.meanInferenceMs.toStringAsFixed(1)} ms'),
             Text('平均标签检索: ${summary.meanTagRetrievalMs.toStringAsFixed(1)} ms'),
             Text('平均总耗时: ${summary.meanTotalMs.toStringAsFixed(1)} ms'),
-            Text('P50 / P90 总耗时: ${summary.p50TotalMs.toStringAsFixed(1)} / ${summary.p90TotalMs.toStringAsFixed(1)} ms'),
+            Text(
+              'P50 / P90 总耗时: ${summary.p50TotalMs.toStringAsFixed(1)} / ${summary.p90TotalMs.toStringAsFixed(1)} ms',
+            ),
             Text('最大总耗时: ${summary.maxTotalMs.toStringAsFixed(1)} ms'),
-            Text('平均 RSS 增量: ${(summary.meanRssDeltaBytes / 1024 / 1024).toStringAsFixed(2)} MB'),
+            Text(
+              '平均 RSS 增量: ${(summary.meanRssDeltaBytes / 1024 / 1024).toStringAsFixed(2)} MB',
+            ),
           ],
         ),
       ),
@@ -216,10 +249,70 @@ class _AdapterSummaryCard extends StatelessWidget {
   }
 }
 
+class _SpeedupCard extends StatelessWidget {
+  const _SpeedupCard({required this.cpuSummary, required this.npuSummary});
+
+  final MobileClipAdapterSummary cpuSummary;
+  final MobileClipAdapterSummary npuSummary;
+
+  @override
+  Widget build(BuildContext context) {
+    final inferenceSpeedup = _speedup(
+      baselineMs: cpuSummary.meanInferenceMs,
+      candidateMs: npuSummary.meanInferenceMs,
+    );
+    final totalSpeedup = _speedup(
+      baselineMs: cpuSummary.meanTotalMs,
+      candidateMs: npuSummary.meanTotalMs,
+    );
+
+    return Card(
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'CPU vs NNAPI hardware 速度对比',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '平均推理: CPU ${cpuSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
+              'NNAPI hardware ${npuSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
+              '加速比 $inferenceSpeedup',
+            ),
+            Text(
+              '平均总耗时: CPU ${cpuSummary.meanTotalMs.toStringAsFixed(1)} ms, '
+              'NNAPI hardware ${npuSummary.meanTotalMs.toStringAsFixed(1)} ms, '
+              '加速比 $totalSpeedup',
+            ),
+            Text(
+              '共享预处理后，这里的差异主要反映 ONNX Runtime 在 CPU 与 NNAPI hardware 上的执行差异。',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _speedup({required double baselineMs, required double candidateMs}) {
+    if (baselineMs <= 0 || candidateMs <= 0) {
+      return '-';
+    }
+    return '${(baselineMs / candidateMs).toStringAsFixed(2)}x';
+  }
+}
+
 class _ComparisonCard extends StatelessWidget {
-  const _ComparisonCard({required this.comparison});
+  const _ComparisonCard({
+    required this.comparison,
+    required this.displayNamesById,
+  });
 
   final MobileClipEmbeddingComparisonSummary comparison;
+  final Map<String, String> displayNamesById;
 
   @override
   Widget build(BuildContext context) {
@@ -230,16 +323,23 @@ class _ComparisonCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${comparison.leftAdapterId} vs ${comparison.rightAdapterId}',
+              '${displayNamesById[comparison.leftAdapterId] ?? comparison.leftAdapterId} vs '
+              '${displayNamesById[comparison.rightAdapterId] ?? comparison.rightAdapterId}',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
             Text('样本对数: ${comparison.sampleCount}'),
             Text('平均余弦相似度: ${comparison.meanCosine.toStringAsFixed(6)}'),
-            Text('余弦范围: ${comparison.minCosine.toStringAsFixed(6)} - ${comparison.maxCosine.toStringAsFixed(6)}'),
+            Text(
+              '余弦范围: ${comparison.minCosine.toStringAsFixed(6)} - ${comparison.maxCosine.toStringAsFixed(6)}',
+            ),
             Text('平均 L2 距离: ${comparison.meanL2Distance.toStringAsFixed(6)}'),
-            Text('Top-1 一致率: ${(comparison.top1AgreementRate * 100).toStringAsFixed(1)}%'),
-            Text('Top-5 重叠率: ${(comparison.top5OverlapRate * 100).toStringAsFixed(1)}%'),
+            Text(
+              'Top-1 一致率: ${(comparison.top1AgreementRate * 100).toStringAsFixed(1)}%',
+            ),
+            Text(
+              'Top-5 重叠率: ${(comparison.top5OverlapRate * 100).toStringAsFixed(1)}%',
+            ),
             if (comparison.worstCases.isNotEmpty) ...[
               const SizedBox(height: 12),
               Text('最低余弦样本', style: Theme.of(context).textTheme.titleSmall),
@@ -266,7 +366,9 @@ class _WorstCaseRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pathSegments = worstCase.sample.path.split(RegExp(r'[\\/]'));
-    final fileName = pathSegments.isEmpty ? worstCase.sample.path : pathSegments.last;
+    final fileName = pathSegments.isEmpty
+        ? worstCase.sample.path
+        : pathSegments.last;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -282,7 +384,10 @@ class _WorstCaseRow extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
               child: AspectRatio(
                 aspectRatio: 4 / 3,
-                child: PathImage(path: worstCase.sample.path, fit: BoxFit.cover),
+                child: PathImage(
+                  path: worstCase.sample.path,
+                  fit: BoxFit.cover,
+                ),
               ),
             ),
             const SizedBox(height: 10),
@@ -292,8 +397,8 @@ class _WorstCaseRow extends StatelessWidget {
             SelectableText(worstCase.sample.path),
             Text('cosine: ${worstCase.cosine.toStringAsFixed(6)}'),
             Text('l2: ${worstCase.l2Distance.toStringAsFixed(6)}'),
-            Text('onnx tags: ${worstCase.leftTags.join(', ')}'),
-            Text('ncnn tags: ${worstCase.rightTags.join(', ')}'),
+            Text('left tags: ${worstCase.leftTags.join(', ')}'),
+            Text('right tags: ${worstCase.rightTags.join(', ')}'),
           ],
         ),
       ),

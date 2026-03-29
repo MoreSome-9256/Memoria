@@ -6,13 +6,22 @@ import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:onnxruntime/onnxruntime.dart';
 
+import 'onnx_session_provider_service.dart';
+
 class MobileClipVisionService {
-  MobileClipVisionService._internal();
+  MobileClipVisionService._internal({
+    OnnxSessionProviderPreference providerPreference =
+        OnnxSessionProviderPreference.auto,
+  }) : _providerPreference = providerPreference;
 
   static final MobileClipVisionService _instance =
       MobileClipVisionService._internal();
 
   factory MobileClipVisionService() => _instance;
+  factory MobileClipVisionService.withProviderPreference(
+    OnnxSessionProviderPreference providerPreference,
+  ) =>
+      MobileClipVisionService._internal(providerPreference: providerPreference);
 
   static const String _defaultModelAssetPath =
       'assets/mobileclip2/s2/vision_model.onnx';
@@ -30,11 +39,14 @@ class MobileClipVisionService {
   );
 
   late final int _inputImageSize = _resolveInputImageSize();
+  final OnnxSessionProviderPreference _providerPreference;
 
   OrtSession? _session;
   String? _inputName;
   List<String>? _outputNames;
   _PreprocessSpec _preprocessSpec = const _PreprocessSpec.mobileclip2();
+  OnnxExecutionProvider? _executionProvider;
+  List<String> _providerFallbacks = const <String>[];
 
   Future<void> warmUp() async {
     await _loadSession();
@@ -105,12 +117,21 @@ class MobileClipVisionService {
   }
 
   int get inputImageSize => _inputImageSize;
+  String get executionProviderLabel =>
+      _executionProvider?.label ?? 'Pending session init';
+  String get executionProviderDescription =>
+      _executionProvider?.description ??
+      'ONNX Runtime provider has not been initialized yet.';
+  List<String> get providerFallbacks =>
+      List<String>.unmodifiable(_providerFallbacks);
 
   Future<void> dispose() async {
     _session?.release();
     _session = null;
     _inputName = null;
     _outputNames = null;
+    _executionProvider = null;
+    _providerFallbacks = const <String>[];
   }
 
   Future<OrtSession> _loadSession() async {
@@ -122,18 +143,15 @@ class MobileClipVisionService {
     final modelLoadResult = await _loadModelBytes();
     final modelBytes = modelLoadResult.bytes;
     _preprocessSpec = const _PreprocessSpec.mobileclip2();
-    final sessionOptions = OrtSessionOptions();
-    sessionOptions.setIntraOpNumThreads(2);
-    sessionOptions.setInterOpNumThreads(1);
-    sessionOptions.setSessionGraphOptimizationLevel(
-      GraphOptimizationLevel.ortEnableAll,
+    final loadResult = await OnnxSessionProviderService.createSession(
+      modelBytes: modelBytes,
+      intraOpNumThreads: 2,
+      interOpNumThreads: 1,
+      preference: _providerPreference,
     );
-
-    try {
-      _session = OrtSession.fromBuffer(modelBytes, sessionOptions);
-    } finally {
-      sessionOptions.release();
-    }
+    _session = loadResult.session;
+    _executionProvider = loadResult.executionProvider;
+    _providerFallbacks = loadResult.fallbacks;
 
     if (_session!.inputNames.isEmpty) {
       throw StateError('MobileCLIP ONNX 未找到输入张量');
@@ -145,8 +163,13 @@ class MobileClipVisionService {
     _inputName = _session!.inputNames.first;
     _outputNames = List<String>.from(_session!.outputNames, growable: false);
     debugPrint(
-      '🧠 MobileCLIP ONNX 就绪 source=${modelLoadResult.source} input=$_inputName outputs=$_outputNames size=$_inputImageSize mean=${_preprocessSpec.mean} std=${_preprocessSpec.std}',
+      '🧠 MobileCLIP ONNX 就绪 source=${modelLoadResult.source} input=$_inputName outputs=$_outputNames size=$_inputImageSize mean=${_preprocessSpec.mean} std=${_preprocessSpec.std} provider=$executionProviderLabel',
     );
+    if (_providerFallbacks.isNotEmpty) {
+      debugPrint(
+        '⚠️ MobileCLIP ONNX provider fallback chain: ${_providerFallbacks.join(' -> ')}',
+      );
+    }
     return _session!;
   }
 
@@ -170,8 +193,9 @@ class MobileClipVisionService {
       return _ModelLoadResult(bytes: bytes, source: assetPath);
     }
 
-    final bytes =
-        (await rootBundle.load(_defaultModelAssetPath)).buffer.asUint8List();
+    final bytes = (await rootBundle.load(
+      _defaultModelAssetPath,
+    )).buffer.asUint8List();
     return _ModelLoadResult(bytes: bytes, source: _defaultModelAssetPath);
   }
 
@@ -242,7 +266,9 @@ class _MobileClipPreprocessRequest {
   final List<double> std;
 }
 
-Float32List _preprocessImageForMobileClip(_MobileClipPreprocessRequest request) {
+Float32List _preprocessImageForMobileClip(
+  _MobileClipPreprocessRequest request,
+) {
   final decoded = img.decodeImage(request.imageBytes);
   if (decoded == null) {
     throw ArgumentError('无法解码图片数据');

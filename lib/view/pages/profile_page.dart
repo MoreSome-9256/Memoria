@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/ai_service.dart';
-import 'package:photo_album/service/ai_progress_notification_service.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 
 import 'local_vlm_test_page.dart';
@@ -21,7 +20,7 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   final _auth = const CognitoAuthService();
   final _backendPreferenceService = MobileClipBackendPreferenceService();
-  
+
   late bool _autoResumeEnabled;
 
   Future<AuthUser?> _loadUser() async {
@@ -86,9 +85,11 @@ class _ProfilePageState extends State<ProfilePage> {
                             ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 12),
-                      const Text('AI 模型如何表现的相关配置。改动会应用到后续 AI 扫描任务，模型在首次调用时按需加载。'),
+                      const Text(
+                        'AI 模型如何表现的相关配置。改动会应用到后续 AI 扫描任务，模型在首次调用时按需加载。',
+                      ),
                       const SizedBox(height: 20),
-                      
+
                       // 模型类型
                       Text(
                         '模型类型',
@@ -121,7 +122,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         style: TextStyle(color: Colors.grey[700], fontSize: 12),
                       ),
                       const SizedBox(height: 20),
-                      
+
                       // 自动恢复开关
                       Divider(color: Colors.grey[300]),
                       const SizedBox(height: 12),
@@ -151,7 +152,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         ),
                       ),
                       const SizedBox(height: 24),
-                      
+
                       Row(
                         children: [
                           TextButton(
@@ -161,10 +162,11 @@ class _ProfilePageState extends State<ProfilePage> {
                           const Spacer(),
                           FilledButton(
                             onPressed: () async {
-                              await _backendPreferenceService.setSelectedBackend(
-                                selected,
+                              await _backendPreferenceService
+                                  .setSelectedBackend(selected);
+                              await AIService().setAutoResume(
+                                _autoResumeEnabled,
                               );
-                              await AIService().setAutoResume(_autoResumeEnabled);
                               if (!context.mounted) {
                                 return;
                               }
@@ -374,7 +376,9 @@ class _ProfilePageState extends State<ProfilePage> {
                             ListTile(
                               leading: const Icon(Icons.analytics_outlined),
                               title: const Text('MobileCLIP Benchmark'),
-                              subtitle: const Text('对比 ONNX 基线与未来 ncnn 接入'),
+                              subtitle: const Text(
+                                '对比 ONNX 在 CPU 与 NNAPI hardware 上的速度',
+                              ),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () {
                                 Navigator.of(context).push(
@@ -419,8 +423,7 @@ class _ProfilePageState extends State<ProfilePage> {
                             ),
                           ],
                         ),
-                      )
-                      
+                      ),
                     ),
                   );
                 },

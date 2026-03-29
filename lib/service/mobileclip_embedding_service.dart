@@ -71,16 +71,21 @@ class MobileClipEmbeddingService {
     );
     if (existing != null && existing.length == expectedEmbeddingDim) {
       photo.imageEmbedding = existing;
-      return const MobileClipEmbeddingResolution(reusedCache: true);
+      return MobileClipEmbeddingResolution(
+        reusedCache: true,
+        profile: MobileClipEmbeddingProfile(
+          backendLabel: effectiveBackend.label,
+          providerLabel: 'ObjectBox cache',
+        ),
+      );
     }
 
-    final embedding =
-        preferredImageBytes != null && preferredImageBytes.isNotEmpty
-        ? await embedImageBytesWithBackend(
-            preferredImageBytes,
-            effectiveBackend,
-          )
-        : await embedImageFileWithBackend(File(photo.path), effectiveBackend);
+    final profile = await _profileEmbedding(
+      preferredImageBytes: preferredImageBytes,
+      imageFile: File(photo.path),
+      backend: effectiveBackend,
+    );
+    final embedding = profile.embedding;
 
     if (embedding.length != expectedEmbeddingDim) {
       throw StateError(
@@ -89,12 +94,19 @@ class MobileClipEmbeddingService {
     }
 
     photo.imageEmbedding = embedding;
+    final vectorWriteWatch = Stopwatch()..start();
     _photoEmbeddingIndexRepository.upsertEmbedding(
       photoId: photo.id,
       vector: embedding,
       modelVersion: activeModelVersion,
     );
-    return const MobileClipEmbeddingResolution(reusedCache: false);
+    vectorWriteWatch.stop();
+    return MobileClipEmbeddingResolution(
+      reusedCache: false,
+      profile: profile.copyWith(
+        vectorIndexWriteMs: vectorWriteWatch.elapsedMicroseconds / 1000.0,
+      ),
+    );
   }
 
   Future<void> beginWorkflowSession() async {
@@ -234,10 +246,96 @@ class MobileClipEmbeddingService {
         return _ncnnService.encodeImageBytes(imageBytes);
     }
   }
+
+  Future<MobileClipEmbeddingProfile> _profileEmbedding({
+    required Uint8List? preferredImageBytes,
+    required File imageFile,
+    required MobileClipBackend backend,
+  }) async {
+    final imageBytes =
+        preferredImageBytes != null && preferredImageBytes.isNotEmpty
+        ? preferredImageBytes
+        : await imageFile.readAsBytes();
+
+    switch (backend) {
+      case MobileClipBackend.mobileclip2Onnx:
+        final profile = await _mobileclip2OnnxService.profileImageBytes(
+          imageBytes,
+        );
+        return MobileClipEmbeddingProfile(
+          embedding: profile.embedding,
+          backendLabel: backend.label,
+          providerLabel: _mobileclip2OnnxService.executionProviderLabel,
+          decodeMs: profile.decodeMs,
+          resizeNormalizeMs: profile.resizeNormalizeMs,
+          tensorBuildMs: profile.tensorBuildMs,
+          inferenceMs: profile.inferenceMs,
+        );
+      case MobileClipBackend.ncnn:
+        final profile = await _ncnnService.profileEncodeImageBytes(imageBytes);
+        return MobileClipEmbeddingProfile(
+          embedding: profile.embedding,
+          backendLabel: backend.label,
+          providerLabel: 'NCNN native',
+          decodeMs: profile.preprocessMs,
+          inferenceMs: profile.inferenceMs,
+        );
+    }
+  }
 }
 
 class MobileClipEmbeddingResolution {
-  const MobileClipEmbeddingResolution({required this.reusedCache});
+  const MobileClipEmbeddingResolution({
+    required this.reusedCache,
+    this.profile,
+  });
 
   final bool reusedCache;
+  final MobileClipEmbeddingProfile? profile;
+}
+
+class MobileClipEmbeddingProfile {
+  const MobileClipEmbeddingProfile({
+    this.embedding = const <double>[],
+    required this.backendLabel,
+    required this.providerLabel,
+    this.decodeMs = 0,
+    this.resizeNormalizeMs = 0,
+    this.tensorBuildMs = 0,
+    this.inferenceMs = 0,
+    this.vectorIndexWriteMs = 0,
+  });
+
+  final List<double> embedding;
+  final String backendLabel;
+  final String providerLabel;
+  final double decodeMs;
+  final double resizeNormalizeMs;
+  final double tensorBuildMs;
+  final double inferenceMs;
+  final double vectorIndexWriteMs;
+
+  double get preprocessMs => decodeMs + resizeNormalizeMs;
+
+  MobileClipEmbeddingProfile copyWith({
+    List<double>? embedding,
+    String? backendLabel,
+    String? providerLabel,
+    double? decodeMs,
+    double? resizeNormalizeMs,
+    double? tensorBuildMs,
+    double? inferenceMs,
+    double? vectorIndexWriteMs,
+  }) {
+    return MobileClipEmbeddingProfile(
+      embedding: embedding ?? this.embedding,
+      backendLabel: backendLabel ?? this.backendLabel,
+      providerLabel: providerLabel ?? this.providerLabel,
+      decodeMs: decodeMs ?? this.decodeMs,
+      resizeNormalizeMs: resizeNormalizeMs ?? this.resizeNormalizeMs,
+      tensorBuildMs: tensorBuildMs ?? this.tensorBuildMs,
+      inferenceMs: inferenceMs ?? this.inferenceMs,
+      vectorIndexWriteMs: vectorIndexWriteMs ?? this.vectorIndexWriteMs,
+    );
+  }
 }

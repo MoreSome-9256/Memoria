@@ -62,38 +62,76 @@ class MobileClipVisionService {
   }
 
   Future<List<double>> embedImageBytes(Uint8List imageBytes) async {
-    final input = await preprocessImageBytesForBenchmark(imageBytes);
-    return embedPreprocessedInput(input);
+    final profile = await profileImageBytes(imageBytes);
+    return profile.embedding;
   }
 
   Future<Float32List> preprocessImageBytesForBenchmark(
     Uint8List imageBytes,
   ) async {
-    return compute<_MobileClipPreprocessRequest, Float32List>(
-      _preprocessImageForMobileClip,
-      _MobileClipPreprocessRequest(
-        imageBytes: imageBytes,
-        inputImageSize: _inputImageSize,
-        mean: _preprocessSpec.mean,
-        std: _preprocessSpec.std,
-      ),
+    final profile = await profileImageBytesForBenchmark(imageBytes);
+    return profile.input;
+  }
+
+  Future<MobileClipVisionPreprocessProfile> profileImageBytesForBenchmark(
+    Uint8List imageBytes,
+  ) async {
+    final payload =
+        await compute<_MobileClipPreprocessRequest, Map<String, Object?>>(
+          _preprocessImageForMobileClip,
+          _MobileClipPreprocessRequest(
+            imageBytes: imageBytes,
+            inputImageSize: _inputImageSize,
+            mean: _preprocessSpec.mean,
+            std: _preprocessSpec.std,
+          ),
+        );
+    return MobileClipVisionPreprocessProfile(
+      input: payload['input']! as Float32List,
+      decodeMs: (payload['decodeMs']! as num).toDouble(),
+      resizeNormalizeMs: (payload['resizeNormalizeMs']! as num).toDouble(),
+    );
+  }
+
+  Future<MobileClipVisionEmbeddingProfile> profileImageBytes(
+    Uint8List imageBytes,
+  ) async {
+    final preprocessProfile = await profileImageBytesForBenchmark(imageBytes);
+    final runProfile = await profilePreprocessedInput(preprocessProfile.input);
+    return MobileClipVisionEmbeddingProfile(
+      embedding: runProfile.embedding,
+      decodeMs: preprocessProfile.decodeMs,
+      resizeNormalizeMs: preprocessProfile.resizeNormalizeMs,
+      tensorBuildMs: runProfile.tensorBuildMs,
+      inferenceMs: runProfile.inferenceMs,
     );
   }
 
   Future<List<double>> embedPreprocessedInput(Float32List input) async {
+    final profile = await profilePreprocessedInput(input);
+    return profile.embedding;
+  }
+
+  Future<MobileClipVisionRunProfile> profilePreprocessedInput(
+    Float32List input,
+  ) async {
     final session = await _loadSession();
+    final tensorWatch = Stopwatch()..start();
     final inputTensor = OrtValueTensor.createTensorWithDataList(input, <int>[
       1,
       3,
       _inputImageSize,
       _inputImageSize,
     ]);
+    tensorWatch.stop();
     final runOptions = OrtRunOptions();
 
     try {
+      final inferenceWatch = Stopwatch()..start();
       final outputs = session.run(runOptions, <String, OrtValue>{
         _inputName!: inputTensor,
       }, _outputNames);
+      inferenceWatch.stop();
       try {
         if (outputs.isEmpty || outputs.first == null) {
           throw StateError('MobileCLIP ONNX 输出为空');
@@ -104,7 +142,11 @@ class MobileClipVisionService {
           throw StateError('MobileCLIP ONNX 输出为空');
         }
 
-        return _l2Normalize(embedding);
+        return MobileClipVisionRunProfile(
+          embedding: _l2Normalize(embedding),
+          tensorBuildMs: tensorWatch.elapsedMicroseconds / 1000.0,
+          inferenceMs: inferenceWatch.elapsedMicroseconds / 1000.0,
+        );
       } finally {
         for (final output in outputs) {
           output?.release();
@@ -266,24 +308,33 @@ class _MobileClipPreprocessRequest {
   final List<double> std;
 }
 
-Float32List _preprocessImageForMobileClip(
+Map<String, Object?> _preprocessImageForMobileClip(
   _MobileClipPreprocessRequest request,
 ) {
+  final decodeWatch = Stopwatch()..start();
   final decoded = img.decodeImage(request.imageBytes);
+  decodeWatch.stop();
   if (decoded == null) {
     throw ArgumentError('无法解码图片数据');
   }
 
+  final resizeNormalizeWatch = Stopwatch()..start();
   final preprocessed = _preprocessMobileClipImage(
     decoded,
     request.inputImageSize,
   );
-  return _toMobileClipNchw(
+  final input = _toMobileClipNchw(
     preprocessed,
     request.inputImageSize,
     request.mean,
     request.std,
   );
+  resizeNormalizeWatch.stop();
+  return <String, Object?>{
+    'input': input,
+    'decodeMs': decodeWatch.elapsedMicroseconds / 1000.0,
+    'resizeNormalizeMs': resizeNormalizeWatch.elapsedMicroseconds / 1000.0,
+  };
 }
 
 img.Image _preprocessMobileClipImage(img.Image source, int inputImageSize) {
@@ -354,4 +405,48 @@ Float32List _toMobileClipNchw(
   }
 
   return buffer;
+}
+
+class MobileClipVisionPreprocessProfile {
+  const MobileClipVisionPreprocessProfile({
+    required this.input,
+    required this.decodeMs,
+    required this.resizeNormalizeMs,
+  });
+
+  final Float32List input;
+  final double decodeMs;
+  final double resizeNormalizeMs;
+
+  double get preprocessMs => decodeMs + resizeNormalizeMs;
+}
+
+class MobileClipVisionRunProfile {
+  const MobileClipVisionRunProfile({
+    required this.embedding,
+    required this.tensorBuildMs,
+    required this.inferenceMs,
+  });
+
+  final List<double> embedding;
+  final double tensorBuildMs;
+  final double inferenceMs;
+}
+
+class MobileClipVisionEmbeddingProfile {
+  const MobileClipVisionEmbeddingProfile({
+    required this.embedding,
+    required this.decodeMs,
+    required this.resizeNormalizeMs,
+    required this.tensorBuildMs,
+    required this.inferenceMs,
+  });
+
+  final List<double> embedding;
+  final double decodeMs;
+  final double resizeNormalizeMs;
+  final double tensorBuildMs;
+  final double inferenceMs;
+
+  double get preprocessMs => decodeMs + resizeNormalizeMs;
 }

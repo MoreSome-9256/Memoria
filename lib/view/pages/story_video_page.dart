@@ -24,6 +24,7 @@ import 'export_manager.dart';
 import 'offscreen_render_worker.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
+import '../widgets/path_image.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
 
 class StoryVideoPage extends StatefulWidget {
@@ -210,8 +211,19 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   int _currentBeatIndexForPreview = -1; // 记录当前演到第几拍了
 
   Future<void> _initAudioAndListener() async {
-    // 🌟 1. 获取这首歌的真实时长（比如 15000 毫秒）
-    await _audioPlayer.setSourceDeviceFile(widget.customMusicPath!);
+    // ==========================================
+    // 🌟 1. 安全降级：获取这首歌的真实时长（修复空指针崩溃！）
+    // ==========================================
+    if (widget.customMusicPath != null && widget.customMusicPath!.isNotEmpty) {
+      await _audioPlayer.setSourceDeviceFile(widget.customMusicPath!);
+    } else {
+      // 队友没生成音乐/网络失败时，也给监听器喂一口本地测试音乐！
+      await _audioPlayer.setSourceAsset('audio/sandal_leap.mp3');
+    }
+
+    // 给老旧安卓机一点缓冲时间，防止 getDuration 拿不到数据
+    await Future.delayed(const Duration(milliseconds: 150));
+
     Duration? songDuration = await _audioPlayer.getDuration();
     // 🌟 修复：把获取到的时长存进我们刚才定义的全局变量里！
     _singleLoopMs = songDuration?.inMilliseconds ?? 15000;
@@ -734,7 +746,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         screenBody = Stack(
           fit: StackFit.expand,
           children: [
-            Image.file(File(currentSection.photo.path), fit: BoxFit.cover),
+            PathImage(path: currentSection.photo.path, fit: BoxFit.cover),
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
               child: Container(color: Colors.black.withValues(alpha: 0.6)),
@@ -780,8 +792,8 @@ screenBody = Center(
         return Transform.scale(
           scale: scale,
           child: file.existsSync()
-              ? Image.file(
-                  file,
+              ? PathImage(
+                  path: file.path,
                   fit: BoxFit.cover,
                   width: double.infinity,
                   height: double.infinity,
@@ -804,8 +816,8 @@ screenBody = Center(
         return Transform.scale(
           scale: scale,
           child: file.existsSync()
-              ? Image.file(
-                  file,
+              ? PathImage(
+                  path: file.path,
                   fit: BoxFit.cover,
                   width: double.infinity,
                   height: double.infinity,
@@ -839,7 +851,7 @@ screenBody = Center(
         fit: StackFit.expand,
         children: [
           // 底层模糊背景
-          if (file.existsSync()) Image.file(file, fit: BoxFit.cover),
+          if (file.existsSync()) PathImage(path: file.path, fit: BoxFit.cover),
           BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
             child: Container(color: Colors.black.withValues(alpha: 0.6)),
@@ -1759,8 +1771,8 @@ screenBody = Center(
             return Transform.scale(
               scale: scale,
               child: file.existsSync()
-                  ? Image.file(
-                      file,
+                  ? PathImage(
+                      path: file.path,
                       fit: BoxFit.cover,
                       width: double.infinity,
                       height: double.infinity,

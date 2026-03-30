@@ -18,6 +18,7 @@ import flutter_local_notifications
 import flutter_quick_video_encoder
 import gal
 import isar_flutter_libs
+import objectbox_flutter_libs
 import package_info_plus
 import photo_manager
 import shared_preferences_foundation
@@ -38,6 +39,7 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   FlutterQuickVideoEncoderPlugin.register(with: registry.registrar(forPlugin: "FlutterQuickVideoEncoderPlugin"))
   GalPlugin.register(with: registry.registrar(forPlugin: "GalPlugin"))
   IsarFlutterLibsPlugin.register(with: registry.registrar(forPlugin: "IsarFlutterLibsPlugin"))
+  ObjectboxFlutterLibsPlugin.register(with: registry.registrar(forPlugin: "ObjectboxFlutterLibsPlugin"))
   FPPPackageInfoPlusPlugin.register(with: registry.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))
   PhotoManagerPlugin.register(with: registry.registrar(forPlugin: "PhotoManagerPlugin"))
   SharedPreferencesPlugin.register(with: registry.registrar(forPlugin: "SharedPreferencesPlugin"))

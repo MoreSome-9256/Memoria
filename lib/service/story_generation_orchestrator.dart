@@ -1,6 +1,8 @@
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:isar/isar.dart';
 
 import '../models/entity/photo_entity.dart';
@@ -12,6 +14,9 @@ import 'internvl_experiment_service.dart';
 import 'llm_service.dart';
 import 'on_device_internvl_service.dart';
 import 'photo_service.dart';
+
+const String _warmupPngBase64 =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn9lW8AAAAASUVORK5CYII=';
 
 class StoryGenerationOrchestrator {
   StoryGenerationOrchestrator._internal();
@@ -354,6 +359,10 @@ class StoryGenerationOrchestrator {
             .map((photo) => photo.path)
             .toList(growable: false),
       );
+      await _applyLocalCaptionsToPhotos(
+        photos: sortedPhotos,
+        localCaptionMap: localCaptionMap,
+      );
       final story = await _saveStory(
         request: request,
         photos: sortedPhotos,
@@ -493,6 +502,39 @@ class StoryGenerationOrchestrator {
     return photos;
   }
 
+  Future<void> _applyLocalCaptionsToPhotos({
+    required List<PhotoEntity> photos,
+    required Map<int, _CaptionResult> localCaptionMap,
+  }) async {
+    final toUpdate = <PhotoEntity>[];
+    for (final photo in photos) {
+      final captionResult = localCaptionMap[photo.id];
+      if (captionResult == null ||
+          captionResult.source != _CaptionSource.localVlm) {
+        continue;
+      }
+      final cleanedCaption = _cleanCaptionText(captionResult.text);
+      if (!_isValidCaptionCandidate(cleanedCaption)) {
+        continue;
+      }
+      if ((photo.aiCaption?.trim() ?? '') == cleanedCaption) {
+        continue;
+      }
+      photo.aiCaption = cleanedCaption;
+      localCaptionMap[photo.id] = _CaptionResult.localVlm(cleanedCaption);
+      toUpdate.add(photo);
+    }
+
+    if (toUpdate.isEmpty) {
+      return;
+    }
+
+    final isar = PhotoService().isar;
+    await isar.writeTxn(() async {
+      await isar.collection<PhotoEntity>().putAll(toUpdate);
+    });
+  }
+
   List<String> _buildMetadataBullets(List<PhotoEntity> photos) {
     final first = photos.first;
     final last = photos.last;
@@ -588,6 +630,7 @@ class StoryGenerationOrchestrator {
   }) async {
     final captions = <int, _CaptionResult>{};
     final runtime = await _prepareLocalRuntime();
+    await _warmupCaptionPath(runtime);
     for (var index = 0; index < photos.length; index++) {
       final photo = photos[index];
       final payload = OnDeviceInternvlImagePayload(
@@ -608,29 +651,19 @@ class StoryGenerationOrchestrator {
       );
 
       try {
-        final prompt = _buildLocalCaptionPrompt(<OnDeviceInternvlImagePayload>[payload]);
-        final structured = await _runLocalStructuredTask(
-          prompt: prompt,
-          payloads: <OnDeviceInternvlImagePayload>[payload],
-          maxTokens: 192,
-          temperature: 0.2,
-          cliTimeoutMs: 240000,
-          requestTimeout: const Duration(minutes: 4),
-          preparedRuntime: runtime,
-          allowCliFallback: true,
+        final caption = await _generateSingleLocalCaption(
+          payload: payload,
+          runtime: runtime,
         );
-
-        final parsed = _tryParseJsonObject(structured.rawContent);
-        String caption = '';
-        final rawItems = _extractListOfMaps(parsed?['captions']);
-        if (rawItems.isNotEmpty) {
-          caption = rawItems.first['caption']?.toString().trim() ?? '';
-        }
-        if (caption.isEmpty) {
-          caption = structured.narrative.trim();
-        }
         if (caption.isNotEmpty) {
           captions[photo.id] = _CaptionResult.localVlm(caption);
+        } else {
+          final existingCaption = photo.aiCaption?.trim();
+          if (existingCaption != null && existingCaption.isNotEmpty) {
+            captions[photo.id] = _CaptionResult.existingAiFallback(
+              existingCaption,
+            );
+          }
         }
       } catch (_) {
         final existingCaption = photo.aiCaption?.trim();
@@ -650,6 +683,66 @@ class StoryGenerationOrchestrator {
     }
 
     return captions;
+  }
+
+  Future<String> _generateSingleLocalCaption({
+    required OnDeviceInternvlImagePayload payload,
+    required _LocalRuntime runtime,
+    bool allowCliFallback = true,
+    int maxTokens = 96,
+    double temperature = 0.15,
+    Duration requestTimeout = const Duration(seconds: 90),
+    int cliTimeoutMs = 120000,
+  }) async {
+    final prompt = _buildLocalCaptionPrompt(<OnDeviceInternvlImagePayload>[payload]);
+    final structured = await _runLocalStructuredTask(
+      prompt: prompt,
+      payloads: <OnDeviceInternvlImagePayload>[payload],
+      maxTokens: maxTokens,
+      temperature: temperature,
+      cliTimeoutMs: cliTimeoutMs,
+      requestTimeout: requestTimeout,
+      preparedRuntime: runtime,
+      allowCliFallback: allowCliFallback,
+    );
+    final caption = _extractLocalCaptionFromStructured(structured);
+    return _isValidCaptionCandidate(caption) ? caption : '';
+  }
+
+  Future<void> _warmupCaptionPath(_LocalRuntime runtime) async {
+    final blankPayload = await _buildWarmupImagePayload();
+    try {
+      await _generateSingleLocalCaption(
+        payload: blankPayload,
+        runtime: runtime,
+        allowCliFallback: false,
+        maxTokens: 32,
+        temperature: 0.0,
+        requestTimeout: const Duration(seconds: 25),
+        cliTimeoutMs: 20000,
+      );
+    } catch (_) {
+      // Warmup is best-effort only. The first real image should still proceed.
+    }
+  }
+
+  Future<OnDeviceInternvlImagePayload> _buildWarmupImagePayload() async {
+    final warmupPath = await _ensureWarmupImageFilePath();
+    return OnDeviceInternvlImagePayload(
+      path: warmupPath,
+      capturedAtIso: DateTime.now().toUtc().toIso8601String(),
+      locationName: 'local_vlm_warmup',
+    );
+  }
+
+  Future<String> _ensureWarmupImageFilePath() async {
+    final file = File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}memoria_local_vlm_warmup.png',
+    );
+    if (!await file.exists()) {
+      await file.writeAsBytes(base64Decode(_warmupPngBase64), flush: true);
+    }
+    return file.path;
   }
 
   Future<_StructuredStoryPayload> _generateLocalDirectStory({
@@ -825,6 +918,24 @@ ${jsonEncode(photoPayload)}
   }
 
   String _buildLocalCaptionPrompt(List<OnDeviceInternvlImagePayload> payloads) {
+    final promptMetadataLines = <String>[
+      '图片元数据：',
+      for (var index = 0; index < payloads.length; index++)
+        '- 图片${index + 1}：${_formatPayloadMeta(payloads[index])}',
+    ];
+    return <String>[
+      '你是手机本地图片描述助手。',
+      '请只根据图片可见内容，为每张图片写一句自然、具体、简短的中文描述。',
+      '如果画面主要是风景，就写风景与环境；如果主要是人物，就写人物与场景。',
+      '不要解释规则，不要复述任务，不要输出“用户要求”“任务要求”“长度要求”这类字样。',
+      '',
+      ...promptMetadataLines,
+      '',
+      '只输出 JSON。',
+      '格式固定：{"captions":[{"index":1,"caption":"..."}]}',
+      'caption 控制在 8-24 个中文字符，避免空话和套话。',
+    ].join('\n');
+
     final metadataLines = <String>[
       '图片元数据：',
       for (var index = 0; index < payloads.length; index++)
@@ -888,7 +999,7 @@ ${jsonEncode(photoPayload)}
     final runtime = preparedRuntime ?? await _prepareLocalRuntime();
     final profile = runtime.profile;
     final server = runtime.server;
-    if (server == null || !server.ready) {
+    if (!_canAttemptLocalServerRequest(server)) {
       throw StateError(
         server?.error.isNotEmpty == true
             ? server!.error
@@ -896,21 +1007,22 @@ ${jsonEncode(photoPayload)}
       );
     }
 
+    final readyServer = server!;
     try {
-      return await _internvlExperimentService.analyzeImagesStructured(
-        serverUrl: server.chatCompletionsUrl,
-        model: server.modelAlias,
+      return await _invokeLocalServerWithWarmupRetry(
+        server: readyServer,
         prompt: prompt,
-        imagePaths: payloads.map((item) => item.path).toList(growable: false),
+        payloads: payloads,
         maxTokens: maxTokens,
         temperature: temperature,
-      ).timeout(requestTimeout);
+        requestTimeout: requestTimeout,
+      );
     } catch (error) {
       if (allowCliFallback &&
           (_looksLikeEmptyServerText(error) ||
               _looksLikeServerUnavailable(error))) {
         return _invokeLocalCliFallback(
-          server: server,
+          server: readyServer,
           prompt: prompt,
           payloads: payloads,
           profileThreads: profile?.recommendedThreads ?? 4,
@@ -925,27 +1037,28 @@ ${jsonEncode(photoPayload)}
           threads: profile?.recommendedThreads ?? 4,
           contextSize: profile?.recommendedContextSize ?? 2048,
         );
-        if (restarted == null || !restarted.ready) {
+        if (!_canAttemptLocalServerRequest(restarted)) {
           throw StateError(
             '本地服务在接收图片时断开，且重启失败：${restarted?.error.isNotEmpty == true ? restarted!.error : restarted?.summary ?? '未知错误'}',
           );
         }
+        final readyRestarted = restarted!;
         try {
-          return await _internvlExperimentService.analyzeImagesStructured(
-            serverUrl: restarted.chatCompletionsUrl,
-            model: restarted.modelAlias,
+          return await _invokeLocalServerWithWarmupRetry(
+            server: readyRestarted,
             prompt: prompt,
-            imagePaths: payloads.map((item) => item.path).toList(growable: false),
+            payloads: payloads,
             maxTokens: maxTokens,
             temperature: temperature,
-          ).timeout(requestTimeout);
+            requestTimeout: requestTimeout,
+          );
         } catch (retryError) {
           if (allowCliFallback &&
               (_looksLikeEmptyServerText(retryError) ||
                   _looksLikeServerUnavailable(retryError) ||
                   _looksLikeServerPipeFailure(retryError))) {
             return _invokeLocalCliFallback(
-              server: restarted,
+              server: readyRestarted,
               prompt: prompt,
               payloads: payloads,
               profileThreads: profile?.recommendedThreads ?? 4,
@@ -961,6 +1074,51 @@ ${jsonEncode(photoPayload)}
     }
   }
 
+  Future<InternvlStructuredResponse> _invokeLocalServerWithWarmupRetry({
+    required OnDeviceInternvlServerStatus server,
+    required String prompt,
+    required List<OnDeviceInternvlImagePayload> payloads,
+    required int maxTokens,
+    required double temperature,
+    required Duration requestTimeout,
+  }) async {
+    Object? lastError;
+    for (final wait in const <Duration>[
+      Duration.zero,
+      Duration(seconds: 4),
+      Duration(seconds: 8),
+    ]) {
+      if (wait > Duration.zero) {
+        await Future<void>.delayed(wait);
+      }
+      try {
+        debugPrint(
+          '🦙 [Local VLM] story path -> llama-server '
+          'url=${server.chatCompletionsUrl} '
+          'images=${payloads.length} '
+          'maxTokens=$maxTokens '
+          'temperature=$temperature '
+          'delayMs=${wait.inMilliseconds}',
+        );
+        return await _internvlExperimentService.analyzeImagesStructured(
+          serverUrl: server.chatCompletionsUrl,
+          model: server.modelAlias,
+          prompt: prompt,
+          imagePaths: payloads.map((item) => item.path).toList(growable: false),
+          maxTokens: maxTokens,
+          temperature: temperature,
+        ).timeout(requestTimeout);
+      } catch (error) {
+        lastError = error;
+        if (!_looksLikeServerUnavailable(error) &&
+            !_looksLikeEmptyServerText(error)) {
+          rethrow;
+        }
+      }
+    }
+    throw lastError ?? StateError('鏈湴 VLM 鏈嶅姟棰勭儹澶辫触');
+  }
+
   Future<_LocalRuntime> _prepareLocalRuntime() async {
     final profile = await OnDeviceInternvlService().probeDeviceProfile();
     final server = await OnDeviceInternvlService().ensureServerStarted(
@@ -968,6 +1126,10 @@ ${jsonEncode(photoPayload)}
       contextSize: profile?.recommendedContextSize ?? 2048,
     );
     return _LocalRuntime(profile: profile, server: server);
+  }
+
+  bool _canAttemptLocalServerRequest(OnDeviceInternvlServerStatus? server) {
+    return server != null && (server.ready || server.reachable || server.running);
   }
 
   Future<InternvlStructuredResponse> _invokeLocalCliFallback({
@@ -979,6 +1141,12 @@ ${jsonEncode(photoPayload)}
     required int maxTokens,
     required int cliTimeoutMs,
   }) async {
+    debugPrint(
+      '🦙 [Local VLM] story path -> CLI fallback '
+      'images=${payloads.length} '
+      'maxTokens=$maxTokens '
+      'timeoutMs=$cliTimeoutMs',
+    );
     final cliResult = await OnDeviceInternvlService().runCliExperiment(
       images: payloads,
       prompt: prompt,
@@ -1338,6 +1506,263 @@ ${jsonEncode(photoPayload)}
         (key, mapValue) => MapEntry<String, dynamic>(key.toString(), mapValue),
       );
     }).toList(growable: false);
+  }
+
+  String _extractLocalCaptionFromStructured(
+    InternvlStructuredResponse structured,
+  ) {
+    final parsed = _tryParseJsonObject(structured.rawContent);
+    final output = _extractOutputMap(parsed);
+    final rawCaptions = _extractListOfMaps(
+      output['captions'] ?? output['items'] ?? output['images'],
+    );
+
+    var candidate = '';
+    if (rawCaptions.isNotEmpty) {
+      candidate = _cleanCaptionText(
+        _firstString(
+              rawCaptions.first,
+              const <String>['caption', 'description', 'text', 'summary'],
+            ) ??
+            '',
+      );
+    }
+
+    if (!_isValidCaptionCandidate(candidate)) {
+      final fallbackCaptions = _extractDraftCaptions(structured.rawContent);
+      if (fallbackCaptions.isNotEmpty) {
+        candidate = _cleanCaptionText(fallbackCaptions.first);
+      }
+    }
+
+    if (!_isValidCaptionCandidate(candidate)) {
+      candidate = _cleanCaptionText(_extractFinalParagraph(structured.rawContent));
+    }
+
+    if (!_isValidCaptionCandidate(candidate)) {
+      candidate = _cleanCaptionText(structured.narrative);
+    }
+
+    return _isValidCaptionCandidate(candidate) ? candidate : '';
+  }
+
+  Map<String, dynamic> _extractOutputMap(Map<String, dynamic>? parsed) {
+    if (parsed == null) {
+      return <String, dynamic>{};
+    }
+    final output = parsed['output'];
+    if (output is Map<String, dynamic>) {
+      return output;
+    }
+    if (output is Map) {
+      return output.map(
+        (key, value) => MapEntry<String, dynamic>(key.toString(), value),
+      );
+    }
+    return parsed;
+  }
+
+  String? _firstString(Map<String, dynamic>? map, List<String> keys) {
+    if (map == null) {
+      return null;
+    }
+    for (final key in keys) {
+      final value = map[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return value.trim();
+      }
+    }
+    return null;
+  }
+
+  List<String> _extractDraftCaptions(String rawText) {
+    final matches = RegExp(
+      r'caption\s*\d*\s*[:\uFF1A]\s*(.+)',
+      caseSensitive: false,
+    ).allMatches(rawText);
+    final extracted = matches
+        .map((match) => _cleanCaptionText(match.group(1) ?? ''))
+        .where(_isValidCaptionCandidate)
+        .toList(growable: false);
+    if (extracted.isNotEmpty) {
+      return extracted.toSet().toList(growable: false);
+    }
+
+    final compact = _extractFinalParagraph(rawText);
+    return _isValidCaptionCandidate(compact)
+        ? <String>[compact]
+        : const <String>[];
+  }
+
+  String _extractFinalParagraph(String rawText) {
+    final lines = rawText
+        .split(RegExp(r'[\r\n]+'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .where((line) => !_looksLikeInstructionLine(line))
+        .where((line) => !_looksLikeRuntimeLogLine(line))
+        .toList(growable: false);
+    if (lines.isEmpty) {
+      return '';
+    }
+    return lines.last;
+  }
+
+  bool _looksLikePromptEchoText(String text) {
+    final lower = text.toLowerCase();
+    return text.contains('用户要求') ||
+        text.contains('任务要求') ||
+        text.contains('长度要求') ||
+        text.contains('回答要求') ||
+        text.contains('附加要求') ||
+        text.contains('图片元数据') ||
+        text.contains('只输出 JSON') ||
+        text.contains('不要复述要求') ||
+        text.contains('可见内容与元数据') ||
+        text.contains('基于图片的可见内容') ||
+        lower.contains('user requirements') ||
+        lower.contains('task requirements') ||
+        lower.contains('output requirements') ||
+        lower.contains('caption length') ||
+        lower.contains('visible content') ||
+        lower.contains('metadata');
+  }
+
+  bool _looksLikeInstructionLine(String line) {
+    final lower = line.toLowerCase();
+    return _looksLikePromptEchoText(line) ||
+        lower.contains('schema_version') ||
+        lower.contains('"task"') ||
+        lower.contains("'task'") ||
+        lower.contains('"output"') ||
+        lower.contains("'output'") ||
+        lower.contains('json format') ||
+        lower.contains('json schema') ||
+        lower.contains('captions array') ||
+        lower.contains('caption length') ||
+        lower.contains('facts') ||
+        lower.contains('time_hint') ||
+        lower.contains('location_hint') ||
+        lower.contains('confidence') ||
+        lower.contains('metadata') ||
+        lower.contains('output requirements') ||
+        lower.contains('extra requirements') ||
+        lower.contains('user theme') ||
+        lower.contains('user angle') ||
+        lower.contains('generation mode') ||
+        lower.contains('task:') ||
+        lower.startsWith('1.') ||
+        lower.startsWith('2.') ||
+        lower.startsWith('3.') ||
+        lower.startsWith('*') ||
+        lower.startsWith('-');
+  }
+
+  bool _looksLikeRuntimeLogLine(String line) {
+    final lower = line.toLowerCase();
+    return lower.contains('load_tensors') ||
+        lower.contains('llama_') ||
+        lower.contains('clip_') ||
+        lower.contains('sched_') ||
+        lower.contains('find_slot') ||
+        lower.contains('gguf') ||
+        lower.contains('flash attention') ||
+        lower.contains('cpu mapped model buffer') ||
+        lower.contains('encoding image slice') ||
+        lower.contains('<think>') ||
+        lower.contains('</think>') ||
+        lower.contains('```') ||
+        lower.contains("'''json");
+  }
+
+  String _cleanCaptionText(String value) {
+    var cleaned = value.trim();
+    if (cleaned.isEmpty) {
+      return '';
+    }
+    cleaned = cleaned.replaceAll(RegExp(r'<think>[\s\S]*?</think>'), ' ');
+    cleaned = cleaned.replaceAll(RegExp(r'```[\s\S]*?```'), ' ');
+    cleaned = cleaned.replaceAll(RegExp(r'\\n+'), ' ');
+    cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ').trim();
+    cleaned = cleaned.replaceAll(RegExp(r'^[#*\-\d.\s:\uFF1A]+'), '').trim();
+    if (_looksLikePromptEchoText(cleaned)) {
+      return '';
+    }
+
+    const stopMarkers = <String>[
+      '用户要求',
+      '任务要求',
+      '长度要求',
+      '回答要求',
+      '附加要求',
+      '图片元数据',
+      '只输出 JSON',
+      '不要复述要求',
+      '可见内容与元数据',
+      '基于图片的可见内容',
+      'schema_version',
+      '"task"',
+      "'task'",
+      '"output"',
+      "'output'",
+      'json format',
+      'json schema',
+      'captions array',
+      'caption length',
+      'facts',
+      'time_hint',
+      'location_hint',
+      'confidence',
+      'metadata',
+      'output requirements',
+      'extra requirements',
+      'user theme',
+      'user angle',
+      'generation mode',
+      'task:',
+      'load_tensors',
+      'llama_',
+      'clip_',
+      'sched_',
+      'find_slot',
+      'gguf',
+      'flash attention',
+      'cpu mapped model buffer',
+      '<think>',
+      '</think>',
+    ];
+    for (final marker in stopMarkers) {
+      final index = cleaned.toLowerCase().indexOf(marker);
+      if (index >= 0) {
+        cleaned = cleaned.substring(0, index).trim();
+      }
+    }
+
+    cleaned = cleaned.replaceAll(RegExp("^[`\"']+|[`\"']+\$"), '').trim();
+    return cleaned;
+  }
+
+  bool _isValidCaptionCandidate(String value) {
+    final cleaned = value.trim();
+    final lower = cleaned.toLowerCase();
+    if (cleaned.isEmpty || cleaned.length > 80) {
+      return false;
+    }
+    if (_looksLikePromptEchoText(cleaned)) {
+      return false;
+    }
+    if (_looksLikeInstructionLine(cleaned) ||
+        _looksLikeRuntimeLogLine(cleaned)) {
+      return false;
+    }
+    if (cleaned.startsWith('{') ||
+        cleaned.startsWith('[') ||
+        lower.contains('"caption"') ||
+        lower == 'caption' ||
+        lower == 'json') {
+      return false;
+    }
+    return RegExp(r'[\u4e00-\u9fff]').hasMatch(cleaned);
   }
 }
 

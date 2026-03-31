@@ -401,6 +401,12 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
   Future<InternvlStructuredResponse> _invokeLocalModel(
     OnDeviceInternvlServerStatus server,
   ) {
+    debugPrint(
+      '🦙 [Local VLM] test page -> llama-server '
+      'url=${server.chatCompletionsUrl} '
+      'images=${_selectedImages.length} '
+      'mode=${_taskMode.name}',
+    );
     return _experimentService.analyzeImagesStructured(
       serverUrl: server.chatCompletionsUrl,
       model: server.modelAlias,
@@ -441,6 +447,11 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
   Future<InternvlStructuredResponse> _invokeLocalCliFallback(
     OnDeviceInternvlServerStatus server,
   ) async {
+    debugPrint(
+      '🦙 [Local VLM] test page -> CLI fallback '
+      'images=${_selectedImages.length} '
+      'mode=${_taskMode.name}',
+    );
     if (mounted) {
       setState(() {
         _progressLabel = '常驻服务返回空文本，已切换到本地 CLI 兜底...';

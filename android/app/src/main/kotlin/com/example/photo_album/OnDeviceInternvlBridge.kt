@@ -10,8 +10,10 @@ import java.io.IOException
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.URL
 import kotlin.math.max
 import kotlin.math.min
 import java.util.concurrent.Executors
@@ -54,6 +56,7 @@ class OnDeviceInternvlBridge(private val context: Context) {
     private val serverPort = 8080
     private val serverModelAlias = "local-qwen3.5-0.8b-vl"
     private val serverStartupTimeoutMs = 60_000L
+    private val serverInferenceWarmupTimeoutMs = 12_000L
     private val linkerPath by lazy {
         sequenceOf(
             "/system/bin/linker64",
@@ -66,6 +69,11 @@ class OnDeviceInternvlBridge(private val context: Context) {
     private var serverLastError: String = ""
     @Volatile
     private var serverLogTail: String = ""
+    @Volatile
+    private var serverInferenceReady: Boolean = false
+
+    private val warmupImageDataUrl =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2ioAAAAASUVORK5CYII="
 
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
         return when (call.method) {
@@ -291,7 +299,7 @@ class OnDeviceInternvlBridge(private val context: Context) {
         val process = serverProcess
         val processAlive = process?.isAlive == true
         val reachable = isServerReachable()
-        val ready = (deployment["isRunnable"] == true) && reachable
+        val ready = (deployment["isRunnable"] == true) && reachable && serverInferenceReady
 
         return mapOf(
             "running" to (processAlive || reachable),
@@ -390,7 +398,7 @@ class OnDeviceInternvlBridge(private val context: Context) {
         val contextSize = (arguments["contextSize"] as? Number)?.toInt()?.coerceIn(512, 4096) ?: 2048
 
         synchronized(this) {
-            if (isServerReachable()) {
+            if (isServerReachable() && serverInferenceReady) {
                 serverLastError = ""
                 return buildServerStatus()
             }
@@ -399,6 +407,7 @@ class OnDeviceInternvlBridge(private val context: Context) {
             if (current == null || !current.isAlive) {
                 current?.destroyForcibly()
                 serverProcess = null
+                serverInferenceReady = false
                 serverLastError = ""
                 serverLogTail = ""
                 ensureRuntimeServerStaged()
@@ -410,7 +419,10 @@ class OnDeviceInternvlBridge(private val context: Context) {
             return buildServerStatus()
         }
 
-        serverLastError = ""
+        serverInferenceReady = waitForServerInferenceReady(serverInferenceWarmupTimeoutMs)
+        if (serverInferenceReady) {
+            serverLastError = ""
+        }
         return buildServerStatus()
     }
 
@@ -422,6 +434,7 @@ class OnDeviceInternvlBridge(private val context: Context) {
                 current.destroyForcibly()
             }
             serverProcess = null
+            serverInferenceReady = false
         }
         return buildServerStatus()
     }
@@ -459,6 +472,88 @@ class OnDeviceInternvlBridge(private val context: Context) {
             "llama-server 启动超时，端口 $serverPort 未在 ${timeoutMs}ms 内就绪"
         }
         return false
+    }
+
+    private fun waitForServerInferenceReady(timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val current = serverProcess
+            if (current == null) {
+                serverLastError = "llama-server 未启动"
+                return false
+            }
+            if (!current.isAlive) {
+                serverProcess = null
+                serverInferenceReady = false
+                val logTail = serverLogTail.trim()
+                serverLastError = if (logTail.isNotEmpty()) {
+                    "llama-server 预热失败：$logTail"
+                } else {
+                    "llama-server 预热失败，退出码=${current.exitValue()}"
+                }
+                return false
+            }
+            if (tryWarmupCompletion()) {
+                serverLastError = ""
+                return true
+            }
+            Thread.sleep(600)
+        }
+
+        val logTail = serverLogTail.trim()
+        serverLastError = if (logTail.isNotEmpty()) {
+            "llama-server 已连通但模型预热超时：$logTail"
+        } else {
+            "llama-server 已连通，但在 ${timeoutMs}ms 内未完成模型预热"
+        }
+        return false
+    }
+
+    private fun tryWarmupCompletion(): Boolean {
+        val body = """
+            {
+              "model": "$serverModelAlias",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    {"type": "text", "text": "请用一个词描述这张测试图片。"},
+                    {"type": "image_url", "image_url": {"url": "$warmupImageDataUrl"}}
+                  ]
+                }
+              ],
+              "max_tokens": 8,
+              "temperature": 0.0,
+              "stream": false
+            }
+        """.trimIndent()
+
+        return try {
+            val connection = (URL("http://$serverHost:$serverPort/v1/chat/completions")
+                .openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 1500
+                readTimeout = 4000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+            }
+            connection.outputStream.bufferedWriter(Charsets.UTF_8).use { writer ->
+                writer.write(body)
+            }
+            val code = connection.responseCode
+            if (code == 200) {
+                connection.inputStream.close()
+                true
+            } else {
+                val errorText = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (code != 503 && errorText.isNotBlank()) {
+                    appendServerLog("warmup_http_$code: $errorText")
+                }
+                false
+            }
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     private fun isServerReachable(): Boolean {
@@ -842,12 +937,24 @@ class OnDeviceInternvlBridge(private val context: Context) {
             lines
         }
 
-        return candidateLines
+        val normalized = candidateLines
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .filterNot(::isDiagnosticLine)
             .joinToString("\n")
             .trim()
+
+        extractJsonObject(normalized)?.let { return it }
+        return normalized
+    }
+
+    private fun extractJsonObject(text: String): String? {
+        val firstBrace = text.indexOf('{')
+        val lastBrace = text.lastIndexOf('}')
+        if (firstBrace < 0 || lastBrace <= firstBrace) {
+            return null
+        }
+        return text.substring(firstBrace, lastBrace + 1).trim()
     }
 
     private fun isDiagnosticLine(line: String): Boolean {
@@ -877,6 +984,32 @@ class OnDeviceInternvlBridge(private val context: Context) {
             line.startsWith("image decoded") ||
             line.startsWith("For normal use cases") ||
             line.startsWith("WARN:") ||
+            line.startsWith("用户要求") ||
+            line.startsWith("任务要求") ||
+            line.startsWith("长度要求") ||
+            line.startsWith("回答要求") ||
+            line.startsWith("附加要求") ||
+            line.startsWith("图片元数据") ||
+            line.startsWith("只输出 JSON") ||
+            line.contains("不要复述要求") ||
+            line.contains("可见内容与元数据") ||
+            line.contains("基于图片的可见内容") ||
+            line.startsWith("[系统提示]") ||
+            line.startsWith("[用户问题]") ||
+            line.startsWith("任务：") ||
+            line.startsWith("图片元数据") ||
+            line.startsWith("回答要求") ||
+            line.startsWith("JSON 格式") ||
+            line.startsWith("captions 数组") ||
+            line.startsWith("caption 长度") ||
+            line.startsWith("只输出 JSON") ||
+            line.startsWith("只输出JSON") ||
+            line.startsWith("[附加要求]") ||
+            line.startsWith("用户主题") ||
+            line.startsWith("用户切入点") ||
+            line.startsWith("生成方式") ||
+            line.contains("<think>") ||
+            line.contains("</think>") ||
             line == "--- vision hparams ---" ||
             line == "---"
     }

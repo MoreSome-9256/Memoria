@@ -11,7 +11,7 @@ import '../../service/photo_service.dart';
 import '../../service/story_service.dart';
 import '../../utils/ocr_policy.dart';
 import '../widgets/path_image.dart';
-import 'digital_album_page.dart';
+import 'digital_album_book_page.dart';
 import 'story_video_page.dart';
 
 class StoryResultPage extends StatefulWidget {
@@ -283,9 +283,9 @@ class _StoryResultPageState extends State<StoryResultPage> {
   }
 
   Future<void> _openDigitalAlbum() async {
-    final result = await Navigator.of(context).push<DigitalAlbumResult>(
-      MaterialPageRoute<DigitalAlbumResult>(
-        builder: (context) => DigitalAlbumPage(
+    final result = await Navigator.of(context).push<DigitalAlbumBookResult>(
+      MaterialPageRoute<DigitalAlbumBookResult>(
+        builder: (context) => DigitalAlbumBookPage(
           title: widget.title,
           subtitle: widget.subtitle,
           sections: _sections,
@@ -299,7 +299,6 @@ class _StoryResultPageState extends State<StoryResultPage> {
     }
 
     setState(() {
-      _sections = List<StorySection>.from(result.sections);
       _hasSaved = _hasSaved || result.saved;
     });
   }

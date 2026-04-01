@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -294,8 +293,19 @@ class LLMService {
   Future<String?> completeText({
     required String prompt,
     String systemPrompt = _defaultTextSystemPrompt,
+    bool jsonMode = false,
+    double? temperature,
+    double? topP,
+    Duration? requestTimeout,
   }) {
-    return _chatCompletion(prompt, systemPrompt: systemPrompt);
+    return _chatCompletion(
+      prompt,
+      systemPrompt: systemPrompt,
+      jsonMode: jsonMode,
+      temperature: temperature,
+      topP: topP,
+      requestTimeout: requestTimeout,
+    );
   }
 
   Future<String?> generatePhotoCaption({
@@ -355,6 +365,10 @@ class LLMService {
   Future<String?> _chatCompletion(
     String prompt, {
     String systemPrompt = _defaultTextSystemPrompt,
+    bool jsonMode = false,
+    double? temperature,
+    double? topP,
+    Duration? requestTimeout,
   }) async {
     final baseUrl = _baseUrl.endsWith('/')
         ? _baseUrl.substring(0, _baseUrl.length - 1)
@@ -365,6 +379,9 @@ class LLMService {
       prompt: prompt,
       systemPrompt: systemPrompt,
       useChatCompletions: isChatCompletions,
+      jsonMode: jsonMode,
+      temperature: temperature,
+      topP: topP,
     );
 
     // print('🌐 [LLM REQUEST] POST $baseUrl$apiPath');
@@ -377,7 +394,11 @@ class LLMService {
 
     final response = await _dio.post(
       '$baseUrl$apiPath',
-      options: Options(headers: headers.isEmpty ? null : headers),
+      options: Options(
+        headers: headers.isEmpty ? null : headers,
+        receiveTimeout: requestTimeout,
+        sendTimeout: requestTimeout,
+      ),
       data: requestBody,
     );
 
@@ -498,19 +519,31 @@ class LLMService {
     required String prompt,
     required String systemPrompt,
     required bool useChatCompletions,
+    bool jsonMode = false,
+    double? temperature,
+    double? topP,
   }) {
+    final resolvedTemperature = temperature ?? (jsonMode ? 0.1 : 0.7);
     if (useChatCompletions) {
-      return {
+      final body = <String, dynamic>{
         'model': _modelName,
         // chat/completions 风格
         'messages': [
           {'role': 'system', 'content': systemPrompt},
           {'role': 'user', 'content': prompt},
         ],
+        'temperature': resolvedTemperature,
       };
+      if (topP != null) {
+        body['top_p'] = topP;
+      }
+      if (jsonMode) {
+        body['response_format'] = {'type': 'json_object'};
+      }
+      return body;
     }
 
-    return {
+    final body = <String, dynamic>{
       'model': _modelName,
       // responses 风格
       'input': [
@@ -522,7 +555,17 @@ class LLMService {
           ],
         },
       ],
+      'temperature': resolvedTemperature,
     };
+    if (topP != null) {
+      body['top_p'] = topP;
+    }
+    if (jsonMode) {
+      body['text'] = {
+        'format': {'type': 'json_object'}
+      };
+    }
+    return body;
   }
 
   Map<String, dynamic> _buildVisionRequestBody({

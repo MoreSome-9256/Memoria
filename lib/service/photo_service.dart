@@ -7,6 +7,7 @@ import 'package:photo_manager/photo_manager.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../models/entity/face_entity.dart';
+import '../models/entity/digital_album_book_entity.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../models/entity/story_entity.dart';
@@ -84,6 +85,7 @@ class PhotoService {
         FaceEntitySchema,
         EventEntitySchema,
         StoryEntitySchema,
+        DigitalAlbumBookEntitySchema,
       ], // 注册所有实体
       directory: dir.path,
     );

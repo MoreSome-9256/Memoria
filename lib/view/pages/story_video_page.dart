@@ -24,8 +24,11 @@ import 'export_manager.dart';
 import 'offscreen_render_worker.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
+import '../../service/photo_service.dart';
 import '../widgets/path_image.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
+import '../../models/entity/face_entity.dart';
+import 'package:isar/isar.dart';
 
 class StoryVideoPage extends StatefulWidget {
   final String title;
@@ -83,6 +86,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   double _lastAudioPositionMs = 0; // 上一次拿到的播放进度
   int _singleLoopMs = 15000; // 单首音乐的真实长度
 
+  // 🌟 1. 声明一个本地的可变切片列表
+  late List<StorySection> _localSections;
+
   int _currentLyricIndex = 0;
   String _currentLyricText = "";
   // 🎛️ VFX 控制台参数
@@ -126,6 +132,11 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   @override
   void initState() {
     super.initState();
+    // 🌟 2. 拷贝一份传进来的切片，让它变成可以修改的状态
+    _localSections = List.from(widget.sections);
+
+    // 🌟 3. 启动人脸雷达：去数据库捞取人脸数据
+    _loadFaceDataAsync();
     _vfxController = AnimationController(
       vsync: this,
       duration: Duration(milliseconds: 500), // 先随便给个值，后面会被覆盖
@@ -175,6 +186,39 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     debugPrint(
       "🎵 成功加载真实节拍！BPM: ${bpmRaw.toDouble()}, 间隔: ${_beatIntervalMs}ms, 共 ${_beatData.length} 拍",
     );
+  }
+  // ==========================================
+  // 🎯 人脸数据后台加载与热更新
+  // ==========================================
+  Future<void> _loadFaceDataAsync() async {
+    try {
+      // 拿到本地数据库实例
+      final isar = PhotoService().isar;
+
+      for (int i = 0; i < _localSections.length; i++) {
+        final photo = _localSections[i].photo;
+
+        // 🚀 极速查询：根据 assetId 去 FaceEntity 表里捞出这张照片对应的所有人脸
+        final faces = await isar.faceEntitys
+            .filter()
+            .assetIdEqualTo(photo.id)
+            .findAll();
+
+        if (faces.isNotEmpty && mounted) {
+          setState(() {
+            // 🌟 核心魔法：用带有人脸数据的新 Photo 替换旧的。
+            // 此时屏幕如果正在渲染这张照片，Alignment 会瞬间更新，镜头完美对准人脸！
+            _localSections[i] = StorySection(
+              text: _localSections[i].text,
+              photo: photo.copyWith(faces: faces),
+            );
+          });
+        }
+      }
+      debugPrint("🎯 所有人脸数据加载完毕，智能裁切已全面激活！");
+    } catch (e) {
+      debugPrint("⚠️ 加载人脸数据失败: $e");
+    }
   }
 
   Future<void> _loadBeatDataFromBackend() async {
@@ -269,30 +313,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
       // 🌟 真实的连续时间 = 当前播放条位置 + (已经循环的圈数 * 一圈的总时长)
       double currentTimeMs = currentPosMs + (_audioLoopCount * _singleLoopMs);
-
-      // ==========================================
-      // 🌟 核心升级：根据 BPM 动态计算片头结束的确切时间！
-      // ==========================================
-      // 第一张图（片头）固定在第 8 拍时切换到正片
-      double firstCutTimeMs = 8 * _beatIntervalMs.toDouble();
-
-      // 动态获取当前选中转场的卡点时间
-      int offset = _currentTransition.offsetMs;
-      int duration = _currentTransition.durationMs;
-      // 开始时间 = 切图点 - 提前量
-      double transitionStartMs = firstCutTimeMs - offset;
-      // 🌟 结束时间 = 开始时间 + 转场总长（保证它一定能完完整整播完！）
-      double transitionEndMs = transitionStartMs + duration;
-
-      bool shouldShow =
-          currentTimeMs >= transitionStartMs &&
-          currentTimeMs <= transitionEndMs;
-
-      if (_showPreviewTransition != shouldShow) {
-        setState(() {
-          _showPreviewTransition = shouldShow;
-        });
-      }
 
       // 1. 找当前是第几拍
       int targetBeatIndex = 0;
@@ -647,8 +667,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                     child: AnimatedSwitcher(
                       duration: 800.ms,
                       child: _buildPureImageLayer(
-                        currentSection.photo.path,
-                        subtitleLayer, // 👆 刚才被抽空的字幕层在这里被渲染
+                        currentSection.photo,
+                        subtitleLayer,
                       ),
                     ),
                   ),
@@ -805,8 +825,10 @@ screenBody = Center(
   }*/
 
   // 🎬 核心特效：根据长宽比自适应的视觉层（已支持字幕嵌入）
-  Widget _buildAdaptiveImageLayer(String imagePath, Widget subtitle) {
-    final file = File(imagePath);
+  Widget _buildAdaptiveImageLayer(var photo, Widget subtitle) {
+    final file = File(photo.path);
+    // 🎯 呼叫智能裁切雷达
+    final Alignment smartAlignment = _calculateFaceAlignment(photo);
 
     // 1. 基础的 Ken Burns 放大动画
     Widget kenBurnsAnimation = TweenAnimationBuilder(
@@ -819,6 +841,7 @@ screenBody = Center(
               ? PathImage(
                   path: file.path,
                   fit: BoxFit.cover,
+                  alignment: smartAlignment,
                   width: double.infinity,
                   height: double.infinity,
                 )
@@ -840,14 +863,14 @@ screenBody = Center(
     // 🌟 竖屏模式：依然铺满全屏
     if (!widget.isHorizontal) {
       return SizedBox.expand(
-        key: ValueKey<String>(imagePath),
+        key: ValueKey<String>(photo.path),
         child: containerContent,
       );
     }
     // 🌟 横屏模式：16:9 居中，字幕会被 ClipRect 限制在框内
     else {
       return Stack(
-        key: ValueKey<String>(imagePath),
+        key: ValueKey<String>(photo.path),
         fit: StackFit.expand,
         children: [
           // 底层模糊背景
@@ -985,76 +1008,6 @@ screenBody = Center(
     );
   }
 
-  // 1. 定义你的素材库 (假设你目前准备了这几个)
-  final List<TransitionMaterial> _transitions = const [
-    TransitionMaterial(
-      id: 'none',
-      name: '无转场',
-      movPath: '',
-      webpPath: '',
-      offsetMs: 0,
-      durationMs: 0,
-    ),
-    TransitionMaterial(
-      id: 'orange_and_red',
-      name: '橙色动画',
-      movPath: 'assets/transitions/orange_and_red.mov',
-      webpPath: 'assets/transitions/orange_and_red.webp',
-      offsetMs: 800, // 提前 0.8 秒
-      durationMs: 2000,
-    ),
-    TransitionMaterial(
-      id: 'white_circle',
-      name: '白底圆圈',
-      movPath: 'assets/transitions/white_circle.mov',
-      webpPath: 'assets/transitions/white_circle.webp',
-      offsetMs: 500, // 动作快，提前 0.5 秒就够了
-      durationMs: 2000,
-    ),
-    TransitionMaterial(
-      id: 'light',
-      name: '光效转场',
-      movPath: 'assets/transitions/light.mov',
-      webpPath: 'assets/transitions/light.webp',
-      offsetMs: 500, 
-      durationMs: 2000,
-    ),
-    TransitionMaterial(
-      id: 'blue_circle',
-      name: '蓝色圆形',
-      movPath: 'assets/transitions/blue_circle.mov',
-      webpPath: 'assets/transitions/blue_circle.webp',
-      offsetMs: 500,
-      durationMs: 1000,
-    ),
-    TransitionMaterial(
-      id: 'red',
-      name: '红色箭头',
-      movPath: 'assets/transitions/red.mov',
-      webpPath: 'assets/transitions/red.webp',
-      offsetMs: 500, 
-      durationMs: 1000,
-    ),
-    TransitionMaterial(
-      id: 'green',
-      name: '彩色切分',
-      movPath: 'assets/transitions/green.mov',
-      webpPath: 'assets/transitions/green.webp',
-      offsetMs: 0,
-      durationMs: 3000,
-    ),
-    TransitionMaterial(
-      id: 'glass',
-      name: '蓝色玻璃',
-      movPath: 'assets/transitions/glass.mov',
-      webpPath: 'assets/transitions/glass.webp',
-      offsetMs: 500,
-      durationMs: 3000,
-    ),
-  ];
-
-  // 2. 记住用户当前选了哪个（默认选漏光）
-  late TransitionMaterial _currentTransition = _transitions[1];
 
   // 🎛️ 导演控制台面板
   void _showVfxPanel() {
@@ -1447,6 +1400,65 @@ screenBody = Center(
       ),
     );
   }
+  // ==========================================
+  // 🎯 智能裁切：基于面积加权的人脸重心计算
+  // ==========================================
+  Alignment _calculateFaceAlignment(dynamic photo) {
+    // ⚠️ 提取数据：这里假设 photo 有 width, height 和关联的人脸列表
+    // 根据你的 Isar 模型，如果 photo.faces 是 IsarLinks，你可能需要 photo.faces.toList()
+    final int imageWidth = photo.width ?? 0;
+    final int imageHeight = photo.height ?? 0;
+    final List<dynamic> faces = photo.faces?.toList() ?? [];
+
+    // 1. 如果没有脸、或者图片宽高无效，直接老老实实居中
+    if (faces.isEmpty || imageWidth <= 0 || imageHeight <= 0) {
+      return Alignment.center;
+    }
+
+    double totalWeight = 0.0;
+    double weightedX = 0.0;
+    double weightedY = 0.0;
+
+    // 2. 遍历所有检测到的人脸
+    for (var face in faces) {
+      // 算出这张脸的绝对中心坐标 (像素)
+      double faceCenterX = face.left + (face.width / 2);
+      double faceCenterY = face.top + (face.height / 2);
+
+      // 🌟 核心魔法：使用人脸的面积作为权重 (Area Weighting)
+      // 脸越大，对最终重心的牵引力就越强！
+      double weight = face.area;
+      if (weight <= 0) continue;
+
+      weightedX += faceCenterX * weight;
+      weightedY += faceCenterY * weight;
+      totalWeight += weight;
+    }
+
+    // 防御性判断：如果全是无效面积，退回居中
+    if (totalWeight <= 0) {
+      return Alignment.center;
+    }
+
+    // 3. 计算加权后的“绝对视觉重心”（像素坐标）
+    double avgX = weightedX / totalWeight;
+    double avgY = weightedY / totalWeight;
+
+    // 4. 归一化：把像素坐标转变成 0.0 ~ 1.0 的相对比例
+    double normalizedX = avgX / imageWidth;
+    double normalizedY = avgY / imageHeight;
+
+    // 5. 坐标系映射：Flutter 的 Alignment 要求是 -1.0 (左/上) 到 1.0 (右/下)
+    double alignX = (normalizedX * 2) - 1.0;
+    double alignY = (normalizedY * 2) - 1.0;
+
+    debugPrint(
+      "🎯 智能裁切：检测到 ${faces.length} 张脸，加权重心 Alignment(${alignX.toStringAsFixed(2)}, ${alignY.toStringAsFixed(2)})",
+    );
+
+    // 钳制在合法范围内 (-1.0 到 1.0)，防止把图片推出黑边
+    return Alignment(alignX.clamp(-1.0, 1.0), alignY.clamp(-1.0, 1.0));
+  }
 
   void _updateStateForFrame(int frameIndex) {
     if (_beatData.isEmpty) return;
@@ -1538,230 +1550,19 @@ screenBody = Center(
       return (null, 0, 0);
     }
   }
-  Future<void> _startExport() async {
-    if (_isPlaying) await _togglePlay();
 
-    // 🚀 保持 AI 自动写文案在后台运行
-    List<String> currentCaptions = widget.sections.map((s) => s.text).toList();
-    _aiCopyFuture = LLMService().generateSocialMediaCopy(
-      platform: widget.targetPlatform,
-      title: widget.title,
-      subtitle: widget.subtitle,
-      captions: currentCaptions,
-    );
-
-    // 计算最终毫秒数
-    int totalBeatsNeeded = widget.sections.length * 8;
-    int finalExportDurationMs = totalBeatsNeeded * _beatIntervalMs;
-    if (_beatData.length > totalBeatsNeeded) {
-      finalExportDurationMs = (_beatData[totalBeatsNeeded]['ms'] as num)
-          .toInt();
-    } else if (_beatData.isNotEmpty) {
-      int missingBeats = totalBeatsNeeded - _beatData.length;
-      finalExportDurationMs =
-          (_beatData.last['ms'] as num).toInt() +
-          (missingBeats * _beatIntervalMs);
-    }
-    double exactExportSeconds = finalExportDurationMs / 1000.0;
-
-    setState(() {
-      _isExporting = true;
-      _exportProgress = 0.0;
-    });
-
-    // 🎬 1. 抓取第0帧，主要是为了获取屏幕真正的硬件像素分辨率
-    _updateStateForFrame(0);
-    await Future.delayed(const Duration(milliseconds: 50)); // 给UI一点时间渲染第一帧
-    var firstFrame = await _captureFrameRgba();
-    if (firstFrame.$1 == null) {
-      debugPrint("❌ 无法获取初始帧尺寸，导出终止");
-      setState(() => _isExporting = false);
-      return;
-    }
-
-    int videoWidth = firstFrame.$2;
-    int videoHeight = firstFrame.$3;
-
-    final docDir = await getApplicationDocumentsDirectory();
-    final String silentVideoPath =
-        "${docDir.path}/silent_temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
-
-    // 🎬 2. 轰鸣启动硬件编码器引擎！
-    try {
-      FlutterQuickVideoEncoder.setLogLevel(LogLevel.none); // 保持控制台清爽
-      await FlutterQuickVideoEncoder.setup(
-        width: videoWidth,
-        height: videoHeight,
-        fps: 24,
-        videoBitrate: 4000000, // 4Mbps 码率，保障画质不糊
-        profileLevel: ProfileLevel.any,
-        filepath: silentVideoPath,
-        // 👇 新增这三个必填的音频占位参数
-        audioBitrate: 64000, // 随便给个 64kbps
-        audioChannels: 2, // 双声道立体声
-        sampleRate: 44100, // 标准的 44.1kHz 采样率
-      );
-    } catch (e) {
-      debugPrint("❌ 硬件编码器启动失败: $e");
-      setState(() => _isExporting = false);
-      return;
-    }
-
-    int fps = 24;
-    int totalFrames = (finalExportDurationMs / 1000 * fps).floor();
-
-    // 🌟 新增：计算每一帧视频对应的音频字节数
-    // 公式：采样率(44100) * 通道数(2) * 每个采样点的字节数(16-bit = 2字节) / 帧率(24)
-    final int bytesPerAudioFrame = (44100 * 2 * 2) ~/ fps;
-    // 生成一包全为 0 的静音数据（相当于这段时间的纯静音）
-    final Uint8List silentAudioChunk = Uint8List(bytesPerAudioFrame);
-
-    // 在 for 循环外面，新增一个变量，用来装“上一帧的编码任务”
-    Future<void>? _previousEncodeTask;
-
-    // 🎬 3. 流水线作业：渲染UI -> 抓像素 -> 塞进芯片
-    for (int i = 0; i < totalFrames; i++) {
-      _updateStateForFrame(i);
-
-      if (i % 5 == 0) {
-        // UI 节流，不要每帧都 setState
-        setState(() => _exportProgress = (i / totalFrames) * 0.85);
-      }
-
-      // 等待 Flutter 把这帧画面画出来
-      await WidgetsBinding.instance.endOfFrame;
-
-      final frameData = await _captureFrameRgba();
-
-      if (frameData.$1 != null) {
-        // 🚀 核心黑魔法：在开启当前帧的编码前，确保上一帧已经塞进去了
-        if (_previousEncodeTask != null) {
-          await _previousEncodeTask;
-        }
-
-        // 🚀 开启当前帧的编码，但是【不要 await】它！
-        // 把任务存起来，让原生层自己去慢慢压制，Dart 立刻进入下一次循环去截下一张图！
-        _previousEncodeTask = Future.microtask(() async {
-          await FlutterQuickVideoEncoder.appendVideoFrame(frameData.$1!);
-          await FlutterQuickVideoEncoder.appendAudioFrame(silentAudioChunk);
-        });
-      }
-    }
-    // 循环结束后，确保最后一帧被顺利吃进去
-    if (_previousEncodeTask != null) {
-      await _previousEncodeTask;
-    }
-
-    // 🎬 4. 封口！此时无声的高清视频已经生成完毕
-    await FlutterQuickVideoEncoder.finish();
-
-    // 🎬 5. 移交接力棒，让 FFmpeg 做最后的极速音视频缝合
-    await _fastMuxAudio(silentVideoPath, exactExportSeconds);
-  }
-  Future<void> _fastMuxAudio(
-    String silentVideoPath,
-    double exactSeconds,
-  ) async {
-    setState(() => _exportProgress = 0.95); // 进度来到最后一步
-
-    try {
-      final docDir = await getApplicationDocumentsDirectory();
-      String audioPath;
-
-      // 准备音频 (和你之前的逻辑完全一样)
-      if (widget.customMusicPath != null) {
-        File originalAudio = File(widget.customMusicPath!);
-        File safeAudioFile = File('${docDir.path}/safe_custom_audio.mp3');
-        if (safeAudioFile.existsSync()) safeAudioFile.deleteSync();
-        await originalAudio.copy(safeAudioFile.path);
-        audioPath = safeAudioFile.path;
-      } else {
-        final ByteData audioData = await rootBundle.load(
-          'assets/audio/sandal_leap.mp3',
-        );
-        final File tempAudioFile = File('${docDir.path}/temp_audio.mp3');
-        await tempAudioFile.writeAsBytes(audioData.buffer.asUint8List());
-        audioPath = tempAudioFile.path;
-      }
-
-      final String outputPath =
-          "${docDir.path}/FINAL_STORY_${DateTime.now().millisecondsSinceEpoch}.mp4";
-
-      // 🚀 FFmpeg 终极魔法：精准音视频映射
-      String command = [
-        "-y",
-        "-i", "'$silentVideoPath'", // 输入 0：静音视频
-        "-stream_loop", "-1", // 音频无限循环
-        "-i", "'$audioPath'", // 输入 1：背景音乐
-        "-map", "0:v:0", // 🌟 强行指定：只拿第1个输入的视频流
-        "-map", "1:a:0", // 🌟 强行指定：只拿第2个输入的音频流
-        "-c:v", "copy", // 视频流直接复制
-        "-c:a", "aac", // 音频流压成 aac
-        "-shortest", // 🌟 关键：以最短的流（通常是视频）为准结束
-        "'$outputPath'",
-      ].join(" ");
-
-      debugPrint("🎬 FFmpeg 光速混音开始: $command");
-
-      await FFmpegKit.execute(command).then((session) async {
-        final returnCode = await session.getReturnCode();
-        if (ReturnCode.isSuccess(returnCode)) {
-          debugPrint("✅✅✅ 硬件直出+极速混音，完美结束！");
-
-          // 顺手做个垃圾回收，删掉那个无声视频
-          File(silentVideoPath).delete().catchError((_) {});
-
-          _handleExportSuccess(outputPath);
-        } else {
-          final logs = await session.getLogsAsString();
-          debugPrint("❌ FFmpeg 混音失败:\n$logs");
-        }
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isExporting = false;
-          _exportProgress = 0.0;
-        });
-      }
-    }
-  }
-
-  // 🌟 新增一个变量，用来装这个“未来的文案”
-  Future<String>? _aiCopyFuture;
-
-  // 辅助方法：处理成功后的跳转（提取出你原有的逻辑）
-  void _handleExportSuccess(String outputPath) async {
-    try {
-      await Gal.putVideo(outputPath);
-      if (mounted) {
-        List<String> currentCaptions = widget.sections
-            .map((s) => s.text)
-            .toList();
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => PublishPage(
-              title: widget.title,
-              subtitle: widget.subtitle,
-              captions: currentCaptions,
-              targetPlatform: widget.targetPlatform,
-              exportedVideoPath: outputPath,
-              generatedCopyFuture: _aiCopyFuture,
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      debugPrint("❌ 保存到相册失败: $e");
-    }
-  }
 
   // 🎬 专门给取景器提供纯净画面的层（无黑边）
-  Widget _buildPureImageLayer(String imagePath, Widget subtitle) {
-    final file = File(imagePath);
+  // 🌟 修改点 1：把参数里的 String imagePath 改成 var photo (或者 PhotoEntity photo)
+  Widget _buildPureImageLayer(var photo, Widget subtitle) {
+    // 🌟 修改点 2：从传进来的 photo 对象里提取真正的路径
+    final file = File(photo.path);
+
+    // 🎯 呼叫智能裁切雷达
+    final Alignment smartAlignment = _calculateFaceAlignment(photo);
+
     return Stack(
-      key: ValueKey<String>(imagePath),
+      key: ValueKey<String>(photo.path), // 🌟 这里也要改成 photo.path
       fit: StackFit.expand,
       children: [
         TweenAnimationBuilder(
@@ -1774,6 +1575,7 @@ screenBody = Center(
                   ? PathImage(
                       path: file.path,
                       fit: BoxFit.cover,
+                      alignment: smartAlignment, // 🎯 装备雷达
                       width: double.infinity,
                       height: double.infinity,
                     )
@@ -1781,7 +1583,7 @@ screenBody = Center(
             );
           },
         ),
-        subtitle, // 字幕层
+        subtitle,
       ],
     );
   }

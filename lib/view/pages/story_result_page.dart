@@ -86,6 +86,8 @@ class StoryResultPage extends StatefulWidget {
                 text: p.ocrText,
               ),
               location: p.city ?? p.province ?? '未知地点',
+              width: p.width ?? 0,
+              height: p.height ?? 0,
             ),
           ),
         );
@@ -106,6 +108,8 @@ class StoryResultPage extends StatefulWidget {
             ),
             tags: photos.first.aiTags ?? [],
             location: photos.first.city ?? photos.first.province ?? '未知地点',
+            width: photos.first.width ?? 0,
+            height: photos.first.height ?? 0,
           ),
         ),
       );

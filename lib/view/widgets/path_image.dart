@@ -11,6 +11,8 @@ class PathImage extends StatefulWidget {
   final bool enableSmartCache;
   final VoidCallback? onFirstFrame;
 
+  final AlignmentGeometry alignment;
+
   const PathImage({
     super.key,
     required this.path,
@@ -19,6 +21,7 @@ class PathImage extends StatefulWidget {
     this.height,
     this.enableSmartCache = true,
     this.onFirstFrame,
+    this.alignment = Alignment.center,
   });
 
   @override
@@ -67,6 +70,7 @@ class _PathImageState extends State<PathImage> {
           return Image.network(
             widget.path,
             fit: widget.fit,
+            alignment: widget.alignment,
             width: widget.width,
             height: widget.height,
             cacheWidth: cache.$1,
@@ -84,6 +88,7 @@ class _PathImageState extends State<PathImage> {
         return Image.file(
           file,
           fit: widget.fit,
+          alignment: widget.alignment,
           width: widget.width,
           height: widget.height,
           cacheWidth: cache.$1,

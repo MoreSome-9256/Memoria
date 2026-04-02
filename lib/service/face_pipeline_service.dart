@@ -12,6 +12,18 @@ import '../utils/face_crop_util.dart';
 import 'face_embedding_service.dart';
 import 'onnx_face_embedding_service.dart';
 
+class _ExistingFaceSnapshot {
+  const _ExistingFaceSnapshot({
+    required this.ids,
+    required this.debugCropPaths,
+  });
+
+  final List<int> ids;
+  final List<String> debugCropPaths;
+
+  int get count => ids.length;
+}
+
 class FacePipelineService {
   FacePipelineService({FaceEmbeddingService? embeddingService})
     : _embeddingService =
@@ -24,6 +36,10 @@ class FacePipelineService {
     'FACE_DEBUG_CROPS',
     defaultValue: false,
   );
+  static const bool _writeEmbeddingToIsar = bool.fromEnvironment(
+    'FACE_WRITE_EMBEDDING_TO_ISAR',
+    defaultValue: true,
+  );
 
   final FaceEmbeddingService _embeddingService;
   final FaceEmbeddingIndexRepository _faceEmbeddingIndexRepository =
@@ -33,18 +49,18 @@ class FacePipelineService {
     required Isar isar,
     required PhotoEntity photo,
     required File imageFile,
+    Uint8List? imageBytes,
     required List<Face> faces,
   }) async {
     final totalWatch = Stopwatch()..start();
     final existingReadWatch = Stopwatch()..start();
-    final existingFaces = await _loadExistingFaces(
+    final existingFaces = await _loadExistingFaceSnapshot(
       isar: isar,
       photoId: photo.id,
+      includeDebugCropPaths: _persistDebugCrops,
     );
     existingReadWatch.stop();
-    final existingIds = existingFaces
-        .map((face) => face.id)
-        .toList(growable: false);
+    final existingIds = existingFaces.ids;
 
     var sourceDecodeMs = 0.0;
     var embeddingWarmUpMs = 0.0;
@@ -53,17 +69,26 @@ class FacePipelineService {
     var tempFileMs = 0.0;
     var embeddingMs = 0.0;
     var isarWriteMs = 0.0;
+    var isarDeleteMs = 0.0;
+    var isarPutMs = 0.0;
     var objectBoxWriteMs = 0.0;
     var cleanupMs = 0.0;
+    var staleIdsCount = 0;
+    var facesWithEmbedding = 0;
+    var embeddingBytesWritten = 0;
 
     if (faces.isEmpty) {
       if (existingIds.isNotEmpty) {
+        staleIdsCount = existingIds.length;
         final isarWriteWatch = Stopwatch()..start();
+        final deleteWatch = Stopwatch()..start();
         await isar.writeTxn(() async {
           await isar.collection<FaceEntity>().deleteAll(existingIds);
         });
+        deleteWatch.stop();
         isarWriteWatch.stop();
         isarWriteMs = isarWriteWatch.elapsedMicroseconds / 1000.0;
+        isarDeleteMs = deleteWatch.elapsedMicroseconds / 1000.0;
 
         final objectBoxWriteWatch = Stopwatch()..start();
         _faceEmbeddingIndexRepository.deleteByPhotoIds(<int>[photo.id]);
@@ -72,7 +97,7 @@ class FacePipelineService {
       }
 
       final cleanupWatch = Stopwatch()..start();
-      _deleteDebugCropFiles(existingFaces);
+      _deleteDebugCropFiles(existingFaces.debugCropPaths);
       cleanupWatch.stop();
       cleanupMs = cleanupWatch.elapsedMicroseconds / 1000.0;
 
@@ -80,7 +105,7 @@ class FacePipelineService {
       return FacePipelineProfile(
         requestedFaces: faces.length,
         persistedFaces: 0,
-        existingFaces: existingFaces.length,
+        existingFaces: existingFaces.count,
         existingReadMs: existingReadWatch.elapsedMicroseconds / 1000.0,
         sourceDecodeMs: sourceDecodeMs,
         embeddingWarmUpMs: embeddingWarmUpMs,
@@ -89,14 +114,22 @@ class FacePipelineService {
         tempFileMs: tempFileMs,
         embeddingMs: embeddingMs,
         isarWriteMs: isarWriteMs,
+        isarDeleteMs: isarDeleteMs,
+        isarPutMs: isarPutMs,
         objectBoxWriteMs: objectBoxWriteMs,
         cleanupMs: cleanupMs,
+        staleIdsCount: staleIdsCount,
+        facesWithEmbedding: facesWithEmbedding,
+        embeddingBytesWritten: embeddingBytesWritten,
+        writesEmbeddingToIsar: _writeEmbeddingToIsar,
         totalMs: totalWatch.elapsedMicroseconds / 1000.0,
       );
     }
 
     final sourceDecodeWatch = Stopwatch()..start();
-    final decodedImage = await FaceCropUtil.decodeSourceImage(imageFile);
+    final decodedImage = imageBytes != null && imageBytes.isNotEmpty
+        ? FaceCropUtil.decodeSourceImageBytes(imageBytes)
+        : await FaceCropUtil.decodeSourceImage(imageFile);
     sourceDecodeWatch.stop();
     sourceDecodeMs = sourceDecodeWatch.elapsedMicroseconds / 1000.0;
     if (decodedImage == null) {
@@ -105,7 +138,7 @@ class FacePipelineService {
       return FacePipelineProfile(
         requestedFaces: faces.length,
         persistedFaces: 0,
-        existingFaces: existingFaces.length,
+        existingFaces: existingFaces.count,
         existingReadMs: existingReadWatch.elapsedMicroseconds / 1000.0,
         sourceDecodeMs: sourceDecodeMs,
         embeddingWarmUpMs: embeddingWarmUpMs,
@@ -114,8 +147,14 @@ class FacePipelineService {
         tempFileMs: tempFileMs,
         embeddingMs: embeddingMs,
         isarWriteMs: isarWriteMs,
+        isarDeleteMs: isarDeleteMs,
+        isarPutMs: isarPutMs,
         objectBoxWriteMs: objectBoxWriteMs,
         cleanupMs: cleanupMs,
+        staleIdsCount: staleIdsCount,
+        facesWithEmbedding: facesWithEmbedding,
+        embeddingBytesWritten: embeddingBytesWritten,
+        writesEmbeddingToIsar: _writeEmbeddingToIsar,
         totalMs: totalWatch.elapsedMicroseconds / 1000.0,
       );
     }
@@ -203,7 +242,7 @@ class FacePipelineService {
 
     if (results.isEmpty) {
       final cleanupWatch = Stopwatch()..start();
-      _deleteDebugCropFiles(existingFaces);
+      _deleteDebugCropFiles(existingFaces.debugCropPaths);
       cleanupWatch.stop();
       cleanupMs = cleanupWatch.elapsedMicroseconds / 1000.0;
 
@@ -211,7 +250,7 @@ class FacePipelineService {
       return FacePipelineProfile(
         requestedFaces: faces.length,
         persistedFaces: 0,
-        existingFaces: existingFaces.length,
+        existingFaces: existingFaces.count,
         existingReadMs: existingReadWatch.elapsedMicroseconds / 1000.0,
         sourceDecodeMs: sourceDecodeMs,
         embeddingWarmUpMs: embeddingWarmUpMs,
@@ -220,21 +259,62 @@ class FacePipelineService {
         tempFileMs: tempFileMs,
         embeddingMs: embeddingMs,
         isarWriteMs: isarWriteMs,
+        isarDeleteMs: isarDeleteMs,
+        isarPutMs: isarPutMs,
         objectBoxWriteMs: objectBoxWriteMs,
         cleanupMs: cleanupMs,
+        staleIdsCount: staleIdsCount,
+        facesWithEmbedding: facesWithEmbedding,
+        embeddingBytesWritten: embeddingBytesWritten,
+        writesEmbeddingToIsar: _writeEmbeddingToIsar,
         totalMs: totalWatch.elapsedMicroseconds / 1000.0,
       );
     }
 
+    staleIdsCount = existingIds.length;
+    facesWithEmbedding = results
+        .where((face) => face.embedding != null && face.embedding!.isNotEmpty)
+        .length;
+    embeddingBytesWritten = results.fold<int>(
+      0,
+      (sum, face) => sum + ((face.embedding?.length ?? 0) * 8),
+    );
+
     final isarWriteWatch = Stopwatch()..start();
+    final deleteWatch = Stopwatch();
+    final putWatch = Stopwatch();
+    List<List<double>?>? embeddingBackups;
+    if (!_writeEmbeddingToIsar) {
+      embeddingBackups = results
+          .map(
+            (face) => face.embedding == null
+                ? null
+                : List<double>.from(face.embedding!),
+          )
+          .toList(growable: false);
+      for (final face in results) {
+        face.embedding = null;
+      }
+    }
     await isar.writeTxn(() async {
       if (existingIds.isNotEmpty) {
+        deleteWatch.start();
         await isar.collection<FaceEntity>().deleteAll(existingIds);
+        deleteWatch.stop();
       }
+      putWatch.start();
       await isar.collection<FaceEntity>().putAll(results);
+      putWatch.stop();
     });
+    if (embeddingBackups != null) {
+      for (var index = 0; index < results.length; index++) {
+        results[index].embedding = embeddingBackups[index];
+      }
+    }
     isarWriteWatch.stop();
     isarWriteMs = isarWriteWatch.elapsedMicroseconds / 1000.0;
+    isarDeleteMs = deleteWatch.elapsedMicroseconds / 1000.0;
+    isarPutMs = putWatch.elapsedMicroseconds / 1000.0;
 
     final objectBoxWriteWatch = Stopwatch()..start();
     _faceEmbeddingIndexRepository.replaceForPhoto(
@@ -245,7 +325,7 @@ class FacePipelineService {
     objectBoxWriteMs = objectBoxWriteWatch.elapsedMicroseconds / 1000.0;
 
     final cleanupWatch = Stopwatch()..start();
-    _deleteDebugCropFiles(existingFaces);
+    _deleteDebugCropFiles(existingFaces.debugCropPaths);
     cleanupWatch.stop();
     cleanupMs = cleanupWatch.elapsedMicroseconds / 1000.0;
 
@@ -253,7 +333,7 @@ class FacePipelineService {
     return FacePipelineProfile(
       requestedFaces: faces.length,
       persistedFaces: results.length,
-      existingFaces: existingFaces.length,
+      existingFaces: existingFaces.count,
       existingReadMs: existingReadWatch.elapsedMicroseconds / 1000.0,
       sourceDecodeMs: sourceDecodeMs,
       embeddingWarmUpMs: embeddingWarmUpMs,
@@ -262,29 +342,42 @@ class FacePipelineService {
       tempFileMs: tempFileMs,
       embeddingMs: embeddingMs,
       isarWriteMs: isarWriteMs,
+      isarDeleteMs: isarDeleteMs,
+      isarPutMs: isarPutMs,
       objectBoxWriteMs: objectBoxWriteMs,
       cleanupMs: cleanupMs,
+      staleIdsCount: staleIdsCount,
+      facesWithEmbedding: facesWithEmbedding,
+      embeddingBytesWritten: embeddingBytesWritten,
+      writesEmbeddingToIsar: _writeEmbeddingToIsar,
       totalMs: totalWatch.elapsedMicroseconds / 1000.0,
     );
   }
 
-  Future<List<FaceEntity>> _loadExistingFaces({
+  Future<_ExistingFaceSnapshot> _loadExistingFaceSnapshot({
     required Isar isar,
     required int photoId,
+    required bool includeDebugCropPaths,
   }) async {
-    return isar
-        .collection<FaceEntity>()
-        .filter()
-        .photoIdEqualTo(photoId)
-        .findAll();
+    final query = isar.collection<FaceEntity>().filter().photoIdEqualTo(
+      photoId,
+    );
+
+    final ids = await query.idProperty().findAll();
+    if (!includeDebugCropPaths || ids.isEmpty) {
+      return _ExistingFaceSnapshot(ids: ids, debugCropPaths: const <String>[]);
+    }
+
+    final paths = await query.debugCropPathProperty().findAll();
+    final normalizedPaths = paths
+        .whereType<String>()
+        .where((path) => path.isNotEmpty)
+        .toList(growable: false);
+    return _ExistingFaceSnapshot(ids: ids, debugCropPaths: normalizedPaths);
   }
 
-  void _deleteDebugCropFiles(List<FaceEntity> faces) {
-    for (final face in faces) {
-      final path = face.debugCropPath;
-      if (path == null || path.isEmpty) {
-        continue;
-      }
+  void _deleteDebugCropFiles(Iterable<String> paths) {
+    for (final path in paths) {
       final file = File(path);
       if (file.existsSync()) {
         try {
@@ -346,8 +439,14 @@ class FacePipelineProfile {
     required this.tempFileMs,
     required this.embeddingMs,
     required this.isarWriteMs,
+    required this.isarDeleteMs,
+    required this.isarPutMs,
     required this.objectBoxWriteMs,
     required this.cleanupMs,
+    required this.staleIdsCount,
+    required this.facesWithEmbedding,
+    required this.embeddingBytesWritten,
+    required this.writesEmbeddingToIsar,
     required this.totalMs,
   });
 
@@ -362,7 +461,13 @@ class FacePipelineProfile {
   final double tempFileMs;
   final double embeddingMs;
   final double isarWriteMs;
+  final double isarDeleteMs;
+  final double isarPutMs;
   final double objectBoxWriteMs;
   final double cleanupMs;
+  final int staleIdsCount;
+  final int facesWithEmbedding;
+  final int embeddingBytesWritten;
+  final bool writesEmbeddingToIsar;
   final double totalMs;
 }

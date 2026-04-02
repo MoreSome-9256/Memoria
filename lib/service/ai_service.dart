@@ -1168,6 +1168,7 @@ class AIService {
             isar: isar,
             photo: photo,
             imageFile: analysisFile,
+            imageBytes: resolvedAnalysisFile.sourceBytes,
             faces: faces,
           );
       profile.facePersistMs = facePipelineProfile.totalMs;
@@ -1179,10 +1180,19 @@ class AIService {
       profile.faceTempFileMs = facePipelineProfile.tempFileMs;
       profile.faceEmbeddingMs = facePipelineProfile.embeddingMs;
       profile.faceIsarWriteMs = facePipelineProfile.isarWriteMs;
+      profile.faceIsarDeleteMs = facePipelineProfile.isarDeleteMs;
+      profile.faceIsarPutMs = facePipelineProfile.isarPutMs;
       profile.faceObjectBoxWriteMs = facePipelineProfile.objectBoxWriteMs;
       profile.faceCleanupMs = facePipelineProfile.cleanupMs;
       profile.faceRequestedCount = facePipelineProfile.requestedFaces;
       profile.facePersistedCount = facePipelineProfile.persistedFaces;
+      profile.faceStaleIdsCount = facePipelineProfile.staleIdsCount;
+      profile.faceEmbeddingFacesWritten =
+          facePipelineProfile.facesWithEmbedding;
+      profile.faceEmbeddingBytesWritten =
+          facePipelineProfile.embeddingBytesWritten;
+      profile.faceWritesEmbeddingToIsar =
+          facePipelineProfile.writesEmbeddingToIsar;
 
       final captionLocation =
           photo.locationName ?? photo.district ?? photo.city ?? photo.province;
@@ -1363,7 +1373,7 @@ class AIService {
     );
   }
 
-  Future<File> _createAuxiliaryAnalysisFile(
+  Future<_CreatedAnalysisFile> _createAuxiliaryAnalysisFile(
     File sourceFile,
     int photoId,
   ) async {
@@ -1371,17 +1381,18 @@ class AIService {
     final uniqueSuffix = DateTime.now().microsecondsSinceEpoch;
     final targetPath =
         '${tempDir.path}/temp_mlkit_${photoId}_$uniqueSuffix.jpg';
-    final result = await FlutterImageCompress.compressAndGetFile(
+    final bytes = await FlutterImageCompress.compressWithFile(
       sourceFile.absolute.path,
-      targetPath,
       minWidth: 1024,
       minHeight: 1024,
       quality: 80,
     );
-    if (result == null) {
+    if (bytes == null || bytes.isEmpty) {
       throw Exception('压缩失败');
     }
-    return File(result.path);
+    final file = File(targetPath);
+    await file.writeAsBytes(bytes, flush: true);
+    return _CreatedAnalysisFile(file: file, bytes: bytes);
   }
 
   // 将 AI 分析结果写入数据库（增强版）

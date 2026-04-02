@@ -16,5 +16,8 @@
   "COGNITO_APP_CLIENT_ID": "XXXXXXXXXXXXXXXXXXXXXXXXXX",
   "COGNITO_IDENTITY_POOL_ID": "ap-southeast-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "AUDIO_API_BASE_URL": "http://127.0.0.1:8000",
-  "AUDIO_API_ENDPOINT": "/api/analyze_beats"
+  "AUDIO_API_ENDPOINT": "/api/analyze_beats",
+  "AI_ANALYSIS_INPUT_STRATEGY": "thumbnail_first",
+  "AI_ANALYSIS_AUXILIARY_STRATEGY": "always_compress",
+  "AI_ANALYSIS_THUMBNAIL_TIMEOUT_MS": "120"
 }

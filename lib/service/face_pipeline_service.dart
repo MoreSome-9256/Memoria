@@ -157,31 +157,20 @@ class FacePipelineService {
       }
 
       final tempFileWatch = Stopwatch()..start();
-      final cropFile = await FaceCropUtil.writeFaceImageToTempFile(
-        faceImage: croppedFace,
-        photoId: photo.id,
-        faceIndex: index,
-      );
+      final cropBytes = FaceCropUtil.encodeFaceImageToJpegBytes(croppedFace);
       tempFileWatch.stop();
       tempFileMs += tempFileWatch.elapsedMicroseconds / 1000.0;
 
       FaceEmbeddingResult? embeddingResult;
       try {
         final embeddingWatch = Stopwatch()..start();
-        embeddingResult = await _embeddingService.embedFaceCrop(cropFile);
+        embeddingResult = await _embeddingService.embedFaceCropBytes(cropBytes);
         embeddingWatch.stop();
         embeddingMs += embeddingWatch.elapsedMicroseconds / 1000.0;
       } catch (error) {
         debugPrint(
           '⚠️ face embedding 失败 photo=${photo.id} face=$index: $error',
         );
-      } finally {
-        if (cropFile.existsSync()) {
-          final tempDeleteWatch = Stopwatch()..start();
-          cropFile.deleteSync();
-          tempDeleteWatch.stop();
-          tempFileMs += tempDeleteWatch.elapsedMicroseconds / 1000.0;
-        }
       }
 
       final qualityScore = _estimateQualityScore(face, photo);

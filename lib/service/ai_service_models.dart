@@ -7,6 +7,11 @@ class _PreparedAnalysisInput {
     required this.mobileClipBytes,
     required this.usedThumbnail,
     required this.inputSource,
+    required this.inputStrategy,
+    required this.thumbnailAttempted,
+    required this.thumbnailTimedOut,
+    required this.fallbackToOriginal,
+    required this.fallbackReason,
     required this.loadMs,
     required this.thumbnailReadMs,
     required this.fileReadMs,
@@ -17,6 +22,11 @@ class _PreparedAnalysisInput {
   final Uint8List mobileClipBytes;
   final bool usedThumbnail;
   final String inputSource;
+  final String inputStrategy;
+  final bool thumbnailAttempted;
+  final bool thumbnailTimedOut;
+  final bool fallbackToOriginal;
+  final String fallbackReason;
   final double loadMs;
   final double thumbnailReadMs;
   final double fileReadMs;

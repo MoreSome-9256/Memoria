@@ -29,6 +29,8 @@ import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../storage/vector_index/vector_index_constants.dart';
 
 part 'ai_service_progress.dart';
+part 'ai_service_input.dart';
+part 'ai_service_auxiliary.dart';
 part 'ai_service_models.dart';
 part 'ai_service_profiler.dart';
 
@@ -52,6 +54,20 @@ class AIService {
   static const ThumbnailSize _mobileClipThumbnailSize = ThumbnailSize.square(
     384,
   );
+  static const String _analysisInputStrategyOverride = String.fromEnvironment(
+    'AI_ANALYSIS_INPUT_STRATEGY',
+    defaultValue: 'thumbnail_first',
+  );
+  static const String _analysisThumbnailTimeoutMsOverride =
+      String.fromEnvironment(
+        'AI_ANALYSIS_THUMBNAIL_TIMEOUT_MS',
+        defaultValue: '120',
+      );
+  static const String _analysisAuxiliaryStrategyOverride =
+      String.fromEnvironment(
+        'AI_ANALYSIS_AUXILIARY_STRATEGY',
+        defaultValue: 'always_compress',
+      );
   static const int _minFaceDetectorInputSize = 32;
   static const int _maxParallelWorkers = 8;
   static const int _maxConcurrentCaptionWorkers = 2;
@@ -74,6 +90,15 @@ class AIService {
   final Set<Id> _junkFilterBypassPhotoIds = <Id>{};
   final ListQueue<_AsyncCaptionTask> _pendingCaptionTasks =
       ListQueue<_AsyncCaptionTask>();
+  static final _AnalysisInputConfig _analysisInputConfig =
+      _AnalysisInputConfig.resolve(
+        strategyLabel: _analysisInputStrategyOverride,
+        thumbnailTimeoutMsLabel: _analysisThumbnailTimeoutMsOverride,
+      );
+  static final _AnalysisAuxiliaryConfig _analysisAuxiliaryConfig =
+      _AnalysisAuxiliaryConfig.resolve(
+        strategyLabel: _analysisAuxiliaryStrategyOverride,
+      );
 
   bool _autoResumeEnabled = false;
 
@@ -990,9 +1015,10 @@ class AIService {
       backendLabel: selectedBackend.label,
     );
     File? analysisFile;
-    var deferAnalysisFileCleanup = false;
     try {
-      final prepared = await _prepareAnalysisInput(photo);
+      profile.inputStrategy = _analysisInputConfig.strategy.label;
+      profile.auxiliaryStrategy = _analysisAuxiliaryConfig.strategy.label;
+      final prepared = await _prepareAnalysisInputConfigured(photo);
       if (prepared == null) {
         profile.outcome = 'prepare_failed';
         return _PhotoProcessResult.failed(profile: profile);
@@ -1003,7 +1029,12 @@ class AIService {
       profile.fileReadMs = prepared.fileReadMs;
       profile.inputBytes = prepared.mobileClipBytes.lengthInBytes;
       profile.inputSource = prepared.inputSource;
+      profile.inputStrategy = prepared.inputStrategy;
       profile.usedThumbnail = prepared.usedThumbnail;
+      profile.thumbnailAttempted = prepared.thumbnailAttempted;
+      profile.thumbnailTimedOut = prepared.thumbnailTimedOut;
+      profile.fallbackToOriginal = prepared.fallbackToOriginal;
+      profile.fallbackReason = prepared.fallbackReason;
 
       final resolution = await mobileClipEmbeddingService.resolvePhotoEmbedding(
         photo: photo,
@@ -1072,12 +1103,15 @@ class AIService {
       final visualTags = _sanitizeVisualTags(mobileClipTags);
 
       final auxiliaryFileWatch = Stopwatch()..start();
-      analysisFile = await _createAuxiliaryAnalysisFile(
-        prepared.file,
-        photo.id,
-      );
+      final resolvedAnalysisFile = await _AnalysisFileResolver(
+        config: _analysisAuxiliaryConfig,
+        createCompressedFile: _createAuxiliaryAnalysisFile,
+      ).resolve(sourceFile: prepared.file, photoId: photo.id);
+      analysisFile = resolvedAnalysisFile.file;
       auxiliaryFileWatch.stop();
       profile.auxiliaryFileMs = auxiliaryFileWatch.elapsedMicroseconds / 1000.0;
+      profile.auxiliarySource = resolvedAnalysisFile.source;
+      profile.auxiliaryCreated = resolvedAnalysisFile.createdTemporaryFile;
       final inputImage = InputImage.fromFile(analysisFile);
 
       var ocrResult = OcrResult.empty();
@@ -1089,7 +1123,11 @@ class AIService {
       }
 
       final dimensionWatch = Stopwatch()..start();
-      final analysisDimensions = await _readImageDimensions(analysisFile);
+      final analysisDimensions = await _readImageDimensions(
+        analysisFile,
+        knownWidth: photo.width,
+        knownHeight: photo.height,
+      );
       dimensionWatch.stop();
       profile.analysisDecodeMs = dimensionWatch.elapsedMicroseconds / 1000.0;
       final canRunFaceDetection =
@@ -1155,7 +1193,7 @@ class AIService {
       } else {
         final captionWatch = Stopwatch()..start();
         caption = await photoCaptionService.generateCaption(
-          imageFile: analysisFile,
+          imageFile: prepared.file,
           visualTags: visualTags,
           ocrTags: ocrResult.tags,
           ocrText: ocrResult.text,
@@ -1186,11 +1224,10 @@ class AIService {
       profile.outcome = 'completed';
 
       if (profile.captionDeferred) {
-        deferAnalysisFileCleanup = true;
         _enqueueAsyncCaption(
           _AsyncCaptionTask(
             photoId: photo.id,
-            imageFile: analysisFile,
+            imageFile: prepared.file,
             captionService: photoCaptionService,
             visualTags: visualTags,
             ocrTags: ocrResult.tags,
@@ -1213,8 +1250,7 @@ class AIService {
       profile.error = error.toString();
       return _PhotoProcessResult.failed(profile: profile);
     } finally {
-      if (!deferAnalysisFileCleanup &&
-          analysisFile != null &&
+      if (analysisFile != null &&
           analysisFile.path != photo.path &&
           analysisFile.existsSync()) {
         try {
@@ -1252,6 +1288,19 @@ class AIService {
     return TagSanitizer.sanitizeVisualTags(sanitized, maxTags: maxTags);
   }
 
+  Future<_PreparedAnalysisInput?> _prepareAnalysisInputConfigured(
+    PhotoEntity photo,
+  ) {
+    if (_analysisInputConfig.strategy ==
+        _AnalysisInputStrategy.thumbnailFirst) {
+      return _prepareAnalysisInput(photo);
+    }
+    return _AnalysisInputLoader(
+      config: _analysisInputConfig,
+      thumbnailSize: _mobileClipThumbnailSize,
+    ).load(photo);
+  }
+
   Future<_PreparedAnalysisInput?> _prepareAnalysisInput(
     PhotoEntity photo,
   ) async {
@@ -1265,6 +1314,7 @@ class AIService {
     var thumbnailReadMs = 0.0;
     var fileReadMs = 0.0;
     var inputSource = 'original_file';
+    var fallbackReason = 'none';
     try {
       final asset = await AssetEntity.fromId(photo.assetId);
       final thumbnailWatch = Stopwatch()..start();
@@ -1275,8 +1325,13 @@ class AIService {
       thumbnailReadMs = thumbnailWatch.elapsedMicroseconds / 1000.0;
       if (mobileClipBytes != null && mobileClipBytes.isNotEmpty) {
         inputSource = 'thumbnail';
+      } else if (asset == null) {
+        fallbackReason = 'asset_unavailable';
+      } else {
+        fallbackReason = 'thumbnail_empty';
       }
     } catch (error) {
+      fallbackReason = 'thumbnail_error';
       debugPrint('⚠️ 读取系统缩略图失败 photoId=${photo.id}: $error');
     }
 
@@ -1297,6 +1352,11 @@ class AIService {
       mobileClipBytes: mobileClipBytes,
       usedThumbnail: inputSource == 'thumbnail',
       inputSource: inputSource,
+      inputStrategy: _AnalysisInputStrategy.thumbnailFirst.label,
+      thumbnailAttempted: true,
+      thumbnailTimedOut: false,
+      fallbackToOriginal: inputSource != 'thumbnail',
+      fallbackReason: inputSource == 'thumbnail' ? 'none' : fallbackReason,
       loadMs: loadWatch.elapsedMicroseconds / 1000.0,
       thumbnailReadMs: thumbnailReadMs,
       fileReadMs: fileReadMs,
@@ -1394,9 +1454,27 @@ class AIService {
   }
 }
 
-Future<(int, int)?> _readImageDimensions(File imageFile) async {
+Future<(int, int)?> _readImageDimensions(
+  File imageFile, {
+  int? knownWidth,
+  int? knownHeight,
+}) async {
   try {
+    // Catalog dimensions are sufficient for the face min-size gate.
+    if (knownWidth != null &&
+        knownHeight != null &&
+        knownWidth > 0 &&
+        knownHeight > 0) {
+      return (knownWidth, knownHeight);
+    }
+
     final bytes = await imageFile.readAsBytes();
+    final decoder = img.findDecoderForData(bytes);
+    final info = decoder?.startDecode(bytes);
+    if (info != null && info.width > 0 && info.height > 0) {
+      return (info.width, info.height);
+    }
+
     final decoded = img.decodeImage(bytes);
     if (decoded == null) {
       return null;

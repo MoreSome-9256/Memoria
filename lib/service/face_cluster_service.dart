@@ -6,8 +6,9 @@ import 'package:isar/isar.dart';
 import '../models/entity/face_entity.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/face_cluster_models.dart';
-import 'photo_service.dart';
+import '../storage/vector_index/face_embedding_index_repository.dart';
 import '../utils/tag_sanitizer.dart';
+import 'photo_service.dart';
 
 typedef FaceEntitiesLoader = Future<List<FaceEntity>> Function();
 typedef PhotoEntitiesLoader = Future<List<PhotoEntity>> Function();
@@ -82,6 +83,8 @@ class FaceClusterService {
 
   final FaceEntitiesLoader? _facesLoader;
   final PhotoEntitiesLoader? _photosLoader;
+  final FaceEmbeddingIndexRepository _faceEmbeddingIndexRepository =
+      FaceEmbeddingIndexRepository();
 
   Future<FaceClusterRunSummary> reclusterAllFaces({
     double minQualityScore = defaultMinQualityScore,
@@ -106,6 +109,14 @@ class FaceClusterService {
     int maxClusterSize = defaultMaxClusterSize,
   }) async {
     final allFaces = await _loadAllFaces();
+    final indexedEmbeddings = _faceEmbeddingIndexRepository
+        .readEmbeddingsForFaces(allFaces);
+    for (final face in allFaces) {
+      final embedding = indexedEmbeddings[face.id];
+      if (embedding != null) {
+        face.embedding = embedding;
+      }
+    }
     if (allFaces.isEmpty) {
       return const FaceClusterRunSummary(
         candidateFaceCount: 0,
@@ -227,9 +238,11 @@ class FaceClusterService {
       });
 
       final attachCandidates = candidateFaces
-          .where((face) =>
-              face.embeddingModelVersion == version &&
-              !seedFaceIds.contains(face.id))
+          .where(
+            (face) =>
+                face.embeddingModelVersion == version &&
+                !seedFaceIds.contains(face.id),
+          )
           .toList(growable: false);
 
       for (final face in attachCandidates) {
@@ -250,10 +263,9 @@ class FaceClusterService {
       for (final members in stableClusters) {
         final sortedMembers = List<FaceEntity>.from(members)
           ..sort((left, right) {
-            final primaryCompare =
-                (right.isPrimaryFace ? 1 : 0).compareTo(
-                  left.isPrimaryFace ? 1 : 0,
-                );
+            final primaryCompare = (right.isPrimaryFace ? 1 : 0).compareTo(
+              left.isPrimaryFace ? 1 : 0,
+            );
             if (primaryCompare != 0) {
               return primaryCompare;
             }
@@ -293,8 +305,9 @@ class FaceClusterService {
       assignedClusterByFaceId.putIfAbsent(face.id, () => null);
     }
 
-    final clusteredFaceCount =
-        assignedClusterByFaceId.values.whereType<int>().length;
+    final clusteredFaceCount = assignedClusterByFaceId.values
+        .whereType<int>()
+        .length;
     final leftoverFaceCount = candidateFaces.length - clusteredFaceCount;
 
     _logClusterPairDiagnostics(
@@ -403,7 +416,9 @@ class FaceClusterService {
     if (photo.isProbablyScreenshot) {
       return true;
     }
-    final tags = TagSanitizer.sanitizeVisualTags(photo.aiTags ?? const <String>[]);
+    final tags = TagSanitizer.sanitizeVisualTags(
+      photo.aiTags ?? const <String>[],
+    );
     if (tags.any(_nonHumanPhotoTags.contains)) {
       return true;
     }
@@ -432,8 +447,10 @@ class FaceClusterService {
       }
 
       final currentScore = _representativeScore(face, photoById[face.photoId]);
-      final existingScore =
-          _representativeScore(existing, photoById[existing.photoId]);
+      final existingScore = _representativeScore(
+        existing,
+        photoById[existing.photoId],
+      );
       if (currentScore > existingScore) {
         bestFaceByPhotoId[face.photoId] = face;
       }
@@ -450,8 +467,9 @@ class FaceClusterService {
   }) {
     final sortedFaces = List<FaceEntity>.from(faces)
       ..sort((left, right) {
-        final primaryCompare =
-            (right.isPrimaryFace ? 1 : 0).compareTo(left.isPrimaryFace ? 1 : 0);
+        final primaryCompare = (right.isPrimaryFace ? 1 : 0).compareTo(
+          left.isPrimaryFace ? 1 : 0,
+        );
         if (primaryCompare != 0) {
           return primaryCompare;
         }
@@ -611,7 +629,10 @@ class FaceClusterService {
             continue;
           }
 
-          final maxPairSimilarity = _maxPairSimilarity(leftCluster, rightCluster);
+          final maxPairSimilarity = _maxPairSimilarity(
+            leftCluster,
+            rightCluster,
+          );
           if (maxPairSimilarity < pairThreshold) {
             continue;
           }
@@ -744,8 +765,9 @@ class FaceClusterService {
   FaceEntity _coverFace(List<FaceEntity> faces) {
     final sorted = List<FaceEntity>.from(faces)
       ..sort((left, right) {
-        final primaryCompare =
-            (right.isPrimaryFace ? 1 : 0).compareTo(left.isPrimaryFace ? 1 : 0);
+        final primaryCompare = (right.isPrimaryFace ? 1 : 0).compareTo(
+          left.isPrimaryFace ? 1 : 0,
+        );
         if (primaryCompare != 0) {
           return primaryCompare;
         }

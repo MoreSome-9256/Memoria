@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 
+import 'onnx_session_provider_service.dart';
+
 class MobileClipTextService {
   MobileClipTextService._internal();
 
@@ -26,6 +28,8 @@ class MobileClipTextService {
   OrtSession? _session;
   String? _inputName;
   List<String>? _outputNames;
+  OnnxExecutionProvider? _executionProvider;
+  List<String> _providerFallbacks = const <String>[];
 
   Future<void> warmUp() async {
     await _loadSession();
@@ -49,11 +53,9 @@ class MobileClipTextService {
     final runOptions = OrtRunOptions();
 
     try {
-      final outputs = session.run(
-        runOptions,
-        <String, OrtValue>{_inputName!: inputTensor},
-        _outputNames,
-      );
+      final outputs = session.run(runOptions, <String, OrtValue>{
+        _inputName!: inputTensor,
+      }, _outputNames);
 
       try {
         if (outputs.isEmpty || outputs.first == null) {
@@ -82,6 +84,8 @@ class MobileClipTextService {
     _session = null;
     _inputName = null;
     _outputNames = null;
+    _executionProvider = null;
+    _providerFallbacks = const <String>[];
   }
 
   Future<OrtSession> _loadSession() async {
@@ -91,20 +95,14 @@ class MobileClipTextService {
 
     OrtEnv.instance.init();
     final modelBytes = await _loadModelBytes();
-    final sessionOptions = OrtSessionOptions();
-
-    // Text encoder is matmul-heavy; a bit more intra-op threads is beneficial.
-    sessionOptions.setIntraOpNumThreads(2);
-    sessionOptions.setInterOpNumThreads(1);
-    sessionOptions.setSessionGraphOptimizationLevel(
-      GraphOptimizationLevel.ortEnableAll,
+    final loadResult = await OnnxSessionProviderService.createSession(
+      modelBytes: modelBytes,
+      intraOpNumThreads: 2,
+      interOpNumThreads: 1,
     );
-
-    try {
-      _session = OrtSession.fromBuffer(modelBytes, sessionOptions);
-    } finally {
-      sessionOptions.release();
-    }
+    _session = loadResult.session;
+    _executionProvider = loadResult.executionProvider;
+    _providerFallbacks = loadResult.fallbacks;
 
     if (_session!.inputNames.isEmpty) {
       throw StateError('MobileCLIP Text ONNX 未找到输入张量');
@@ -116,8 +114,13 @@ class MobileClipTextService {
     _inputName = _session!.inputNames.first;
     _outputNames = List<String>.from(_session!.outputNames, growable: false);
     debugPrint(
-      '🧠 MobileCLIP Text ONNX 就绪 input=$_inputName outputs=$_outputNames',
+      '🧠 MobileCLIP Text ONNX 就绪 input=$_inputName outputs=$_outputNames provider=${_executionProvider?.label ?? 'CPU'}',
     );
+    if (_providerFallbacks.isNotEmpty) {
+      debugPrint(
+        '⚠️ MobileCLIP Text ONNX provider fallback chain: ${_providerFallbacks.join(' -> ')}',
+      );
+    }
     return _session!;
   }
 

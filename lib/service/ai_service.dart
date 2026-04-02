@@ -25,6 +25,15 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../storage/vector_index/photo_embedding_index_repository.dart';
+import '../storage/vector_index/vector_index_constants.dart';
+
+part 'ai_service_progress.dart';
+part 'ai_service_input.dart';
+part 'ai_service_auxiliary.dart';
+part 'ai_service_models.dart';
+part 'ai_service_profiler.dart';
+
 class AIService {
   static final AIService _instance = AIService._internal();
   factory AIService() => _instance;
@@ -45,8 +54,23 @@ class AIService {
   static const ThumbnailSize _mobileClipThumbnailSize = ThumbnailSize.square(
     384,
   );
+  static const String _analysisInputStrategyOverride = String.fromEnvironment(
+    'AI_ANALYSIS_INPUT_STRATEGY',
+    defaultValue: 'thumbnail_first',
+  );
+  static const String _analysisThumbnailTimeoutMsOverride =
+      String.fromEnvironment(
+        'AI_ANALYSIS_THUMBNAIL_TIMEOUT_MS',
+        defaultValue: '120',
+      );
+  static const String _analysisAuxiliaryStrategyOverride =
+      String.fromEnvironment(
+        'AI_ANALYSIS_AUXILIARY_STRATEGY',
+        defaultValue: 'always_compress',
+      );
   static const int _minFaceDetectorInputSize = 32;
   static const int _maxParallelWorkers = 8;
+  static const int _maxConcurrentCaptionWorkers = 2;
   static const String _autoResumeKey = 'ai_auto_resume';
   static const String _runtimeActiveKey = 'ai_runtime_active';
   static const String _runtimeHeartbeatAtKey = 'ai_runtime_heartbeat_at';
@@ -61,7 +85,20 @@ class AIService {
       ValueNotifier<JunkPhotoCleanupReport?>(null);
   final JunkPhotoFilterService _junkPhotoFilterService =
       JunkPhotoFilterService();
+  final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
+      PhotoEmbeddingIndexRepository();
   final Set<Id> _junkFilterBypassPhotoIds = <Id>{};
+  final ListQueue<_AsyncCaptionTask> _pendingCaptionTasks =
+      ListQueue<_AsyncCaptionTask>();
+  static final _AnalysisInputConfig _analysisInputConfig =
+      _AnalysisInputConfig.resolve(
+        strategyLabel: _analysisInputStrategyOverride,
+        thumbnailTimeoutMsLabel: _analysisThumbnailTimeoutMsOverride,
+      );
+  static final _AnalysisAuxiliaryConfig _analysisAuxiliaryConfig =
+      _AnalysisAuxiliaryConfig.resolve(
+        strategyLabel: _analysisAuxiliaryStrategyOverride,
+      );
 
   bool _autoResumeEnabled = false;
 
@@ -69,6 +106,7 @@ class AIService {
   bool _pauseRequested = false;
   bool _stopRequested = false;
   int _inflightCount = 0;
+  int _activeCaptionTasks = 0;
   Completer<void>? _analysisCompleter;
   int _lastRuntimeHeartbeatPersistAtMs = 0;
 
@@ -425,6 +463,9 @@ class AIService {
     final queuedPhotoIds = <Id>{};
     final queue = ListQueue<PhotoEntity>();
     final recentDurationsMs = ListQueue<int>();
+    final pipelineProfiler = _AiPipelineRunProfiler(
+      summaryEvery: math.max(4, math.min(batchSize, 8)),
+    );
     var producerDone = false;
     var inflightCount = 0;
     var activeWorkerCount = 1;
@@ -520,23 +561,28 @@ class AIService {
               continue;
             }
 
-            final photosToAnalyze = await isar
+            final pendingFetchWatch = Stopwatch()..start();
+            final fetchedCandidates = await isar
                 .collection<PhotoEntity>()
                 .filter()
                 .isAiAnalyzedEqualTo(false)
                 .sortByTimestampDesc()
                 .limit(currentBatchSize * 4)
-                .findAll()
-                .then(
-                  (photos) => photos
-                      .where(
-                        (photo) =>
-                            !attemptedPhotoIds.contains(photo.id) &&
-                            !queuedPhotoIds.contains(photo.id),
-                      )
-                      .take(currentBatchSize)
-                      .toList(growable: false),
-                );
+                .findAll();
+            final photosToAnalyze = fetchedCandidates
+                .where(
+                  (photo) =>
+                      !attemptedPhotoIds.contains(photo.id) &&
+                      !queuedPhotoIds.contains(photo.id),
+                )
+                .take(currentBatchSize)
+                .toList(growable: false);
+            pendingFetchWatch.stop();
+            pipelineProfiler.recordPendingFetch(
+              fetchMs: pendingFetchWatch.elapsedMicroseconds / 1000.0,
+              fetchedCandidates: fetchedCandidates.length,
+              scheduledPhotos: photosToAnalyze.length,
+            );
 
             if (photosToAnalyze.isEmpty) {
               break;
@@ -686,6 +732,8 @@ class AIService {
 
               final spentMs =
                   DateTime.now().millisecondsSinceEpoch - photoStartedAtMs;
+              result.profile.wallMs = spentMs.toDouble();
+              pipelineProfiler.recordPhoto(result.profile);
               if (recentDurationsMs.length >= 18) {
                 recentDurationsMs.removeFirst();
               }
@@ -763,6 +811,7 @@ class AIService {
       }
       debugPrint("✅ AI 分析完成，总计处理: $totalAnalyzed 张");
     } finally {
+      pipelineProfiler.logFinalSummary();
       await mobileClipTagService.endWorkflowSession();
       await mobileClipEmbeddingService.endWorkflowSession();
 
@@ -860,6 +909,77 @@ class AIService {
     return !_stopRequested;
   }
 
+  void _enqueueAsyncCaption(_AsyncCaptionTask task) {
+    _pendingCaptionTasks.addLast(task);
+    _pumpAsyncCaptionQueue();
+  }
+
+  void _pumpAsyncCaptionQueue() {
+    while (_activeCaptionTasks < _maxConcurrentCaptionWorkers &&
+        _pendingCaptionTasks.isNotEmpty) {
+      final task = _pendingCaptionTasks.removeFirst();
+      _activeCaptionTasks++;
+      unawaited(_runAsyncCaptionTask(task));
+    }
+  }
+
+  Future<void> _runAsyncCaptionTask(_AsyncCaptionTask task) async {
+    final watch = Stopwatch()..start();
+    try {
+      final caption = await task.captionService.generateCaption(
+        imageFile: task.imageFile,
+        visualTags: task.visualTags,
+        ocrTags: task.ocrTags,
+        ocrText: task.ocrText,
+        location: task.location,
+        takenAt: task.takenAt,
+        isProbablyScreenshot: task.isProbablyScreenshot,
+        faceCount: task.faceCount,
+      );
+      if (caption.trim().isNotEmpty) {
+        await _updatePhotoCaption(task.photoId, caption);
+      }
+      watch.stop();
+      debugPrint(
+        'AI async caption photoId=${task.photoId} '
+        'updated=${caption.trim().isNotEmpty} '
+        'elapsedMs=${(watch.elapsedMicroseconds / 1000.0).toStringAsFixed(1)}',
+      );
+    } catch (error) {
+      watch.stop();
+      debugPrint(
+        '⚠️ AI async caption failed photoId=${task.photoId} '
+        'elapsedMs=${(watch.elapsedMicroseconds / 1000.0).toStringAsFixed(1)} '
+        'error=$error',
+      );
+    } finally {
+      if (task.imageFile.existsSync()) {
+        try {
+          await task.imageFile.delete();
+        } catch (_) {}
+      }
+      _activeCaptionTasks = math.max(0, _activeCaptionTasks - 1);
+      _pumpAsyncCaptionQueue();
+    }
+  }
+
+  Future<void> _updatePhotoCaption(Id photoId, String caption) async {
+    final trimmed = caption.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+
+    final isar = PhotoService().isar;
+    await isar.writeTxn(() async {
+      final photo = await isar.collection<PhotoEntity>().get(photoId);
+      if (photo == null) {
+        return;
+      }
+      photo.aiCaption = trimmed;
+      await isar.collection<PhotoEntity>().put(photo);
+    });
+  }
+
   int _resolveWorkerCount(int workItems) {
     if (workItems <= 1) {
       return 1;
@@ -890,30 +1010,63 @@ class AIService {
     required FaceDetector faceDetector,
     required bool skipJunkFilter,
   }) async {
+    final profile = _AiPhotoProfile(
+      photoId: photo.id,
+      backendLabel: selectedBackend.label,
+    );
     File? analysisFile;
     try {
-      final prepared = await _prepareAnalysisInput(photo);
+      profile.inputStrategy = _analysisInputConfig.strategy.label;
+      profile.auxiliaryStrategy = _analysisAuxiliaryConfig.strategy.label;
+      final prepared = await _prepareAnalysisInputConfigured(photo);
       if (prepared == null) {
-        return const _PhotoProcessResult.failed();
+        profile.outcome = 'prepare_failed';
+        return _PhotoProcessResult.failed(profile: profile);
       }
 
-      await mobileClipEmbeddingService.resolvePhotoEmbedding(
+      profile.inputLoadMs = prepared.loadMs;
+      profile.thumbnailReadMs = prepared.thumbnailReadMs;
+      profile.fileReadMs = prepared.fileReadMs;
+      profile.inputBytes = prepared.mobileClipBytes.lengthInBytes;
+      profile.inputSource = prepared.inputSource;
+      profile.inputStrategy = prepared.inputStrategy;
+      profile.usedThumbnail = prepared.usedThumbnail;
+      profile.thumbnailAttempted = prepared.thumbnailAttempted;
+      profile.thumbnailTimedOut = prepared.thumbnailTimedOut;
+      profile.fallbackToOriginal = prepared.fallbackToOriginal;
+      profile.fallbackReason = prepared.fallbackReason;
+
+      final resolution = await mobileClipEmbeddingService.resolvePhotoEmbedding(
         photo: photo,
         preferredImageBytes: prepared.mobileClipBytes,
         backend: selectedBackend,
       );
+      final embeddingProfile = resolution.profile;
+      profile.embeddingCacheHit = resolution.reusedCache;
+      if (embeddingProfile != null) {
+        profile.providerLabel = embeddingProfile.providerLabel;
+        profile.decodeMs = embeddingProfile.decodeMs;
+        profile.resizeNormalizeMs = embeddingProfile.resizeNormalizeMs;
+        profile.tensorBuildMs = embeddingProfile.tensorBuildMs;
+        profile.inferenceMs = embeddingProfile.inferenceMs;
+        profile.objectBoxWriteMs = embeddingProfile.vectorIndexWriteMs;
+      }
       final embedding = photo.imageEmbedding ?? const <double>[];
       if (embedding.isEmpty) {
-        return const _PhotoProcessResult.failed();
+        profile.outcome = 'embedding_empty';
+        return _PhotoProcessResult.failed(profile: profile);
       }
 
       if (!skipJunkFilter) {
+        final junkWatch = Stopwatch()..start();
         final junkDecision = await _junkPhotoFilterService.evaluatePhoto(
           photo: photo,
           imageEmbedding: embedding,
         );
+        junkWatch.stop();
+        profile.junkFilterMs = junkWatch.elapsedMicroseconds / 1000.0;
         if (junkDecision.shouldFilter) {
-          await _markAsAnalyzed(
+          final persistenceProfile = await _markAsAnalyzed(
             photo.id,
             const <String>[JunkPhotoFilterService.junkCandidateTag],
             embedding,
@@ -924,7 +1077,11 @@ class AIService {
             0.0,
             0.0,
             isar,
+            selectedBackend,
+            skipVectorIndexWrite: true,
           );
+          profile.isarWriteMs = persistenceProfile.isarWriteMs;
+          profile.outcome = 'junk_filtered';
           return _PhotoProcessResult.success(
             eventId: photo.eventId,
             junkCandidate: JunkPhotoCleanupCandidate(
@@ -934,25 +1091,45 @@ class AIService {
               timestamp: photo.timestamp,
               reasons: junkDecision.hits,
             ),
+            profile: profile,
           );
         }
       }
 
+      final tagWatch = Stopwatch()..start();
       final mobileClipTags = await mobileClipTagService.retrieveTags(embedding);
+      tagWatch.stop();
+      profile.tagRetrievalMs = tagWatch.elapsedMicroseconds / 1000.0;
       final visualTags = _sanitizeVisualTags(mobileClipTags);
 
-      analysisFile = await _createAuxiliaryAnalysisFile(
-        prepared.file,
-        photo.id,
-      );
+      final auxiliaryFileWatch = Stopwatch()..start();
+      final resolvedAnalysisFile = await _AnalysisFileResolver(
+        config: _analysisAuxiliaryConfig,
+        createCompressedFile: _createAuxiliaryAnalysisFile,
+      ).resolve(sourceFile: prepared.file, photoId: photo.id);
+      analysisFile = resolvedAnalysisFile.file;
+      auxiliaryFileWatch.stop();
+      profile.auxiliaryFileMs = auxiliaryFileWatch.elapsedMicroseconds / 1000.0;
+      profile.auxiliarySource = resolvedAnalysisFile.source;
+      profile.auxiliaryCreated = resolvedAnalysisFile.createdTemporaryFile;
       final inputImage = InputImage.fromFile(analysisFile);
 
       var ocrResult = OcrResult.empty();
       if (OcrService.shouldRunOcr(visualTags, aspectRatio: photo.aspectRatio)) {
+        final ocrWatch = Stopwatch()..start();
         ocrResult = await ocrService.analyzeImageFile(analysisFile);
+        ocrWatch.stop();
+        profile.ocrMs = ocrWatch.elapsedMicroseconds / 1000.0;
       }
 
-      final analysisDimensions = await _readImageDimensions(analysisFile);
+      final dimensionWatch = Stopwatch()..start();
+      final analysisDimensions = await _readImageDimensions(
+        analysisFile,
+        knownWidth: photo.width,
+        knownHeight: photo.height,
+      );
+      dimensionWatch.stop();
+      profile.analysisDecodeMs = dimensionWatch.elapsedMicroseconds / 1000.0;
       final canRunFaceDetection =
           analysisDimensions != null &&
           analysisDimensions.$1 >= _minFaceDetectorInputSize &&
@@ -968,9 +1145,12 @@ class AIService {
         );
       }
 
+      final faceDetectionWatch = Stopwatch()..start();
       final faces = canRunFaceDetection
           ? await faceDetector.processImage(inputImage)
           : const <Face>[];
+      faceDetectionWatch.stop();
+      profile.faceDetectionMs = faceDetectionWatch.elapsedMicroseconds / 1000.0;
       final faceCount = faces.length;
       final maxSmileProb = faces.isNotEmpty
           ? faces
@@ -983,29 +1163,50 @@ class AIService {
         tags: visualTags,
       );
 
-      await facePipelineService.rebuildFacesForPhoto(
-        isar: isar,
-        photo: photo,
-        imageFile: analysisFile,
-        faces: faces,
-      );
+      final facePipelineProfile = await facePipelineService
+          .rebuildFacesForPhoto(
+            isar: isar,
+            photo: photo,
+            imageFile: analysisFile,
+            faces: faces,
+          );
+      profile.facePersistMs = facePipelineProfile.totalMs;
+      profile.faceExistingReadMs = facePipelineProfile.existingReadMs;
+      profile.faceSourceDecodeMs = facePipelineProfile.sourceDecodeMs;
+      profile.faceWarmUpMs = facePipelineProfile.embeddingWarmUpMs;
+      profile.faceCropMs = facePipelineProfile.cropMs;
+      profile.faceDebugCropMs = facePipelineProfile.debugCropMs;
+      profile.faceTempFileMs = facePipelineProfile.tempFileMs;
+      profile.faceEmbeddingMs = facePipelineProfile.embeddingMs;
+      profile.faceIsarWriteMs = facePipelineProfile.isarWriteMs;
+      profile.faceObjectBoxWriteMs = facePipelineProfile.objectBoxWriteMs;
+      profile.faceCleanupMs = facePipelineProfile.cleanupMs;
+      profile.faceRequestedCount = facePipelineProfile.requestedFaces;
+      profile.facePersistedCount = facePipelineProfile.persistedFaces;
 
-      final caption = await photoCaptionService.generateCaption(
-        imageFile: analysisFile,
-        visualTags: visualTags,
-        ocrTags: ocrResult.tags,
-        ocrText: ocrResult.text,
-        location:
-            photo.locationName ??
-            photo.district ??
-            photo.city ??
-            photo.province,
-        takenAt: DateTime.fromMillisecondsSinceEpoch(photo.timestamp),
-        isProbablyScreenshot: photo.isProbablyScreenshot,
-        faceCount: faceCount,
-      );
+      final captionLocation =
+          photo.locationName ?? photo.district ?? photo.city ?? photo.province;
+      final takenAt = DateTime.fromMillisecondsSinceEpoch(photo.timestamp);
+      var caption = '';
+      if (photoCaptionService.prefersAsyncGeneration && !_stopRequested) {
+        profile.captionDeferred = true;
+      } else {
+        final captionWatch = Stopwatch()..start();
+        caption = await photoCaptionService.generateCaption(
+          imageFile: prepared.file,
+          visualTags: visualTags,
+          ocrTags: ocrResult.tags,
+          ocrText: ocrResult.text,
+          location: captionLocation,
+          takenAt: takenAt,
+          isProbablyScreenshot: photo.isProbablyScreenshot,
+          faceCount: faceCount,
+        );
+        captionWatch.stop();
+        profile.captionMs = captionWatch.elapsedMicroseconds / 1000.0;
+      }
 
-      await _markAsAnalyzed(
+      final persistenceProfile = await _markAsAnalyzed(
         photo.id,
         visualTags,
         embedding,
@@ -1016,12 +1217,38 @@ class AIService {
         maxSmileProb,
         joyScore,
         isar,
+        selectedBackend,
+        skipVectorIndexWrite: true,
       );
+      profile.isarWriteMs = persistenceProfile.isarWriteMs;
+      profile.outcome = 'completed';
 
-      return _PhotoProcessResult.success(eventId: photo.eventId);
+      if (profile.captionDeferred) {
+        _enqueueAsyncCaption(
+          _AsyncCaptionTask(
+            photoId: photo.id,
+            imageFile: prepared.file,
+            captionService: photoCaptionService,
+            visualTags: visualTags,
+            ocrTags: ocrResult.tags,
+            ocrText: ocrResult.text,
+            location: captionLocation,
+            takenAt: takenAt,
+            isProbablyScreenshot: photo.isProbablyScreenshot,
+            faceCount: faceCount,
+          ),
+        );
+      }
+
+      return _PhotoProcessResult.success(
+        eventId: photo.eventId,
+        profile: profile,
+      );
     } catch (error) {
       debugPrint('❌ AI 分析失败 photoId=${photo.id}: $error');
-      return const _PhotoProcessResult.failed();
+      profile.outcome = 'error';
+      profile.error = error.toString();
+      return _PhotoProcessResult.failed(profile: profile);
     } finally {
       if (analysisFile != null &&
           analysisFile.path != photo.path &&
@@ -1061,6 +1288,19 @@ class AIService {
     return TagSanitizer.sanitizeVisualTags(sanitized, maxTags: maxTags);
   }
 
+  Future<_PreparedAnalysisInput?> _prepareAnalysisInputConfigured(
+    PhotoEntity photo,
+  ) {
+    if (_analysisInputConfig.strategy ==
+        _AnalysisInputStrategy.thumbnailFirst) {
+      return _prepareAnalysisInput(photo);
+    }
+    return _AnalysisInputLoader(
+      config: _analysisInputConfig,
+      thumbnailSize: _mobileClipThumbnailSize,
+    ).load(photo);
+  }
+
   Future<_PreparedAnalysisInput?> _prepareAnalysisInput(
     PhotoEntity photo,
   ) async {
@@ -1069,26 +1309,57 @@ class AIService {
       return null;
     }
 
+    final loadWatch = Stopwatch()..start();
     Uint8List? mobileClipBytes;
+    var thumbnailReadMs = 0.0;
+    var fileReadMs = 0.0;
+    var inputSource = 'original_file';
+    var fallbackReason = 'none';
     try {
       final asset = await AssetEntity.fromId(photo.assetId);
+      final thumbnailWatch = Stopwatch()..start();
       mobileClipBytes = await asset?.thumbnailDataWithSize(
         _mobileClipThumbnailSize,
       );
+      thumbnailWatch.stop();
+      thumbnailReadMs = thumbnailWatch.elapsedMicroseconds / 1000.0;
+      if (mobileClipBytes != null && mobileClipBytes.isNotEmpty) {
+        inputSource = 'thumbnail';
+      } else if (asset == null) {
+        fallbackReason = 'asset_unavailable';
+      } else {
+        fallbackReason = 'thumbnail_empty';
+      }
     } catch (error) {
+      fallbackReason = 'thumbnail_error';
       debugPrint('⚠️ 读取系统缩略图失败 photoId=${photo.id}: $error');
     }
 
-    mobileClipBytes ??= await file.readAsBytes();
+    if (mobileClipBytes == null || mobileClipBytes.isEmpty) {
+      final fileReadWatch = Stopwatch()..start();
+      mobileClipBytes = await file.readAsBytes();
+      fileReadWatch.stop();
+      fileReadMs = fileReadWatch.elapsedMicroseconds / 1000.0;
+    }
     if (mobileClipBytes.isEmpty) {
       return null;
     }
+    loadWatch.stop();
 
     return _PreparedAnalysisInput(
       photo: photo,
       file: file,
       mobileClipBytes: mobileClipBytes,
-      usedThumbnail: mobileClipBytes.lengthInBytes < file.lengthSync(),
+      usedThumbnail: inputSource == 'thumbnail',
+      inputSource: inputSource,
+      inputStrategy: _AnalysisInputStrategy.thumbnailFirst.label,
+      thumbnailAttempted: true,
+      thumbnailTimedOut: false,
+      fallbackToOriginal: inputSource != 'thumbnail',
+      fallbackReason: inputSource == 'thumbnail' ? 'none' : fallbackReason,
+      loadMs: loadWatch.elapsedMicroseconds / 1000.0,
+      thumbnailReadMs: thumbnailReadMs,
+      fileReadMs: fileReadMs,
     );
   }
 
@@ -1097,7 +1368,9 @@ class AIService {
     int photoId,
   ) async {
     final tempDir = await getTemporaryDirectory();
-    final targetPath = '${tempDir.path}/temp_mlkit_$photoId.jpg';
+    final uniqueSuffix = DateTime.now().microsecondsSinceEpoch;
+    final targetPath =
+        '${tempDir.path}/temp_mlkit_${photoId}_$uniqueSuffix.jpg';
     final result = await FlutterImageCompress.compressAndGetFile(
       sourceFile.absolute.path,
       targetPath,
@@ -1112,7 +1385,7 @@ class AIService {
   }
 
   // 将 AI 分析结果写入数据库（增强版）
-  Future<void> _markAsAnalyzed(
+  Future<_AiPersistenceProfile> _markAsAnalyzed(
     Id id,
     List<String> tags,
     List<double> imageEmbedding,
@@ -1123,7 +1396,10 @@ class AIService {
     double smileProb,
     double joyScore,
     Isar isar,
-  ) async {
+    MobileClipBackend selectedBackend, {
+    bool skipVectorIndexWrite = false,
+  }) async {
+    final isarWriteWatch = Stopwatch()..start();
     await isar.writeTxn(() async {
       final p = await isar.collection<PhotoEntity>().get(id);
       if (p != null) {
@@ -1139,6 +1415,28 @@ class AIService {
         await isar.collection<PhotoEntity>().put(p);
       }
     });
+    isarWriteWatch.stop();
+
+    var objectBoxWriteMs = 0.0;
+    if (!skipVectorIndexWrite) {
+      final objectBoxWriteWatch = Stopwatch()..start();
+      if (imageEmbedding.isEmpty) {
+        _photoEmbeddingIndexRepository.deleteByPhotoIds(<int>[id]);
+      } else {
+        _photoEmbeddingIndexRepository.upsertEmbedding(
+          photoId: id,
+          vector: imageEmbedding,
+          modelVersion: buildPhotoEmbeddingModelVersion(selectedBackend),
+        );
+      }
+      objectBoxWriteWatch.stop();
+      objectBoxWriteMs = objectBoxWriteWatch.elapsedMicroseconds / 1000.0;
+    }
+
+    return _AiPersistenceProfile(
+      isarWriteMs: isarWriteWatch.elapsedMicroseconds / 1000.0,
+      objectBoxWriteMs: objectBoxWriteMs,
+    );
   }
 
   // 📊 工具方法：获取 AI 分析进度
@@ -1156,151 +1454,27 @@ class AIService {
   }
 }
 
-class AIAnalysisProgress {
-  const AIAnalysisProgress({
-    required this.isRunning,
-    required this.isPaused,
-    required this.isStopping,
-    required this.total,
-    required this.completed,
-    required this.failed,
-    required this.currentStep,
-    required this.elapsedMs,
-  });
-
-  factory AIAnalysisProgress.idle() {
-    return const AIAnalysisProgress(
-      isRunning: false,
-      isPaused: false,
-      isStopping: false,
-      total: 0,
-      completed: 0,
-      failed: 0,
-      currentStep: '',
-      elapsedMs: 0,
-    );
-  }
-
-  factory AIAnalysisProgress.running({
-    required int total,
-    required int completed,
-    required int failed,
-    required String currentStep,
-    int elapsedMs = 0,
-  }) {
-    return AIAnalysisProgress(
-      isRunning: true,
-      isPaused: false,
-      isStopping: false,
-      total: total,
-      completed: completed,
-      failed: failed,
-      currentStep: currentStep,
-      elapsedMs: elapsedMs,
-    );
-  }
-
-  factory AIAnalysisProgress.paused({
-    required int total,
-    required int completed,
-    required int failed,
-    required String currentStep,
-    int elapsedMs = 0,
-  }) {
-    return AIAnalysisProgress(
-      isRunning: false,
-      isPaused: true,
-      isStopping: false,
-      total: total,
-      completed: completed,
-      failed: failed,
-      currentStep: currentStep,
-      elapsedMs: elapsedMs,
-    );
-  }
-
-  factory AIAnalysisProgress.stopping({
-    required int total,
-    required int completed,
-    required int failed,
-    required String currentStep,
-    int elapsedMs = 0,
-  }) {
-    return AIAnalysisProgress(
-      isRunning: false,
-      isPaused: false,
-      isStopping: true,
-      total: total,
-      completed: completed,
-      failed: failed,
-      currentStep: currentStep,
-      elapsedMs: elapsedMs,
-    );
-  }
-
-  final bool isRunning;
-  final bool isPaused;
-  final bool isStopping;
-  final int total;
-  final int completed;
-  final int failed;
-  final String currentStep;
-  final int elapsedMs;
-
-  AIAnalysisProgress copyWith({
-    bool? isRunning,
-    bool? isPaused,
-    bool? isStopping,
-    int? total,
-    int? completed,
-    int? failed,
-    String? currentStep,
-    int? elapsedMs,
-  }) {
-    return AIAnalysisProgress(
-      isRunning: isRunning ?? this.isRunning,
-      isPaused: isPaused ?? this.isPaused,
-      isStopping: isStopping ?? this.isStopping,
-      total: total ?? this.total,
-      completed: completed ?? this.completed,
-      failed: failed ?? this.failed,
-      currentStep: currentStep ?? this.currentStep,
-      elapsedMs: elapsedMs ?? this.elapsedMs,
-    );
-  }
-
-  double? get averageSecondsPerItem {
-    if (completed <= 0 || elapsedMs <= 0) {
-      return null;
-    }
-    return elapsedMs / 1000.0 / completed;
-  }
-
-  Duration? get estimatedRemainingDuration {
-    final avg = averageSecondsPerItem;
-    final remaining = total - completed;
-    if (avg == null || remaining <= 0) {
-      return null;
-    }
-    final etaMs = (avg * remaining * 1000).round();
-    return Duration(milliseconds: etaMs);
-  }
-
-  Duration get elapsed => Duration(milliseconds: elapsedMs);
-
-  double get fraction {
-    if (total <= 0) {
-      return 0;
-    }
-    return (completed / total).clamp(0, 1).toDouble();
-  }
-
-  bool get isVisible => (isRunning || isPaused || isStopping) && total > 0;
-}
-
-Future<(int, int)?> _readImageDimensions(File imageFile) async {
+Future<(int, int)?> _readImageDimensions(
+  File imageFile, {
+  int? knownWidth,
+  int? knownHeight,
+}) async {
   try {
+    // Catalog dimensions are sufficient for the face min-size gate.
+    if (knownWidth != null &&
+        knownHeight != null &&
+        knownWidth > 0 &&
+        knownHeight > 0) {
+      return (knownWidth, knownHeight);
+    }
+
     final bytes = await imageFile.readAsBytes();
+    final decoder = img.findDecoderForData(bytes);
+    final info = decoder?.startDecode(bytes);
+    if (info != null && info.width > 0 && info.height > 0) {
+      return (info.width, info.height);
+    }
+
     final decoded = img.decodeImage(bytes);
     if (decoded == null) {
       return null;
@@ -1311,52 +1485,4 @@ Future<(int, int)?> _readImageDimensions(File imageFile) async {
     debugPrint('⚠️ 读取分析图尺寸失败 path=${imageFile.path}: $error');
     return null;
   }
-}
-
-class _PreparedAnalysisInput {
-  const _PreparedAnalysisInput({
-    required this.photo,
-    required this.file,
-    required this.mobileClipBytes,
-    required this.usedThumbnail,
-  });
-
-  final PhotoEntity photo;
-  final File file;
-  final Uint8List mobileClipBytes;
-  final bool usedThumbnail;
-}
-
-class _PhotoProcessResult {
-  const _PhotoProcessResult._({
-    required this.didSucceed,
-    this.eventId,
-    this.junkCandidate,
-  });
-
-  const _PhotoProcessResult.success({
-    int? eventId,
-    JunkPhotoCleanupCandidate? junkCandidate,
-  }) : this._(didSucceed: true, eventId: eventId, junkCandidate: junkCandidate);
-
-  const _PhotoProcessResult.failed()
-    : this._(didSucceed: false, eventId: null, junkCandidate: null);
-
-  final bool didSucceed;
-  final int? eventId;
-  final JunkPhotoCleanupCandidate? junkCandidate;
-}
-
-class _RuntimeSnapshot {
-  const _RuntimeSnapshot({
-    required this.isActive,
-    required this.total,
-    required this.completed,
-    required this.failed,
-  });
-
-  final bool isActive;
-  final int total;
-  final int completed;
-  final int failed;
 }

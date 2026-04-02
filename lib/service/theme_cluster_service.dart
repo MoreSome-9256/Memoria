@@ -511,6 +511,8 @@ class ThemeClusterService {
 
     await _embeddingService.beginWorkflowSession();
     try {
+      final activeModelVersion = await _embeddingService
+          .getSelectedModelVersion();
       for (final photo in photos) {
         processed++;
 
@@ -526,8 +528,12 @@ class ThemeClusterService {
           continue;
         }
 
-        if (_embeddingService.hasReusableEmbedding(photo)) {
-          cached[photo.id] = photo.imageEmbedding!;
+        final indexedEmbedding = _embeddingService.readIndexedEmbeddingForPhoto(
+          photo: photo,
+          modelVersion: activeModelVersion,
+        );
+        if (indexedEmbedding != null) {
+          cached[photo.id] = indexedEmbedding;
           cachedEmbeddings++;
           _emitEmbeddingProgress(
             processed: processed,

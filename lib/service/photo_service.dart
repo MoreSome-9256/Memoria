@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -11,6 +12,8 @@ import '../models/entity/digital_album_book_entity.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../models/entity/story_entity.dart';
+import '../storage/vector_index/face_embedding_index_repository.dart';
+import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../data/tag_taxonomy_v2.dart';
 import '../service/junk_photo_filter_service.dart';
 import '../utils/photo_filter_helper.dart';
@@ -63,21 +66,44 @@ class _SingleAssetBuildResult {
   final int skippedScreenshot;
 }
 
+class _PhotoAccessCacheEntry {
+  const _PhotoAccessCacheEntry({
+    required this.checkedAtMs,
+    this.resolvedPath,
+    this.isRemoved = false,
+  });
+
+  final int checkedAtMs;
+  final String? resolvedPath;
+  final bool isRemoved;
+}
+
 class PhotoService {
   late Isar _isar;
+  bool _isInitialized = false;
   static const bool _verboseAssetLogging = false;
   static const int _assetExistenceWorkerCount = 12;
   static const int _assetBuildWorkerCount = 8;
+  static const Duration _photoAccessCacheTtl = Duration(seconds: 20);
 
   static final PhotoService _instance = PhotoService._internal();
   factory PhotoService() => _instance;
   // 私有构造函数
   PhotoService._internal();
+  final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
+      PhotoEmbeddingIndexRepository();
+  final FaceEmbeddingIndexRepository _faceEmbeddingIndexRepository =
+      FaceEmbeddingIndexRepository();
+  final Map<String, _PhotoAccessCacheEntry> _photoAccessCache =
+      <String, _PhotoAccessCacheEntry>{};
 
   // 暴露 isar 实例供其他服务使用
   Isar get isar => _isar;
 
   Future<void> init() async {
+    if (_isInitialized) {
+      return;
+    }
     final dir = await getApplicationDocumentsDirectory();
     _isar = await Isar.open(
       [
@@ -89,6 +115,7 @@ class PhotoService {
       ], // 注册所有实体
       directory: dir.path,
     );
+    _isInitialized = true;
   }
 
   Future<void> clearAllCachedData() async {
@@ -98,6 +125,8 @@ class PhotoService {
       await _isar.collection<FaceEntity>().clear();
       await _isar.collection<PhotoEntity>().clear();
     });
+    _photoEmbeddingIndexRepository.deleteAll();
+    _faceEmbeddingIndexRepository.deleteAll();
 
     print("🗑️ 已清空 Isar 缓存数据（照片/事件/故事）");
   }
@@ -131,6 +160,8 @@ class PhotoService {
       await _isar.collection<PhotoEntity>().clear();
       await _isar.collection<PhotoEntity>().putAll(built.photos);
     });
+    _photoEmbeddingIndexRepository.deleteAll();
+    _faceEmbeddingIndexRepository.deleteAll();
 
     print(
       "✅ 安全重建完成: 清空旧数据=$totalBefore 入库=${built.insertedCount} 无GPS=${built.insertedNoGps} 跳过[无时间=${built.skippedInvalidTime} 非相机=${built.skippedNonCamera} 截图=${built.skippedScreenshot}]",
@@ -286,7 +317,8 @@ class PhotoService {
       }
     }
 
-    if ((selectedAlbum == null || selectedCount <= 0) && preferredAlbums.isNotEmpty) {
+    if ((selectedAlbum == null || selectedCount <= 0) &&
+        preferredAlbums.isNotEmpty) {
       final fallbackAlbums = await PhotoManager.getAssetPathList(
         type: RequestType.image,
         onlyAll: false,
@@ -444,7 +476,9 @@ class PhotoService {
             )
             .findAll();
         existingAssetIds.addAll(
-          existingPhotos.map((photo) => photo.assetId).where((id) => id.isNotEmpty),
+          existingPhotos
+              .map((photo) => photo.assetId)
+              .where((id) => id.isNotEmpty),
         );
       }
     }
@@ -504,7 +538,9 @@ class PhotoService {
     );
   }
 
-  Future<_SingleAssetBuildResult> _buildSingleAssetPhoto(AssetEntity asset) async {
+  Future<_SingleAssetBuildResult> _buildSingleAssetPhoto(
+    AssetEntity asset,
+  ) async {
     final file = await _resolveReadableFile(asset);
     if (file == null) {
       print('⚠️ 资源无法解析为本地文件: assetId=${asset.id} title=${asset.title}');
@@ -579,7 +615,9 @@ class PhotoService {
 
     final originFile = await asset.originFile;
     if (originFile != null && originFile.path.isNotEmpty) {
-      print('ℹ️ 资源使用 originFile 兜底: assetId=${asset.id} path=${originFile.path}');
+      print(
+        'ℹ️ 资源使用 originFile 兜底: assetId=${asset.id} path=${originFile.path}',
+      );
       return originFile;
     }
 
@@ -616,8 +654,12 @@ class PhotoService {
     }
 
     final removedIds = <int>[];
+    final repairedPhotos = <PhotoEntity>[];
     var cursor = 0;
-    final workerCount = math.min(_assetExistenceWorkerCount, localPhotos.length);
+    final workerCount = math.min(
+      _assetExistenceWorkerCount,
+      localPhotos.length,
+    );
     final workers = List<Future<void>>.generate(workerCount, (_) async {
       while (true) {
         final index = cursor;
@@ -630,25 +672,208 @@ class PhotoService {
         final asset = await AssetEntity.fromId(photo.assetId);
         if (asset == null) {
           removedIds.add(photo.id);
+          continue;
+        }
+
+        final currentFile = photo.path.trim().isEmpty ? null : File(photo.path);
+        if (currentFile != null && currentFile.existsSync()) {
+          continue;
+        }
+
+        final refreshedFile = await _resolveReadableFile(asset);
+        if (refreshedFile != null && refreshedFile.existsSync()) {
+          photo.path = refreshedFile.path;
+          repairedPhotos.add(photo);
+        } else {
+          removedIds.add(photo.id);
         }
       }
     });
 
     await Future.wait(workers);
 
-    if (removedIds.isEmpty) {
+    if (removedIds.isEmpty && repairedPhotos.isEmpty) {
       return 0;
     }
 
     await _isar.writeTxn(() async {
-      await _isar.collection<PhotoEntity>().deleteAll(removedIds);
+      if (removedIds.isNotEmpty) {
+        await _isar.collection<PhotoEntity>().deleteAll(removedIds);
+      }
+      if (repairedPhotos.isNotEmpty) {
+        await _isar.collection<PhotoEntity>().putAll(repairedPhotos);
+      }
     });
+    _photoEmbeddingIndexRepository.deleteByPhotoIds(removedIds);
+    _faceEmbeddingIndexRepository.deleteByPhotoIds(removedIds);
+
+    if (repairedPhotos.isNotEmpty) {
+      print("🩹 已修复 ${repairedPhotos.length} 条失效照片路径");
+    }
 
     print("🧹 已清理系统相册中删除/不可访问的照片: ${removedIds.length} 张");
     return removedIds.length;
   }
 
   // 📊 获取照片统计信息
+  Future<List<PhotoEntity>> reconcileAccessiblePhotos(
+    Iterable<PhotoEntity> photos,
+  ) async {
+    final candidates = photos.toList(growable: false);
+    if (candidates.isEmpty) {
+      return const <PhotoEntity>[];
+    }
+
+    final stopwatch = Stopwatch()..start();
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final removedIds = <int>{};
+    final repairedIds = <int>{};
+    var cacheHits = 0;
+    var removedCount = 0;
+    var repairedCount = 0;
+    var cursor = 0;
+    final workerCount = math.min(_assetExistenceWorkerCount, candidates.length);
+    final workers = List<Future<void>>.generate(workerCount, (_) async {
+      while (true) {
+        final index = cursor;
+        cursor++;
+        if (index >= candidates.length) {
+          break;
+        }
+
+        final photo = candidates[index];
+        final cacheKey = _photoAccessCacheKey(photo);
+        final cacheEntry = _photoAccessCache[cacheKey];
+        if (cacheEntry != null &&
+            nowMs - cacheEntry.checkedAtMs <= _photoAccessCacheTtl.inMilliseconds) {
+          cacheHits++;
+          if (cacheEntry.isRemoved) {
+            if (photo.id > 0) {
+              removedIds.add(photo.id);
+            }
+            removedCount++;
+            continue;
+          }
+          final resolvedPath = cacheEntry.resolvedPath;
+          if (resolvedPath != null && resolvedPath.isNotEmpty) {
+            photo.path = resolvedPath;
+            continue;
+          }
+        }
+
+        final currentFile = photo.path.trim().isEmpty ? null : File(photo.path);
+        if (currentFile != null && currentFile.existsSync()) {
+          _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
+            checkedAtMs: nowMs,
+            resolvedPath: photo.path,
+          );
+          continue;
+        }
+
+        final asset = await AssetEntity.fromId(photo.assetId);
+        if (asset == null) {
+          if (photo.id > 0) {
+            removedIds.add(photo.id);
+          }
+          _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
+            checkedAtMs: nowMs,
+            isRemoved: true,
+          );
+          removedCount++;
+          continue;
+        }
+
+        final refreshedFile = await _resolveReadableFile(asset);
+        if (refreshedFile != null && refreshedFile.existsSync()) {
+          if (photo.path != refreshedFile.path) {
+            photo.path = refreshedFile.path;
+            if (photo.id > 0) {
+              repairedIds.add(photo.id);
+            }
+            repairedCount++;
+          }
+          _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
+            checkedAtMs: nowMs,
+            resolvedPath: refreshedFile.path,
+          );
+        } else if (photo.id > 0) {
+          removedIds.add(photo.id);
+          _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
+            checkedAtMs: nowMs,
+            isRemoved: true,
+          );
+          removedCount++;
+        }
+      }
+    });
+
+    await Future.wait(workers);
+
+    final repairedPhotos = repairedIds.isEmpty
+        ? const <PhotoEntity>[]
+        : candidates
+              .where((photo) => repairedIds.contains(photo.id))
+              .toList(growable: false);
+    final removedPhotoIds = removedIds.toList(growable: false);
+
+    final staleFaces = removedPhotoIds.isEmpty
+        ? const <FaceEntity>[]
+        : await _isar
+              .collection<FaceEntity>()
+              .filter()
+              .anyOf(
+                removedPhotoIds,
+                (query, photoId) => query.photoIdEqualTo(photoId),
+              )
+              .findAll();
+
+    if (removedPhotoIds.isNotEmpty || repairedPhotos.isNotEmpty) {
+      await _isar.writeTxn(() async {
+        if (staleFaces.isNotEmpty) {
+          await _isar.collection<FaceEntity>().deleteAll(
+            staleFaces.map((item) => item.id).toList(growable: false),
+          );
+        }
+        if (removedPhotoIds.isNotEmpty) {
+          await _isar.collection<PhotoEntity>().deleteAll(removedPhotoIds);
+        }
+        if (repairedPhotos.isNotEmpty) {
+          await _isar.collection<PhotoEntity>().putAll(repairedPhotos);
+        }
+      });
+    }
+
+    if (removedPhotoIds.isNotEmpty) {
+      _photoEmbeddingIndexRepository.deleteByPhotoIds(removedPhotoIds);
+      _faceEmbeddingIndexRepository.deleteByPhotoIds(removedPhotoIds);
+    }
+
+    final result = candidates
+        .where((photo) => !removedIds.contains(photo.id))
+        .toList(growable: false);
+    stopwatch.stop();
+    if (kDebugMode &&
+        (candidates.length >= 12 ||
+            repairedIds.isNotEmpty ||
+            removedIds.isNotEmpty ||
+            cacheHits > 0)) {
+      debugPrint(
+        '🧹 [photo-reconcile] total=${candidates.length} '
+        'result=${result.length} cacheHits=$cacheHits '
+        'repaired=$repairedCount removed=$removedCount '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
+    }
+    return result;
+  }
+
+  String _photoAccessCacheKey(PhotoEntity photo) {
+    if (photo.id > 0) {
+      return 'id:${photo.id}';
+    }
+    return 'asset:${photo.assetId}';
+  }
+
   Future<Map<String, int>> getPhotoStats() async {
     final total = await _isar.collection<PhotoEntity>().count();
     final withGPS = await _isar
@@ -687,7 +912,9 @@ class PhotoService {
     final updatedPhotoIds = <int>[];
     for (final photo in photos) {
       final aiTags = photo.aiTags ?? const <String>[];
-      final isJunkCandidate = aiTags.contains(JunkPhotoFilterService.junkCandidateTag);
+      final isJunkCandidate = aiTags.contains(
+        JunkPhotoFilterService.junkCandidateTag,
+      );
       final needsReset =
           photo.isAiAnalyzed &&
           !isJunkCandidate &&
@@ -724,15 +951,16 @@ class PhotoService {
       return 0;
     }
 
-    final resetPhotoIds = updatedPhotoIds
-        .toSet()
-        .toList(growable: false);
+    final resetPhotoIds = updatedPhotoIds.toSet().toList(growable: false);
     final staleFaces = resetPhotoIds.isEmpty
         ? const <FaceEntity>[]
         : await _isar
               .collection<FaceEntity>()
               .filter()
-              .anyOf(resetPhotoIds, (query, photoId) => query.photoIdEqualTo(photoId))
+              .anyOf(
+                resetPhotoIds,
+                (query, photoId) => query.photoIdEqualTo(photoId),
+              )
               .findAll();
 
     await _isar.writeTxn(() async {
@@ -743,6 +971,8 @@ class PhotoService {
       }
       await _isar.collection<PhotoEntity>().putAll(updatedPhotos);
     });
+    _photoEmbeddingIndexRepository.deleteByPhotoIds(resetPhotoIds);
+    _faceEmbeddingIndexRepository.deleteByPhotoIds(resetPhotoIds);
 
     final scopeText = maxPhotos == null
         ? '${photos.length} 张照片'
@@ -757,9 +987,9 @@ class PhotoService {
       return 0;
     }
 
-    final photos = (await _isar.collection<PhotoEntity>().getAll(normalizedIds))
-        .whereType<PhotoEntity>()
-        .toList(growable: false);
+    final photos = (await _isar.collection<PhotoEntity>().getAll(
+      normalizedIds,
+    )).whereType<PhotoEntity>().toList(growable: false);
     if (photos.isEmpty) {
       return 0;
     }
@@ -781,6 +1011,7 @@ class PhotoService {
     await _isar.writeTxn(() async {
       await _isar.collection<PhotoEntity>().putAll(photos);
     });
+    _photoEmbeddingIndexRepository.deleteByPhotoIds(normalizedIds);
 
     print('🔁 已将 $updatedCount 张低质量候选重新加入正常 AI 打标队列');
     return updatedCount;
@@ -824,6 +1055,8 @@ class PhotoService {
       await _isar.collection<FaceEntity>().clear();
       await _isar.collection<PhotoEntity>().putAll(oldPhotos);
     });
+    _photoEmbeddingIndexRepository.deleteAll();
+    _faceEmbeddingIndexRepository.deleteAll();
 
     print("🎉 成功重置了 ${oldPhotos.length} 张照片的 AI 状态！");
 

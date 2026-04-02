@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
 import 'dart:ui';
@@ -8,8 +7,8 @@ import '../../models/entity/photo_entity.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
+import '../widgets/path_image.dart';
 import 'create_page.dart';
-import 'package:photo_manager/photo_manager.dart';
 import 'event_detail_page.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 
@@ -69,22 +68,17 @@ class _HomePageState extends State<HomePage> {
       return true;
     }).toList();
 
-    final selection = filtered.take(15).toList();
-    selection.shuffle();
+    final selection = filtered.take(15).toList()..shuffle();
+    final reconciledSelection = await PhotoService().reconcileAccessiblePhotos(
+      selection,
+    );
     // ==========================================
     // 🌟 新增：修复缓存路径失效问题
     // 遍历选中的照片，用永远不变的 assetId 换取最新有效路径
     // ==========================================
-    for (var photo in selection) {
-      final asset = await AssetEntity.fromId(photo.assetId);
-      final file = await asset?.file;
-      if (file != null && file.path.isNotEmpty) {
-        photo.path = file.path; // 将内存中的旧路径替换为新路径
-      }
-    }
-    if (selection.isNotEmpty && mounted) {
+    if (reconciledSelection.isNotEmpty && mounted) {
       setState(() {
-        _displayPhotos = selection;
+        _displayPhotos = reconciledSelection;
       });
       _startBackgroundTimer();
     }
@@ -128,18 +122,6 @@ class _HomePageState extends State<HomePage> {
     // 🌟 新增：修复发现卡片封面图路径失效问题
     // 只更新每张卡片第一张图（封面）的路径即可，节省性能
     // ==========================================
-    for (var card in finalCards) {
-      List<PhotoEntity> photos = card['photos'];
-      if (photos.isNotEmpty) {
-        final firstPhoto = photos.first;
-        final asset = await AssetEntity.fromId(firstPhoto.assetId);
-        final file = await asset?.file;
-        if (file != null && file.path.isNotEmpty) {
-          firstPhoto.path = file.path;
-        }
-      }
-    }
-
     // 🥉 规则 3：地点保底策略
     if (finalCards.length < maxCards) {
       final locationCards = await _buildLocationRuleCards(isar);
@@ -149,9 +131,28 @@ class _HomePageState extends State<HomePage> {
       }
     }
 
+    final reconciledCards = <Map<String, dynamic>>[];
+    for (final card in finalCards) {
+      final photos =
+          (card['photos'] as List<PhotoEntity>?) ?? const <PhotoEntity>[];
+      final reconciledPhotos = await PhotoService().reconcileAccessiblePhotos(
+        photos,
+      );
+      if (reconciledPhotos.isEmpty) {
+        continue;
+      }
+      reconciledCards.add(<String, dynamic>{
+        ...card,
+        'photos': reconciledPhotos,
+      });
+      if (reconciledCards.length >= maxCards) {
+        break;
+      }
+    }
+
     if (mounted) {
       setState(() {
-        _discoverCards = finalCards;
+        _discoverCards = reconciledCards;
       });
     }
   }
@@ -605,15 +606,19 @@ class _HomePageState extends State<HomePage> {
           Positioned.fill(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 1200),
-              child: hasPhotos
-                  ? Image.file(
-                      File(currentPhoto!.path),
+              child: hasPhotos && currentPhoto != null
+                  ? Stack(
                       key: ValueKey(currentPhoto.id),
-                      width: double.infinity,
-                      height: double.infinity,
-                      fit: BoxFit.cover,
-                      color: Colors.black.withOpacity(0.35),
-                      colorBlendMode: BlendMode.darken,
+                      fit: StackFit.expand,
+                      children: [
+                        PathImage(
+                          path: currentPhoto.path,
+                          width: double.infinity,
+                          height: double.infinity,
+                          fit: BoxFit.cover,
+                        ),
+                        Container(color: Colors.black.withOpacity(0.35)),
+                      ],
                     )
                   : const Center(
                       child: Icon(
@@ -730,11 +735,25 @@ class _HomePageState extends State<HomePage> {
     final firstPhoto = photos.isNotEmpty ? photos.first : null;
 
     return GestureDetector(
-      onTap: () {
+      onTap: () async {
         if (photos.isEmpty) return;
+        final reconciledPhotos = await PhotoService().reconcileAccessiblePhotos(
+          photos,
+        );
+        if (!context.mounted || reconciledPhotos.isEmpty) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                behavior: SnackBarBehavior.floating,
+                content: Text('这些照片已经在系统相册中删除，已从应用中移除。'),
+              ),
+            );
+          }
+          return;
+        }
 
         // 1. 组装合法的 UI 模型 Photo 列表
-        final mappedPhotos = photos
+        final mappedPhotos = reconciledPhotos
             .map(
               (p) => Photo(
                 id: p.assetId,
@@ -806,7 +825,7 @@ class _HomePageState extends State<HomePage> {
                 height: 80,
                 color: Colors.white54,
                 child: firstPhoto != null
-                    ? Image.file(File(firstPhoto.path), fit: BoxFit.cover)
+                    ? PathImage(path: firstPhoto.path, fit: BoxFit.cover)
                     : Icon(
                         cardData['icon'] as IconData,
                         color: Colors.grey.shade600,

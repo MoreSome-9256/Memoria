@@ -889,59 +889,10 @@ class DigitalAlbumValidatorService {
     List<AlbumElementModel> elements,
     AlbumPageSide pageSide,
   ) {
-    final images = elements.where((item) => item.type == AlbumElementType.image).toList(growable: false);
-    if (images.isEmpty) {
-      return elements;
-    }
-
-    final resolved = <AlbumElementModel>[];
-
-    for (final element in elements) {
-      if (element.type != AlbumElementType.text && element.type != AlbumElementType.subtitle) {
-        resolved.add(element);
-        continue;
-      }
-
-      final role = element.payload['role']?.toString() ?? '';
-      if (role == 'meta' && images.length < 2) {
-        resolved.add(element);
-        continue;
-      }
-
-      final textRect = Rect.fromLTWH(element.x, element.y, element.w, element.h);
-      var overlap = 0.0;
-      for (final image in images) {
-        overlap = math.max(
-          overlap,
-          _overlapRatio(textRect, Rect.fromLTWH(image.x, image.y, image.w, image.h)),
-        );
-      }
-
-      if (overlap < 0.04) {
-        resolved.add(element);
-        continue;
-      }
-
-      final relocated = _relocateTextOutsideImages(
-        element,
-        images,
-        safeRect: _safeRectForElement(
-          element,
-          pageSide: pageSide,
-          role: role,
-        ),
-      );
-      final moved = relocated != null &&
-          ((relocated.x - element.x).abs() > 0.002 || (relocated.y - element.y).abs() > 0.002);
-
-      if (moved) {
-        resolved.add(relocated);
-        continue;
-      }
-
-    }
-
-    return resolved..sort((a, b) => a.zIndex.compareTo(b.zIndex));
+    // Text elements are intentionally allowed to remain above images.
+    // We no longer remove or relocate general text just because an image
+    // overlaps it; final layering guarantees text stays readable.
+    return elements..sort((a, b) => a.zIndex.compareTo(b.zIndex));
   }
 
   bool _isOverlayTextRole(AlbumElementModel element) {
@@ -1071,8 +1022,46 @@ class DigitalAlbumValidatorService {
     final withoutWeakArtWords = _removeLowValueArtWords(elements);
     final withoutLowValueNotes = _removeLowValueNotes(withoutWeakArtWords);
     final syncedShapes = _syncGeneratedTextBackings(withoutLowValueNotes);
-    return _dedupeElementsById(syncedShapes)
+    return _normalizeLayerOrder(_dedupeElementsById(syncedShapes))
       ..sort((a, b) => a.zIndex.compareTo(b.zIndex));
+  }
+
+  List<AlbumElementModel> _normalizeLayerOrder(List<AlbumElementModel> elements) {
+    final images = <AlbumElementModel>[];
+    final shapes = <AlbumElementModel>[];
+    final texts = <AlbumElementModel>[];
+    final others = <AlbumElementModel>[];
+
+    for (final element in elements) {
+      if (element.type == AlbumElementType.image) {
+        images.add(element);
+      } else if (element.type == AlbumElementType.text ||
+          element.type == AlbumElementType.subtitle) {
+        texts.add(element);
+      } else if (element.type == AlbumElementType.shape) {
+        shapes.add(element);
+      } else {
+        others.add(element);
+      }
+    }
+
+    images.sort((a, b) => a.zIndex.compareTo(b.zIndex));
+    shapes.sort((a, b) => a.zIndex.compareTo(b.zIndex));
+    texts.sort((a, b) => a.zIndex.compareTo(b.zIndex));
+    others.sort((a, b) => a.zIndex.compareTo(b.zIndex));
+
+    var nextZ = 0;
+    final normalized = <AlbumElementModel>[];
+    for (final element in <AlbumElementModel>[
+      ...images,
+      ...others,
+      ...shapes,
+      ...texts,
+    ]) {
+      normalized.add(element.copyWith(zIndex: nextZ));
+      nextZ += 1;
+    }
+    return normalized;
   }
 
   List<AlbumElementModel> _removeLowValueArtWords(List<AlbumElementModel> elements) {

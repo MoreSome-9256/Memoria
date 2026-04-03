@@ -19,7 +19,14 @@ class FaceCropUtil {
 
   static Future<img.Image?> decodeSourceImage(File sourceFile) async {
     final bytes = await sourceFile.readAsBytes();
-    return img.decodeImage(bytes);
+    return decodeSourceImageBytes(bytes);
+  }
+
+  static img.Image? decodeSourceImageBytes(Uint8List sourceBytes) {
+    if (sourceBytes.isEmpty) {
+      return null;
+    }
+    return img.decodeImage(sourceBytes);
   }
 
   static img.Image? cropFaceImage({

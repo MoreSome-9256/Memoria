@@ -45,10 +45,16 @@ class _AiPhotoProfile {
   double faceTempFileMs = 0;
   double faceEmbeddingMs = 0;
   double faceIsarWriteMs = 0;
+  double faceIsarDeleteMs = 0;
+  double faceIsarPutMs = 0;
   double faceObjectBoxWriteMs = 0;
   double faceCleanupMs = 0;
   int faceRequestedCount = 0;
   int facePersistedCount = 0;
+  int faceStaleIdsCount = 0;
+  int faceEmbeddingFacesWritten = 0;
+  int faceEmbeddingBytesWritten = 0;
+  bool faceWritesEmbeddingToIsar = false;
   double captionMs = 0;
   double isarWriteMs = 0;
   double wallMs = 0;
@@ -99,6 +105,12 @@ class _AiPhotoProfile {
         'faceTempMs=${_fmt(faceTempFileMs)} '
         'faceEmbedMs=${_fmt(faceEmbeddingMs)} '
         'faceStoreIsarMs=${_fmt(faceIsarWriteMs)} '
+        'faceStoreDeleteMs=${_fmt(faceIsarDeleteMs)} '
+        'faceStorePutMs=${_fmt(faceIsarPutMs)} '
+        'faceStaleIds=$faceStaleIdsCount '
+        'faceEmbedFaces=$faceEmbeddingFacesWritten '
+        'faceEmbedBytes=$faceEmbeddingBytesWritten '
+        'faceEmbedIsar=$faceWritesEmbeddingToIsar '
         'faceStoreObxMs=${_fmt(faceObjectBoxWriteMs)} '
         'faceCleanupMs=${_fmt(faceCleanupMs)} '
         'captionMs=${_fmt(captionMs)} isarMs=${_fmt(isarWriteMs)} '
@@ -264,6 +276,12 @@ class _AiPipelineRunProfiler {
         'faceTempAvgMs=${_avg(profiles, (profile) => profile.faceTempFileMs, count)} '
         'faceEmbedAvgMs=${_avg(profiles, (profile) => profile.faceEmbeddingMs, count)} '
         'faceStoreIsarAvgMs=${_avg(profiles, (profile) => profile.faceIsarWriteMs, count)} '
+        'faceStoreDeleteAvgMs=${_avg(profiles, (profile) => profile.faceIsarDeleteMs, count)} '
+        'faceStorePutAvgMs=${_avg(profiles, (profile) => profile.faceIsarPutMs, count)} '
+        'faceStaleIdsAvg=${_avgInt(profiles, (profile) => profile.faceStaleIdsCount, count)} '
+        'faceEmbedFacesAvg=${_avgInt(profiles, (profile) => profile.faceEmbeddingFacesWritten, count)} '
+        'faceEmbedBytesAvg=${_avgInt(profiles, (profile) => profile.faceEmbeddingBytesWritten, count)} '
+        'faceEmbedIsarWrites=${profiles.where((profile) => profile.faceWritesEmbeddingToIsar).length} '
         'faceStoreObxAvgMs=${_avg(profiles, (profile) => profile.faceObjectBoxWriteMs, count)} '
         'faceCleanupAvgMs=${_avg(profiles, (profile) => profile.faceCleanupMs, count)} '
         'captionAvgMs=${_avg(profiles, (profile) => profile.captionMs, count)} '
@@ -284,6 +302,18 @@ class _AiPipelineRunProfiler {
       (sum, profile) => sum + selector(profile),
     );
     return _fmt(total / count);
+  }
+
+  String _avgInt(
+    List<_AiPhotoProfile> profiles,
+    int Function(_AiPhotoProfile profile) selector,
+    int count,
+  ) {
+    final total = profiles.fold<int>(
+      0,
+      (sum, profile) => sum + selector(profile),
+    );
+    return (total / count).toStringAsFixed(1);
   }
 
   double _percentile(List<double> values, double percentile) {

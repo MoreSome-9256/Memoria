@@ -32,13 +32,22 @@ class _AnalysisAuxiliaryConfig {
 class _ResolvedAnalysisFile {
   const _ResolvedAnalysisFile({
     required this.file,
+    required this.sourceBytes,
     required this.source,
     required this.createdTemporaryFile,
   });
 
   final File file;
+  final Uint8List? sourceBytes;
   final String source;
   final bool createdTemporaryFile;
+}
+
+class _CreatedAnalysisFile {
+  const _CreatedAnalysisFile({required this.file, required this.bytes});
+
+  final File file;
+  final Uint8List bytes;
 }
 
 class _AnalysisFileResolver {
@@ -48,7 +57,7 @@ class _AnalysisFileResolver {
   });
 
   final _AnalysisAuxiliaryConfig config;
-  final Future<File> Function(File sourceFile, int photoId)
+  final Future<_CreatedAnalysisFile> Function(File sourceFile, int photoId)
   createCompressedFile;
 
   Future<_ResolvedAnalysisFile> resolve({
@@ -59,13 +68,15 @@ class _AnalysisFileResolver {
       case _AnalysisAuxiliaryStrategy.useOriginal:
         return _ResolvedAnalysisFile(
           file: sourceFile,
+          sourceBytes: null,
           source: 'source_file',
           createdTemporaryFile: false,
         );
       case _AnalysisAuxiliaryStrategy.alwaysCompress:
-        final file = await createCompressedFile(sourceFile, photoId);
+        final created = await createCompressedFile(sourceFile, photoId);
         return _ResolvedAnalysisFile(
-          file: file,
+          file: created.file,
+          sourceBytes: created.bytes,
           source: 'compressed_temp',
           createdTemporaryFile: true,
         );

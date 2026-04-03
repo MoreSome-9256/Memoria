@@ -32,23 +32,85 @@ class _PreparedAnalysisInput {
   final double fileReadMs;
 }
 
+class _AiPhotoProcessingRequest {
+  const _AiPhotoProcessingRequest({
+    required this.photo,
+    required this.isar,
+    required this.selectedBackend,
+    required this.mobileClipEmbeddingService,
+    required this.mobileClipTagService,
+    required this.photoCaptionService,
+    required this.facePipelineService,
+    required this.ocrService,
+    required this.faceDetector,
+    required this.junkPhotoFilterService,
+    required this.skipJunkFilter,
+    required this.stopRequested,
+  });
+
+  final PhotoEntity photo;
+  final Isar isar;
+  final MobileClipBackend selectedBackend;
+  final MobileClipEmbeddingService mobileClipEmbeddingService;
+  final MobileClipTagService mobileClipTagService;
+  final PhotoCaptionService photoCaptionService;
+  final FacePipelineService facePipelineService;
+  final OcrService ocrService;
+  final FaceDetector faceDetector;
+  final JunkPhotoFilterService junkPhotoFilterService;
+  final bool skipJunkFilter;
+  final bool stopRequested;
+}
+
+class _AiPhotoWriteRequest {
+  const _AiPhotoWriteRequest({
+    required this.photoId,
+    required this.tags,
+    required this.imageEmbedding,
+    required this.aiCaption,
+    required this.ocrText,
+    required this.ocrTags,
+    required this.faceCount,
+    required this.smileProb,
+    required this.joyScore,
+    required this.skipVectorIndexWrite,
+  });
+
+  final Id photoId;
+  final List<String> tags;
+  final List<double> imageEmbedding;
+  final String aiCaption;
+  final String ocrText;
+  final List<String> ocrTags;
+  final int faceCount;
+  final double smileProb;
+  final double joyScore;
+  final bool skipVectorIndexWrite;
+}
+
 class _PhotoProcessResult {
   const _PhotoProcessResult._({
     required this.didSucceed,
     required this.profile,
     this.eventId,
     this.junkCandidate,
+    this.persistenceRequest,
+    this.deferredCaptionTask,
   });
 
   const _PhotoProcessResult.success({
     int? eventId,
     JunkPhotoCleanupCandidate? junkCandidate,
     required _AiPhotoProfile profile,
+    _AiPhotoWriteRequest? persistenceRequest,
+    _AsyncCaptionTask? deferredCaptionTask,
   }) : this._(
          didSucceed: true,
          profile: profile,
          eventId: eventId,
          junkCandidate: junkCandidate,
+         persistenceRequest: persistenceRequest,
+         deferredCaptionTask: deferredCaptionTask,
        );
 
   const _PhotoProcessResult.failed({required _AiPhotoProfile profile})
@@ -57,12 +119,16 @@ class _PhotoProcessResult {
         profile: profile,
         eventId: null,
         junkCandidate: null,
+        persistenceRequest: null,
+        deferredCaptionTask: null,
       );
 
   final bool didSucceed;
   final _AiPhotoProfile profile;
   final int? eventId;
   final JunkPhotoCleanupCandidate? junkCandidate;
+  final _AiPhotoWriteRequest? persistenceRequest;
+  final _AsyncCaptionTask? deferredCaptionTask;
 }
 
 class _AiPersistenceProfile {

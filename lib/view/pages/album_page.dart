@@ -1,7 +1,6 @@
 ﻿import 'dart:async';
-import 'dart:collection';
-
 import 'package:flutter/material.dart';
+import 'dart:collection';
 import 'package:isar/isar.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../data/tag_taxonomy_v2.dart';
@@ -50,13 +49,21 @@ class _AlbumPageState extends State<AlbumPage> {
   static const double _contentBottomInset = 118;
   static const int _tagBrowserYieldChunk = 120;
   bool _isClearingCache = false;
+  bool _tagBrowserAiRecoveryTriggered = false;
   String? _lastPromptedJunkCleanupReportId;
   final TextEditingController _semanticSearchController =
       TextEditingController();
   final FocusNode _semanticSearchFocusNode = FocusNode();
   final AlbumTagBrowserService _albumTagBrowserService =
       AlbumTagBrowserService();
+  final ScrollController _momentsScrollController = ScrollController();
+  final Map<String, GlobalKey> _momentSectionKeys = <String, GlobalKey>{};
+  final GlobalKey _momentsFastScrollerTrackKey = GlobalKey();
   _AlbumViewMode _viewMode = _AlbumViewMode.tags;
+  Timer? _momentsFastScrollerHideTimer;
+  bool _showMomentsFastScroller = false;
+  bool _draggingMomentsFastScroller = false;
+  String? _momentsFastScrollerLabel;
 
   // 馃専 1. 鏀逛负鐩存帴鐩戝惉鏈€缁?UI 鏁版嵁缁撴瀯鐨?Stream
   late Stream<Map<String, List<Event>>> _uiEventsStream;
@@ -501,6 +508,8 @@ class _AlbumPageState extends State<AlbumPage> {
     AIService().junkCleanupReportListenable.removeListener(
       _onJunkCleanupReportChanged,
     );
+    _momentsFastScrollerHideTimer?.cancel();
+    _momentsScrollController.dispose();
     _semanticSearchController.dispose();
     _semanticSearchFocusNode.dispose();
     super.dispose();
@@ -892,8 +901,19 @@ class _AlbumPageState extends State<AlbumPage> {
         final browserData = snapshot.data;
         final clusters =
             browserData?.clusters ?? const <AlbumCoarseTagCluster>[];
+        final totalPhotoCount = browserData?.totalPhotoCount ?? 0;
+        final analyzedPhotoCount = browserData?.analyzedPhotoCount ?? 0;
+        if (totalPhotoCount > 0 &&
+            analyzedPhotoCount <= 0 &&
+            !AIService().isAnalyzing &&
+            !_tagBrowserAiRecoveryTriggered) {
+          _tagBrowserAiRecoveryTriggered = true;
+          unawaited(AIService().analyzePhotosInBackground());
+        } else if (analyzedPhotoCount > 0 || AIService().isAnalyzing) {
+          _tagBrowserAiRecoveryTriggered = false;
+        }
         if (clusters.isEmpty) {
-          return _buildTagBrowserEmptyState();
+          return _buildTagBrowserEmptyState(browserData);
         }
 
         return CustomScrollView(
@@ -947,52 +967,257 @@ class _AlbumPageState extends State<AlbumPage> {
         }
 
         final items = <Object>[];
+        final sectionKeys = <String, GlobalKey>{};
         for (final entry in groupedEvents.entries) {
           items.add(entry.key);
           items.addAll(entry.value);
+          sectionKeys[entry.key] = _momentSectionKeys[entry.key] ?? GlobalKey();
         }
+        _momentSectionKeys
+          ..clear()
+          ..addAll(sectionKeys);
 
-        return ListView.builder(
-          padding: EdgeInsets.fromLTRB(
-            16,
-            16,
-            16,
-            _contentBottomInset + MediaQuery.of(context).padding.bottom,
-          ),
-          itemCount: items.length,
-          itemBuilder: (context, index) {
-            final item = items[index];
-            if (item is String) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                child: Text(
-                  item,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
+        return Stack(
+          children: [
+            NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (notification is ScrollUpdateNotification ||
+                    notification is UserScrollNotification) {
+                  _handleMomentsScrollActivity();
+                }
+                return false;
+              },
+              child: ListView.builder(
+                controller: _momentsScrollController,
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  16,
+                  16,
+                  _contentBottomInset + MediaQuery.of(context).padding.bottom,
                 ),
-              );
-            }
-            return EventCard(event: item as Event);
-          },
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  if (item is String) {
+                    return Padding(
+                      key: _momentSectionKeys[item],
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Text(
+                        item,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    );
+                  }
+                  return EventCard(event: item as Event);
+                },
+              ),
+            ),
+            _buildMomentsFastScroller(groupedEvents.keys.toList(growable: false)),
+          ],
         );
       },
     );
   }
 
-  Widget _buildTagBrowserEmptyState() {
+  void _handleMomentsScrollActivity() {
+    _updateMomentsFastScrollerLabel();
+    if (!_showMomentsFastScroller && mounted) {
+      setState(() {
+        _showMomentsFastScroller = true;
+      });
+    }
+    _momentsFastScrollerHideTimer?.cancel();
+    _momentsFastScrollerHideTimer = Timer(const Duration(milliseconds: 900), () {
+      if (!mounted || _draggingMomentsFastScroller) {
+        return;
+      }
+      setState(() {
+        _showMomentsFastScroller = false;
+        _momentsFastScrollerLabel = null;
+      });
+    });
+  }
+
+  void _updateMomentsFastScrollerLabel() {
+    if (_momentSectionKeys.isEmpty) {
+      return;
+    }
+    String? currentLabel;
+    for (final entry in _momentSectionKeys.entries) {
+      final context = entry.value.currentContext;
+      if (context == null) {
+        continue;
+      }
+      final box = context.findRenderObject() as RenderBox?;
+      if (box == null || !box.attached) {
+        continue;
+      }
+      final dy = box.localToGlobal(Offset.zero).dy;
+      if (dy <= 180) {
+        currentLabel = entry.key;
+      } else {
+        break;
+      }
+    }
+    if (currentLabel != null && currentLabel != _momentsFastScrollerLabel && mounted) {
+      setState(() {
+        _momentsFastScrollerLabel = currentLabel;
+      });
+    }
+  }
+
+  void _jumpToMomentSection(String label) {
+    final context = _momentSectionKeys[label]?.currentContext;
+    if (context == null) {
+      return;
+    }
+    Scrollable.ensureVisible(
+      context,
+      alignment: 0.04,
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+    );
+  }
+
+  Widget _buildMomentsFastScroller(List<String> labels) {
+    if (labels.length <= 1) {
+      return const SizedBox.shrink();
+    }
+    final visible = _showMomentsFastScroller || _draggingMomentsFastScroller;
+    final bubbleLabel = _momentsFastScrollerLabel;
+    return Positioned(
+      right: 8,
+      top: 110,
+      bottom: 140,
+      child: IgnorePointer(
+        ignoring: !visible,
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 160),
+          opacity: visible ? 1 : 0,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (bubbleLabel != null)
+                Container(
+                  margin: const EdgeInsets.only(right: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  child: Text(
+                    bubbleLabel,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragStart: (_) {
+                  setState(() {
+                    _draggingMomentsFastScroller = true;
+                    _showMomentsFastScroller = true;
+                  });
+                },
+                onVerticalDragUpdate: (details) {
+                  final box = _momentsFastScrollerTrackKey.currentContext
+                      ?.findRenderObject() as RenderBox?;
+                  if (box == null || labels.isEmpty) {
+                    return;
+                  }
+                  final local = box.globalToLocal(details.globalPosition);
+                  final height = box.size.height;
+                  final ratio = (local.dy / height).clamp(0.0, 0.999);
+                  final index = (ratio * labels.length).floor().clamp(
+                    0,
+                    labels.length - 1,
+                  );
+                  final label = labels[index];
+                  if (label != _momentsFastScrollerLabel && mounted) {
+                    setState(() {
+                      _momentsFastScrollerLabel = label;
+                    });
+                  }
+                  _jumpToMomentSection(label);
+                },
+                onVerticalDragEnd: (_) {
+                  _momentsFastScrollerHideTimer?.cancel();
+                  setState(() {
+                    _draggingMomentsFastScroller = false;
+                  });
+                  _handleMomentsScrollActivity();
+                },
+                child: Container(
+                  key: _momentsFastScrollerTrackKey,
+                  width: 28,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.unfold_more_rounded,
+                    size: 18,
+                    color: Colors.black54,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTagBrowserEmptyState(_AlbumTagBrowserData? browserData) {
+    final totalPhotoCount = browserData?.totalPhotoCount ?? 0;
+    final analyzedPhotoCount = browserData?.analyzedPhotoCount ?? 0;
+    final taggedPhotoCount = browserData?.taggedPhotoCount ?? 0;
+    final aiProgress = AIService().progressListenable.value;
+
+    String title;
+    String subtitle;
+    IconData icon;
+
+    if (totalPhotoCount <= 0) {
+      title = '暂时还没有可浏览的标签聚类';
+      subtitle = '先点击右上角 + 扫描相册，系统再按粗粒度标签自动整理相册。';
+      icon = Icons.sell_outlined;
+    } else if (analyzedPhotoCount <= 0 || aiProgress.isVisible) {
+      title = '照片已入库，正在后台打标';
+      final completedText = aiProgress.total > 0
+          ? '${aiProgress.completed}/${aiProgress.total}'
+          : '$analyzedPhotoCount/$totalPhotoCount';
+      subtitle =
+          '当前已有 $totalPhotoCount 张照片，AI 正在补充标签与文案（$completedText）。打标完成后，这里会自动出现标签预览。';
+      icon = Icons.auto_awesome_outlined;
+    } else if (taggedPhotoCount <= 0) {
+      title = '已完成分析，但暂未形成标签预览';
+      subtitle =
+          '当前已有 $analyzedPhotoCount 张照片完成分析，但还没有可聚类的标签结果。可以稍后再看，或继续补扫、补打标。';
+      icon = Icons.label_outline;
+    } else {
+      title = '暂时还没有可浏览的标签聚类';
+      subtitle = '标签结果正在整理中，请稍候再试。';
+      icon = Icons.sell_outlined;
+    }
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.sell_outlined, size: 64, color: Colors.grey[400]),
+            Icon(icon, size: 64, color: Colors.grey[400]),
             const SizedBox(height: 16),
-            const Text('暂时还没有可浏览的标签聚类'),
+            Text(title),
             const SizedBox(height: 8),
             Text(
-              '先点击右上角 + 扫描并完成一轮 AI 打标，系统就会按粗粒度标签自动整理相册。',
+              subtitle,
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey[600], height: 1.5),
             ),
@@ -1051,9 +1276,9 @@ class _AlbumPageState extends State<AlbumPage> {
       }
     }
 
-    // 2. 蹇€熷垎缁?
+    // 2. 一级标题按年份和季节分组，具体到日的信息保留在卡片内部。
     for (final event in allEvents) {
-      final key = '${event.year} · ${event.season}';
+      final key = _seasonGroupKey(event.startDate);
       if (!grouped.containsKey(key)) {
         grouped[key] = [];
       }
@@ -1061,6 +1286,16 @@ class _AlbumPageState extends State<AlbumPage> {
     }
 
     return grouped;
+  }
+
+  String _seasonGroupKey(DateTime date) {
+    final season = switch (date.month) {
+      3 || 4 || 5 => '春',
+      6 || 7 || 8 => '夏',
+      9 || 10 || 11 => '秋',
+      _ => '冬',
+    };
+    return '${date.year}年 · $season';
   }
 }
 
@@ -1669,7 +1904,8 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
     final grouped = <String, List<PhotoEntity>>{};
     for (final photo in photos) {
       final date = DateTime.fromMillisecondsSinceEpoch(photo.timestamp);
-      final key = '${date.year}-${date.month.toString().padLeft(2, '0')}';
+      final key =
+          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
       grouped.putIfAbsent(key, () => <PhotoEntity>[]).add(photo);
     }
     final keys = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
@@ -1686,10 +1922,10 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
 
   String _formatMonthTitle(String key) {
     final parts = key.split('-');
-    if (parts.length != 2) {
+    if (parts.length != 3) {
       return key;
     }
-    return '${parts[0]}年${parts[1]}月';
+    return '${parts[0]}年${parts[1]}月${parts[2]}日';
   }
 }
 

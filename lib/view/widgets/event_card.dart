@@ -10,8 +10,60 @@ class EventCard extends StatelessWidget {
 
   final Event event;
 
+  String? _displayTitle() {
+    for (final theme in event.aiThemes) {
+      final candidate = theme.title.trim();
+      if (candidate.isNotEmpty) {
+        return candidate;
+      }
+    }
+
+    final title = event.title.trim();
+    if (title.isEmpty) {
+      return null;
+    }
+    if (title.contains('未知地点')) {
+      return null;
+    }
+    final dateLike = RegExp(
+      r'^\d{1,4}年?\d{0,2}月?\d{0,2}日?(\s*[-~至到]\s*\d{1,4}年?\d{0,2}月?\d{0,2}日?)?$',
+    );
+    if (dateLike.hasMatch(title)) {
+      return null;
+    }
+    return title;
+  }
+
+  String _dateLine() {
+    final date =
+        '${event.startDate.year}年${event.startDate.month.toString().padLeft(2, '0')}月${event.startDate.day.toString().padLeft(2, '0')}日';
+    final location = event.location.trim();
+    if (location.isEmpty || location == '未知地点') {
+      return date;
+    }
+    return '$date · $location';
+  }
+
+  List<String> _visibleTags(double maxWidth) {
+    final visible = <String>[];
+    var usedWidth = 0.0;
+    for (final tag in event.tags) {
+      final estimatedChipWidth = (26 + (tag.runes.length * 14)).toDouble();
+      final nextWidth = visible.isEmpty
+          ? estimatedChipWidth
+          : usedWidth + 8 + estimatedChipWidth;
+      if (nextWidth > maxWidth) {
+        break;
+      }
+      visible.add(tag);
+      usedWidth = nextWidth;
+    }
+    return visible;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final title = _displayTitle();
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       clipBehavior: Clip.antiAlias,
@@ -33,13 +85,15 @@ class EventCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    event.title,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
+                  if (title != null) ...[
+                    Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
+                    const SizedBox(height: 8),
+                  ],
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -51,7 +105,7 @@ class EventCard extends StatelessWidget {
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
-                          '${event.startDate.month}月 · ${event.location}',
+                          _dateLine(),
                           style: TextStyle(color: Colors.grey[600]),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -72,14 +126,31 @@ class EventCard extends StatelessWidget {
                   ),
                   if (event.tags.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      children: event.tags.map((tag) {
-                        return Chip(
-                          label: Text(tag, style: const TextStyle(fontSize: 12)),
-                          visualDensity: VisualDensity.compact,
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final tags = _visibleTags(constraints.maxWidth);
+                        if (tags.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+                        return SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          physics: const NeverScrollableScrollPhysics(),
+                          child: Row(
+                            children: tags.map((tag) {
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: Chip(
+                                  label: Text(
+                                    tag,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                              );
+                            }).toList(growable: false),
+                          ),
                         );
-                      }).toList(growable: false),
+                      },
                     ),
                   ],
                 ],

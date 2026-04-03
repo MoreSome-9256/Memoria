@@ -1,11 +1,10 @@
-import 'package:flutter/foundation.dart';
+﻿import 'package:flutter/foundation.dart';
 import 'package:isar/isar.dart';
+
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/vo/semantic_search_models.dart';
-import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../utils/tag_sanitizer.dart';
-import 'mobileclip_embedding_service.dart';
 import 'photo_service.dart';
 import 'semantic_matching_service.dart';
 import 'semantic_query_parser_service.dart';
@@ -20,10 +19,6 @@ class SemanticPhotoSearchService {
 
   final SemanticMatchingService _semanticService = SemanticMatchingService();
   final SemanticQueryParserService _queryParser = SemanticQueryParserService();
-  final MobileClipEmbeddingService _mobileClipEmbeddingService =
-      MobileClipEmbeddingService();
-  final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
-      PhotoEmbeddingIndexRepository();
 
   static const double _positiveSemanticParticipationThreshold = 0.20;
   static const double _exactPositiveThreshold = 0.24;
@@ -49,28 +44,23 @@ class SemanticPhotoSearchService {
   Set<String>? _cachedLocations;
 
   Future<SemanticSearchResult> search(String rawQuery) async {
-    final allPhotos = await _loadAllPhotos();
-    final photos = allPhotos
-        .where((photo) => photo.isAiAnalyzed)
-        .toList(growable: false);
-    final activeModelVersion = await _mobileClipEmbeddingService
-        .getSelectedModelVersion();
+    final photos = await _loadAnalyzedPhotos();
     final query = await _queryParser.parseQuery(
       rawQuery,
       locationDictionary: _cachedLocations ?? const <String>{},
     );
 
-    if (rawQuery.trim().isEmpty || allPhotos.isEmpty) {
+    if (rawQuery.trim().isEmpty || photos.isEmpty) {
       return _emptyResult(query, photos.length);
     }
 
-    final strictMetadataCandidates = _filterByMetadata(allPhotos, query);
+    final strictMetadataCandidates = _filterByMetadata(photos, query);
     final metadataCandidateCount = strictMetadataCandidates.length;
 
     if (query.isMetadataOnly ||
         (!query.hasPositiveSemantics && !query.hasNegativeSemantics)) {
       final metadataOnlyResult = _resolveMetadataOnlyCandidates(
-        allPhotos,
+        photos,
         strictMetadataCandidates,
         query,
       );
@@ -99,10 +89,8 @@ class SemanticPhotoSearchService {
       );
     }
 
-    final semanticMetadataCandidates = _filterByMetadata(photos, query);
-    final primaryMetadataCandidates = semanticMetadataCandidates.isNotEmpty
-        ? semanticMetadataCandidates
-        : photos;
+    final primaryMetadataCandidates =
+        strictMetadataCandidates.isNotEmpty ? strictMetadataCandidates : photos;
     final vectors = await _buildSemanticVectors(query);
     final primaryTagCandidates = _applyTagStrategy(
       primaryMetadataCandidates,
@@ -113,7 +101,6 @@ class SemanticPhotoSearchService {
 
     final primaryScores = _scoreCandidates(
       primaryTagCandidates,
-      activeModelVersion: activeModelVersion,
       positiveVectors: vectors.positiveVectors,
       negativeVectors: vectors.negativeVectors,
       coarseTags: query.coarseTags,
@@ -151,7 +138,6 @@ class SemanticPhotoSearchService {
         strictMetadataCandidates: strictMetadataCandidates,
         query: query,
         vectors: vectors,
-        activeModelVersion: activeModelVersion,
       );
       usedFallback = fallback.usedFallback;
       relaxationMessage = fallback.message;
@@ -198,9 +184,12 @@ class SemanticPhotoSearchService {
     );
   }
 
-  Future<List<PhotoEntity>> _loadAllPhotos() async {
-    final photos = await PhotoService().isar.photoEntitys
-        .where()
+  Future<List<PhotoEntity>> _loadAnalyzedPhotos() async {
+    final photos = await PhotoService()
+        .isar
+        .collection<PhotoEntity>()
+        .filter()
+        .isAiAnalyzedEqualTo(true)
         .sortByTimestampDesc()
         .findAll();
     _cachedLocations = _buildLocationDictionary(photos);
@@ -392,7 +381,6 @@ class SemanticPhotoSearchService {
 
   _ScoreCandidatesResult _scoreCandidates(
     List<PhotoEntity> candidates, {
-    required String activeModelVersion,
     required List<_SemanticVector> positiveVectors,
     required List<_SemanticVector> negativeVectors,
     required List<SemanticSearchCoarseTag> coarseTags,
@@ -404,7 +392,6 @@ class SemanticPhotoSearchService {
     for (final photo in candidates) {
       final hit = _scorePhoto(
         photo,
-        activeModelVersion: activeModelVersion,
         positiveVectors: positiveVectors,
         negativeVectors: negativeVectors,
         coarseTags: coarseTags,
@@ -422,7 +409,6 @@ class SemanticPhotoSearchService {
 
   SemanticSearchHit? _scorePhoto(
     PhotoEntity photo, {
-    required String activeModelVersion,
     required List<_SemanticVector> positiveVectors,
     required List<_SemanticVector> negativeVectors,
     required List<SemanticSearchCoarseTag> coarseTags,
@@ -434,10 +420,7 @@ class SemanticPhotoSearchService {
       return null;
     }
 
-    final imageEmbedding = _readSearchEmbedding(
-      photo,
-      activeModelVersion: activeModelVersion,
-    );
+    final imageEmbedding = photo.imageEmbedding;
     if (imageEmbedding == null || imageEmbedding.isEmpty) {
       return null;
     }
@@ -508,20 +491,6 @@ class SemanticPhotoSearchService {
     );
   }
 
-  List<double>? _readSearchEmbedding(
-    PhotoEntity photo, {
-    required String activeModelVersion,
-  }) {
-    // The merged architecture stores vectors in ObjectBox, but many existing
-    // photos still only have legacy Isar embeddings. Search should remain
-    // usable while the index is warming up or after a partial migration.
-    return _photoEmbeddingIndexRepository.readEmbeddingForPhoto(
-      photo,
-      modelVersion: activeModelVersion,
-      allowLegacyFallback: true,
-    );
-  }
-
   _PositiveSemanticAggregate _scorePositiveSemantics(
     List<double> imageEmbedding,
     List<_SemanticVector> positiveVectors,
@@ -583,7 +552,6 @@ class SemanticPhotoSearchService {
     required List<PhotoEntity> strictMetadataCandidates,
     required SemanticSearchQuery query,
     required _SemanticVectorBundle vectors,
-    required String activeModelVersion,
   }) {
     final hits = <int, SemanticSearchHit>{};
     var usedFallback = false;
@@ -608,7 +576,6 @@ class SemanticPhotoSearchService {
     tagCandidateCount = levelOneCandidates.length;
     final levelOneScores = _scoreCandidates(
       levelOneCandidates,
-      activeModelVersion: activeModelVersion,
       positiveVectors: vectors.positiveVectors,
       negativeVectors: vectors.negativeVectors,
       coarseTags: query.coarseTags,
@@ -629,7 +596,6 @@ class SemanticPhotoSearchService {
       }
       final levelTwoScores = _scoreCandidates(
         levelTwoCandidates,
-        activeModelVersion: activeModelVersion,
         positiveVectors: vectors.positiveVectors,
         negativeVectors: vectors.negativeVectors,
         coarseTags: const <SemanticSearchCoarseTag>[],
@@ -659,7 +625,6 @@ class SemanticPhotoSearchService {
           : relaxedMetadata.photos;
       final recallScores = _scoreCandidates(
         recallCandidates,
-        activeModelVersion: activeModelVersion,
         positiveVectors: vectors.recallVectors,
         negativeVectors: vectors.negativeVectors,
         coarseTags: const <SemanticSearchCoarseTag>[],
@@ -792,7 +757,7 @@ class SemanticPhotoSearchService {
       return total < 3;
     }
     final expectedFloor = estimate.min > 0 ? estimate.min : estimate.max ~/ 4;
-    final threshold = expectedFloor <= 0 ? 3 : expectedFloor.clamp(3, 24);
+    final threshold = expectedFloor <= 0 ? 3 : expectedFloor.clamp(3, 24) as int;
     return total < threshold;
   }
 

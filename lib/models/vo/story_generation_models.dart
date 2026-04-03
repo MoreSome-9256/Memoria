@@ -109,6 +109,10 @@ class StoryGenerationRequest {
     required this.mode,
     required this.isHorizontal,
     required this.targetPlatform,
+    this.enableAiMusic = true,
+    this.customMusicPath,
+    this.enableAutoCaptions = true,
+    this.manualCaptionsText,
     this.semanticSearchQuery,
     this.preserveSelectionOrder = false,
   });
@@ -121,6 +125,10 @@ class StoryGenerationRequest {
   final StoryGenerationMode mode;
   final bool isHorizontal;
   final String targetPlatform;
+  final bool enableAiMusic;
+  final String? customMusicPath;
+  final bool enableAutoCaptions;
+  final String? manualCaptionsText;
   final String? semanticSearchQuery;
   final bool preserveSelectionOrder;
 }

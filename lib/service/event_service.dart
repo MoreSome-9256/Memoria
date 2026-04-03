@@ -235,8 +235,10 @@ class EventService {
           e.locationName = locationName;
           e.formattedAddress = formattedAddress;
 
-          if (e.location.isNotEmpty) {
-            e.title = "${e.location} · ${e.dateRangeText}";
+          final displayLocation =
+              e.locationName ?? e.district ?? e.city ?? e.province;
+          if ((displayLocation?.trim().isNotEmpty ?? false)) {
+            e.title = "${displayLocation!.trim()} · ${e.dateRangeText}";
           }
 
           await isar.collection<EventEntity>().put(e);

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math;
 
 import '../../models/vo/story_generation_models.dart';
+import '../../service/story_video_preparation_service.dart';
 import '../../service/story_generation_orchestrator.dart';
 import '../widgets/path_image.dart';
 import 'story_result_page.dart';
@@ -66,12 +67,42 @@ class _StoryGenerationProgressPageState
         _hasCompleted = true;
       });
 
+      StoryVideoPreparationResult? videoPreparation;
+      try {
+        videoPreparation = await StoryVideoPreparationService().prepare(
+          request: widget.request,
+          story: output.story,
+          photos: output.photos,
+          onStatus: (status) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _state = StoryGenerationProgressState(
+                steps: _state?.steps ?? const <StoryGenerationProgressStep>[],
+                headline: status,
+                isCompleted: false,
+              );
+            });
+          },
+        );
+      } catch (_) {
+        videoPreparation = null;
+      }
+
+      if (!mounted) {
+        return;
+      }
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
           builder: (context) => StoryResultPage.fromStoryEntity(
             storyEntity: output.story,
             photos: output.photos,
+            customMusicPath: videoPreparation?.customMusicPath,
+            dynamicBeatData: videoPreparation?.dynamicBeatData,
+            captions: videoPreparation?.captions,
             isHorizontal: widget.request.isHorizontal,
             targetPlatform: widget.request.targetPlatform,
           ),

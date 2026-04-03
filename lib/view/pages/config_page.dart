@@ -123,6 +123,13 @@ class _ConfigPageState extends State<ConfigPage> {
   }
 
   void _openStoryGenerationFlow() {
+    if (_selectedMusicSource == MusicSource.manualImport &&
+        _customMusicPath == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先选择一段本地音乐')));
+      return;
+    }
     if (!_validateCommonThemeInput()) {
       return;
     }
@@ -140,6 +147,10 @@ class _ConfigPageState extends State<ConfigPage> {
             mode: _selectedStoryMode,
             isHorizontal: _selectedAspectRatio == VideoAspectRatio.horizontal,
             targetPlatform: _currentPlatformName(),
+            enableAiMusic: _selectedMusicSource == MusicSource.aiGenerated,
+            customMusicPath: _customMusicPath,
+            enableAutoCaptions: _enableAutoCaptions,
+            manualCaptionsText: _manualCaptionsController.text.trim(),
             semanticSearchQuery: widget.semanticSearchQuery?.trim(),
             preserveSelectionOrder: widget.preservePhotoOrder,
           ),
@@ -704,9 +715,19 @@ Sandal Leap
             ),
           ),
           const SizedBox(height: 12),
+          Text(
+            '故事生成完成后，可在结果页通过“播放回忆”进入视频预览与导出。',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurfaceVariant.withValues(alpha: 0.9),
+              height: 1.45,
+            ),
+            textAlign: TextAlign.center,
+          ),
 
           // Generate video button
-          FilledButton(
+          if (false) FilledButton(
             onPressed: _isGenerating ? null : _generateStory,
             style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 16),

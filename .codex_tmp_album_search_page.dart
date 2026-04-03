@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 import '../../models/entity/photo_entity.dart';
 import '../../models/vo/semantic_search_models.dart';
@@ -526,33 +526,23 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     final grouped = <String, List<PhotoEntity>>{};
     for (final photo in photos) {
       final date = DateTime.fromMillisecondsSinceEpoch(photo.timestamp);
-      final key =
-          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      final key = '${date.year}-${date.month.toString().padLeft(2, '0')}';
       grouped.putIfAbsent(key, () => <PhotoEntity>[]).add(photo);
     }
     final keys = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
     return keys
         .map(
           (key) => _PhotoMonthGroup(
-            title: _formatDayTitle(key),
+            title: _formatMonthTitle(key),
             photos: grouped[key]!..sort((a, b) => b.timestamp.compareTo(a.timestamp)),
           ),
         )
         .toList(growable: false);
   }
 
-  String _formatDayTitle(String key) {
-    final _ = _formatMonthTitle;
-    final parts = key.split('-');
-    if (parts.length != 3) {
-      return key;
-    }
-    return '${parts[0]}年${parts[1]}月${parts[2]}日';
-  }
-
   String _formatMonthTitle(String key) {
     final parts = key.split('-');
-    if (parts.length != 3) {
+    if (parts.length != 2) {
       return key;
     }
     return '${parts[0]}年${parts[1]}月';

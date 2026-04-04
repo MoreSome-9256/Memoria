@@ -18,6 +18,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:convert';
 
 // 🌟 新增：视频长宽比枚举
 enum VideoAspectRatio { vertical, horizontal }
@@ -68,12 +69,169 @@ class _ConfigPageState extends State<ConfigPage> {
   bool _enableAutoCaptions = true;
   late TextEditingController _manualCaptionsController; // 🌟 新增：手动字幕控制器
 
+  // ==========================================
+  // 🌟 新增：动态主题生成相关的状态
+  // ==========================================
+  bool _isGeneratingTheme = false;
+  List<String> _dynamicSubtitles = [];
+
   @override
   void initState() {
     super.initState();
-    _themeController = TextEditingController(text: widget.selectedTheme.title);
-    _selectedSubtitle = widget.selectedTheme.subtitle;
     _manualCaptionsController = TextEditingController();
+
+    // 🌟 1. 核心判定：是否是从“故事队列”进来的？
+    // 只要 preservePhotoOrder 为 true，说明它绝对是从队列页面拼凑过来的！
+    bool isFromQueue = widget.preservePhotoOrder || widget.event.id == '-1';
+
+    if (isFromQueue && widget.selectedPhotos.isNotEmpty) {
+      _themeController = TextEditingController(text: '✨ 正在分析画面提炼主题...');
+      _selectedSubtitle = null;
+      _generateThemeFromPhotos(); // 🚀 启动大模型提炼！
+    } else {
+      // 单一相册正常进入，直接用本地相册名
+      _themeController = TextEditingController(text: _deriveSmartTheme());
+      _selectedSubtitle = _deriveSmartSubtitle();
+    }
+  }
+  // ==========================================
+  // 🌟 核心提炼逻辑：直接调用专用的标题生成 API！
+  // ==========================================
+  Future<void> _generateThemeFromPhotos() async {
+    setState(() => _isGeneratingTheme = true);
+
+    try {
+      // 🌟 2. 核心修复：即使照片没有 AI 标签，也要用时间和地点把 Prompt 喂饱！
+      List<String> topTags = widget.selectedPhotos
+          .map((p) {
+            String desc = p.caption ?? p.ocrSummary ?? p.tags.join(' ');
+
+            // 如果照片完全没被 AI 分析过（比如你刚拍的本地照片），那就提取它的物理信息
+            if (desc.trim().isEmpty) {
+              String loc = p.location != null && p.location != '未知地点'
+                  ? p.location!
+                  : '某地';
+              String date = '${p.dateTaken.year}年${p.dateTaken.month}月';
+              desc = '$date 拍摄于 $loc';
+            }
+            return desc;
+          })
+          .where((s) => s.trim().isNotEmpty)
+          .take(15)
+          .toList();
+
+      // 终极保底，理论上不可能走到这步
+      if (topTags.isEmpty) topTags = ['美好的回忆'];
+
+      final eventEntity = EventEntity()
+        ..id = int.tryParse(widget.event.id) ?? -1
+        ..title = widget.event.title
+        ..startTime = widget.event.startDate.millisecondsSinceEpoch
+        ..endTime = widget.event.endDate.millisecondsSinceEpoch
+        ..locationName = widget.event.location ?? '';
+
+      List<String> generatedTitles = await LLMService().generateCreativeTitles(
+        eventEntity,
+        topTags,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        if (generatedTitles.isNotEmpty) {
+          _themeController.text = generatedTitles.first;
+          if (generatedTitles.length > 1) {
+            _dynamicSubtitles = generatedTitles.sublist(1);
+          } else {
+            _dynamicSubtitles = ['美好时光', '特别的日子', '记忆碎片'];
+          }
+          _selectedSubtitle = _dynamicSubtitles.first;
+        } else {
+          throw Exception("返回的标题列表为空");
+        }
+      });
+    } catch (e) {
+      debugPrint("❌ AI 主题提炼失败: $e");
+      // 失败了就降级回本地的智能推断算法
+      if (mounted) {
+        setState(() {
+          _themeController.text = _deriveSmartTheme();
+          _dynamicSubtitles = ['美好时光', '特别的日子', '跨越时光的相遇'];
+          _selectedSubtitle = _dynamicSubtitles.first;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _isGeneratingTheme = false);
+    }
+  }
+  // ==========================================
+  // 🧠 智能推断 1：核心主题 (Title) 兜底策略
+  // ==========================================
+  String _deriveSmartTheme() {
+    // 优先级 1：搜索词兜底（依然保留这个障眼法，体验很好）
+    if (widget.semanticSearchQuery != null &&
+        widget.semanticSearchQuery!.isNotEmpty) {
+      return widget.semanticSearchQuery!;
+    }
+
+    // 🌟 优先级 2：核心修复，用 preservePhotoOrder 准确判断是否来自故事队列
+    if (widget.preservePhotoOrder && widget.selectedPhotos.isNotEmpty) {
+      final locationCounts = <String, int>{};
+      for (var photo in widget.selectedPhotos) {
+        if (photo.location != null &&
+            photo.location != '未知地点' &&
+            photo.location!.isNotEmpty) {
+          locationCounts[photo.location!] =
+              (locationCounts[photo.location!] ?? 0) + 1;
+        }
+      }
+
+      // 如果有集中出现的地点
+      if (locationCounts.isNotEmpty) {
+        final topLocation = locationCounts.entries
+            .reduce((a, b) => a.value > b.value ? a : b)
+            .key;
+        return '$topLocation纪影';
+      }
+      // 如果连地点都没有，兜底时间
+      final firstDate = widget.selectedPhotos.first.dateTaken;
+      return '${firstDate.year}年${firstDate.month}月精选';
+    }
+
+    // 优先级 3：正常的单一相册进入
+    if (widget.event.title.isNotEmpty) {
+      return widget.event.title;
+    }
+
+    return widget.selectedTheme.title.isEmpty
+        ? '专属回忆'
+        : widget.selectedTheme.title;
+  }
+  // ==========================================
+  // 🧠 智能推断 2：副标题 (Subtitle)
+  // ==========================================
+  String _deriveSmartSubtitle() {
+    // 🥇 优先级 1：单一相册传过来的 AI 推荐副标题
+    if (widget.event.id != '-1' && widget.selectedTheme.subtitle.isNotEmpty) {
+      return widget.selectedTheme.subtitle;
+    }
+
+    // 🥈 优先级 2：如果是搜索出来的，或者是跨相册拼凑的，我们根据时间跨度智能生成
+    if (widget.selectedPhotos.isNotEmpty) {
+      final dates = widget.selectedPhotos.map((p) => p.dateTaken).toList();
+      dates.sort(); // 按时间排序
+      final firstDate = dates.first;
+      final lastDate = dates.last;
+
+      if (firstDate.year == lastDate.year &&
+          firstDate.month == lastDate.month) {
+        return '${firstDate.year}年${firstDate.month}月的记忆碎片';
+      } else {
+        return '跨越时光的相遇';
+      }
+    }
+
+    return '美好时光'; // 🏁 最终兜底
   }
 
   // 🌟 新增：拣选音乐的方法
@@ -513,16 +671,24 @@ Sandal Leap
           const SizedBox(height: 8),
           TextField(
             controller: _themeController,
+            readOnly: _isGeneratingTheme,
             decoration: InputDecoration(
               hintText: '输入故事主题',
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
-              prefixIcon: Text(
-                widget.selectedTheme.emoji,
-                style: const TextStyle(fontSize: 24),
+              prefixIcon: const Icon(
+                Icons.auto_awesome,
+                color: Colors.pinkAccent,
               ),
               prefixIconConstraints: const BoxConstraints(minWidth: 50),
+              // 🌟 正在生成时，右边给个加载小圈圈
+              suffixIcon: _isGeneratingTheme
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : null,
             ),
           ),
           const SizedBox(height: 24),
@@ -535,23 +701,46 @@ Sandal Leap
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [widget.selectedTheme.subtitle, '难忘的回忆', '美好时光', '特别的日子']
-                .map((subtitle) {
-                  final isSelected = subtitle == _selectedSubtitle;
-                  return ChoiceChip(
-                    label: Text(subtitle),
-                    selected: isSelected,
-                    onSelected: (selected) {
-                      setState(() {
-                        _selectedSubtitle = selected ? subtitle : null;
-                      });
-                    },
-                  );
-                })
-                .toList(),
+          if (_isGeneratingTheme)
+            Text(
+              '💡 AI 正在构思文艺文案...',
+              style: TextStyle(
+                color: Colors.pinkAccent.shade200,
+                fontStyle: FontStyle.italic,
+              ),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              // 🌟 核心：优先使用 AI 生成的列表，如果没有，再用兜底列表
+              children:
+                  (_dynamicSubtitles.isNotEmpty
+                          ? _dynamicSubtitles
+                          : <String>[
+                              if (_selectedSubtitle != null &&
+                                  _selectedSubtitle!.isNotEmpty)
+                                _selectedSubtitle!,
+                              if (widget.selectedTheme.subtitle.isNotEmpty)
+                                widget.selectedTheme.subtitle,
+                              '难忘的回忆',
+                              '美好时光',
+                              '特别的日子',
+                            ])
+                      .toSet()
+                      .map((subtitle) {
+                        final isSelected = subtitle == _selectedSubtitle;
+                        return ChoiceChip(
+                          label: Text(subtitle),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              _selectedSubtitle = selected ? subtitle : null;
+                            });
+                          },
+                        );
+                      })
+                      .toList(),
           ),
           const SizedBox(height: 24),
 

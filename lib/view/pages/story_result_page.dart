@@ -26,6 +26,7 @@ class StoryResultPage extends StatefulWidget {
     this.dynamicBeatData,
     required this.isHorizontal,
     required this.targetPlatform,
+    this.videoCaptions,
   });
 
   final String title;
@@ -37,6 +38,7 @@ class StoryResultPage extends StatefulWidget {
   final Map<String, dynamic>? dynamicBeatData;
   final bool isHorizontal;
   final String targetPlatform;
+  final List<String>? videoCaptions;
 
   factory StoryResultPage.fromStoryEntity({
     required StoryEntity storyEntity,
@@ -59,9 +61,7 @@ class StoryResultPage extends StatefulWidget {
 
     for (final map in sectionMaps) {
       final photo = map['photo'] as Photo;
-      final text = (captionMap[photo.id]?.isNotEmpty ?? false)
-          ? captionMap[photo.id]!
-          : (map['text'] as String? ?? '');
+      final text = map['text'] as String? ?? '';
       sections.add(StorySection(text: text, photo: photo));
     }
 
@@ -72,7 +72,7 @@ class StoryResultPage extends StatefulWidget {
       }
       sections.add(
         StorySection(
-          text: captionMap[photoEntity.assetId] ?? '',
+          text: '',
           photo: Photo(
             id: photoEntity.assetId,
             path: photoEntity.path,
@@ -140,6 +140,7 @@ class StoryResultPage extends StatefulWidget {
       dynamicBeatData: dynamicBeatData,
       isHorizontal: isHorizontal,
       targetPlatform: targetPlatform,
+      videoCaptions: captions,
     );
   }
 
@@ -311,7 +312,27 @@ class _StoryResultPageState extends State<StoryResultPage> {
     final random = math.Random();
     final introPhoto = _sections[random.nextInt(_sections.length)].photo;
     final introSection = StorySection(text: '__INTRO__', photo: introPhoto);
-    final finalVideoSections = <StorySection>[introSection, ..._sections];
+    // ==========================================
+    // 🌟 核心修改 3：在传给视频页面之前，组装视频专属的“短字幕”版本切片
+    // ==========================================
+    final videoSpecificSections = <StorySection>[];
+    for (int i = 0; i < _sections.length; i++) {
+      // 找找看有没有队友生成的视频短字幕，如果没有，拿长脚本兜个底
+      String videoSubtitle =
+          (widget.videoCaptions != null && i < widget.videoCaptions!.length)
+          ? widget.videoCaptions![i]
+          : _sections[i].text;
+
+      videoSpecificSections.add(
+        StorySection(text: videoSubtitle, photo: _sections[i].photo),
+      );
+    }
+
+    // 把带有短字幕的列表传进去！
+    final finalVideoSections = <StorySection>[
+      introSection,
+      ...videoSpecificSections,
+    ];
 
     Navigator.of(context).push(
       MaterialPageRoute<void>(

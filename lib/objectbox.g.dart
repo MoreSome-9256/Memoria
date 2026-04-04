@@ -21,132 +21,120 @@ export 'package:objectbox/objectbox.dart'; // so that callers only have to impor
 
 final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
-    id: const obx_int.IdUid(1, 8370563462794805516),
-    name: 'FaceEmbeddingIndexEntity',
-    lastPropertyId: const obx_int.IdUid(9, 6750648057042900395),
-    flags: 0,
-    properties: <obx_int.ModelProperty>[
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(1, 8843737281638857806),
-        name: 'id',
-        type: 6,
-        flags: 1,
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(2, 3267451317628674720),
-        name: 'lookupKey',
-        type: 9,
-        flags: 34848,
-        indexId: const obx_int.IdUid(1, 8600724477751288479),
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(3, 3933032177763013511),
-        name: 'faceId',
-        type: 6,
-        flags: 8,
-        indexId: const obx_int.IdUid(2, 3837454356930359201),
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(4, 294085512296946356),
-        name: 'photoId',
-        type: 6,
-        flags: 8,
-        indexId: const obx_int.IdUid(3, 6557949488033671988),
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(5, 4541208934521601897),
-        name: 'modelVersion',
-        type: 9,
-        flags: 2048,
-        indexId: const obx_int.IdUid(4, 2056787761425532404),
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(6, 4936296631951580656),
-        name: 'updatedAtMillis',
-        type: 6,
-        flags: 0,
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(7, 1304280626013516244),
-        name: 'isStale',
-        type: 1,
-        flags: 0,
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(8, 3446556576835000235),
-        name: 'qualityScore',
-        type: 8,
-        flags: 0,
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(9, 6750648057042900395),
-        name: 'vector',
-        type: 28,
-        flags: 8,
-        indexId: const obx_int.IdUid(5, 4756014183495336155),
-        hnswParams: obx_int.ModelHnswParams(dimensions: 512, distanceType: 2),
-      ),
-    ],
-    relations: <obx_int.ModelRelation>[],
-    backlinks: <obx_int.ModelBacklink>[],
-  ),
+      id: const obx_int.IdUid(1, 8370563462794805516),
+      name: 'FaceEmbeddingIndexEntity',
+      lastPropertyId: const obx_int.IdUid(9, 6750648057042900395),
+      flags: 0,
+      properties: <obx_int.ModelProperty>[
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(1, 8843737281638857806),
+            name: 'id',
+            type: 6,
+            flags: 1),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(2, 3267451317628674720),
+            name: 'lookupKey',
+            type: 9,
+            flags: 34848,
+            indexId: const obx_int.IdUid(1, 8600724477751288479)),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(3, 3933032177763013511),
+            name: 'faceId',
+            type: 6,
+            flags: 8,
+            indexId: const obx_int.IdUid(2, 3837454356930359201)),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(4, 294085512296946356),
+            name: 'photoId',
+            type: 6,
+            flags: 8,
+            indexId: const obx_int.IdUid(3, 6557949488033671988)),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(5, 4541208934521601897),
+            name: 'modelVersion',
+            type: 9,
+            flags: 2048,
+            indexId: const obx_int.IdUid(4, 2056787761425532404)),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(6, 4936296631951580656),
+            name: 'updatedAtMillis',
+            type: 6,
+            flags: 0),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(7, 1304280626013516244),
+            name: 'isStale',
+            type: 1,
+            flags: 0),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(8, 3446556576835000235),
+            name: 'qualityScore',
+            type: 8,
+            flags: 0),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(9, 6750648057042900395),
+            name: 'vector',
+            type: 28,
+            flags: 8,
+            indexId: const obx_int.IdUid(5, 4756014183495336155),
+            hnswParams: obx_int.ModelHnswParams(
+              dimensions: 512,
+              distanceType: 2,
+            ))
+      ],
+      relations: <obx_int.ModelRelation>[],
+      backlinks: <obx_int.ModelBacklink>[]),
   obx_int.ModelEntity(
-    id: const obx_int.IdUid(2, 8545569770623572711),
-    name: 'PhotoEmbeddingIndexEntity',
-    lastPropertyId: const obx_int.IdUid(7, 1369084111896358290),
-    flags: 0,
-    properties: <obx_int.ModelProperty>[
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(1, 2606934105691962462),
-        name: 'id',
-        type: 6,
-        flags: 1,
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(2, 3233694135508193574),
-        name: 'lookupKey',
-        type: 9,
-        flags: 34848,
-        indexId: const obx_int.IdUid(6, 214909983476304403),
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(3, 7079421070950175234),
-        name: 'photoId',
-        type: 6,
-        flags: 8,
-        indexId: const obx_int.IdUid(7, 527425103259854012),
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(4, 5838416942170268119),
-        name: 'modelVersion',
-        type: 9,
-        flags: 2048,
-        indexId: const obx_int.IdUid(8, 8501660533990213362),
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(5, 2195784073689755980),
-        name: 'updatedAtMillis',
-        type: 6,
-        flags: 0,
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(6, 2095394697055809540),
-        name: 'isStale',
-        type: 1,
-        flags: 0,
-      ),
-      obx_int.ModelProperty(
-        id: const obx_int.IdUid(7, 1369084111896358290),
-        name: 'vector',
-        type: 28,
-        flags: 8,
-        indexId: const obx_int.IdUid(9, 513319743638822687),
-        hnswParams: obx_int.ModelHnswParams(dimensions: 512, distanceType: 2),
-      ),
-    ],
-    relations: <obx_int.ModelRelation>[],
-    backlinks: <obx_int.ModelBacklink>[],
-  ),
+      id: const obx_int.IdUid(2, 8545569770623572711),
+      name: 'PhotoEmbeddingIndexEntity',
+      lastPropertyId: const obx_int.IdUid(7, 1369084111896358290),
+      flags: 0,
+      properties: <obx_int.ModelProperty>[
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(1, 2606934105691962462),
+            name: 'id',
+            type: 6,
+            flags: 1),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(2, 3233694135508193574),
+            name: 'lookupKey',
+            type: 9,
+            flags: 34848,
+            indexId: const obx_int.IdUid(6, 214909983476304403)),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(3, 7079421070950175234),
+            name: 'photoId',
+            type: 6,
+            flags: 8,
+            indexId: const obx_int.IdUid(7, 527425103259854012)),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(4, 5838416942170268119),
+            name: 'modelVersion',
+            type: 9,
+            flags: 2048,
+            indexId: const obx_int.IdUid(8, 8501660533990213362)),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(5, 2195784073689755980),
+            name: 'updatedAtMillis',
+            type: 6,
+            flags: 0),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(6, 2095394697055809540),
+            name: 'isStale',
+            type: 1,
+            flags: 0),
+        obx_int.ModelProperty(
+            id: const obx_int.IdUid(7, 1369084111896358290),
+            name: 'vector',
+            type: 28,
+            flags: 8,
+            indexId: const obx_int.IdUid(9, 513319743638822687),
+            hnswParams: obx_int.ModelHnswParams(
+              dimensions: 512,
+              distanceType: 2,
+            ))
+      ],
+      relations: <obx_int.ModelRelation>[],
+      backlinks: <obx_int.ModelBacklink>[])
 ];
 
 /// Shortcut for [obx.Store.new] that passes [getObjectBoxModel] and for Flutter
@@ -160,211 +148,165 @@ final _entities = <obx_int.ModelEntity>[
 /// For Flutter apps, also calls `loadObjectBoxLibraryAndroidCompat()` from
 /// the ObjectBox Flutter library to fix loading the native ObjectBox library
 /// on Android 6 and older.
-Future<obx.Store> openStore({
-  String? directory,
-  int? maxDBSizeInKB,
-  int? maxDataSizeInKB,
-  int? fileMode,
-  int? maxReaders,
-  bool queriesCaseSensitiveDefault = true,
-  String? macosApplicationGroup,
-}) async {
+Future<obx.Store> openStore(
+    {String? directory,
+    int? maxDBSizeInKB,
+    int? maxDataSizeInKB,
+    int? fileMode,
+    int? maxReaders,
+    bool queriesCaseSensitiveDefault = true,
+    String? macosApplicationGroup}) async {
   await loadObjectBoxLibraryAndroidCompat();
-  return obx.Store(
-    getObjectBoxModel(),
-    directory: directory ?? (await defaultStoreDirectory()).path,
-    maxDBSizeInKB: maxDBSizeInKB,
-    maxDataSizeInKB: maxDataSizeInKB,
-    fileMode: fileMode,
-    maxReaders: maxReaders,
-    queriesCaseSensitiveDefault: queriesCaseSensitiveDefault,
-    macosApplicationGroup: macosApplicationGroup,
-  );
+  return obx.Store(getObjectBoxModel(),
+      directory: directory ?? (await defaultStoreDirectory()).path,
+      maxDBSizeInKB: maxDBSizeInKB,
+      maxDataSizeInKB: maxDataSizeInKB,
+      fileMode: fileMode,
+      maxReaders: maxReaders,
+      queriesCaseSensitiveDefault: queriesCaseSensitiveDefault,
+      macosApplicationGroup: macosApplicationGroup);
 }
 
 /// Returns the ObjectBox model definition for this project for use with
 /// [obx.Store.new].
 obx_int.ModelDefinition getObjectBoxModel() {
   final model = obx_int.ModelInfo(
-    entities: _entities,
-    lastEntityId: const obx_int.IdUid(2, 8545569770623572711),
-    lastIndexId: const obx_int.IdUid(9, 513319743638822687),
-    lastRelationId: const obx_int.IdUid(0, 0),
-    lastSequenceId: const obx_int.IdUid(0, 0),
-    retiredEntityUids: const [],
-    retiredIndexUids: const [],
-    retiredPropertyUids: const [],
-    retiredRelationUids: const [],
-    modelVersion: 5,
-    modelVersionParserMinimum: 5,
-    version: 1,
-  );
+      entities: _entities,
+      lastEntityId: const obx_int.IdUid(2, 8545569770623572711),
+      lastIndexId: const obx_int.IdUid(9, 513319743638822687),
+      lastRelationId: const obx_int.IdUid(0, 0),
+      lastSequenceId: const obx_int.IdUid(0, 0),
+      retiredEntityUids: const [],
+      retiredIndexUids: const [],
+      retiredPropertyUids: const [],
+      retiredRelationUids: const [],
+      modelVersion: 5,
+      modelVersionParserMinimum: 5,
+      version: 1);
 
   final bindings = <Type, obx_int.EntityDefinition>{
     FaceEmbeddingIndexEntity:
         obx_int.EntityDefinition<FaceEmbeddingIndexEntity>(
-          model: _entities[0],
-          toOneRelations: (FaceEmbeddingIndexEntity object) => [],
-          toManyRelations: (FaceEmbeddingIndexEntity object) => {},
-          getId: (FaceEmbeddingIndexEntity object) => object.id,
-          setId: (FaceEmbeddingIndexEntity object, int id) {
-            object.id = id;
-          },
-          objectToFB: (FaceEmbeddingIndexEntity object, fb.Builder fbb) {
-            final lookupKeyOffset = fbb.writeString(object.lookupKey);
-            final modelVersionOffset = fbb.writeString(object.modelVersion);
-            final vectorOffset = object.vector == null
-                ? null
-                : fbb.writeListFloat32(object.vector!);
-            fbb.startTable(10);
-            fbb.addInt64(0, object.id);
-            fbb.addOffset(1, lookupKeyOffset);
-            fbb.addInt64(2, object.faceId);
-            fbb.addInt64(3, object.photoId);
-            fbb.addOffset(4, modelVersionOffset);
-            fbb.addInt64(5, object.updatedAtMillis);
-            fbb.addBool(6, object.isStale);
-            fbb.addFloat64(7, object.qualityScore);
-            fbb.addOffset(8, vectorOffset);
-            fbb.finish(fbb.endTable());
-            return object.id;
-          },
-          objectFromFB: (obx.Store store, ByteData fbData) {
-            final buffer = fb.BufferContext(fbData);
-            final rootOffset = buffer.derefObject(0);
-            final idParam = const fb.Int64Reader().vTableGet(
-              buffer,
-              rootOffset,
-              4,
-              0,
-            );
-            final lookupKeyParam = const fb.StringReader(
-              asciiOptimization: true,
-            ).vTableGet(buffer, rootOffset, 6, '');
-            final faceIdParam = const fb.Int64Reader().vTableGet(
-              buffer,
-              rootOffset,
-              8,
-              0,
-            );
-            final photoIdParam = const fb.Int64Reader().vTableGet(
-              buffer,
-              rootOffset,
-              10,
-              0,
-            );
-            final modelVersionParam = const fb.StringReader(
-              asciiOptimization: true,
-            ).vTableGet(buffer, rootOffset, 12, '');
-            final updatedAtMillisParam = const fb.Int64Reader().vTableGet(
-              buffer,
-              rootOffset,
-              14,
-              0,
-            );
-            final isStaleParam = const fb.BoolReader().vTableGet(
-              buffer,
-              rootOffset,
-              16,
-              false,
-            );
-            final qualityScoreParam = const fb.Float64Reader()
-                .vTableGetNullable(buffer, rootOffset, 18);
-            final vectorParam = const fb.ListReader<double>(
-              fb.Float32Reader(),
-              lazy: false,
-            ).vTableGetNullable(buffer, rootOffset, 20);
-            final object = FaceEmbeddingIndexEntity(
-              id: idParam,
-              lookupKey: lookupKeyParam,
-              faceId: faceIdParam,
-              photoId: photoIdParam,
-              modelVersion: modelVersionParam,
-              updatedAtMillis: updatedAtMillisParam,
-              isStale: isStaleParam,
-              qualityScore: qualityScoreParam,
-              vector: vectorParam,
-            );
+            model: _entities[0],
+            toOneRelations: (FaceEmbeddingIndexEntity object) => [],
+            toManyRelations: (FaceEmbeddingIndexEntity object) => {},
+            getId: (FaceEmbeddingIndexEntity object) => object.id,
+            setId: (FaceEmbeddingIndexEntity object, int id) {
+              object.id = id;
+            },
+            objectToFB: (FaceEmbeddingIndexEntity object, fb.Builder fbb) {
+              final lookupKeyOffset = fbb.writeString(object.lookupKey);
+              final modelVersionOffset = fbb.writeString(object.modelVersion);
+              final vectorOffset = object.vector == null
+                  ? null
+                  : fbb.writeListFloat32(object.vector!);
+              fbb.startTable(10);
+              fbb.addInt64(0, object.id);
+              fbb.addOffset(1, lookupKeyOffset);
+              fbb.addInt64(2, object.faceId);
+              fbb.addInt64(3, object.photoId);
+              fbb.addOffset(4, modelVersionOffset);
+              fbb.addInt64(5, object.updatedAtMillis);
+              fbb.addBool(6, object.isStale);
+              fbb.addFloat64(7, object.qualityScore);
+              fbb.addOffset(8, vectorOffset);
+              fbb.finish(fbb.endTable());
+              return object.id;
+            },
+            objectFromFB: (obx.Store store, ByteData fbData) {
+              final buffer = fb.BufferContext(fbData);
+              final rootOffset = buffer.derefObject(0);
+              final idParam =
+                  const fb.Int64Reader().vTableGet(buffer, rootOffset, 4, 0);
+              final lookupKeyParam =
+                  const fb.StringReader(asciiOptimization: true)
+                      .vTableGet(buffer, rootOffset, 6, '');
+              final faceIdParam =
+                  const fb.Int64Reader().vTableGet(buffer, rootOffset, 8, 0);
+              final photoIdParam =
+                  const fb.Int64Reader().vTableGet(buffer, rootOffset, 10, 0);
+              final modelVersionParam =
+                  const fb.StringReader(asciiOptimization: true)
+                      .vTableGet(buffer, rootOffset, 12, '');
+              final updatedAtMillisParam =
+                  const fb.Int64Reader().vTableGet(buffer, rootOffset, 14, 0);
+              final isStaleParam = const fb.BoolReader()
+                  .vTableGet(buffer, rootOffset, 16, false);
+              final qualityScoreParam = const fb.Float64Reader()
+                  .vTableGetNullable(buffer, rootOffset, 18);
+              final vectorParam =
+                  const fb.ListReader<double>(fb.Float32Reader(), lazy: false)
+                      .vTableGetNullable(buffer, rootOffset, 20);
+              final object = FaceEmbeddingIndexEntity(
+                  id: idParam,
+                  lookupKey: lookupKeyParam,
+                  faceId: faceIdParam,
+                  photoId: photoIdParam,
+                  modelVersion: modelVersionParam,
+                  updatedAtMillis: updatedAtMillisParam,
+                  isStale: isStaleParam,
+                  qualityScore: qualityScoreParam,
+                  vector: vectorParam);
 
-            return object;
-          },
-        ),
+              return object;
+            }),
     PhotoEmbeddingIndexEntity:
         obx_int.EntityDefinition<PhotoEmbeddingIndexEntity>(
-          model: _entities[1],
-          toOneRelations: (PhotoEmbeddingIndexEntity object) => [],
-          toManyRelations: (PhotoEmbeddingIndexEntity object) => {},
-          getId: (PhotoEmbeddingIndexEntity object) => object.id,
-          setId: (PhotoEmbeddingIndexEntity object, int id) {
-            object.id = id;
-          },
-          objectToFB: (PhotoEmbeddingIndexEntity object, fb.Builder fbb) {
-            final lookupKeyOffset = fbb.writeString(object.lookupKey);
-            final modelVersionOffset = fbb.writeString(object.modelVersion);
-            final vectorOffset = object.vector == null
-                ? null
-                : fbb.writeListFloat32(object.vector!);
-            fbb.startTable(8);
-            fbb.addInt64(0, object.id);
-            fbb.addOffset(1, lookupKeyOffset);
-            fbb.addInt64(2, object.photoId);
-            fbb.addOffset(3, modelVersionOffset);
-            fbb.addInt64(4, object.updatedAtMillis);
-            fbb.addBool(5, object.isStale);
-            fbb.addOffset(6, vectorOffset);
-            fbb.finish(fbb.endTable());
-            return object.id;
-          },
-          objectFromFB: (obx.Store store, ByteData fbData) {
-            final buffer = fb.BufferContext(fbData);
-            final rootOffset = buffer.derefObject(0);
-            final idParam = const fb.Int64Reader().vTableGet(
-              buffer,
-              rootOffset,
-              4,
-              0,
-            );
-            final lookupKeyParam = const fb.StringReader(
-              asciiOptimization: true,
-            ).vTableGet(buffer, rootOffset, 6, '');
-            final photoIdParam = const fb.Int64Reader().vTableGet(
-              buffer,
-              rootOffset,
-              8,
-              0,
-            );
-            final modelVersionParam = const fb.StringReader(
-              asciiOptimization: true,
-            ).vTableGet(buffer, rootOffset, 10, '');
-            final updatedAtMillisParam = const fb.Int64Reader().vTableGet(
-              buffer,
-              rootOffset,
-              12,
-              0,
-            );
-            final isStaleParam = const fb.BoolReader().vTableGet(
-              buffer,
-              rootOffset,
-              14,
-              false,
-            );
-            final vectorParam = const fb.ListReader<double>(
-              fb.Float32Reader(),
-              lazy: false,
-            ).vTableGetNullable(buffer, rootOffset, 16);
-            final object = PhotoEmbeddingIndexEntity(
-              id: idParam,
-              lookupKey: lookupKeyParam,
-              photoId: photoIdParam,
-              modelVersion: modelVersionParam,
-              updatedAtMillis: updatedAtMillisParam,
-              isStale: isStaleParam,
-              vector: vectorParam,
-            );
+            model: _entities[1],
+            toOneRelations: (PhotoEmbeddingIndexEntity object) => [],
+            toManyRelations: (PhotoEmbeddingIndexEntity object) => {},
+            getId: (PhotoEmbeddingIndexEntity object) => object.id,
+            setId: (PhotoEmbeddingIndexEntity object, int id) {
+              object.id = id;
+            },
+            objectToFB: (PhotoEmbeddingIndexEntity object, fb.Builder fbb) {
+              final lookupKeyOffset = fbb.writeString(object.lookupKey);
+              final modelVersionOffset = fbb.writeString(object.modelVersion);
+              final vectorOffset = object.vector == null
+                  ? null
+                  : fbb.writeListFloat32(object.vector!);
+              fbb.startTable(8);
+              fbb.addInt64(0, object.id);
+              fbb.addOffset(1, lookupKeyOffset);
+              fbb.addInt64(2, object.photoId);
+              fbb.addOffset(3, modelVersionOffset);
+              fbb.addInt64(4, object.updatedAtMillis);
+              fbb.addBool(5, object.isStale);
+              fbb.addOffset(6, vectorOffset);
+              fbb.finish(fbb.endTable());
+              return object.id;
+            },
+            objectFromFB: (obx.Store store, ByteData fbData) {
+              final buffer = fb.BufferContext(fbData);
+              final rootOffset = buffer.derefObject(0);
+              final idParam =
+                  const fb.Int64Reader().vTableGet(buffer, rootOffset, 4, 0);
+              final lookupKeyParam =
+                  const fb.StringReader(asciiOptimization: true)
+                      .vTableGet(buffer, rootOffset, 6, '');
+              final photoIdParam =
+                  const fb.Int64Reader().vTableGet(buffer, rootOffset, 8, 0);
+              final modelVersionParam =
+                  const fb.StringReader(asciiOptimization: true)
+                      .vTableGet(buffer, rootOffset, 10, '');
+              final updatedAtMillisParam =
+                  const fb.Int64Reader().vTableGet(buffer, rootOffset, 12, 0);
+              final isStaleParam = const fb.BoolReader()
+                  .vTableGet(buffer, rootOffset, 14, false);
+              final vectorParam =
+                  const fb.ListReader<double>(fb.Float32Reader(), lazy: false)
+                      .vTableGetNullable(buffer, rootOffset, 16);
+              final object = PhotoEmbeddingIndexEntity(
+                  id: idParam,
+                  lookupKey: lookupKeyParam,
+                  photoId: photoIdParam,
+                  modelVersion: modelVersionParam,
+                  updatedAtMillis: updatedAtMillisParam,
+                  isStale: isStaleParam,
+                  vector: vectorParam);
 
-            return object;
-          },
-        ),
+              return object;
+            })
   };
 
   return obx_int.ModelDefinition(model, bindings);
@@ -374,87 +316,71 @@ obx_int.ModelDefinition getObjectBoxModel() {
 class FaceEmbeddingIndexEntity_ {
   /// See [FaceEmbeddingIndexEntity.id].
   static final id = obx.QueryIntegerProperty<FaceEmbeddingIndexEntity>(
-    _entities[0].properties[0],
-  );
+      _entities[0].properties[0]);
 
   /// See [FaceEmbeddingIndexEntity.lookupKey].
   static final lookupKey = obx.QueryStringProperty<FaceEmbeddingIndexEntity>(
-    _entities[0].properties[1],
-  );
+      _entities[0].properties[1]);
 
   /// See [FaceEmbeddingIndexEntity.faceId].
   static final faceId = obx.QueryIntegerProperty<FaceEmbeddingIndexEntity>(
-    _entities[0].properties[2],
-  );
+      _entities[0].properties[2]);
 
   /// See [FaceEmbeddingIndexEntity.photoId].
   static final photoId = obx.QueryIntegerProperty<FaceEmbeddingIndexEntity>(
-    _entities[0].properties[3],
-  );
+      _entities[0].properties[3]);
 
   /// See [FaceEmbeddingIndexEntity.modelVersion].
   static final modelVersion = obx.QueryStringProperty<FaceEmbeddingIndexEntity>(
-    _entities[0].properties[4],
-  );
+      _entities[0].properties[4]);
 
   /// See [FaceEmbeddingIndexEntity.updatedAtMillis].
   static final updatedAtMillis =
       obx.QueryIntegerProperty<FaceEmbeddingIndexEntity>(
-        _entities[0].properties[5],
-      );
+          _entities[0].properties[5]);
 
   /// See [FaceEmbeddingIndexEntity.isStale].
   static final isStale = obx.QueryBooleanProperty<FaceEmbeddingIndexEntity>(
-    _entities[0].properties[6],
-  );
+      _entities[0].properties[6]);
 
   /// See [FaceEmbeddingIndexEntity.qualityScore].
   static final qualityScore = obx.QueryDoubleProperty<FaceEmbeddingIndexEntity>(
-    _entities[0].properties[7],
-  );
+      _entities[0].properties[7]);
 
   /// See [FaceEmbeddingIndexEntity.vector].
   static final vector = obx.QueryHnswProperty<FaceEmbeddingIndexEntity>(
-    _entities[0].properties[8],
-  );
+      _entities[0].properties[8]);
 }
 
 /// [PhotoEmbeddingIndexEntity] entity fields to define ObjectBox queries.
 class PhotoEmbeddingIndexEntity_ {
   /// See [PhotoEmbeddingIndexEntity.id].
   static final id = obx.QueryIntegerProperty<PhotoEmbeddingIndexEntity>(
-    _entities[1].properties[0],
-  );
+      _entities[1].properties[0]);
 
   /// See [PhotoEmbeddingIndexEntity.lookupKey].
   static final lookupKey = obx.QueryStringProperty<PhotoEmbeddingIndexEntity>(
-    _entities[1].properties[1],
-  );
+      _entities[1].properties[1]);
 
   /// See [PhotoEmbeddingIndexEntity.photoId].
   static final photoId = obx.QueryIntegerProperty<PhotoEmbeddingIndexEntity>(
-    _entities[1].properties[2],
-  );
+      _entities[1].properties[2]);
 
   /// See [PhotoEmbeddingIndexEntity.modelVersion].
   static final modelVersion =
       obx.QueryStringProperty<PhotoEmbeddingIndexEntity>(
-        _entities[1].properties[3],
-      );
+          _entities[1].properties[3]);
 
   /// See [PhotoEmbeddingIndexEntity.updatedAtMillis].
   static final updatedAtMillis =
       obx.QueryIntegerProperty<PhotoEmbeddingIndexEntity>(
-        _entities[1].properties[4],
-      );
+          _entities[1].properties[4]);
 
   /// See [PhotoEmbeddingIndexEntity.isStale].
   static final isStale = obx.QueryBooleanProperty<PhotoEmbeddingIndexEntity>(
-    _entities[1].properties[5],
-  );
+      _entities[1].properties[5]);
 
   /// See [PhotoEmbeddingIndexEntity.vector].
   static final vector = obx.QueryHnswProperty<PhotoEmbeddingIndexEntity>(
-    _entities[1].properties[6],
-  );
+      _entities[1].properties[6]);
 }

@@ -471,7 +471,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
       if (_selectedTag == null) {
         return true;
       }
-      final tags = _tagBrowserService.clusterableTagsForPhoto(photo);
+      final tags = _tagBrowserService.browsableTagsForPhoto(photo);
       return tags.contains(_selectedTag);
     }).toList(growable: false);
 
@@ -499,7 +499,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     final counts = <String, int>{};
     final scores = <String, double>{};
     for (final photo in photos) {
-      final tags = _tagBrowserService.clusterableTagsForPhoto(photo);
+      final tags = _tagBrowserService.browsableTagsForPhoto(photo);
       final hitScore = hits[photo.id]?.score ?? 0.0;
       for (final tag in tags) {
         counts[tag] = (counts[tag] ?? 0) + 1;

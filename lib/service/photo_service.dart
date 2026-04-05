@@ -120,11 +120,13 @@ class PhotoService {
 
   Future<void> clearAllCachedData() async {
     await _isar.writeTxn(() async {
+      await _isar.collection<DigitalAlbumBookEntity>().clear();
       await _isar.collection<StoryEntity>().clear();
       await _isar.collection<EventEntity>().clear();
       await _isar.collection<FaceEntity>().clear();
       await _isar.collection<PhotoEntity>().clear();
     });
+    _photoAccessCache.clear();
     _photoEmbeddingIndexRepository.deleteAll();
     _faceEmbeddingIndexRepository.deleteAll();
 
@@ -154,12 +156,14 @@ class PhotoService {
     }
 
     await _isar.writeTxn(() async {
+      await _isar.collection<DigitalAlbumBookEntity>().clear();
       await _isar.collection<StoryEntity>().clear();
       await _isar.collection<EventEntity>().clear();
       await _isar.collection<FaceEntity>().clear();
       await _isar.collection<PhotoEntity>().clear();
       await _isar.collection<PhotoEntity>().putAll(built.photos);
     });
+    _photoAccessCache.clear();
     _photoEmbeddingIndexRepository.deleteAll();
     _faceEmbeddingIndexRepository.deleteAll();
 
@@ -207,15 +211,14 @@ class PhotoService {
       skipExisting: true,
     );
 
+    var insertedPhotoIds = const <int>[];
     if (built.photos.isNotEmpty) {
+      late final List<int> storedIds;
       await _isar.writeTxn(() async {
-        await _isar.collection<PhotoEntity>().putAll(built.photos);
+        storedIds = await _isar.collection<PhotoEntity>().putAll(built.photos);
       });
+      insertedPhotoIds = storedIds.where((id) => id > 0).toList(growable: false);
     }
-    final insertedPhotoIds = built.photos
-        .map((photo) => photo.id)
-        .where((id) => id > 0)
-        .toList(growable: false);
 
     print(
       "✅ 基础数据同步完成: 删除=$removedCount 入库=${built.insertedCount} 其中无GPS入库=${built.insertedNoGps} 跳过[无时间=${built.skippedInvalidTime} 非相机=${built.skippedNonCamera} 截图=${built.skippedScreenshot}]",
@@ -284,7 +287,14 @@ class PhotoService {
       ],
     );
 
-    final preferredAlbums = await PhotoManager.getAssetPathList(
+    return _prepareScanViaAllPhotosOrGlobal(
+      safeFilter: safeFilter,
+      isLimited: isLimited,
+      maxAssets: maxAssets,
+      offsetFromNewest: offsetFromNewest,
+    );
+
+    /* final preferredAlbums = await PhotoManager.getAssetPathList(
       type: RequestType.image,
       onlyAll: true,
       filterOption: safeFilter,
@@ -387,10 +397,169 @@ class PhotoService {
       totalCount: totalCount,
       fetchCount: fetchCount,
       startOffset: startOffset,
+    ); */
+  }
+
+  Future<_PreparedScanData> _prepareScanViaAllPhotosOrGlobal({
+    required FilterOptionGroup safeFilter,
+    required bool isLimited,
+    required int? maxAssets,
+    required int offsetFromNewest,
+  }) async {
+    final preferredAlbums = await PhotoManager.getAssetPathList(
+      type: RequestType.image,
+      onlyAll: true,
+      filterOption: safeFilter,
+    );
+
+    AssetPathEntity? selectedAlbum;
+    var selectedCount = -1;
+    if (preferredAlbums.isNotEmpty) {
+      final albumCountResults = await Future.wait(
+        preferredAlbums.map((album) async {
+          final count = await album.assetCountAsync;
+          return MapEntry<AssetPathEntity, int>(album, count);
+        }),
+      );
+      for (final entry in albumCountResults) {
+        final album = entry.key;
+        final count = entry.value;
+        print('All-photos album [${album.name}] count=$count');
+        if (count > selectedCount) {
+          selectedAlbum = album;
+          selectedCount = count;
+        }
+      }
+    }
+
+    if (selectedAlbum != null && selectedCount > 0) {
+      final totalCount = selectedCount;
+      final normalizedOffset = math.max(0, offsetFromNewest);
+      final startOffset = maxAssets == null
+          ? 0
+          : math.min(normalizedOffset, totalCount);
+      final remainingCount = math.max(0, totalCount - startOffset);
+      final fetchCount = maxAssets == null
+          ? totalCount
+          : math.min(maxAssets, remainingCount);
+      final endIndex = startOffset + fetchCount;
+      final assets = await selectedAlbum.getAssetListRange(
+        start: startOffset,
+        end: endIndex,
+      );
+      assets.sort(
+        (a, b) => b.createDateTime.millisecondsSinceEpoch.compareTo(
+          a.createDateTime.millisecondsSinceEpoch,
+        ),
+      );
+
+      return _PreparedScanData(
+        assets: assets,
+        totalCount: totalCount,
+        fetchCount: fetchCount,
+        startOffset: startOffset,
+      );
+    }
+
+    final fallback = await _prepareGlobalScan(
+      maxAssets: maxAssets,
+      offsetFromNewest: offsetFromNewest,
+      safeFilter: safeFilter,
+    );
+    if (fallback.assets.isNotEmpty) {
+      return fallback;
+    }
+
+    if (isLimited) {
+      throw const PhotoScanException(
+        PhotoScanError.permissionDenied,
+        '当前系统仅授予了“部分照片”权限，且授权列表为空。请到系统设置将照片权限改为“允许所有照片”，或先在系统权限面板中勾选至少一张照片后重试。',
+      );
+    }
+
+    throw const PhotoScanException(
+      PhotoScanError.noAlbum,
+      '未找到可读取的相册。请确认系统照片权限已授予，并检查系统相册中是否存在图片。',
     );
   }
 
-  Future<_PreparedScanData> _prepareGlobalScan({int? maxAssets}) async {
+  Future<_PreparedScanData> _prepareGlobalScan({
+    required FilterOptionGroup safeFilter,
+    required int? maxAssets,
+    required int offsetFromNewest,
+  }) async {
+    const pageSize = 200;
+    final assets = <AssetEntity>[];
+    var page = 0;
+    final normalizedOffset = math.max(0, offsetFromNewest);
+    final targetCount = maxAssets == null
+        ? null
+        : normalizedOffset + math.max(1, maxAssets);
+    var reachedEnd = false;
+
+    while (true) {
+      final remaining = targetCount == null
+          ? pageSize
+          : targetCount - assets.length;
+      if (remaining <= 0) {
+        break;
+      }
+
+      final batch = await PhotoManager.getAssetListPaged(
+        page: page,
+        pageCount: remaining < pageSize ? remaining.toInt() : pageSize,
+        type: RequestType.image,
+        filterOption: safeFilter,
+      );
+      if (batch.isEmpty) {
+        reachedEnd = true;
+        break;
+      }
+
+      assets.addAll(batch);
+      if (batch.length < pageSize) {
+        reachedEnd = true;
+        break;
+      }
+      page++;
+    }
+
+    assets.sort(
+      (a, b) => b.createDateTime.millisecondsSinceEpoch.compareTo(
+        a.createDateTime.millisecondsSinceEpoch,
+      ),
+    );
+
+    final totalCount = reachedEnd
+        ? assets.length
+        : math.max(
+            assets.length,
+            normalizedOffset + (maxAssets ?? assets.length),
+          );
+    if (normalizedOffset >= assets.length) {
+      return _PreparedScanData(
+        assets: const <AssetEntity>[],
+        totalCount: totalCount,
+        fetchCount: 0,
+        startOffset: normalizedOffset,
+      );
+    }
+
+    final fetchEnd = maxAssets == null
+        ? assets.length
+        : math.min(normalizedOffset + maxAssets, assets.length);
+    final slicedAssets = assets.sublist(normalizedOffset, fetchEnd);
+
+    return _PreparedScanData(
+      assets: slicedAssets,
+      totalCount: totalCount,
+      fetchCount: slicedAssets.length,
+      startOffset: normalizedOffset,
+    );
+  }
+
+  // ignore: unused_element
+  Future<_PreparedScanData> _prepareGlobalScanLegacy({int? maxAssets}) async {
     const pageSize = 200;
     final assets = <AssetEntity>[];
     var page = 0;
@@ -458,7 +627,9 @@ class PhotoService {
     required bool skipExisting,
   }) async {
     final existingAssetIds = <String>{};
+    final existingPhotosByAssetId = <String, PhotoEntity>{};
     final buildResults = <_SingleAssetBuildResult>[];
+    final refreshedExistingPhotos = <PhotoEntity>[];
 
     if (skipExisting && assets.isNotEmpty) {
       final assetIdsToCheck = assets
@@ -480,6 +651,11 @@ class PhotoService {
               .map((photo) => photo.assetId)
               .where((id) => id.isNotEmpty),
         );
+        for (final photo in existingPhotos) {
+          if (photo.assetId.isNotEmpty) {
+            existingPhotosByAssetId[photo.assetId] = photo;
+          }
+        }
       }
     }
 
@@ -496,6 +672,16 @@ class PhotoService {
 
           final asset = assets[index];
           if (skipExisting && existingAssetIds.contains(asset.id)) {
+            final existingPhoto = existingPhotosByAssetId[asset.id];
+            if (existingPhoto != null) {
+              final refreshed = await _refreshExistingPhotoFromAsset(
+                existingPhoto,
+                asset,
+              );
+              if (refreshed != null) {
+                refreshedExistingPhotos.add(refreshed);
+              }
+            }
             continue;
           }
 
@@ -528,6 +714,12 @@ class PhotoService {
       (sum, item) => sum + item.skippedScreenshot,
     );
 
+    if (refreshedExistingPhotos.isNotEmpty) {
+      await _isar.writeTxn(() async {
+        await _isar.collection<PhotoEntity>().putAll(refreshedExistingPhotos);
+      });
+    }
+
     return _ScanBuildResult(
       photos: photos,
       insertedCount: photos.length,
@@ -536,6 +728,44 @@ class PhotoService {
       skippedNonCamera: skippedNonCamera,
       skippedScreenshot: skippedScreenshot,
     );
+  }
+
+  Future<PhotoEntity?> _refreshExistingPhotoFromAsset(
+    PhotoEntity existingPhoto,
+    AssetEntity asset,
+  ) async {
+    final file = await _resolveReadableFile(asset);
+    if (file == null) {
+      return null;
+    }
+
+    final refreshedTimestamp = _resolveBestTimestampMs(asset, file);
+    final refreshedWidth = asset.width;
+    final refreshedHeight = asset.height;
+
+    var changed = false;
+    if (PhotoFilterHelper.hasValidTimestamp(refreshedTimestamp) &&
+        existingPhoto.timestamp != refreshedTimestamp) {
+      existingPhoto.timestamp = refreshedTimestamp;
+      changed = true;
+    }
+    if (file.path.isNotEmpty && existingPhoto.path != file.path) {
+      existingPhoto.path = file.path;
+      changed = true;
+    }
+    if (refreshedWidth > 0 && existingPhoto.width != refreshedWidth) {
+      existingPhoto.width = refreshedWidth;
+      changed = true;
+    }
+    if (refreshedHeight > 0 && existingPhoto.height != refreshedHeight) {
+      existingPhoto.height = refreshedHeight;
+      changed = true;
+    }
+
+    if (!changed) {
+      return null;
+    }
+    return existingPhoto;
   }
 
   Future<_SingleAssetBuildResult> _buildSingleAssetPhoto(
@@ -576,7 +806,7 @@ class PhotoService {
       _logAssetExtInfo(asset: asset, filePath: file.path, latLong: latLong);
     }
 
-    final timestamp = asset.createDateTime.millisecondsSinceEpoch;
+    final timestamp = _resolveBestTimestampMs(asset, file);
     if (!PhotoFilterHelper.hasValidTimestamp(timestamp)) {
       return _SingleAssetBuildResult(
         skippedInvalidTime: 1,
@@ -683,6 +913,10 @@ class PhotoService {
         final refreshedFile = await _resolveReadableFile(asset);
         if (refreshedFile != null && refreshedFile.existsSync()) {
           photo.path = refreshedFile.path;
+          final refreshedTimestamp = _resolveBestTimestampMs(asset, refreshedFile);
+          if (PhotoFilterHelper.hasValidTimestamp(refreshedTimestamp)) {
+            photo.timestamp = refreshedTimestamp;
+          }
           repairedPhotos.add(photo);
         } else {
           removedIds.add(photo.id);
@@ -713,6 +947,35 @@ class PhotoService {
 
     print("🧹 已清理系统相册中删除/不可访问的照片: ${removedIds.length} 张");
     return removedIds.length;
+  }
+
+  int _resolveBestTimestampMs(AssetEntity asset, File file) {
+    final createMs = asset.createDateTime.millisecondsSinceEpoch;
+    final modifiedMs = asset.modifiedDateTime.millisecondsSinceEpoch;
+    final fileNameMs = PhotoFilterHelper.extractTimestampFromFileName(file.path);
+
+    final candidates = <int>[
+      if (fileNameMs != null && PhotoFilterHelper.hasValidTimestamp(fileNameMs))
+        fileNameMs,
+      if (PhotoFilterHelper.hasValidTimestamp(createMs)) createMs,
+      if (PhotoFilterHelper.hasValidTimestamp(modifiedMs)) modifiedMs,
+    ]..sort();
+
+    if (candidates.isEmpty) {
+      return 0;
+    }
+
+    final resolved = candidates.first;
+    if (_verboseAssetLogging) {
+      final createIso = asset.createDateTime.toIso8601String();
+      final modifiedIso = asset.modifiedDateTime.toIso8601String();
+      final resolvedIso = DateTime.fromMillisecondsSinceEpoch(resolved)
+          .toIso8601String();
+      print(
+        '🕒 解析拍摄时间 assetId=${asset.id} resolved=$resolvedIso create=$createIso modified=$modifiedIso file=${file.path}',
+      );
+    }
+    return resolved;
   }
 
   // 📊 获取照片统计信息

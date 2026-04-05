@@ -86,6 +86,10 @@ class AlbumRefreshService {
 
   bool get isRunning => _isRunning;
 
+  void resetScanOffsets() {
+    _scanOffsetByChunk.clear();
+  }
+
   Future<AlbumRefreshResult?> startRefresh({
     bool clearCacheFirst = false,
     int? recentPhotoLimit,
@@ -195,7 +199,10 @@ class AlbumRefreshService {
       );
 
       if (!aiAlreadyRunning) {
-        unawaited(_runAiPipeline(maxPhotos: recentPhotoLimit));
+        final handoffLimit = clearCacheFirst
+            ? recentPhotoLimit
+            : (requeuedCount > 0 ? requeuedCount : recentPhotoLimit);
+        unawaited(_runAiPipeline(maxPhotos: handoffLimit));
       }
 
       return AlbumRefreshResult(

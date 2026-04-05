@@ -21,6 +21,8 @@ class StoryResultPage extends StatefulWidget {
     required this.subtitle,
     required this.heroImage,
     required this.sections,
+    this.storyTemplateId,
+    this.videoCaptionByPhotoId = const <String, String>{},
     this.storyEntityId,
     this.customMusicPath,
     this.dynamicBeatData,
@@ -32,6 +34,8 @@ class StoryResultPage extends StatefulWidget {
   final String subtitle;
   final Photo heroImage;
   final List<StorySection> sections;
+  final String? storyTemplateId;
+  final Map<String, String> videoCaptionByPhotoId;
   final int? storyEntityId;
   final String? customMusicPath;
   final Map<String, dynamic>? dynamicBeatData;
@@ -41,27 +45,35 @@ class StoryResultPage extends StatefulWidget {
   factory StoryResultPage.fromStoryEntity({
     required StoryEntity storyEntity,
     required List<PhotoEntity> photos,
+    String? storyTemplateId,
     String? customMusicPath,
     Map<String, dynamic>? dynamicBeatData,
-    List<String>? captions,
+    List<String>? videoCaptions,
+    List<Photo>? photoOverrides,
     required bool isHorizontal,
     required String targetPlatform,
   }) {
-    final captionMap = <String, String>{};
-    if (captions != null && captions.isNotEmpty) {
-      for (var i = 0; i < photos.length && i < captions.length; i++) {
-        captionMap[photos[i].assetId] = captions[i];
+    final videoCaptionMap = <String, String>{};
+    if (videoCaptions != null && videoCaptions.isNotEmpty) {
+      for (var i = 0; i < photos.length && i < videoCaptions.length; i++) {
+        final caption = videoCaptions[i].trim();
+        if (caption.isNotEmpty) {
+          videoCaptionMap[photos[i].assetId] = caption;
+        }
       }
     }
+
+    final photoOverrideMap = <String, Photo>{
+      for (final photo in photoOverrides ?? const <Photo>[]) photo.id: photo,
+    };
 
     final sectionMaps = storyEntity.parseToSections(photos);
     final sections = <StorySection>[];
 
     for (final map in sectionMaps) {
-      final photo = map['photo'] as Photo;
-      final text = (captionMap[photo.id]?.isNotEmpty ?? false)
-          ? captionMap[photo.id]!
-          : (map['text'] as String? ?? '');
+      final basePhoto = map['photo'] as Photo;
+      final photo = _mergePhotoOverride(basePhoto, photoOverrideMap[basePhoto.id]);
+      final text = map['text'] as String? ?? '';
       sections.add(StorySection(text: text, photo: photo));
     }
 
@@ -72,23 +84,10 @@ class StoryResultPage extends StatefulWidget {
       }
       sections.add(
         StorySection(
-          text: captionMap[photoEntity.assetId] ?? '',
-          photo: Photo(
-            id: photoEntity.assetId,
-            path: photoEntity.path,
-            dateTaken: DateTime.fromMillisecondsSinceEpoch(photoEntity.timestamp),
-            tags: photoEntity.aiTags ?? const <String>[],
-            caption: photoEntity.aiCaption?.trim(),
-            ocrSummary: OcrPolicy.effectiveSummary(
-              tags: photoEntity.ocrTags ?? const <String>[],
-              text: photoEntity.ocrText,
-            ),
-            location:
-                photoEntity.locationName ??
-                photoEntity.district ??
-                photoEntity.city ??
-                photoEntity.province ??
-                '未知地点',
+          text: '',
+          photo: _mergePhotoOverride(
+            _buildPhotoFromEntity(photoEntity),
+            photoOverrideMap[photoEntity.assetId],
           ),
         ),
       );
@@ -98,25 +97,10 @@ class StoryResultPage extends StatefulWidget {
       final photoEntity = photos.first;
       sections.add(
         StorySection(
-          text: (captions != null && captions.isNotEmpty)
-              ? captions.first
-              : (storyEntity.content.trim().isEmpty ? '我的专属回忆' : storyEntity.content),
-          photo: Photo(
-            id: photoEntity.assetId,
-            path: photoEntity.path,
-            dateTaken: DateTime.fromMillisecondsSinceEpoch(photoEntity.timestamp),
-            tags: photoEntity.aiTags ?? const <String>[],
-            caption: photoEntity.aiCaption?.trim(),
-            ocrSummary: OcrPolicy.effectiveSummary(
-              tags: photoEntity.ocrTags ?? const <String>[],
-              text: photoEntity.ocrText,
-            ),
-            location:
-                photoEntity.locationName ??
-                photoEntity.district ??
-                photoEntity.city ??
-                photoEntity.province ??
-                '未知地点',
+          text: storyEntity.content.trim().isEmpty ? '我的专属回忆' : storyEntity.content,
+          photo: _mergePhotoOverride(
+            _buildPhotoFromEntity(photoEntity),
+            photoOverrideMap[photoEntity.assetId],
           ),
         ),
       );
@@ -124,10 +108,9 @@ class StoryResultPage extends StatefulWidget {
 
     final heroPhoto = sections.isNotEmpty
         ? sections.first.photo
-        : Photo(
-            id: photos.first.assetId,
-            path: photos.first.path,
-            dateTaken: DateTime.fromMillisecondsSinceEpoch(photos.first.timestamp),
+        : _mergePhotoOverride(
+            _buildPhotoFromEntity(photos.first),
+            photoOverrideMap[photos.first.assetId],
           );
 
     return StoryResultPage(
@@ -135,11 +118,56 @@ class StoryResultPage extends StatefulWidget {
       subtitle: storyEntity.subtitle,
       heroImage: heroPhoto,
       sections: sections,
+      storyTemplateId: storyTemplateId,
+      videoCaptionByPhotoId: Map<String, String>.unmodifiable(videoCaptionMap),
       storyEntityId: storyEntity.id,
       customMusicPath: customMusicPath,
       dynamicBeatData: dynamicBeatData,
       isHorizontal: isHorizontal,
       targetPlatform: targetPlatform,
+    );
+  }
+
+  static Photo _buildPhotoFromEntity(PhotoEntity photoEntity) {
+    return Photo(
+      id: photoEntity.assetId,
+      path: photoEntity.path,
+      dateTaken: DateTime.fromMillisecondsSinceEpoch(photoEntity.timestamp),
+      tags: photoEntity.aiTags ?? const <String>[],
+      caption: photoEntity.aiCaption?.trim(),
+      ocrSummary: OcrPolicy.effectiveSummary(
+        tags: photoEntity.ocrTags ?? const <String>[],
+        text: photoEntity.ocrText,
+      ),
+      location:
+          photoEntity.locationName ??
+          photoEntity.district ??
+          photoEntity.city ??
+          photoEntity.province ??
+          '未知地点',
+    );
+  }
+
+  static Photo _mergePhotoOverride(Photo basePhoto, Photo? overridePhoto) {
+    if (overridePhoto == null) {
+      return basePhoto;
+    }
+
+    final overrideCaption = overridePhoto.caption?.trim();
+    final overrideLocation = overridePhoto.location?.trim();
+    final overrideVlmCaption = overridePhoto.vlmCaption?.trim();
+
+    return basePhoto.copyWith(
+      path: overridePhoto.path.trim().isNotEmpty ? overridePhoto.path : basePhoto.path,
+      location: (overrideLocation?.isNotEmpty ?? false)
+          ? overridePhoto.location
+          : basePhoto.location,
+      caption: (overrideCaption?.isNotEmpty ?? false)
+          ? overrideCaption
+          : basePhoto.caption,
+      vlmCaption: (overrideVlmCaption?.isNotEmpty ?? false)
+          ? overrideVlmCaption
+          : basePhoto.vlmCaption,
     );
   }
 
@@ -152,6 +180,7 @@ class StoryResultPage extends StatefulWidget {
           .where((block) => block.photo != null)
           .map((block) => StorySection(text: block.text, photo: block.photo!))
           .toList(),
+      storyTemplateId: null,
       isHorizontal: story.isHorizontal,
       targetPlatform: '小红书',
     );
@@ -289,6 +318,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
           title: widget.title,
           subtitle: widget.subtitle,
           sections: _sections,
+          storyTemplateId: widget.storyTemplateId,
           storyEntityId: widget.storyEntityId,
         ),
       ),
@@ -308,10 +338,22 @@ class _StoryResultPageState extends State<StoryResultPage> {
       return;
     }
 
+    final playbackSections = _sections.map((section) {
+      final videoCaption = widget.videoCaptionByPhotoId[section.photo.id]?.trim();
+      if (videoCaption == null || videoCaption.isEmpty) {
+        return section;
+      }
+      return section.copyWith(text: videoCaption);
+    }).toList(growable: false);
+
     final random = math.Random();
-    final introPhoto = _sections[random.nextInt(_sections.length)].photo;
+    final introPhoto =
+        playbackSections[random.nextInt(playbackSections.length)].photo;
     final introSection = StorySection(text: '__INTRO__', photo: introPhoto);
-    final finalVideoSections = <StorySection>[introSection, ..._sections];
+    final finalVideoSections = <StorySection>[
+      introSection,
+      ...playbackSections,
+    ];
 
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -527,7 +569,7 @@ class _PhotoContextCard extends StatelessWidget {
           ),
           if (caption != null && caption.isNotEmpty) ...[
             const SizedBox(height: 8),
-            _PhotoContextRow(label: 'AI Caption', value: caption),
+            _PhotoContextRow(label: '图片描述', value: caption),
           ],
           if (ocrSummary != null && ocrSummary.isNotEmpty) ...[
             const SizedBox(height: 8),

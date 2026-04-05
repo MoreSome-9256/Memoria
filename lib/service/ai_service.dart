@@ -69,7 +69,7 @@ class AIService {
         defaultValue: 'always_compress',
       );
   static const int _minFaceDetectorInputSize = 32;
-  static const int _maxParallelWorkers = 8;
+  static const int _maxParallelWorkers = 4;
   static const int _maxConcurrentCaptionWorkers = 2;
   static const String _autoResumeKey = 'ai_auto_resume';
   static const String _runtimeActiveKey = 'ai_runtime_active';
@@ -374,7 +374,7 @@ class AIService {
 
   // 🧠 核心方法：批量分析未处理的照片（包含人脸检测和情感分析）
   Future<void> analyzePhotosInBackground({
-    int batchSize = 10,
+    int batchSize = 6,
     int? maxPhotos,
   }) async {
     await _setManualStopPending(false);
@@ -562,25 +562,42 @@ class AIService {
             }
 
             final pendingFetchWatch = Stopwatch()..start();
-            final fetchedCandidates = await isar
-                .collection<PhotoEntity>()
-                .filter()
-                .isAiAnalyzedEqualTo(false)
-                .sortByTimestampDesc()
-                .limit(currentBatchSize * 4)
-                .findAll();
-            final photosToAnalyze = fetchedCandidates
-                .where(
-                  (photo) =>
-                      !attemptedPhotoIds.contains(photo.id) &&
-                      !queuedPhotoIds.contains(photo.id),
-                )
-                .take(currentBatchSize)
-                .toList(growable: false);
+            var candidateLimit = math.max(currentBatchSize * 4, maxBuffered * 2);
+            var fetchedCount = 0;
+            final photosToAnalyze = <PhotoEntity>[];
+            while (true) {
+              final fetchedCandidates = await isar
+                  .collection<PhotoEntity>()
+                  .filter()
+                  .isAiAnalyzedEqualTo(false)
+                  .sortByTimestampDesc()
+                  .limit(candidateLimit)
+                  .findAll();
+              fetchedCount = fetchedCandidates.length;
+
+              photosToAnalyze
+                ..clear()
+                ..addAll(
+                  fetchedCandidates
+                      .where(
+                        (photo) =>
+                            !attemptedPhotoIds.contains(photo.id) &&
+                            !queuedPhotoIds.contains(photo.id),
+                      )
+                      .take(currentBatchSize),
+                );
+
+              final exhaustedWindow = fetchedCandidates.length < candidateLimit;
+              if (photosToAnalyze.isNotEmpty || exhaustedWindow) {
+                break;
+              }
+
+              candidateLimit = math.min(candidateLimit * 2, targetTotal * 2);
+            }
             pendingFetchWatch.stop();
             pipelineProfiler.recordPendingFetch(
               fetchMs: pendingFetchWatch.elapsedMicroseconds / 1000.0,
-              fetchedCandidates: fetchedCandidates.length,
+              fetchedCandidates: fetchedCount,
               scheduledPhotos: photosToAnalyze.length,
             );
 
@@ -953,7 +970,7 @@ class AIService {
         'error=$error',
       );
     } finally {
-      if (task.imageFile.existsSync()) {
+      if (task.deleteImageFileAfterUse && task.imageFile.existsSync()) {
         try {
           await task.imageFile.delete();
         } catch (_) {}
@@ -985,7 +1002,9 @@ class AIService {
       return 1;
     }
     final cpuCores = Platform.numberOfProcessors;
-    final suggested = cpuCores <= 2 ? 1 : math.max(2, cpuCores - 1);
+    final suggested = Platform.isAndroid || Platform.isIOS
+        ? (cpuCores <= 4 ? 2 : 3)
+        : (cpuCores <= 2 ? 1 : math.max(2, cpuCores - 1));
     final bounded = math.min(_maxParallelWorkers, suggested);
     return math.max(1, math.min(bounded, workItems));
   }
@@ -1238,6 +1257,7 @@ class AIService {
           _AsyncCaptionTask(
             photoId: photo.id,
             imageFile: prepared.file,
+            deleteImageFileAfterUse: false,
             captionService: photoCaptionService,
             visualTags: visualTags,
             ocrTags: ocrResult.tags,

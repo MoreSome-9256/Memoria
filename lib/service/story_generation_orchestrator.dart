@@ -7,6 +7,7 @@ import 'package:isar/isar.dart';
 
 import '../models/entity/photo_entity.dart';
 import '../models/entity/story_entity.dart';
+import '../models/vo/photo.dart';
 import '../models/vo/story_generation_models.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
@@ -154,8 +155,12 @@ class StoryGenerationOrchestrator {
             .map((photo) => photo.path)
             .toList(growable: false),
       );
-      final materials =
-          sortedPhotos.map(_buildPhotoMaterial).toList(growable: false);
+      final requestPhotoByAssetId = <String, Photo>{
+        for (final photo in request.selectedPhotos) photo.id: photo,
+      };
+      final materials = sortedPhotos
+          .map((photo) => _buildPhotoMaterial(photo, requestPhotoByAssetId[photo.assetId]))
+          .toList(growable: false);
       completeStep(
         'clues',
         detail: '素材线索提取完成',
@@ -506,33 +511,9 @@ class StoryGenerationOrchestrator {
     required List<PhotoEntity> photos,
     required Map<int, _CaptionResult> localCaptionMap,
   }) async {
-    final toUpdate = <PhotoEntity>[];
-    for (final photo in photos) {
-      final captionResult = localCaptionMap[photo.id];
-      if (captionResult == null ||
-          captionResult.source != _CaptionSource.localVlm) {
-        continue;
-      }
-      final cleanedCaption = _cleanCaptionText(captionResult.text);
-      if (!_isValidCaptionCandidate(cleanedCaption)) {
-        continue;
-      }
-      if ((photo.aiCaption?.trim() ?? '') == cleanedCaption) {
-        continue;
-      }
-      photo.aiCaption = cleanedCaption;
-      localCaptionMap[photo.id] = _CaptionResult.localVlm(cleanedCaption);
-      toUpdate.add(photo);
-    }
-
-    if (toUpdate.isEmpty) {
-      return;
-    }
-
-    final isar = PhotoService().isar;
-    await isar.writeTxn(() async {
-      await isar.collection<PhotoEntity>().putAll(toUpdate);
-    });
+    // Local VLM captions are scoped to the current story-generation flow.
+    // They should not overwrite the image's existing caption used by other features.
+    return;
   }
 
   List<String> _buildMetadataBullets(List<PhotoEntity> photos) {
@@ -559,7 +540,10 @@ class StoryGenerationOrchestrator {
     ];
   }
 
-  _StoryPhotoMaterial _buildPhotoMaterial(PhotoEntity photo) {
+  _StoryPhotoMaterial _buildPhotoMaterial(
+    PhotoEntity photo,
+    Photo? requestPhoto,
+  ) {
     final aiTags =
         TagSanitizer.sanitizeVisualTags(photo.aiTags ?? const <String>[]);
     final ocrTags = OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]);
@@ -567,6 +551,8 @@ class StoryGenerationOrchestrator {
       tags: photo.ocrTags ?? const <String>[],
       text: photo.ocrText,
     ) ?? '';
+    final overriddenCaption = requestPhoto?.caption?.trim();
+    final overriddenVlmCaption = requestPhoto?.vlmCaption?.trim();
     return _StoryPhotoMaterial(
       photo: photo,
       timeText: _formatDateTime(photo.timestamp),
@@ -574,7 +560,12 @@ class StoryGenerationOrchestrator {
       aiTags: aiTags,
       ocrTags: ocrTags,
       ocrSummary: ocrSummary,
-      existingCaption: photo.aiCaption?.trim(),
+      existingCaption: (overriddenCaption?.isNotEmpty ?? false)
+          ? overriddenCaption
+          : photo.aiCaption?.trim(),
+      existingVlmCaption: (overriddenVlmCaption?.isNotEmpty ?? false)
+          ? overriddenVlmCaption
+          : null,
     );
   }
 
@@ -867,11 +858,23 @@ class StoryGenerationOrchestrator {
     required List<Map<String, dynamic>> photoPayload,
   }) {
     final semanticSearchQuery = request.semanticSearchQuery?.trim();
+    final selectedTemplate = storyPromptTemplateById(request.storyTemplateId);
+    final selectedTemplateExample = storyPromptTemplateExampleById(
+      request.storyTemplateId,
+    );
     final orderingHint = request.preserveSelectionOrder ? '按用户故事队列顺序' : '按时间排序后';
     final semanticHint = semanticSearchQuery == null || semanticSearchQuery.isEmpty
         ? ''
         : '\n用户这次是通过语义搜索选图进入的，原始搜索内容是：$semanticSearchQuery。'
             '\n请把这句话当作用户想表达的主题线索和关注重点，但不要生硬地让每张图片都强行贴合搜索词。';
+
+    final templateHint = selectedTemplate == null
+        ? ''
+        : '\n\n本次用户额外选择了文案模板：${selectedTemplate.category.title} · ${selectedTemplate.title}'
+            '\n模板预期效果：${selectedTemplate.preview}'
+            '\n请在不违背图片事实的前提下，优先按下面这条模板要求来组织语言和叙事：'
+            '\n${selectedTemplate.instruction}'
+            '${selectedTemplateExample.isEmpty ? '' : '\n\n以下是这个模板的参考示例，请学习它的写法、节奏、情绪组织方式与镜头感，但不要照抄示例内容，也不要把示例中的具体意象、地点或人物关系直接搬到当前图片里：\n$selectedTemplateExample'}';
 
     return '''
 请基于下面这组$orderingHint的图片素材，生成一份适合相册故事页展示的结构化 JSON。
@@ -882,14 +885,14 @@ class StoryGenerationOrchestrator {
 3. 时间和地点信息如果存在，要自然融入故事，而不是机械罗列。
 4. 要写得有文采、有画面感，但仍然要真实可信。
 5. sections 数组长度必须等于图片数量 ${photoPayload.length}，并且 index 从 1 开始连续递增。
-6. 每个 section.text 只负责对应那一张图片，长度建议 40-110 字。
-7. story 是整篇故事正文，长度建议 220-700 字。
+6. 每个 section.text 只负责对应那一张图片，长度建议 80-140 字。
+7. story 是整篇故事正文，长度建议 500-1200 字。
 8. highlights 用 3-6 条短句概括故事的精彩片段或关键线索。
-9. 如果某张图片包含 preferred_caption 和 preferred_caption_source，请把 preferred_caption 当作这张图最优先的视觉依据。
-10. 如果 preferred_caption_source 是 "local_vlm"，不要让 tags 或 existing_caption 覆盖这条本地视觉描述。
-11. existing_caption 只是本地 caption 不可用时的回退线索。
+9. 如果某张图片同时提供 existing_caption 和 local_vlm_caption，请综合两者写作：existing_caption 更像用户已有表述，local_vlm_caption 更像本地视觉补充。
+10. 如果 preferred_caption_source 是 "local_vlm"，优先相信它对画面主体与细节的判断，但不要丢掉 existing_caption 里有价值的措辞或情绪线索。
+11. existing_caption 不再只是回退线索；当它和 local_vlm_caption 并存时，请把它视为同一张图的补充描述来源。
 12. tags、ocr_tags 和 ocr_summary 都只是辅助线索，不能替代图片主体描述。
-$semanticHint
+$semanticHint$templateHint
 
 输出 JSON 格式：
 {
@@ -936,6 +939,7 @@ ${jsonEncode(photoPayload)}
       'caption 控制在 8-24 个中文字符，避免空话和套话。',
     ].join('\n');
 
+    // ignore: dead_code
     final metadataLines = <String>[
       '图片元数据：',
       for (var index = 0; index < payloads.length; index++)
@@ -1775,6 +1779,7 @@ class _StoryPhotoMaterial {
     required this.ocrTags,
     required this.ocrSummary,
     required this.existingCaption,
+    required this.existingVlmCaption,
   });
 
   final PhotoEntity photo;
@@ -1784,18 +1789,26 @@ class _StoryPhotoMaterial {
   final List<String> ocrTags;
   final String ocrSummary;
   final String? existingCaption;
+  final String? existingVlmCaption;
 
   Map<String, dynamic> toJson({
     required int index,
     _CaptionResult? localCaptionResult,
   }) {
+    final storedVlmCaption = existingVlmCaption?.trim() ?? '';
+    final hasStoredVlmCaption = storedVlmCaption.isNotEmpty;
     final localCaption = localCaptionResult?.source == _CaptionSource.localVlm
         ? localCaptionResult!.text
-        : '';
-    final preferredCaption = (localCaptionResult?.text.trim().isNotEmpty ?? false)
-        ? localCaptionResult!.text
+        : storedVlmCaption;
+    final preferredCaption = localCaption.trim().isNotEmpty
+        ? localCaption
         : (existingCaption ?? '');
-    final preferredSource = localCaptionResult?.source.apiValue ??
+    final preferredSource = localCaption.trim().isNotEmpty
+        ? _CaptionSource.localVlm.apiValue
+        : localCaptionResult?.source.apiValue ??
+        (hasStoredVlmCaption
+            ? _CaptionSource.localVlm.apiValue
+            : null) ??
         ((existingCaption?.trim().isNotEmpty ?? false)
             ? _CaptionSource.existingAiFallback.apiValue
             : _CaptionSource.none.apiValue);
@@ -1815,7 +1828,10 @@ class _StoryPhotoMaterial {
       'existing_caption': existingCaption ?? '',
       'local_vlm_caption': localCaption,
       'local_vlm_caption_source':
-          localCaptionResult?.source.apiValue ?? _CaptionSource.none.apiValue,
+          localCaptionResult?.source.apiValue ??
+          (hasStoredVlmCaption
+              ? _CaptionSource.localVlm.apiValue
+              : _CaptionSource.none.apiValue),
       'preferred_caption': preferredCaption,
       'preferred_caption_source': preferredSource,
     };

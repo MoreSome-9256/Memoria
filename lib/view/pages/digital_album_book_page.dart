@@ -1,6 +1,7 @@
 ﻿import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -30,19 +31,22 @@ class DigitalAlbumBookPage extends StatefulWidget {
     required this.title,
     required this.subtitle,
     required this.sections,
+    this.storyTemplateId,
     required this.storyEntityId,
   });
 
   final String title;
   final String subtitle;
   final List<StorySection> sections;
+  final String? storyTemplateId;
   final int? storyEntityId;
 
   @override
   State<DigitalAlbumBookPage> createState() => _DigitalAlbumBookPageState();
 }
 
-class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage> {
+class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
+    with SingleTickerProviderStateMixin {
   final DigitalAlbumLayoutService _layoutService = const DigitalAlbumLayoutService();
   final DigitalAlbumValidatorService _validator = const DigitalAlbumValidatorService();
   final DigitalAlbumAiService _aiService = const DigitalAlbumAiService();
@@ -51,6 +55,7 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage> {
   final TransformationController _spreadZoomController = TransformationController();
   final FocusNode _inlineTextFocusNode = FocusNode();
   final List<_EditorSnapshot> _history = <_EditorSnapshot>[];
+  late final AnimationController _turnController;
   AlbumBookDocument? _document;
   _SelectedElementRef? _selectedElement;
   TextEditingController? _inlineTextController;
@@ -74,6 +79,12 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage> {
   bool _isSpreadZoomed = false;
   bool _isQuickMenuVisible = false;
   bool _isTemplatePanelVisible = false;
+  int? _turnFromSpread;
+  int? _turnToSpread;
+  bool _turnForward = true;
+  bool _turnCommitOnComplete = false;
+  double _turnDragExtent = 1;
+  double _turnDragDelta = 0;
   late List<StorySection> _workingSections;
   final AlbumBookStylePreset _currentStylePreset = AlbumBookStylePreset.editorial;
   Set<String> _selectedTemplateIds =
@@ -84,6 +95,10 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage> {
   @override
   void initState() {
     super.initState();
+    _turnController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 520),
+    )..addStatusListener(_handleTurnStatusChanged);
     _workingSections = _cloneSections(widget.sections);
     _lockLandscape();
     _loadBook();
@@ -92,6 +107,7 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage> {
   @override
   void dispose() {
     _cancelPendingCrossPageSwitch();
+    _turnController.dispose();
     _restoreOrientation();
     _pageController.dispose();
     _spreadZoomController.dispose();
@@ -125,6 +141,13 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage> {
     AlbumBookDocument? loaded;
     if (widget.storyEntityId != null) {
       loaded = await _bookService.loadByStoryId(widget.storyEntityId!);
+      if (loaded != null && !_matchesCurrentStorySections(loaded)) {
+        debugPrint(
+          'Ignoring stale digital album cache for storyId=${widget.storyEntityId}; photo set does not match current story sections.',
+        );
+        await _bookService.deleteByStoryId(widget.storyEntityId!);
+        loaded = null;
+      }
     }
 
     final baseDocument = loaded ?? fallback;
@@ -147,6 +170,31 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage> {
           Set<String>.from(DigitalAlbumLayoutService.defaultTemplateIds);
     });
     _syncWorkingSectionsWithDocument(document);
+  }
+
+  bool _matchesCurrentStorySections(AlbumBookDocument document) {
+    final currentPhotoIds = _workingSections
+        .map((section) => section.photo.id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (currentPhotoIds.isEmpty) {
+      return true;
+    }
+
+    final documentPhotoIds = <String>{};
+    for (final spread in document.spreads) {
+      for (final page in <AlbumPageModel>[spread.leftPage, spread.rightPage]) {
+        for (final element in page.elements) {
+          final photoId = element.payload['photo_id']?.toString().trim();
+          if (photoId != null && photoId.isNotEmpty) {
+            documentPhotoIds.add(photoId);
+          }
+        }
+      }
+    }
+
+    return documentPhotoIds.isNotEmpty &&
+        setEquals(currentPhotoIds, documentPhotoIds);
   }
 
   void _syncSpreadZoomState() {
@@ -422,6 +470,7 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage> {
         subtitle: widget.subtitle,
         sections: currentSections,
         document: document,
+        storyTemplateId: widget.storyTemplateId,
       );
 
       if (!mounted) {
@@ -737,16 +786,203 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage> {
     );
   }
 
+  bool get _canPerformPageTurn =>
+      _selectedElement == null &&
+      !_editMode &&
+      !_isSpreadZoomed &&
+      !_isInlineTextEditing;
+
+  bool get _isTurnActive => _turnFromSpread != null && _turnToSpread != null;
+
+  void _handleTurnStatusChanged(AnimationStatus status) {
+    if (!_isTurnActive) {
+      return;
+    }
+    if (status == AnimationStatus.completed && _turnCommitOnComplete) {
+      final target = _turnToSpread;
+      if (target != null) {
+        _pageController.jumpToPage(target);
+        if (mounted) {
+          setState(() {
+            _currentSpread = target;
+            _selectedElement = null;
+          });
+        }
+        _disposeInlineTextController();
+        _inlineTextFocusNode.unfocus();
+        _resetSpreadZoom();
+      }
+      _resetTurnState(resetController: false);
+      _turnController.value = 0;
+      return;
+    }
+
+    if (status == AnimationStatus.dismissed ||
+        (status == AnimationStatus.completed && !_turnCommitOnComplete)) {
+      _resetTurnState(resetController: false);
+      if (_turnController.value != 0) {
+        _turnController.value = 0;
+      }
+    }
+  }
+
+  void _resetTurnState({bool resetController = true}) {
+    _turnCommitOnComplete = false;
+    _turnFromSpread = null;
+    _turnToSpread = null;
+    _turnDragDelta = 0;
+    _turnDragExtent = 1;
+    if (resetController) {
+      _turnController.stop();
+      _turnController.value = 0;
+    }
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  bool _beginTurn({
+    required int targetSpread,
+    required bool forward,
+    double initialProgress = 0,
+  }) {
+    final document = _document;
+    if (document == null ||
+        targetSpread < 0 ||
+        targetSpread >= document.spreads.length ||
+        targetSpread == _currentSpread) {
+      return false;
+    }
+    _turnController.stop();
+    _turnCommitOnComplete = false;
+    _turnFromSpread = _currentSpread;
+    _turnToSpread = targetSpread;
+    _turnForward = forward;
+    _turnController.value = initialProgress.clamp(0.0, 1.0);
+    if (mounted) {
+      setState(() {});
+    }
+    return true;
+  }
+
+  void _animateTurnTo({
+    required bool commit,
+    Duration duration = const Duration(milliseconds: 520),
+    Curve curve = Curves.easeOutCubic,
+  }) {
+    if (!_isTurnActive) {
+      return;
+    }
+    _turnCommitOnComplete = commit;
+    final target = commit ? 1.0 : 0.0;
+    _turnController.animateTo(
+      target,
+      duration: duration,
+      curve: curve,
+    );
+  }
+
+  void _handleTurnDragStart(double spreadWidth) {
+    if (!_canPerformPageTurn || _isTurnActive) {
+      return;
+    }
+    _turnDragExtent = math.max(spreadWidth, 1);
+    _turnDragDelta = 0;
+  }
+
+  void _handleTurnDragUpdate(double deltaDx, double spreadWidth) {
+    if (!_canPerformPageTurn) {
+      return;
+    }
+
+    _turnDragExtent = math.max(spreadWidth, 1);
+    _turnDragDelta += deltaDx;
+
+    if (!_isTurnActive) {
+      if (_turnDragDelta < -8 && _currentSpread < (_document?.spreads.length ?? 0) - 1) {
+        if (!_beginTurn(
+          targetSpread: _currentSpread + 1,
+          forward: true,
+        )) {
+          return;
+        }
+      } else if (_turnDragDelta > 8 && _currentSpread > 0) {
+        if (!_beginTurn(
+          targetSpread: _currentSpread - 1,
+          forward: false,
+        )) {
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+
+    final signedProgress = _turnForward ? -_turnDragDelta : _turnDragDelta;
+    final progress = (signedProgress / (_turnDragExtent * 0.84)).clamp(0.0, 1.0);
+    _turnController.value = progress;
+  }
+
+  void _handleTurnDragEnd(double primaryVelocity) {
+    if (!_isTurnActive) {
+      _turnDragDelta = 0;
+      return;
+    }
+    final progress = _turnController.value;
+    final shouldCommit = progress > 0.34 ||
+        (_turnForward ? primaryVelocity < -420 : primaryVelocity > 420);
+    _animateTurnTo(
+      commit: shouldCommit,
+      duration: Duration(
+        milliseconds: shouldCommit
+            ? math.max(220, ((1 - progress) * 420).round())
+            : math.max(180, (progress * 320).round()),
+      ),
+      curve: shouldCommit ? Curves.easeOutQuart : Curves.easeOutCubic,
+    );
+  }
+
+  void _handleTurnDragCancel() {
+    if (!_isTurnActive) {
+      _turnDragDelta = 0;
+      return;
+    }
+    _animateTurnTo(
+      commit: false,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   void _goToSpread(int index) {
     final document = _document;
     if (document == null || index < 0 || index >= document.spreads.length) {
       return;
     }
+    if (_isTurnActive || !_canPerformPageTurn) {
+      return;
+    }
+    if (index == _currentSpread) {
+      return;
+    }
     _resetSpreadZoom();
-    _pageController.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 420),
-      curve: Curves.easeOutCubic,
+    final delta = index - _currentSpread;
+    if (delta.abs() != 1) {
+      _pageController.jumpToPage(index);
+      setState(() {
+        _currentSpread = index;
+        _selectedElement = null;
+      });
+      return;
+    }
+    _beginTurn(
+      targetSpread: index,
+      forward: delta > 0,
+    );
+    _animateTurnTo(
+      commit: true,
+      duration: const Duration(milliseconds: 860),
+      curve: Curves.easeInOutCubic,
     );
   }
 
@@ -1604,6 +1840,148 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage> {
     );
   }
 
+  Widget _buildSpreadCard(AlbumBookDocument document, int index) {
+    return _BookSpreadCard(
+      spread: document.spreads[index],
+      spreadIndex: index,
+      designPageWidth: document.pageWidth,
+      designPageHeight: document.pageHeight,
+      selected: _selectedElement,
+      editMode: _editMode,
+      isSpreadZoomed: _isSpreadZoomed,
+      isInlineTextEditing: _isInlineTextEditing,
+      editingTextElementId: _inlineEditingElementId,
+      inlineTextController: _inlineTextController,
+      inlineTextFocusNode: _inlineTextFocusNode,
+      onElementSelected: _selectElement,
+      onBlankLongPress: _handleBlankLongPress,
+      onCanvasTap: _clearEditingSelection,
+      onElementMoved: _moveSelectedElement,
+      onElementResized: _resizeSelectedElement,
+      onManipulationEnd: _finishManipulationGesture,
+    );
+  }
+
+  Widget _buildReadOnlyPage({
+    required int spreadIndex,
+    required AlbumPageModel page,
+    required double designPageWidth,
+    required double designPageHeight,
+  }) {
+    return IgnorePointer(
+      child: _AlbumCanvasPage(
+        page: page,
+        spreadIndex: spreadIndex,
+        designPageWidth: designPageWidth,
+        designPageHeight: designPageHeight,
+        selected: null,
+        editMode: false,
+        isSpreadZoomed: false,
+        isInlineTextEditing: false,
+        editingTextElementId: null,
+        inlineTextController: null,
+        inlineTextFocusNode: _inlineTextFocusNode,
+        onElementSelected: (_, _, _) {},
+        onBlankLongPress: (_, _, _) {},
+        onCanvasTap: () {},
+        onElementMoved: (_, _) {},
+        onElementResized: (_, _) {},
+        onManipulationEnd: () {},
+      ),
+    );
+  }
+
+  Widget _buildTurnOverlay(AlbumBookDocument document) {
+    if (!_isTurnActive || _turnFromSpread == null || _turnToSpread == null) {
+      return const SizedBox.shrink();
+    }
+    final fromSpread = document.spreads[_turnFromSpread!];
+    final toSpread = document.spreads[_turnToSpread!];
+    final leftStatic = _turnForward
+        ? _buildReadOnlyPage(
+            spreadIndex: _turnFromSpread!,
+            page: fromSpread.leftPage,
+            designPageWidth: document.pageWidth,
+            designPageHeight: document.pageHeight,
+          )
+        : _buildReadOnlyPage(
+            spreadIndex: _turnToSpread!,
+            page: toSpread.leftPage,
+            designPageWidth: document.pageWidth,
+            designPageHeight: document.pageHeight,
+          );
+    final rightStatic = _turnForward
+        ? _buildReadOnlyPage(
+            spreadIndex: _turnToSpread!,
+            page: toSpread.rightPage,
+            designPageWidth: document.pageWidth,
+            designPageHeight: document.pageHeight,
+          )
+        : _buildReadOnlyPage(
+            spreadIndex: _turnFromSpread!,
+            page: fromSpread.rightPage,
+            designPageWidth: document.pageWidth,
+            designPageHeight: document.pageHeight,
+          );
+    final turningFront = _turnForward
+        ? _buildReadOnlyPage(
+            spreadIndex: _turnFromSpread!,
+            page: fromSpread.rightPage,
+            designPageWidth: document.pageWidth,
+            designPageHeight: document.pageHeight,
+          )
+        : _buildReadOnlyPage(
+            spreadIndex: _turnFromSpread!,
+            page: fromSpread.leftPage,
+            designPageWidth: document.pageWidth,
+            designPageHeight: document.pageHeight,
+          );
+    final turningBack = _turnForward
+        ? _buildReadOnlyPage(
+            spreadIndex: _turnToSpread!,
+            page: toSpread.leftPage,
+            designPageWidth: document.pageWidth,
+            designPageHeight: document.pageHeight,
+          )
+        : _buildReadOnlyPage(
+            spreadIndex: _turnToSpread!,
+            page: toSpread.rightPage,
+            designPageWidth: document.pageWidth,
+            designPageHeight: document.pageHeight,
+          );
+    return IgnorePointer(
+      child: AnimatedBuilder(
+        animation: _turnController,
+        builder: (BuildContext context, Widget? child) {
+          final progress = _turnController.value.clamp(0.0, 1.0);
+          return _BookPageTurnScene(
+            progress: progress,
+            forward: _turnForward,
+            leftStaticPage: leftStatic,
+            rightStaticPage: rightStatic,
+            turningFrontPage: turningFront,
+            turningBackPage: turningBack,
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildTurnGestureLayer(double spreadWidth) {
+    return Positioned.fill(
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragStart: (_) => _handleTurnDragStart(spreadWidth),
+        onHorizontalDragUpdate: (details) =>
+            _handleTurnDragUpdate(details.delta.dx, spreadWidth),
+        onHorizontalDragEnd: (details) =>
+            _handleTurnDragEnd(details.primaryVelocity ?? 0),
+        onHorizontalDragCancel: _handleTurnDragCancel,
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final document = _document;
@@ -1695,12 +2073,7 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage> {
                                             children: [
                                               PageView.builder(
                                                 controller: _pageController,
-                                                physics: (_selectedElement != null ||
-                                                        _editMode ||
-                                                        _isSpreadZoomed ||
-                                                        _isInlineTextEditing)
-                                                    ? const NeverScrollableScrollPhysics()
-                                                    : const BouncingScrollPhysics(),
+                                                physics: const NeverScrollableScrollPhysics(),
                                                 itemCount: document.spreads.length,
                                                 onPageChanged: (value) {
                                                   setState(() {
@@ -1712,55 +2085,12 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage> {
                                                   _resetSpreadZoom();
                                                 },
                                                 itemBuilder: (BuildContext context, int index) {
-                                                  return AnimatedBuilder(
-                                                    animation: _pageController,
-                                                    child: _BookSpreadCard(
-                                                      spread: document.spreads[index],
-                                                      spreadIndex: index,
-                                                      designPageWidth: document.pageWidth,
-                                                      designPageHeight: document.pageHeight,
-                                                      selected: _selectedElement,
-                                                      editMode: _editMode,
-                                                      isSpreadZoomed: _isSpreadZoomed,
-                                                      isInlineTextEditing: _isInlineTextEditing,
-                                                      editingTextElementId: _inlineEditingElementId,
-                                                      inlineTextController: _inlineTextController,
-                                                      inlineTextFocusNode: _inlineTextFocusNode,
-                                                      onElementSelected: _selectElement,
-                                                      onBlankLongPress: _handleBlankLongPress,
-                                                      onCanvasTap: _clearEditingSelection,
-                                                      onElementMoved: _moveSelectedElement,
-                                                      onElementResized: _resizeSelectedElement,
-                                                      onManipulationEnd: _finishManipulationGesture,
-                                                    ),
-                                                    builder: (BuildContext context, Widget? child) {
-                                                      final position = _pageController.hasClients &&
-                                                              _pageController.position
-                                                                  .hasContentDimensions
-                                                          ? (_pageController.page ??
-                                                              _currentSpread.toDouble())
-                                                          : _currentSpread.toDouble();
-                                                      final offset = index - position;
-                                                      final clamped = offset.clamp(-1.0, 1.0);
-                                                      final rotation = clamped * -0.14;
-                                                      final scale = 1 - (clamped.abs() * 0.02);
-                                                      final alignment = clamped >= 0
-                                                          ? Alignment.centerLeft
-                                                          : Alignment.centerRight;
-                                                      return Transform.scale(
-                                                        scale: scale,
-                                                        child: Transform(
-                                                          alignment: alignment,
-                                                          transform: Matrix4.identity()
-                                                            ..setEntry(3, 2, 0.0012)
-                                                            ..rotateY(rotation),
-                                                          child: child,
-                                                        ),
-                                                      );
-                                                    },
-                                                  );
+                                                  return _buildSpreadCard(document, index);
                                                 },
                                               ),
+                                              if (_isTurnActive) _buildTurnOverlay(document),
+                                              if (_canPerformPageTurn)
+                                                _buildTurnGestureLayer(spreadWidth),
                                               if (_selectedElement == null &&
                                                   !_editMode &&
                                                   !_isSpreadZoomed &&
@@ -2198,6 +2528,69 @@ class _BookSpreadCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return _BookSpreadShell(
+      child: Row(
+        children: [
+          Expanded(
+            child: _AlbumCanvasPage(
+              page: spread.leftPage,
+              spreadIndex: spreadIndex,
+              designPageWidth: designPageWidth,
+              designPageHeight: designPageHeight,
+              selected: selected,
+              editMode: editMode,
+              isSpreadZoomed: isSpreadZoomed,
+              isInlineTextEditing: isInlineTextEditing,
+              editingTextElementId: editingTextElementId,
+              inlineTextController: inlineTextController,
+              inlineTextFocusNode: inlineTextFocusNode,
+              onElementSelected: onElementSelected,
+              onBlankLongPress: onBlankLongPress,
+              onCanvasTap: onCanvasTap,
+              onElementMoved: onElementMoved,
+              onElementResized: onElementResized,
+              onManipulationEnd: onManipulationEnd,
+            ),
+          ),
+          const _BookSpine(),
+          Expanded(
+            child: _AlbumCanvasPage(
+              page: spread.rightPage,
+              spreadIndex: spreadIndex,
+              designPageWidth: designPageWidth,
+              designPageHeight: designPageHeight,
+              selected: selected,
+              editMode: editMode,
+              isSpreadZoomed: isSpreadZoomed,
+              isInlineTextEditing: isInlineTextEditing,
+              editingTextElementId: editingTextElementId,
+              inlineTextController: inlineTextController,
+              inlineTextFocusNode: inlineTextFocusNode,
+              onElementSelected: onElementSelected,
+              onBlankLongPress: onBlankLongPress,
+              onCanvasTap: onCanvasTap,
+              onElementMoved: onElementMoved,
+              onElementResized: onElementResized,
+              onManipulationEnd: onManipulationEnd,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BookSpreadShell extends StatelessWidget {
+  const _BookSpreadShell({
+    required this.child,
+    this.enableOuterShadow = true,
+  });
+
+  final Widget child;
+  final bool enableOuterShadow;
+
+  @override
+  Widget build(BuildContext context) {
     return Stack(
       children: [
         Positioned.fill(
@@ -2231,88 +2624,320 @@ class _BookSpreadCard extends StatelessWidget {
                 Color(0xFFF7EEE5),
                 Color(0xFFE9DCCB),
               ],
+              ),
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: enableOuterShadow
+                  ? const <BoxShadow>[
+                      BoxShadow(
+                        color: Color(0x33000000),
+                        blurRadius: 10,
+                        offset: Offset(0, 6),
+                      ),
+                    ]
+                  : const <BoxShadow>[],
             ),
-            borderRadius: BorderRadius.circular(10),
-            boxShadow: const <BoxShadow>[
+            child: Padding(
+              padding: const EdgeInsets.all(1),
+              child: child,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BookSpine extends StatelessWidget {
+  const _BookSpine();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 8,
+      margin: const EdgeInsets.symmetric(horizontal: 0.5),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: <Color>[
+            Colors.brown.withValues(alpha: 0.08),
+            Colors.white.withValues(alpha: 0.86),
+            Colors.brown.withValues(alpha: 0.14),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
+  }
+}
+
+class _BookPageTurnScene extends StatelessWidget {
+  const _BookPageTurnScene({
+    required this.progress,
+    required this.forward,
+    required this.leftStaticPage,
+    required this.rightStaticPage,
+    required this.turningFrontPage,
+    required this.turningBackPage,
+  });
+
+  final double progress;
+  final bool forward;
+  final Widget leftStaticPage;
+  final Widget rightStaticPage;
+  final Widget turningFrontPage;
+  final Widget turningBackPage;
+
+  @override
+  Widget build(BuildContext context) {
+    const spineTotalWidth = 9.0;
+    final p = progress.clamp(0.0, 1.0);
+    final eased = Curves.easeInOutCubic.transform(p);
+    final signedAngle = (forward ? -1.0 : 1.0) * math.pi * eased;
+    final halfTurn = math.pi / 2;
+    final foldedness = math.sin(eased * math.pi);
+    final frontVisible = signedAngle.abs() <= halfTurn;
+    final spineShadow = (0.06 + foldedness * 0.12).clamp(0.0, 0.18);
+    final pageShadow = (0.12 + foldedness * 0.22).clamp(0.0, 0.34);
+
+    return _BookSpreadShell(
+      enableOuterShadow: false,
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final pageWidth = (constraints.maxWidth - spineTotalWidth) / 2;
+          final spineCenter = pageWidth + (spineTotalWidth / 2);
+          final turningFace = frontVisible
+              ? turningFrontPage
+              : Transform(
+                  alignment: Alignment.center,
+                  transform: Matrix4.identity()..rotateY(math.pi),
+                  child: turningBackPage,
+                );
+
+          return Stack(
+            children: [
+              Row(
+                children: [
+                  Expanded(child: leftStaticPage),
+                  const _BookSpine(),
+                  Expanded(child: rightStaticPage),
+                ],
+              ),
+              Positioned(
+                left: spineCenter,
+                top: 0,
+                bottom: 0,
+                width: 0,
+                child: IgnorePointer(
+                  child: OverflowBox(
+                    minWidth: pageWidth,
+                    maxWidth: pageWidth,
+                    minHeight: constraints.maxHeight,
+                    maxHeight: constraints.maxHeight,
+                    alignment:
+                        forward ? Alignment.centerLeft : Alignment.centerRight,
+                    child: _CurvedTurnPageSurface(
+                      pageFace: turningFace,
+                      forward: forward,
+                      foldedness: foldedness,
+                      signedAngle: signedAngle,
+                      pageWidth: pageWidth,
+                      pageHeight: constraints.maxHeight,
+                      pageShadow: pageShadow,
+                    ),
+                  ),
+                ),
+              ),
+              IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: <Color>[
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: foldedness * 0.05),
+                        Colors.black.withValues(alpha: spineShadow),
+                        Colors.black.withValues(alpha: foldedness * 0.05),
+                        Colors.transparent,
+                      ],
+                      stops: const <double>[0, 0.44, 0.5, 0.56, 1],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _CurvedTurnPageSurface extends StatelessWidget {
+  const _CurvedTurnPageSurface({
+    required this.pageFace,
+    required this.forward,
+    required this.foldedness,
+    required this.signedAngle,
+    required this.pageWidth,
+    required this.pageHeight,
+    required this.pageShadow,
+  });
+
+  final Widget pageFace;
+  final bool forward;
+  final double foldedness;
+  final double signedAngle;
+  final double pageWidth;
+  final double pageHeight;
+  final double pageShadow;
+
+  @override
+  Widget build(BuildContext context) {
+    final hingeAlignment = forward ? Alignment.centerLeft : Alignment.centerRight;
+    final globalLiftY = -pageHeight * 0.15 * foldedness;
+    final globalLiftZ = -pageWidth * 0.12 * foldedness;
+    final innerShade = (0.025 + foldedness * 0.07).clamp(0.0, 0.11);
+    final outerGlow = (0.015 + foldedness * 0.03).clamp(0.0, 0.05);
+    final simplePhase = foldedness < 0.12;
+
+    if (simplePhase) {
+      return Transform(
+        alignment: hingeAlignment,
+        transform: Matrix4.identity()
+          ..setEntry(3, 2, 0.0017)
+          ..translateByDouble(0.0, globalLiftY * 0.35, globalLiftZ * 0.25, 1.0)
+          ..rotateY(signedAngle),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            boxShadow: <BoxShadow>[
               BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 10,
-                offset: Offset(0, 6),
+                color: Colors.black.withValues(alpha: pageShadow * 0.55),
+                blurRadius: 16,
+                offset: Offset(forward ? -8 : 8, 10),
+                spreadRadius: -10,
               ),
             ],
           ),
-          child: Padding(
-            padding: const EdgeInsets.all(1),
+          child: SizedBox(
+            width: pageWidth,
+            height: pageHeight,
+            child: pageFace,
+          ),
+        ),
+      );
+    }
+
+    return Transform(
+      alignment: hingeAlignment,
+      transform: Matrix4.identity()
+        ..setEntry(3, 2, 0.00185)
+        ..translateByDouble(0.0, globalLiftY, globalLiftZ, 1.0)
+        ..rotateY(signedAngle),
+      child: ClipPath(
+        clipper: _RaisedPageClipper(
+          forward: forward,
+          foldedness: foldedness,
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: Colors.black.withValues(alpha: pageShadow),
+                blurRadius: 18 + foldedness * 16,
+                offset: Offset(
+                  forward ? -12 : 12,
+                  14 + foldedness * 7,
+                ),
+                spreadRadius: -12,
+              ),
+            ],
+          ),
+          child: SizedBox(
+            width: pageWidth,
+            height: pageHeight,
             child: Stack(
+              fit: StackFit.expand,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: _AlbumCanvasPage(
-                        page: spread.leftPage,
-                        spreadIndex: spreadIndex,
-                        designPageWidth: designPageWidth,
-                        designPageHeight: designPageHeight,
-                        selected: selected,
-                        editMode: editMode,
-                        isSpreadZoomed: isSpreadZoomed,
-                        isInlineTextEditing: isInlineTextEditing,
-                        editingTextElementId: editingTextElementId,
-                        inlineTextController: inlineTextController,
-                        inlineTextFocusNode: inlineTextFocusNode,
-                        onElementSelected: onElementSelected,
-                        onBlankLongPress: onBlankLongPress,
-                        onCanvasTap: onCanvasTap,
-                        onElementMoved: onElementMoved,
-                        onElementResized: onElementResized,
-                        onManipulationEnd: onManipulationEnd,
-                      ),
+                pageFace,
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: forward ? Alignment.centerLeft : Alignment.centerRight,
+                      end: forward ? Alignment.centerRight : Alignment.centerLeft,
+                      colors: <Color>[
+                        Colors.black.withValues(alpha: innerShade),
+                        Colors.transparent,
+                        Colors.white.withValues(alpha: outerGlow),
+                      ],
+                      stops: const <double>[0.0, 0.56, 1.0],
                     ),
-                    Container(
-                      width: 8,
-                      margin: const EdgeInsets.symmetric(horizontal: 0.5),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.centerLeft,
-                          end: Alignment.centerRight,
-                          colors: <Color>[
-                            Colors.brown.withValues(alpha: 0.08),
-                            Colors.white.withValues(alpha: 0.86),
-                            Colors.brown.withValues(alpha: 0.14),
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    Expanded(
-                      child: _AlbumCanvasPage(
-                        page: spread.rightPage,
-                        spreadIndex: spreadIndex,
-                        designPageWidth: designPageWidth,
-                        designPageHeight: designPageHeight,
-                        selected: selected,
-                        editMode: editMode,
-                        isSpreadZoomed: isSpreadZoomed,
-                        isInlineTextEditing: isInlineTextEditing,
-                        editingTextElementId: editingTextElementId,
-                        inlineTextController: inlineTextController,
-                        inlineTextFocusNode: inlineTextFocusNode,
-                        onElementSelected: onElementSelected,
-                        onBlankLongPress: onBlankLongPress,
-                        onCanvasTap: onCanvasTap,
-                        onElementMoved: onElementMoved,
-                        onElementResized: onElementResized,
-                        onManipulationEnd: onManipulationEnd,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),
           ),
         ),
-      ],
+      ),
     );
+  }
+}
+
+class _RaisedPageClipper extends CustomClipper<Path> {
+  const _RaisedPageClipper({
+    required this.forward,
+    required this.foldedness,
+  });
+
+  final bool forward;
+  final double foldedness;
+
+  @override
+  Path getClip(Size size) {
+    final topLift = size.height * 0.16 * foldedness;
+    final bottomLift = size.height * 0.08 * foldedness;
+    final bellyDepth = size.height * 0.11 * foldedness;
+    final path = Path();
+
+    if (forward) {
+      path.moveTo(0, 0);
+      path.quadraticBezierTo(
+        size.width * 0.42,
+        -bellyDepth,
+        size.width,
+        topLift,
+      );
+      path.lineTo(size.width, size.height - bottomLift);
+      path.quadraticBezierTo(
+        size.width * 0.58,
+        size.height - (bellyDepth * 0.18),
+        0,
+        size.height,
+      );
+    } else {
+      path.moveTo(size.width, 0);
+      path.quadraticBezierTo(
+        size.width * 0.58,
+        -bellyDepth,
+        0,
+        topLift,
+      );
+      path.lineTo(0, size.height - bottomLift);
+      path.quadraticBezierTo(
+        size.width * 0.42,
+        size.height - (bellyDepth * 0.18),
+        size.width,
+        size.height,
+      );
+    }
+
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant _RaisedPageClipper oldClipper) {
+    return oldClipper.forward != forward || oldClipper.foldedness != foldedness;
   }
 }
 

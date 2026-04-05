@@ -51,8 +51,11 @@ class StoryQueuePage extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '可跨标签、语义搜索和时刻分组持续加图；拖动可调整顺序，点图片查看大图，点右侧可移除。',
-                      style: TextStyle(color: Colors.grey[700], height: 1.4),
+                      '建议先把每张图片描述改成更贴合画面的内容，再生成故事；拖动可调整顺序，点图片查看大图，点右侧可移除。',
+                      style: TextStyle(
+                        color: Colors.grey[700],
+                        height: 1.4,
+                      ),
                     ),
                   ],
                 ),
@@ -77,6 +80,8 @@ class StoryQueuePage extends StatelessWidget {
                         );
                       },
                       onRemove: () => queue.removePhoto(item.photo.id),
+                      onCaptionChanged: (value) =>
+                          queue.updatePhotoCaption(item.photo.id, value),
                     );
                   },
                 ),
@@ -93,9 +98,7 @@ class StoryQueuePage extends StatelessWidget {
             return Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
               child: FilledButton.icon(
-                onPressed: items.isEmpty
-                    ? null
-                    : () => _openConfigPage(context, queue),
+                onPressed: items.isEmpty ? null : () => _openConfigPage(context, queue),
                 icon: const Icon(Icons.auto_stories_rounded),
                 label: Text(items.isEmpty ? '先加入照片' : '生成故事 ${items.length}'),
                 style: FilledButton.styleFrom(
@@ -128,25 +131,63 @@ class StoryQueuePage extends StatelessWidget {
   }
 }
 
-class _QueuePhotoTile extends StatelessWidget {
+class _QueuePhotoTile extends StatefulWidget {
   const _QueuePhotoTile({
     super.key,
     required this.index,
     required this.item,
     required this.onPreview,
     required this.onRemove,
+    required this.onCaptionChanged,
   });
 
   final int index;
   final StoryQueueItem item;
   final VoidCallback onPreview;
   final VoidCallback onRemove;
+  final ValueChanged<String> onCaptionChanged;
+
+  @override
+  State<_QueuePhotoTile> createState() => _QueuePhotoTileState();
+}
+
+class _QueuePhotoTileState extends State<_QueuePhotoTile> {
+  late final TextEditingController _captionController;
+  late final FocusNode _captionFocusNode;
+
+  String get _captionText => widget.item.photo.caption?.trim() ?? '';
+
+  @override
+  void initState() {
+    super.initState();
+    _captionController = TextEditingController(text: _captionText);
+    _captionFocusNode = FocusNode();
+  }
+
+  @override
+  void didUpdateWidget(covariant _QueuePhotoTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final latestCaption = _captionText;
+    if (_captionFocusNode.hasFocus || _captionController.text == latestCaption) {
+      return;
+    }
+    _captionController.value = TextEditingValue(
+      text: latestCaption,
+      selection: TextSelection.collapsed(offset: latestCaption.length),
+    );
+  }
+
+  @override
+  void dispose() {
+    _captionController.dispose();
+    _captionFocusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final photo = item.photo;
-    final caption = photo.caption?.trim() ?? '';
-    final tags = photo.tags.take(3).join('、');
+    final photo = widget.item.photo;
+    final tags = photo.tags.take(3).join(' / ');
     final date = photo.dateTaken;
     final meta = <String>[
       '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}',
@@ -154,7 +195,7 @@ class _QueuePhotoTile extends StatelessWidget {
     ].join(' · ');
 
     return Container(
-      key: key,
+      key: widget.key,
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
@@ -170,95 +211,139 @@ class _QueuePhotoTile extends StatelessWidget {
           ),
         ],
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(22),
-        onTap: onPreview,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: SizedBox(
-                  width: 68,
-                  height: 68,
-                  child: Hero(
-                    tag: 'story-queue-photo-${photo.id}',
-                    child: PathImage(path: photo.path, fit: BoxFit.cover),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: widget.onPreview,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: SizedBox(
+                      width: 68,
+                      height: 68,
+                      child: Hero(
+                        tag: 'story-queue-photo-${photo.id}',
+                        child: PathImage(path: photo.path, fit: BoxFit.cover),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '第 ${widget.index + 1} 张',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        meta,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if ((widget.item.semanticSearchQuery?.trim().isNotEmpty ?? false)) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          '搜索线索：${widget.item.semanticSearchQuery!.trim()}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      '第 ${index + 1} 张',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                    ReorderableDragStartListener(
+                      index: widget.index,
+                      child: const Padding(
+                        padding: EdgeInsets.only(top: 2),
+                        child: Icon(Icons.drag_handle_rounded),
+                      ),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      meta,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    const SizedBox(height: 10),
+                    IconButton(
+                      onPressed: widget.onRemove,
+                      icon: const Icon(Icons.close_rounded),
+                      tooltip: '移出队列',
+                      visualDensity: VisualDensity.compact,
                     ),
-                    if (caption.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        caption,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ] else if (tags.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        tags,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                    if ((item.semanticSearchQuery?.trim().isNotEmpty ?? false)) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        '搜索线索：${item.semanticSearchQuery!.trim()}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
                   ],
                 ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _captionController,
+              focusNode: _captionFocusNode,
+              minLines: 1,
+              maxLines: 3,
+              textInputAction: TextInputAction.done,
+              onChanged: widget.onCaptionChanged,
+              decoration: InputDecoration(
+                hintText: '手动写一句更贴合这张图片的描述',
+                isDense: true,
+                filled: true,
+                fillColor: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.18),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(
+                    color: Theme.of(context).dividerColor.withValues(alpha: 0.18),
+                  ),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(
+                    color: Theme.of(context).dividerColor.withValues(alpha: 0.18),
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 1.2,
+                  ),
+                ),
               ),
-              const SizedBox(width: 8),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ReorderableDragStartListener(
-                    index: index,
-                    child: const Padding(
-                      padding: EdgeInsets.only(top: 2),
-                      child: Icon(Icons.drag_handle_rounded),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  IconButton(
-                    onPressed: onRemove,
-                    icon: const Icon(Icons.close_rounded),
-                    tooltip: '移出队列',
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ],
+            ),
+            if (_captionText.isEmpty && tags.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                '参考标签：$tags',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.grey[700],
+                  fontSize: 12,
+                ),
               ),
             ],
-          ),
+          ],
         ),
       ),
     );

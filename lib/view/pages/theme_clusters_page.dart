@@ -119,7 +119,7 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const StoriesPage()),
+                MaterialPageRoute(builder: (context) => StoriesPage()),
               );
             },
             icon: const Icon(Icons.auto_stories_outlined),

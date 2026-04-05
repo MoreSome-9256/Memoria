@@ -4,7 +4,7 @@ import '../service/ai_service.dart';
 import '../service/album_refresh_service.dart';
 import 'pages/home_page.dart'; // 🌟 导入刚才新写的首页
 import 'pages/album_page.dart';
-import 'pages/create_page.dart';
+import 'pages/create_hub_page.dart';
 import 'pages/profile_page.dart';
 import 'pages/theme_clusters_page.dart';
 
@@ -143,7 +143,7 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const CreatePage(),
+                  builder: (context) => const CreateHubPage(),
                   fullscreenDialog: true,
                 ),
               );

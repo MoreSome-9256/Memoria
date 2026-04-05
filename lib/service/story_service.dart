@@ -2,6 +2,7 @@ import 'package:isar/isar.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../data/tag_taxonomy_v2.dart';
+import '../models/entity/digital_album_book_entity.dart';
 import '../models/entity/story_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
@@ -437,12 +438,35 @@ class StoryService {
 
   /// 🗑️ 删除故事
   Future<bool> deleteStory(int storyId) async {
+    final deletedCount = await deleteStories(<int>[storyId]);
+    return deletedCount > 0;
+  }
+
+  /// 🗑️ 批量删除故事，同时清理关联的故事相册缓存。
+  Future<int> deleteStories(Iterable<int> storyIds) async {
     final isar = PhotoService().isar;
+    final ids = storyIds.where((id) => id > 0).toSet().toList(growable: false);
+    if (ids.isEmpty) {
+      return 0;
+    }
+
+    final linkedAlbums = await isar
+        .collection<DigitalAlbumBookEntity>()
+        .filter()
+        .anyOf(ids, (query, storyId) => query.storyIdEqualTo(storyId))
+        .findAll();
+
+    var deletedCount = 0;
     await isar.writeTxn(() async {
-      await isar.collection<StoryEntity>().delete(storyId);
+      if (linkedAlbums.isNotEmpty) {
+        await isar.collection<DigitalAlbumBookEntity>().deleteAll(
+          linkedAlbums.map((album) => album.id).toList(growable: false),
+        );
+      }
+      deletedCount = await isar.collection<StoryEntity>().deleteAll(ids);
     });
-    print("🗑️ 故事已删除：ID=$storyId");
-    return true;
+    print("🗑️ 故事已删除：$deletedCount/${ids.length}");
+    return deletedCount;
   }
 
   /// 📸 根据 photoIds 加载照片实体

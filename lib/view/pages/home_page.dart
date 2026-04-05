@@ -8,7 +8,7 @@ import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import '../widgets/path_image.dart';
-import 'create_page.dart';
+import 'create_hub_page.dart';
 import 'event_detail_page.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 
@@ -660,7 +660,7 @@ class _HomePageState extends State<HomePage> {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => const CreatePage(),
+                        builder: (context) => const CreateHubPage(),
                       ),
                     );
                   },

@@ -34,6 +34,26 @@ class SemanticQueryParserService {
       'DeepSeek \u672a\u8fd4\u56de\u6709\u6548\u7684\u6b63\u5411\u8bed\u4e49\uff0c\u5df2\u8865\u5145\u672c\u5730\u8bed\u4e49\u63d0\u793a';
   static const String _noteFallbackMerged =
       '\u672c\u5730\u89c4\u5219\u5df2\u4f5c\u4e3a\u8865\u5145\u515c\u5e95';
+  static const String _notePresetJson =
+      '\u5f53\u524d\u4f7f\u7528\u9884\u7f6e\u7ed3\u6784\u5316\u67e5\u8be2\uff0c\u672a\u8c03\u7528 DeepSeek';
+
+  SemanticSearchQuery buildQueryFromStructuredJson({
+    required String rawQuery,
+    required Map<String, dynamic> jsonObject,
+    Set<String> locationDictionary = const <String>{},
+  }) {
+    final localFallback = _buildLocalFallbackQuery(rawQuery, locationDictionary);
+    final primary = _buildStructuredQueryFromJsonObject(
+      rawQuery: rawQuery,
+      jsonObject: jsonObject,
+      locationDictionary: locationDictionary,
+      usedLlm: false,
+      llmConfigured: true,
+      parserSource: 'preset_json',
+      baseNotes: _notePresetJson,
+    );
+    return _mergeQueries(primary, localFallback);
+  }
 
   static const List<SemanticSearchSemanticItem> _defaultNegativeSemantics =
       <SemanticSearchSemanticItem>[
@@ -604,6 +624,26 @@ $rawQuery
     );
 
     final jsonObject = _decodeJsonObject(response);
+    return _buildStructuredQueryFromJsonObject(
+      rawQuery: rawQuery,
+      jsonObject: jsonObject,
+      locationDictionary: locationDictionary,
+      usedLlm: true,
+      llmConfigured: true,
+      parserSource: 'llm',
+      baseNotes: _noteLlm,
+    );
+  }
+
+  SemanticSearchQuery _buildStructuredQueryFromJsonObject({
+    required String rawQuery,
+    required Map<String, dynamic> jsonObject,
+    required Set<String> locationDictionary,
+    required bool usedLlm,
+    required bool llmConfigured,
+    required String parserSource,
+    required String baseNotes,
+  }) {
     final timeRanges =
         _readTimeRanges(jsonObject['time_ranges'] ?? jsonObject['time']);
     final locations = _readLocations(
@@ -619,8 +659,8 @@ $rawQuery
     var negativeSemantics = _readSemanticItems(
       jsonObject['negative_semantics'] ?? jsonObject['negative_query'],
     );
-    final queryType = _readQueryType(jsonObject['query_type']) ??
-        _inferQueryType(rawQuery);
+    final queryType =
+        _readQueryType(jsonObject['query_type']) ?? _inferQueryType(rawQuery);
     final tagStrictness =
         _readTagStrictness(jsonObject['tag_strictness']) ??
             _defaultTagStrictnessFor(queryType);
@@ -629,7 +669,7 @@ $rawQuery
         ) ??
         _estimateResultCount(rawQuery, queryType);
 
-    var notes = _noteLlm;
+    var notes = baseNotes;
     if (queryType == SemanticSearchQueryType.metadata) {
       positiveSemantics = const <SemanticSearchSemanticItem>[];
       recallSemantics = const <SemanticSearchSemanticItem>[];
@@ -660,9 +700,9 @@ $rawQuery
       recallSemantics: recallSemantics,
       negativeSemantics: negativeSemantics,
       estimatedResultCount: estimatedResultCount,
-      usedLlm: true,
-      llmConfigured: true,
-      parserSource: 'llm',
+      usedLlm: usedLlm,
+      llmConfigured: llmConfigured,
+      parserSource: parserSource,
       debugJson: _prettyJson.convert(jsonObject),
       notes: notes,
     );

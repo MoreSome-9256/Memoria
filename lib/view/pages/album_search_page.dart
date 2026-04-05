@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/vo/semantic_search_models.dart';
 import '../../service/album_tag_browser_service.dart';
+import '../../service/photo_service.dart';
 import '../../service/semantic_photo_search_service.dart';
 import '../../service/story_queue_service.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
@@ -14,9 +15,20 @@ enum _SearchSortMode { score, time }
 enum _SelectionMenuAction { selectAll, clear, cancel }
 
 class AlbumSearchPage extends StatefulWidget {
-  const AlbumSearchPage({super.key, required this.initialQuery});
+  const AlbumSearchPage({
+    super.key,
+    required this.initialQuery,
+    this.initialPhotoIds = const <int>[],
+    this.hideSearchBar = false,
+    this.lockInitialResults = false,
+    this.recommendationTitle,
+  });
 
   final String initialQuery;
+  final List<int> initialPhotoIds;
+  final bool hideSearchBar;
+  final bool lockInitialResults;
+  final String? recommendationTitle;
 
   @override
   State<AlbumSearchPage> createState() => _AlbumSearchPageState();
@@ -31,15 +43,23 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
   bool _selectionMode = false;
   String? _errorMessage;
   SemanticSearchResult? _result;
+  List<PhotoEntity> _directPhotos = const <PhotoEntity>[];
   _SearchSortMode _sortMode = _SearchSortMode.score;
   String? _selectedTag;
   final Set<int> _selectedPhotoIds = <int>{};
+
+  bool get _isLockedResultMode =>
+      widget.lockInitialResults && widget.initialPhotoIds.isNotEmpty;
 
   @override
   void initState() {
     super.initState();
     _controller.text = widget.initialQuery;
-    if (widget.initialQuery.trim().isNotEmpty) {
+    if (_isLockedResultMode) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _loadInitialPhotos();
+      });
+    } else if (widget.initialQuery.trim().isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _performSearch();
       });
@@ -54,6 +74,9 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
   }
 
   Future<void> _performSearch() async {
+    if (_isLockedResultMode) {
+      return;
+    }
     final query = _controller.text.trim();
     if (query.isEmpty) {
       setState(() {
@@ -95,6 +118,53 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     }
   }
 
+  Future<void> _loadInitialPhotos() async {
+    final ids = widget.initialPhotoIds;
+    if (ids.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _isSearching = true;
+      _errorMessage = null;
+      _selectionMode = false;
+      _selectedPhotoIds.clear();
+    });
+
+    try {
+      final photos = (await PhotoService().isar.photoEntitys.getAll(ids))
+          .whereType<PhotoEntity>()
+          .toList(growable: false);
+      final reconciled = await PhotoService().reconcileAccessiblePhotos(photos);
+      final photoById = <int, PhotoEntity>{
+        for (final photo in reconciled) photo.id: photo,
+      };
+      final orderedPhotos = ids
+          .map((id) => photoById[id])
+          .whereType<PhotoEntity>()
+          .toList(growable: false);
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _directPhotos = orderedPhotos;
+        _isSearching = false;
+        _errorMessage = null;
+        _sortMode = _SearchSortMode.score;
+        _selectedTag = null;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.toString();
+        _isSearching = false;
+      });
+    }
+  }
+
   Widget _buildSearchBar() {
     return TextField(
       controller: _controller,
@@ -114,6 +184,36 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
           borderRadius: BorderRadius.circular(22),
           borderSide: BorderSide.none,
         ),
+      ),
+    );
+  }
+
+  Widget _buildRecommendationTitleBar() {
+    final title = (widget.recommendationTitle ?? widget.initialQuery).trim();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title.isEmpty ? '推荐结果' : title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Icon(
+            Icons.auto_awesome_rounded,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ],
       ),
     );
   }
@@ -138,9 +238,11 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     );
   }
 
-  Widget _buildControlPanel(SemanticSearchResult result) {
-    final allPhotos = _allPhotos(result);
-    final tagSummaries = _buildFineTagSummaries(allPhotos, result.hits);
+  Widget _buildControlPanel(
+    List<PhotoEntity> allPhotos,
+    Map<int, SemanticSearchHit> hits,
+  ) {
+    final tagSummaries = _buildFineTagSummaries(allPhotos, hits);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -155,7 +257,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
           Text(
             _selectedTag == null
                 ? '共 ${allPhotos.length} 张，按 ${tagSummaries.length} 个相关标签筛选'
-                : '当前标签：$_selectedTag · ${_visiblePhotos(result).length} 张',
+                : '当前标签：$_selectedTag · ${_visiblePhotos(allPhotos, _result).length} 张',
             style: TextStyle(
               color: Colors.grey[700],
               fontWeight: FontWeight.w600,
@@ -237,8 +339,8 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     );
   }
 
-  Widget? _buildStoryFab(SemanticSearchResult result) {
-    if (_allPhotos(result).isEmpty) {
+  Widget? _buildStoryFab(List<PhotoEntity> photos) {
+    if (photos.isEmpty) {
       return null;
     }
     return FloatingActionButton.extended(
@@ -253,8 +355,8 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     );
   }
 
-  Widget? _buildFloatingStoryActions(SemanticSearchResult result) {
-    final visiblePhotos = _visiblePhotos(result);
+  Widget? _buildFloatingStoryActions(List<PhotoEntity> currentPhotos) {
+    final visiblePhotos = _visiblePhotos(currentPhotos, _result);
     final storyFab = _selectionMode
         ? Row(
             mainAxisSize: MainAxisSize.min,
@@ -293,7 +395,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
               ),
             ],
           )
-        : _buildStoryFab(result);
+        : _buildStoryFab(currentPhotos);
     if (storyFab == null) {
       return null;
     }
@@ -336,12 +438,12 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
       return;
     }
 
-    final result = _result;
-    if (result == null) {
+    final allPhotos = _currentPhotos(_result);
+    if (allPhotos.isEmpty) {
       return;
     }
 
-    final selectedEntities = _allPhotos(result)
+    final selectedEntities = allPhotos
         .where((photo) => _selectedPhotoIds.contains(photo.id))
         .toList(growable: false);
     final addedCount = StoryQueueService().addPhotos(
@@ -466,8 +568,21 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     }.values.toList(growable: false);
   }
 
-  List<PhotoEntity> _visiblePhotos(SemanticSearchResult result) {
-    final photos = _allPhotos(result).where((photo) {
+  List<PhotoEntity> _currentPhotos(SemanticSearchResult? result) {
+    if (_isLockedResultMode) {
+      return _directPhotos;
+    }
+    if (result == null) {
+      return const <PhotoEntity>[];
+    }
+    return _allPhotos(result);
+  }
+
+  List<PhotoEntity> _visiblePhotos(
+    List<PhotoEntity> photos,
+    SemanticSearchResult? result,
+  ) {
+    final filtered = photos.where((photo) {
       if (_selectedTag == null) {
         return true;
       }
@@ -475,21 +590,34 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
       return tags.contains(_selectedTag);
     }).toList(growable: false);
 
-    photos.sort((a, b) {
+    filtered.sort((a, b) {
       switch (_sortMode) {
         case _SearchSortMode.score:
-          final aScore = result.hits[a.id]?.score ?? 0.0;
-          final bScore = result.hits[b.id]?.score ?? 0.0;
-          final scoreCompare = bScore.compareTo(aScore);
-          if (scoreCompare != 0) {
-            return scoreCompare;
+          if (_isLockedResultMode) {
+            final lockedRank = <int, int>{
+              for (var index = 0; index < widget.initialPhotoIds.length; index++)
+                widget.initialPhotoIds[index]: index,
+            };
+            final aRank = lockedRank[a.id] ?? 1 << 20;
+            final bRank = lockedRank[b.id] ?? 1 << 20;
+            final rankCompare = aRank.compareTo(bRank);
+            if (rankCompare != 0) {
+              return rankCompare;
+            }
+          } else {
+            final aScore = result?.hits[a.id]?.score ?? 0.0;
+            final bScore = result?.hits[b.id]?.score ?? 0.0;
+            final scoreCompare = bScore.compareTo(aScore);
+            if (scoreCompare != 0) {
+              return scoreCompare;
+            }
           }
           return b.timestamp.compareTo(a.timestamp);
         case _SearchSortMode.time:
           return b.timestamp.compareTo(a.timestamp);
       }
     });
-    return photos;
+    return filtered;
   }
 
   List<AlbumFineTagSummary> _buildFineTagSummaries(
@@ -621,7 +749,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
             Text(_errorMessage ?? '搜索失败'),
             const SizedBox(height: 12),
             FilledButton(
-              onPressed: _performSearch,
+              onPressed: _isLockedResultMode ? _loadInitialPhotos : _performSearch,
               child: const Text('重试'),
             ),
           ],
@@ -633,12 +761,14 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
   @override
   Widget build(BuildContext context) {
     final result = _result;
-    final visiblePhotos = result == null ? const <PhotoEntity>[] : _visiblePhotos(result);
+    final currentPhotos = _currentPhotos(result);
+    final visiblePhotos = _visiblePhotos(currentPhotos, result);
 
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
-      floatingActionButton:
-          result == null ? null : _buildFloatingStoryActions(result),
+      floatingActionButton: currentPhotos.isEmpty
+          ? null
+          : _buildFloatingStoryActions(currentPhotos),
       body: DecoratedBox(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -656,25 +786,41 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         child: SafeArea(
           child: CustomScrollView(
             slivers: [
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                  child: _buildSearchBar(),
+              if (_isLockedResultMode)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: _buildRecommendationTitleBar(),
+                  ),
+                )
+              else if (!widget.hideSearchBar)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: _buildSearchBar(),
+                  ),
                 ),
-              ),
-              if (result != null && !result.hasExactMatches && result.hasRelatedMatches)
+              if (!widget.hideSearchBar &&
+                  result != null &&
+                  !result.hasExactMatches &&
+                  result.hasRelatedMatches)
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                     child: _buildRelatedOnlyNotice(),
                   ),
                 ),
-              if (result != null &&
-                  (result.hasExactMatches || result.hasRelatedMatches))
+              if ((_isLockedResultMode && currentPhotos.isNotEmpty) ||
+                  (!widget.hideSearchBar &&
+                      result != null &&
+                      (result.hasExactMatches || result.hasRelatedMatches)))
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                    child: _buildControlPanel(result),
+                    child: _buildControlPanel(
+                      currentPhotos,
+                      result?.hits ?? const <int, SemanticSearchHit>{},
+                    ),
                   ),
                 ),
               if (_isSearching)
@@ -687,12 +833,31 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
                   hasScrollBody: false,
                   child: _buildErrorState(),
                 )
-              else if (result == null)
+              else if (!_isLockedResultMode && result == null)
                 SliverFillRemaining(
                   hasScrollBody: false,
                   child: _buildIdleState(),
                 )
-              else if (!result.hasExactMatches && !result.hasRelatedMatches)
+              else if (_isLockedResultMode && currentPhotos.isEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        '这组推荐图片暂时不可用，可以返回后等待后台重新刷新推荐。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          height: 1.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              else if (!_isLockedResultMode &&
+                  !result!.hasExactMatches &&
+                  !result.hasRelatedMatches)
                 SliverFillRemaining(
                   hasScrollBody: false,
                   child: _buildEmptyState(result),

@@ -5,6 +5,8 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+import org.gradle.api.tasks.Sync
+
 android {
     namespace = "com.example.photo_album"
     compileSdk = 35
@@ -27,7 +29,7 @@ android {
     }
 
     androidResources {
-        noCompress += listOf("tflite", "pt", "bin", "onnx", "mp3")
+        noCompress += listOf("tflite", "pt", "bin", "onnx", "mp3", "gguf", "so")
     }
 
     defaultConfig {
@@ -54,8 +56,39 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
+}
+
+val localLlmAssetDir = layout.buildDirectory.dir("generated/localLlmAssets")
+
+val prepareLocalLlmAssets = tasks.register<Sync>("prepareLocalLlmAssets") {
+    into(localLlmAssetDir)
+
+    from("../../third_party/llama.cpp/install-android-baseline/bin") {
+        include("llama-server", "llama-mtmd-cli")
+        into("local_llm/install-android-baseline/bin")
+    }
+
+    from("../../third_party/llama.cpp/install-android-baseline/lib") {
+        include("libggml-base.so", "libggml-cpu.so", "libggml.so", "libllama.so", "libmtmd.so")
+        into("local_llm/install-android-baseline/lib")
+    }
+
+    from("../../checkpoints/qwen") {
+        include("Qwen3.5-0.8B-Q4_K_M.gguf", "mmproj-F16.gguf")
+        into("local_llm/checkpoints/qwen")
+    }
+}
+
+android.sourceSets.getByName("main").assets.srcDir(localLlmAssetDir)
+
+tasks.matching { task ->
+    task.name == "mergeDebugAssets" || task.name == "mergeReleaseAssets"
+}.configureEach {
+    dependsOn(prepareLocalLlmAssets)
 }
 
 flutter {

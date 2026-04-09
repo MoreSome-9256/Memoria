@@ -273,6 +273,26 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     _singleLoopMs = songDuration?.inMilliseconds ?? 15000;
     int singleLoopMs = _singleLoopMs;
 
+    // ==========================================
+    // 🌟 核心修复补丁：填补兜底节拍的“14秒真空期”！
+    // ==========================================
+    // 如果发现还是最初那 3 个孤零零的节拍（说明云端检测失败了）
+    // 那我们就老老实实根据歌曲总时长，按 500ms 一下，铺满整首歌！
+    if (_beatData.length <= 3) {
+      List<Map<String, dynamic>> denseBeats = [];
+      int fallbackInterval = 500; // 默认 120 BPM 的节奏
+      for (int i = 0; i < singleLoopMs; i += fallbackInterval) {
+        denseBeats.add({
+          "ms": i,
+          // 顺便模拟个动次打次的起伏：整秒能量高(0.6)，半秒能量低(0.2)
+          "energy": (i % 1000 == 0) ? 0.6 : 0.2,
+        });
+      }
+      _beatData = denseBeats;
+      _beatIntervalMs = fallbackInterval;
+      debugPrint("⚠️ 已触发本地动态兜底：根据音频时长生成 ${_beatData.length} 个密集节拍");
+    }
+
     // 🌟 2. 核心补丁：无限繁衍节拍数据！
     // 假设我们粗暴地把它复制 20 遍（足以应付 5 分钟的视频）
     if (_beatData.isNotEmpty && _beatData.last['ms'] < singleLoopMs * 1.5) {

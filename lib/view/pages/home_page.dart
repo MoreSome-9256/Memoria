@@ -465,10 +465,6 @@ class _HomePageState extends State<HomePage> {
                       const SizedBox(height: 16),
                       _buildDiscoverList(),
                       const SizedBox(height: 32),
-                      _buildSectionTitle('我的作品'),
-                      const SizedBox(height: 16),
-                      _buildWorksGrid(),
-                      const SizedBox(height: 40), // 底部留点白
                     ],
                   ),
                 ],

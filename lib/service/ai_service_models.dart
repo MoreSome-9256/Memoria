@@ -90,7 +90,7 @@ class _AsyncCaptionTask {
     required this.faceCount,
   });
 
-  final Id photoId;
+  final int photoId;
   final File imageFile;
   final bool deleteImageFileAfterUse;
   final PhotoCaptionService captionService;

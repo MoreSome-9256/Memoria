@@ -7,7 +7,6 @@ import '../../models/event.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/vo/photo.dart';
 import '../../service/junk_photo_cleanup_service.dart';
-import '../../service/photo_service.dart';
 import '../../service/story_queue_service.dart';
 import '../../utils/ocr_policy.dart';
 import '../widgets/deferred_path_image.dart';

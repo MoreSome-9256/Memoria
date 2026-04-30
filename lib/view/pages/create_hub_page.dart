@@ -13,7 +13,6 @@ import 'album_search_page.dart';
 import 'create_page.dart';
 import 'stories_page.dart';
 import 'story_result_page.dart';
-import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 
 class CreateHubPage extends StatefulWidget {

@@ -6,7 +6,6 @@ import '../../models/entity/event_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/entity/story_entity.dart';
 import '../../models/vo/story_generation_models.dart';
-import '../../service/photo_service.dart';
 import '../../service/llm_service.dart';
 import '../../utils/ocr_policy.dart';
 import 'story_result_page.dart';
@@ -365,12 +364,11 @@ class _ConfigPageState extends State<ConfigPage> {
       final selectedAssetIds = widget.selectedPhotos
           .map((photo) => photo.id)
           .toList();
-      final List<PhotoEntity> photoEntities = await isar
-          .collection<PhotoEntity>()
-          .filter()
-          .anyOf(selectedAssetIds, (q, assetId) => q.assetIdEqualTo(assetId))
-          .sortByTimestamp()
-          .findAll();
+      final photoBox = store.box<PhotoEntity>();
+      final _pq = photoBox.query(PhotoEntity_.assetId.oneOf(selectedAssetIds))
+          .order(PhotoEntity_.timestamp).build();
+      final List<PhotoEntity> photoEntities = _pq.find();
+      _pq.close();
 
       if (photoEntities.isEmpty) {
         throw Exception('No photos found');

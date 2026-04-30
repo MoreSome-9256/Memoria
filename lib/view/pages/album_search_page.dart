@@ -9,7 +9,6 @@ import '../../service/story_queue_service.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/path_image.dart';
 import 'story_queue_page.dart';
-import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 
 enum _SearchSortMode { score, time }

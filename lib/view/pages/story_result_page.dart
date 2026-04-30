@@ -7,13 +7,11 @@ import '../../models/entity/story_entity.dart';
 import '../../models/story.dart';
 import '../../models/vo/photo.dart';
 import '../../models/vo/story_section.dart';
-import '../../service/photo_service.dart';
 import '../../service/story_service.dart';
 import '../../utils/ocr_policy.dart';
 import '../widgets/path_image.dart';
 import 'digital_album_book_page.dart';
 import 'story_video_page.dart';
-import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 
 class StoryResultPage extends StatefulWidget {

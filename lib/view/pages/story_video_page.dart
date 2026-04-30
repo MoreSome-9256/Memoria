@@ -24,7 +24,6 @@ import 'export_manager.dart';
 import 'offscreen_render_worker.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
-import '../../service/photo_service.dart';
 import '../widgets/path_image.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
 import '../../models/entity/face_entity.dart';

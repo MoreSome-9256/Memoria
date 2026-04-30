@@ -245,10 +245,8 @@ class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
 class MobileClipBenchmarkService {
   MobileClipBenchmarkService({
     List<MobileClipBenchmarkAdapter>? adapters,
-    PhotoService? photoService,
     MobileClipVisionService? sharedPreprocessingVisionService,
   }) : _adapters = adapters ?? _buildDefaultAdapters(),
-       _photoService = photoService ?? PhotoService(),
        _sharedPreprocessingVisionService =
            sharedPreprocessingVisionService ??
            MobileClipVisionService.withProviderPreference(
@@ -256,7 +254,6 @@ class MobileClipBenchmarkService {
            );
 
   final List<MobileClipBenchmarkAdapter> _adapters;
-  final PhotoService _photoService;
   final MobileClipVisionService _sharedPreprocessingVisionService;
 
   static List<MobileClipBenchmarkAdapter> _buildDefaultAdapters() {

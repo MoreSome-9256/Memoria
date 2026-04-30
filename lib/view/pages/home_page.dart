@@ -98,20 +98,19 @@ class _HomePageState extends State<HomePage> {
   // 🧠 核心：本地智能回忆推荐引擎
   // ==========================================
   Future<void> _generateDiscoverCards() async {
-    final _photoBox = ObjectBoxService().store.box<PhotoEntity>();
     final now = DateTime.now();
     final List<Map<String, dynamic>> finalCards = [];
     const int maxCards = 2; // 页面最多展示 2 张卡片
 
     // 🥇 规则 1：时间策略（动态感知 年底/月底/往年今日）
-    final timeCard = await _buildTimeRuleCard(isar, now);
+    final timeCard = await _buildTimeRuleCard(now);
     if (timeCard != null) {
       finalCards.add(timeCard);
     }
 
     // 🥈 规则 2：内容画像策略（按照片数量降序）
     if (finalCards.length < maxCards) {
-      final contentCards = await _buildContentRuleCards(isar);
+      final contentCards = await _buildContentRuleCards();
       for (var card in contentCards) {
         if (finalCards.length >= maxCards) break;
         finalCards.add(card);
@@ -123,7 +122,7 @@ class _HomePageState extends State<HomePage> {
     // ==========================================
     // 🥉 规则 3：地点保底策略
     if (finalCards.length < maxCards) {
-      final locationCards = await _buildLocationRuleCards(isar);
+      final locationCards = await _buildLocationRuleCards();
       for (var card in locationCards) {
         if (finalCards.length >= maxCards) break;
         finalCards.add(card);
@@ -157,9 +156,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<Map<String, dynamic>?> _buildTimeRuleCard(
-    dynamic isar,
     DateTime now,
   ) async {
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
     // 1. 年度总结 (12.20 - 1.10)
     if ((now.month == 12 && now.day >= 20) ||
         (now.month == 1 && now.day <= 10)) {
@@ -173,7 +172,7 @@ class _HomePageState extends State<HomePage> {
         59,
         59,
       ).millisecondsSinceEpoch;
-      final _tq = _photoBox.query(
+      final _tq = photoBox.query(
         PhotoEntity_.timestamp.between(start, end)).build();
       final photos = _tq.find();
       _tq.close();
@@ -202,7 +201,7 @@ class _HomePageState extends State<HomePage> {
         59,
         59,
       ).millisecondsSinceEpoch;
-      final _tq = _photoBox.query(
+      final _tq = photoBox.query(
         PhotoEntity_.timestamp.between(start, end)).build();
       final photos = _tq.find();
       _tq.close();
@@ -237,7 +236,7 @@ class _HomePageState extends State<HomePage> {
         59,
         59,
       ).millisecondsSinceEpoch;
-      final _tq = _photoBox.query(
+      final _tq = photoBox.query(
         PhotoEntity_.timestamp.between(start, end)).build();
       final photos = _tq.find();
       _tq.close();
@@ -261,8 +260,9 @@ class _HomePageState extends State<HomePage> {
     return null;
   }
 
-  Future<List<Map<String, dynamic>>> _buildContentRuleCards(dynamic isar) async {
-    final _cq = _photoBox.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
+  Future<List<Map<String, dynamic>>> _buildContentRuleCards() async {
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final _cq = photoBox.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
     _cq.limit = 500;
     final recentPhotos = _cq.find();
     _cq.close();
@@ -365,8 +365,9 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<List<Map<String, dynamic>>> _buildLocationRuleCards(dynamic isar) async {
-    final _lq = _photoBox.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
+  Future<List<Map<String, dynamic>>> _buildLocationRuleCards() async {
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final _lq = photoBox.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
     _lq.limit = 1000;
     final recentPhotos = _lq.find();
     _lq.close();

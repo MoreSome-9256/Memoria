@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/mobileclip_embedding_service.dart';
-import '../../service/photo_service.dart';
 import '../../service/semantic_matching_service.dart';
 import '../../storage/vector_index/photo_embedding_index_repository.dart';
 import '../../utils/ocr_policy.dart';

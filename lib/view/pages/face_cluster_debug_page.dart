@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../../models/entity/face_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/face_cluster_service.dart';
-import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 
 class FaceClusterDebugPage extends StatefulWidget {

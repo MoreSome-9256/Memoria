@@ -5,7 +5,7 @@ class DigitalAlbumBookEntity {
   @Id()
   int id = 0;
 
-  @Index(unique: true, replace: true)
+  @Unique(onConflict: ConflictStrategy.replace)
   late int storyId;
 
   late String title;

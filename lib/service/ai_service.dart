@@ -12,7 +12,6 @@ import '../utils/ai_score_helper.dart';
 import '../utils/tag_sanitizer.dart';
 import 'junk_photo_filter_service.dart';
 import 'face_pipeline_service.dart';
-import 'photo_service.dart';
 import 'event_service.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_embedding_service.dart';
@@ -27,6 +26,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../storage/vector_index/vector_index_constants.dart';
 import '../storage/objectbox/objectbox_service.dart';
+import '../objectbox.g.dart';
 
 part 'ai_service_progress.dart';
 part 'ai_service_input.dart';
@@ -87,7 +87,7 @@ class AIService {
       JunkPhotoFilterService();
   final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
       PhotoEmbeddingIndexRepository();
-  final Set<Id> _junkFilterBypassPhotoIds = <Id>{};
+  final Set<int> _junkFilterBypassPhotoIds = <int>{};
   final ListQueue<_AsyncCaptionTask> _pendingCaptionTasks =
       ListQueue<_AsyncCaptionTask>();
   static final _AnalysisInputConfig _analysisInputConfig =
@@ -462,8 +462,8 @@ class AIService {
     var processedCount = 0;
     var scheduledCount = 0;
     final junkCandidates = <JunkPhotoCleanupCandidate>[];
-    final attemptedPhotoIds = <Id>{};
-    final queuedPhotoIds = <Id>{};
+    final attemptedPhotoIds = <int>{};
+    final queuedPhotoIds = <int>{};
     final queue = ListQueue<PhotoEntity>();
     final recentDurationsMs = ListQueue<int>();
     final pipelineProfiler = _AiPipelineRunProfiler(

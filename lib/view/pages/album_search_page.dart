@@ -9,6 +9,8 @@ import '../../service/story_queue_service.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/path_image.dart';
 import 'story_queue_page.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 enum _SearchSortMode { score, time }
 
@@ -132,9 +134,8 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     });
 
     try {
-      final photos = (await PhotoService().isar.photoEntitys.getAll(ids))
-          .whereType<PhotoEntity>()
-          .toList(growable: false);
+      final photos = ObjectBoxService().store.box<PhotoEntity>()
+          .getMany(ids).whereType<PhotoEntity>().toList(growable: false);
       final reconciled = await PhotoService().reconcileAccessiblePhotos(photos);
       final photoById = <int, PhotoEntity>{
         for (final photo in reconciled) photo.id: photo,

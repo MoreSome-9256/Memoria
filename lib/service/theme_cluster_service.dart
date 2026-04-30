@@ -3,14 +3,14 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:isar/isar.dart';
 
 import '../models/entity/photo_entity.dart';
 import '../models/theme_cluster_models.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/theme_subclustering.dart';
 import 'mobileclip_embedding_service.dart';
-import 'photo_service.dart';
 import 'semantic_matching_service.dart';
 import 'theme_cluster_compute_helpers.dart';
 
@@ -466,12 +466,14 @@ class ThemeClusterService {
     if (_photosLoader != null) {
       return _photosLoader();
     }
-    return PhotoService().isar
-        .collection<PhotoEntity>()
-        .where()
-        .sortByTimestampDesc()
-        .limit(maxPhotosToScan)
-        .findAll();
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final q = photoBox.query()
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    q.limit = maxPhotosToScan;
+    final photos = q.find();
+    q.close();
+    return photos;
   }
 
   ThemeSubclusterer _resolveSubclusterer(ThemeDefinition definition) {
@@ -625,9 +627,8 @@ class ThemeClusterService {
     }
 
     if (updated.isNotEmpty) {
-      await PhotoService().isar.writeTxn(() async {
-        await PhotoService().isar.collection<PhotoEntity>().putAll(updated);
-      });
+      final store = ObjectBoxService().store;
+      store.runInTransaction(TxMode.write, () => store.box<PhotoEntity>().putMany(updated));
     }
 
     debugPrint(

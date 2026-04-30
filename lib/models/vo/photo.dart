@@ -9,9 +9,6 @@ class Photo {
   final String? ocrSummary;
   final List<String> ocrTags;
   final bool isSelected;
-  // ==========================================
-  // 🌟 核心新增：为了智能视频裁切而保留的数据
-  // ==========================================
   final int width;
   final int height;
   final List<dynamic>? faces; // 存放人脸数据 (可以兼容传入 FaceEntity)

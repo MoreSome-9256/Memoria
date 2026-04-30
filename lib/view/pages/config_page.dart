@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
@@ -19,6 +18,8 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:convert';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 // 🌟 新增：视频长宽比枚举
 enum VideoAspectRatio { vertical, horizontal }
@@ -237,7 +238,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
   // 🌟 新增：拣选音乐的方法
   Future<void> _pickMusic() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
+    FilePickerResult? result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['mp3', 'wav', 'aac', 'm4a', 'flac', 'ogg'],
       allowMultiple: false,
@@ -339,7 +340,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
     try {
       // 1. 获取 EventEntity（通过 Event.id 查询）
-      final isar = PhotoService().isar;
+      final store = ObjectBoxService().store;
       EventEntity? eventEntity;
 
       if (widget.event.id == '-1') {
@@ -353,7 +354,7 @@ class _ConfigPageState extends State<ConfigPage> {
       } else {
         // 正常走系统自动聚类的相册逻辑
         final eventEntityId = int.parse(widget.event.id);
-        eventEntity = await isar.collection<EventEntity>().get(eventEntityId);
+        eventEntity = store.box<EventEntity>().get(eventEntityId);
       }
 
       if (eventEntity == null) {

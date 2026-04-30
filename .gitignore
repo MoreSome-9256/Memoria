@@ -48,10 +48,9 @@ app.*.map.json
 CLAUDE.md
 
 # Ignore generated files
-*.g.dart
-*.freezed.dart
-*.config.dart
-!lib/objectbox.g.dart
+**.g.dart
+**.freezed.dart
+**.config.dart
 !lib/objectbox-model.json
 
 # open code

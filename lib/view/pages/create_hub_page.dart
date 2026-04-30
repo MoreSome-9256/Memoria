@@ -13,6 +13,8 @@ import 'album_search_page.dart';
 import 'create_page.dart';
 import 'stories_page.dart';
 import 'story_result_page.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class CreateHubPage extends StatefulWidget {
   const CreateHubPage({super.key});
@@ -192,7 +194,7 @@ class _CreateHubPageState extends State<CreateHubPage>
         .whereType<int>()
         .toSet()
         .toList(growable: false);
-    final covers = (await PhotoService().isar.photoEntitys.getAll(coverIds))
+    final covers = ObjectBoxService().store.box<PhotoEntity>().getMany(coverIds)
         .whereType<PhotoEntity>()
         .toList(growable: false);
     final reconciled = await PhotoService().reconcileAccessiblePhotos(covers);

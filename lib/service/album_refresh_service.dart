@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 
 import 'ai_service.dart';
 import 'event_service.dart';
+import 'media_asset_sync_service.dart';
+import 'media_embedding_index_service.dart';
 import 'photo_service.dart';
 
 enum AlbumRefreshStage { idle, scanning, clustering, queueing, handoff, failed }
@@ -126,6 +128,22 @@ class AlbumRefreshService {
           maxAssets: recentPhotoLimit,
         );
       } else {
+        final mediaSummary = await MediaAssetSyncService().reconcile(
+          pageSize: normalizedChunk == null ? 200 : normalizedChunk.clamp(100, 300),
+        );
+        unawaited(
+          MediaEmbeddingIndexService().encodePending(
+            maxConcurrency: 2,
+            batchSize: normalizedChunk ?? 300,
+            inputSize: 336,
+          ),
+        );
+        debugPrint(
+          '🧭 ObjectBox media reconcile: discovered=${mediaSummary.discovered} '
+          'upsert=${mediaSummary.insertedOrUpdated} removed=${mediaSummary.removed} '
+          'limited=${mediaSummary.limitedAccess}',
+        );
+
         scanSummary = await PhotoService().scanAndSyncPhotosWithOffset(
           maxAssets: normalizedChunk,
           offsetFromNewest: currentOffset,

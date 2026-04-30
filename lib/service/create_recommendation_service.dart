@@ -1,8 +1,10 @@
-import 'package:isar/isar.dart';
+
 
 import '../models/entity/create_recommendation_entity.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/vo/semantic_search_models.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import 'photo_service.dart';
 import 'recommendation_query_template_service.dart';
 import 'semantic_photo_search_service.dart';
@@ -35,13 +37,15 @@ class CreateRecommendationService {
     bool force = false,
     Set<String> excludeRecommendationKeys = const <String>{},
   }) async {
-    final isar = PhotoService().isar;
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
+    final recBox = store.box<CreateRecommendationEntity>();
     final now = DateTime.now();
     final nowMs = now.millisecondsSinceEpoch;
-    final photos = await isar.photoEntitys.where().findAll();
+    final photos = photoBox.getAll();
     final presets = _buildPresets(now, photos);
     final presetKeys = presets.map((item) => item.recommendationKey).toSet();
-    final existing = await isar.createRecommendationEntitys.where().findAll();
+    final existing = recBox.getAll();
     final existingByKey = <String, CreateRecommendationEntity>{
       for (final entity in existing) entity.recommendationKey: entity,
     };
@@ -132,9 +136,7 @@ class CreateRecommendationService {
     }
 
     if (updates.isNotEmpty) {
-      await isar.writeTxn(() async {
-        await isar.createRecommendationEntitys.putAll(updates);
-      });
+      store.runInTransaction(TxMode.write, () => recBox.putMany(updates));
     }
 
     return CreateRecommendationRefreshResult(
@@ -153,32 +155,30 @@ class CreateRecommendationService {
   }
 
   Future<List<CreateRecommendationCardData>> loadActiveRecommendations() async {
-    final isar = PhotoService().isar;
-    final entities = await isar.createRecommendationEntitys
-        .filter()
-        .statusEqualTo(CreateRecommendationStatus.active)
-        .findAll();
+    final store = ObjectBoxService().store;
+    final recBox = store.box<CreateRecommendationEntity>();
+    final photoBox = store.box<PhotoEntity>();
+
+    final q = recBox.query(
+      CreateRecommendationEntity_.status.equals(CreateRecommendationStatus.active),
+    ).build();
+    final entities = q.find();
+    q.close();
 
     entities.sort((left, right) {
       final priority = right.priority.compareTo(left.priority);
-      if (priority != 0) {
-        return priority;
-      }
+      if (priority != 0) return priority;
       return right.updatedAt.compareTo(left.updatedAt);
     });
 
     final trimmed = entities.take(_maxCards).toList(growable: false);
-    if (trimmed.isEmpty) {
-      return const <CreateRecommendationCardData>[];
-    }
+    if (trimmed.isEmpty) return const <CreateRecommendationCardData>[];
 
     final coverIds = trimmed
         .expand((entity) => entity.coverPhotoIds.take(1))
         .toSet()
         .toList(growable: false);
-    final coverPhotos = (await isar.photoEntitys.getAll(coverIds))
-        .whereType<PhotoEntity>()
-        .toList(growable: false);
+    final coverPhotos = photoBox.getMany(coverIds).whereType<PhotoEntity>().toList(growable: false);
     final reconciled = await PhotoService().reconcileAccessiblePhotos(coverPhotos);
     final coverById = <int, PhotoEntity>{
       for (final photo in reconciled) photo.id: photo,
@@ -197,11 +197,10 @@ class CreateRecommendationService {
   }
 
   Future<void> dismissRecommendation(int id) async {
-    final isar = PhotoService().isar;
-    final entity = await isar.createRecommendationEntitys.get(id);
-    if (entity == null) {
-      return;
-    }
+    final store = ObjectBoxService().store;
+    final recBox = store.box<CreateRecommendationEntity>();
+    final entity = recBox.get(id);
+    if (entity == null) return;
 
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     entity
@@ -209,9 +208,7 @@ class CreateRecommendationService {
       ..updatedAt = nowMs
       ..nextCheckAt = nowMs + refreshInterval.inMilliseconds;
 
-    await isar.writeTxn(() async {
-      await isar.createRecommendationEntitys.put(entity);
-    });
+    store.runInTransaction(TxMode.write, () => recBox.put(entity));
   }
 
   List<_ResolvedRecommendationPreset> _buildPresets(

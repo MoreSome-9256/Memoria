@@ -6,7 +6,6 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
-import 'package:isar/isar.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../models/entity/photo_entity.dart';
 import '../utils/ai_score_helper.dart';
@@ -27,6 +26,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../storage/vector_index/vector_index_constants.dart';
+import '../storage/objectbox/objectbox_service.dart';
 
 part 'ai_service_progress.dart';
 part 'ai_service_input.dart';
@@ -309,11 +309,10 @@ class AIService {
 
     await loadAutoResumePreference();
 
-    final pending = await PhotoService().isar
-        .collection<PhotoEntity>()
-        .filter()
-        .isAiAnalyzedEqualTo(false)
-        .count();
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final pendingQ = photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
+    final pending = pendingQ.count();
+    pendingQ.close();
     if (pending <= 0) {
       await AIProgressNotificationService().clearProgressNotificationSurfaces();
       await _persistRuntimeState(isActive: false);
@@ -391,18 +390,22 @@ class AIService {
     _inflightCount = 0;
     _analysisCompleter = Completer<void>();
     clearPendingJunkCleanupReport();
-    final isar = PhotoService().isar;
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
     final mobileClipEmbeddingService = MobileClipEmbeddingService();
     final mobileClipTagService = MobileClipTagService();
     final photoCaptionService = PhotoCaptionService();
     final facePipelineService = FacePipelineService();
     final ocrService = OcrService();
 
-    final pendingCount = await isar
-        .collection<PhotoEntity>()
-        .filter()
-        .isAiAnalyzedEqualTo(false)
-        .count();
+    final pendingCount = () {
+      final q = photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
+      try {
+        return q.count();
+      } finally {
+        q.close();
+      }
+    }();
     final targetTotal = maxPhotos == null
         ? pendingCount
         : math.min(pendingCount, maxPhotos);
@@ -566,13 +569,18 @@ class AIService {
             var fetchedCount = 0;
             final photosToAnalyze = <PhotoEntity>[];
             while (true) {
-              final fetchedCandidates = await isar
-                  .collection<PhotoEntity>()
-                  .filter()
-                  .isAiAnalyzedEqualTo(false)
-                  .sortByTimestampDesc()
-                  .limit(candidateLimit)
-                  .findAll();
+              final fetchedCandidates = () {
+                final q = photoBox
+                    .query(PhotoEntity_.isAiAnalyzed.equals(false))
+                    .order(PhotoEntity_.timestamp, flags: Order.descending)
+                    .build();
+                q.limit = candidateLimit;
+                try {
+                  return q.find();
+                } finally {
+                  q.close();
+                }
+              }();
               fetchedCount = fetchedCandidates.length;
 
               photosToAnalyze
@@ -736,7 +744,6 @@ class AIService {
             try {
               final result = await _processSinglePhoto(
                 photo: photo,
-                isar: isar,
                 selectedBackend: selectedBackend,
                 mobileClipEmbeddingService: mobileClipEmbeddingService,
                 mobileClipTagService: mobileClipTagService,
@@ -832,11 +839,14 @@ class AIService {
       await mobileClipTagService.endWorkflowSession();
       await mobileClipEmbeddingService.endWorkflowSession();
 
-      final remainingPending = await isar
-          .collection<PhotoEntity>()
-          .filter()
-          .isAiAnalyzedEqualTo(false)
-          .count();
+      final remainingPending = () {
+        final q = photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
+        try {
+          return q.count();
+        } finally {
+          q.close();
+        }
+      }();
       if (remainingPending > 0 && !_stopRequested) {
         _progressNotifier.value = AIAnalysisProgress.paused(
           total: remainingPending,
@@ -980,20 +990,19 @@ class AIService {
     }
   }
 
-  Future<void> _updatePhotoCaption(Id photoId, String caption) async {
+  Future<void> _updatePhotoCaption(int photoId, String caption) async {
     final trimmed = caption.trim();
     if (trimmed.isEmpty) {
       return;
     }
 
-    final isar = PhotoService().isar;
-    await isar.writeTxn(() async {
-      final photo = await isar.collection<PhotoEntity>().get(photoId);
-      if (photo == null) {
-        return;
-      }
+    final store = ObjectBoxService().store;
+    final box = store.box<PhotoEntity>();
+    store.runInTransaction(TxMode.write, () {
+      final photo = box.get(photoId);
+      if (photo == null) return;
       photo.aiCaption = trimmed;
-      await isar.collection<PhotoEntity>().put(photo);
+      box.put(photo);
     });
   }
 
@@ -1019,7 +1028,6 @@ class AIService {
 
   Future<_PhotoProcessResult> _processSinglePhoto({
     required PhotoEntity photo,
-    required Isar isar,
     required MobileClipBackend selectedBackend,
     required MobileClipEmbeddingService mobileClipEmbeddingService,
     required MobileClipTagService mobileClipTagService,
@@ -1095,7 +1103,6 @@ class AIService {
             0,
             0.0,
             0.0,
-            isar,
             selectedBackend,
             skipVectorIndexWrite: true,
           );
@@ -1184,7 +1191,6 @@ class AIService {
 
       final facePipelineProfile = await facePipelineService
           .rebuildFacesForPhoto(
-            isar: isar,
             photo: photo,
             imageFile: analysisFile,
             imageBytes: resolvedAnalysisFile.sourceBytes,
@@ -1245,7 +1251,6 @@ class AIService {
         faceCount,
         maxSmileProb,
         joyScore,
-        isar,
         selectedBackend,
         skipVectorIndexWrite: true,
       );
@@ -1417,7 +1422,7 @@ class AIService {
 
   // 将 AI 分析结果写入数据库（增强版）
   Future<_AiPersistenceProfile> _markAsAnalyzed(
-    Id id,
+    int id,
     List<String> tags,
     List<double> imageEmbedding,
     String aiCaption,
@@ -1426,13 +1431,14 @@ class AIService {
     int faceCount,
     double smileProb,
     double joyScore,
-    Isar isar,
     MobileClipBackend selectedBackend, {
     bool skipVectorIndexWrite = false,
   }) async {
     final isarWriteWatch = Stopwatch()..start();
-    await isar.writeTxn(() async {
-      final p = await isar.collection<PhotoEntity>().get(id);
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
+    store.runInTransaction(TxMode.write, () {
+      final p = photoBox.get(id);
       if (p != null) {
         p.aiTags = tags;
         p.isAiAnalyzed = true;
@@ -1443,7 +1449,7 @@ class AIService {
         p.faceCount = faceCount;
         p.smileProb = smileProb;
         p.joyScore = joyScore;
-        await isar.collection<PhotoEntity>().put(p);
+        photoBox.put(p);
       }
     });
     isarWriteWatch.stop();
@@ -1470,17 +1476,12 @@ class AIService {
     );
   }
 
-  // 📊 工具方法：获取 AI 分析进度
   Future<Map<String, int>> getAnalysisProgress() async {
-    final isar = PhotoService().isar;
-
-    final total = await isar.collection<PhotoEntity>().count();
-    final analyzed = await isar
-        .collection<PhotoEntity>()
-        .filter()
-        .isAiAnalyzedEqualTo(true)
-        .count();
-
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final total = photoBox.count();
+    final analyzedQ = photoBox.query(PhotoEntity_.isAiAnalyzed.equals(true)).build();
+    final analyzed = analyzedQ.count();
+    analyzedQ.close();
     return {'total': total, 'analyzed': analyzed, 'pending': total - analyzed};
   }
 }

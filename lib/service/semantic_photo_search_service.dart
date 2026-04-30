@@ -1,12 +1,12 @@
 import 'package:flutter/foundation.dart';
-import 'package:isar/isar.dart';
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/vo/semantic_search_models.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../utils/tag_sanitizer.dart';
 import 'mobileclip_embedding_service.dart';
-import 'photo_service.dart';
 import 'semantic_matching_service.dart';
 import 'semantic_query_parser_service.dart';
 
@@ -220,10 +220,12 @@ class SemanticPhotoSearchService {
   }
 
   Future<List<PhotoEntity>> _loadAllPhotos() async {
-    final photos = await PhotoService().isar.photoEntitys
-        .where()
-        .sortByTimestampDesc()
-        .findAll();
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final q = photoBox.query()
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    final photos = q.find();
+    q.close();
     _cachedLocations = _buildLocationDictionary(photos);
     return photos;
   }

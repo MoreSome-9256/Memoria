@@ -7,6 +7,8 @@ import 'package:photo_album/service/amplify_cognito_config.dart';
 import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_tag_service.dart';
+import 'package:photo_album/service/media_asset_sync_service.dart';
+import 'package:photo_album/service/media_embedding_index_service.dart';
 import 'package:photo_album/service/photo_service.dart';
 import 'package:photo_album/service/ai_progress_notification_service.dart';
 import 'package:photo_album/storage/objectbox/objectbox_service.dart';
@@ -123,6 +125,21 @@ class _AppStartupCoordinator {
         );
       }
       await PhotoService().init();
+      unawaited(
+        Future<void>(() async {
+          try {
+            await MediaAssetSyncService().reconcile();
+            await MediaAssetSyncService().startChangeNotify();
+            await MediaEmbeddingIndexService().encodePending(
+              maxConcurrency: 2,
+              batchSize: 300,
+              inputSize: 336,
+            );
+          } catch (error) {
+            debugPrint('Media asset index warm sync skipped: $error');
+          }
+        }),
+      );
       unawaited(
         Future<void>.delayed(
           const Duration(milliseconds: 800),

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
 import 'dart:ui';
 import '../../service/photo_service.dart';
 import '../../models/entity/photo_entity.dart';
@@ -11,6 +10,8 @@ import '../widgets/path_image.dart';
 import 'create_hub_page.dart';
 import 'event_detail_page.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -48,13 +49,11 @@ class _HomePageState extends State<HomePage> {
   // 📸 Hero Card 轮播逻辑 (保持不变)
   // ==========================================
   Future<void> _loadRecentPhotos() async {
-    final isar = PhotoService().isar;
-
-    var recentCandidates = await isar.photoEntitys
-        .where()
-        .sortByTimestampDesc()
-        .limit(100)
-        .findAll();
+    final _pb = ObjectBoxService().store.box<PhotoEntity>();
+    final _q = _pb.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
+    _q.limit = 100;
+    var recentCandidates = _q.find();
+    _q.close();
 
     var filtered = recentCandidates.where((p) {
       final ratio = p.width / p.height;
@@ -99,7 +98,7 @@ class _HomePageState extends State<HomePage> {
   // 🧠 核心：本地智能回忆推荐引擎
   // ==========================================
   Future<void> _generateDiscoverCards() async {
-    final isar = PhotoService().isar;
+    final _photoBox = ObjectBoxService().store.box<PhotoEntity>();
     final now = DateTime.now();
     final List<Map<String, dynamic>> finalCards = [];
     const int maxCards = 2; // 页面最多展示 2 张卡片
@@ -158,7 +157,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<Map<String, dynamic>?> _buildTimeRuleCard(
-    Isar isar,
+    dynamic isar,
     DateTime now,
   ) async {
     // 1. 年度总结 (12.20 - 1.10)
@@ -174,10 +173,10 @@ class _HomePageState extends State<HomePage> {
         59,
         59,
       ).millisecondsSinceEpoch;
-      final photos = await isar.photoEntitys
-          .filter()
-          .timestampBetween(start, end)
-          .findAll();
+      final _tq = _photoBox.query(
+        PhotoEntity_.timestamp.between(start, end)).build();
+      final photos = _tq.find();
+      _tq.close();
 
       if (photos.length >= 10) {
         return _createCard(
@@ -203,10 +202,10 @@ class _HomePageState extends State<HomePage> {
         59,
         59,
       ).millisecondsSinceEpoch;
-      final photos = await isar.photoEntitys
-          .filter()
-          .timestampBetween(start, end)
-          .findAll();
+      final _tq = _photoBox.query(
+        PhotoEntity_.timestamp.between(start, end)).build();
+      final photos = _tq.find();
+      _tq.close();
 
       if (photos.length >= 8) {
         return _createCard(
@@ -238,10 +237,10 @@ class _HomePageState extends State<HomePage> {
         59,
         59,
       ).millisecondsSinceEpoch;
-      final photos = await isar.photoEntitys
-          .filter()
-          .timestampBetween(start, end)
-          .findAll();
+      final _tq = _photoBox.query(
+        PhotoEntity_.timestamp.between(start, end)).build();
+      final photos = _tq.find();
+      _tq.close();
       if (photos.isNotEmpty) {
         historyPhotos.addAll(photos);
         if (historyYear == now.year) historyYear = now.year - i;
@@ -262,12 +261,11 @@ class _HomePageState extends State<HomePage> {
     return null;
   }
 
-  Future<List<Map<String, dynamic>>> _buildContentRuleCards(Isar isar) async {
-    final recentPhotos = await isar.photoEntitys
-        .where()
-        .sortByTimestampDesc()
-        .limit(500)
-        .findAll();
+  Future<List<Map<String, dynamic>>> _buildContentRuleCards(dynamic isar) async {
+    final _cq = _photoBox.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
+    _cq.limit = 500;
+    final recentPhotos = _cq.find();
+    _cq.close();
     List<PhotoEntity> pets = [], scenery = [], foods = [], happy = [];
 
     for (var p in recentPhotos) {
@@ -367,12 +365,11 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<List<Map<String, dynamic>>> _buildLocationRuleCards(Isar isar) async {
-    final recentPhotos = await isar.photoEntitys
-        .where()
-        .sortByTimestampDesc()
-        .limit(1000)
-        .findAll();
+  Future<List<Map<String, dynamic>>> _buildLocationRuleCards(dynamic isar) async {
+    final _lq = _photoBox.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
+    _lq.limit = 1000;
+    final recentPhotos = _lq.find();
+    _lq.close();
     Map<String, List<PhotoEntity>> locationGroups = {};
     for (var p in recentPhotos) {
       final loc = p.city ?? p.province;

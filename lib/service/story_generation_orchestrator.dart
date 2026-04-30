@@ -3,18 +3,18 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:isar/isar.dart';
 
 import '../models/entity/photo_entity.dart';
 import '../models/entity/story_entity.dart';
 import '../models/vo/photo.dart';
 import '../models/vo/story_generation_models.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 import 'internvl_experiment_service.dart';
 import 'llm_service.dart';
 import 'on_device_internvl_service.dart';
-import 'photo_service.dart';
 
 const String _warmupPngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn9lW8AAAAASUVORK5CYII=';
@@ -467,19 +467,14 @@ class StoryGenerationOrchestrator {
   Future<List<PhotoEntity>> _loadSelectedPhotoEntities(
     StoryGenerationRequest request,
   ) async {
-    final isar = PhotoService().isar;
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
     final selectedAssetIds = request.selectedPhotos
         .map((photo) => photo.id)
         .where((id) => id.trim().isNotEmpty)
         .toList(growable: false);
-    final photos = await isar
-        .collection<PhotoEntity>()
-        .filter()
-        .anyOf(
-          selectedAssetIds,
-          (query, assetId) => query.assetIdEqualTo(assetId),
-        )
-        .findAll();
+    final q = photoBox.query(PhotoEntity_.assetId.oneOf(selectedAssetIds)).build();
+    final photos = q.find();
+    q.close();
 
     final latestPathByAssetId = <String, String>{
       for (final photo in request.selectedPhotos)
@@ -1338,10 +1333,8 @@ ${jsonEncode(photoPayload)}
       ..isHorizontal = request.isHorizontal
       ..targetPlatform = request.targetPlatform;
 
-    final isar = PhotoService().isar;
-    await isar.writeTxn(() async {
-      await isar.collection<StoryEntity>().put(story);
-    });
+    final store = ObjectBoxService().store;
+    store.runInTransaction(TxMode.write, () => store.box<StoryEntity>().put(story));
     return story;
   }
 

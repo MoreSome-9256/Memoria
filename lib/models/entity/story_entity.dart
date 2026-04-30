@@ -1,14 +1,13 @@
-import 'package:isar/isar.dart';
+import 'package:objectbox/objectbox.dart';
 import 'photo_entity.dart';
 import '../vo/photo.dart';
 import '../../utils/ocr_policy.dart';
 
-part 'story_entity.g.dart';
-
 /// 故事实体 - 存储用户生成的故事文章
-@Collection()
+@Entity()
 class StoryEntity {
-  Id id = Isar.autoIncrement;
+  @Id()
+  int id = 0;
 
   // 📝 故事基本信息
   late String title; // 故事主题/标题

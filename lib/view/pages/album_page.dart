@@ -1,12 +1,12 @@
 ﻿import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:collection';
-import 'package:isar/isar.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/event_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/event.dart';
+import '../../objectbox.g.dart';
 import '../../service/ai_service.dart';
 import '../../service/album_refresh_service.dart';
 import '../../service/album_tag_browser_service.dart';
@@ -15,6 +15,7 @@ import '../../service/junk_photo_cleanup_service.dart';
 import '../../service/junk_photo_filter_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_queue_service.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 import '../widgets/event_card.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/junk_photo_cleanup_banner.dart';
@@ -27,13 +28,15 @@ const int _albumTagBrowserPhotoSoftLimit = 1200;
 
 // Keep the tag overview and detail sheet on the same snapshot window so a
 // fireImmediately refresh cannot overwrite a non-empty cluster with a narrower query.
-Future<List<PhotoEntity>> _loadAlbumTagBrowserSourcePhotos() {
-  return PhotoService().isar.photoEntitys
-      .where()
-      .sortByTimestampDesc()
-      .limit(_albumTagBrowserPhotoSoftLimit)
-      .findAll()
-      .then(PhotoService().reconcileAccessiblePhotos);
+Future<List<PhotoEntity>> _loadAlbumTagBrowserSourcePhotos() async {
+  final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+  final q = photoBox.query()
+      .order(PhotoEntity_.timestamp, flags: Order.descending)
+      .build();
+  q.limit = _albumTagBrowserPhotoSoftLimit;
+  final photos = q.find();
+  q.close();
+  return PhotoService().reconcileAccessiblePhotos(photos);
 }
 
 class AlbumPage extends StatefulWidget {
@@ -436,9 +439,7 @@ class _AlbumPageState extends State<AlbumPage> {
 
     _albumTagBrowserStream =
         _debounceStream<void>(
-              PhotoService().isar.collection<PhotoEntity>().watchLazy(
-                fireImmediately: true,
-              ),
+              ObjectBoxService().store.box<PhotoEntity>().query().watch(triggerImmediately: true).map((_) => null),
               const Duration(milliseconds: 700),
             )
             .asyncMap((_) => _loadAllPhotosForTagBrowser())
@@ -1257,12 +1258,14 @@ class _AlbumPageState extends State<AlbumPage> {
     List<EventEntity> eventEntities,
   ) async {
     final grouped = <String, List<Event>>{};
-    final isar = PhotoService().isar;
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    Future<List<PhotoEntity>> loadPhotos(List<int> ids) async =>
+        photoBox.getMany(ids).whereType<PhotoEntity>().toList(growable: false);
 
     // 閫愭潯寮傛杞崲锛岄伩鍏嶅ぇ鎵归噺骞跺彂瀵艰嚧涓荤嚎绋嬬灛鏃跺帇鍔涜繃楂樸€?
     final allEvents = <Event>[];
     for (var i = 0; i < eventEntities.length; i++) {
-      final event = await eventEntities[i].toPreviewModel(isar);
+      final event = await eventEntities[i].toPreviewModel(loadPhotoEntities: loadPhotos);
       allEvents.add(event);
       if (i % 8 == 0) {
         await Future<void>.delayed(Duration.zero);
@@ -1411,9 +1414,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
   void initState() {
     super.initState();
     _photosStream = _debounceStream<void>(
-      PhotoService().isar.collection<PhotoEntity>().watchLazy(
-        fireImmediately: true,
-      ),
+      ObjectBoxService().store.box<PhotoEntity>().query().watch(triggerImmediately: true).map((_) => null),
       const Duration(milliseconds: 650),
     ).asyncMap((_) => _loadCurrentPhotos());
   }

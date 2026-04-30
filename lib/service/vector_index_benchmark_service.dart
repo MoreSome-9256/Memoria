@@ -1,27 +1,22 @@
 import 'dart:math' as math;
 
-import 'package:isar/isar.dart';
-
 import '../models/entity/photo_entity.dart';
+import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import 'mobileclip_embedding_service.dart';
-import 'photo_service.dart';
 
 class VectorIndexStorageBenchmarkService {
   VectorIndexStorageBenchmarkService({
-    PhotoService? photoService,
     ObjectBoxService? objectBoxService,
     PhotoEmbeddingIndexRepository? photoEmbeddingIndexRepository,
     MobileClipEmbeddingService? mobileClipEmbeddingService,
-  }) : _photoService = photoService ?? PhotoService(),
-       _objectBoxService = objectBoxService ?? ObjectBoxService(),
+  }) : _objectBoxService = objectBoxService ?? ObjectBoxService(),
        _photoEmbeddingIndexRepository =
            photoEmbeddingIndexRepository ?? PhotoEmbeddingIndexRepository(),
        _mobileClipEmbeddingService =
            mobileClipEmbeddingService ?? MobileClipEmbeddingService();
 
-  final PhotoService _photoService;
   final ObjectBoxService _objectBoxService;
   final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository;
   final MobileClipEmbeddingService _mobileClipEmbeddingService;
@@ -30,7 +25,6 @@ class VectorIndexStorageBenchmarkService {
     int sampleCount = 200,
     int rounds = 6,
   }) async {
-    await _photoService.init();
     await _objectBoxService.init();
 
     final warnings = <String>[];
@@ -38,13 +32,13 @@ class VectorIndexStorageBenchmarkService {
         .getSelectedModelVersion();
 
     final candidateLimit = math.max(sampleCount * 6, sampleCount);
-    final candidateQuery = _photoService.isar
-        .collection<PhotoEntity>()
-        .where()
-        .sortByTimestampDesc();
-    final candidatePhotos = await candidateQuery
-        .limit(candidateLimit)
-        .findAll();
+    final photoBox = _objectBoxService.store.box<PhotoEntity>();
+    final candidateQ = photoBox.query()
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    candidateQ.limit = candidateLimit;
+    final candidatePhotos = candidateQ.find();
+    candidateQ.close();
 
     final legacyCandidates = candidatePhotos
         .where((photo) => _hasUsableLegacyEmbedding(photo.imageEmbedding))
@@ -79,7 +73,7 @@ class VectorIndexStorageBenchmarkService {
       );
     }
 
-    await _photoService.isar.collection<PhotoEntity>().getAll(benchmarkIds);
+    photoBox.getMany(benchmarkIds);
     _photoEmbeddingIndexRepository.readIndexedEmbeddingsByPhotoIds(
       benchmarkIds,
       modelVersion: activeModelVersion,
@@ -92,11 +86,9 @@ class VectorIndexStorageBenchmarkService {
 
     for (var round = 0; round < rounds; round++) {
       final isarWatch = Stopwatch()..start();
-      final isarPhotos =
-          (await _photoService.isar.collection<PhotoEntity>().getAll(
-            benchmarkIds,
-          )).whereType<PhotoEntity>().toList(growable: false);
-      final isarChecksum = _computePhotoChecksum(isarPhotos);
+      final obPhotos =
+          photoBox.getMany(benchmarkIds).whereType<PhotoEntity>().toList(growable: false);
+      final isarChecksum = _computePhotoChecksum(obPhotos);
       isarWatch.stop();
 
       final objectBoxWatch = Stopwatch()..start();

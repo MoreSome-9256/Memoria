@@ -1,10 +1,9 @@
-import 'package:isar/isar.dart';
+import 'package:objectbox/objectbox.dart';
 
-part 'digital_album_book_entity.g.dart';
-
-@Collection()
+@Entity()
 class DigitalAlbumBookEntity {
-  Id id = Isar.autoIncrement;
+  @Id()
+  int id = 0;
 
   @Index(unique: true, replace: true)
   late int storyId;

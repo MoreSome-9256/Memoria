@@ -1,6 +1,6 @@
 ﻿import 'dart:io';
 
-import 'package:isar/isar.dart';
+import 'package:objectbox/objectbox.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../ai_theme.dart';
@@ -10,11 +10,10 @@ import '../../utils/ocr_policy.dart';
 import '../../utils/tag_sanitizer.dart';
 import '../vo/photo.dart';
 
-part 'event_entity.g.dart';
-
-@Collection()
+@Entity()
 class EventEntity {
-  Id id = Isar.autoIncrement;
+  @Id()
+  int id = 0;
 
   // 事件基本信息
   late String title; // 事件标题，默认为日期（如 "8月15日-8月18日"）
@@ -84,8 +83,10 @@ class EventEntity {
   }
 
   // 转换为 UI 层的 Event 模型
-  Future<Event> toUIModel(Isar isar) async {
-    final photoEntities = await _loadPhotoEntities(isar, photoIds);
+  Future<Event> toUIModel({
+    required Future<List<PhotoEntity>> Function(List<int> ids) loadPhotoEntities,
+  }) async {
+    final photoEntities = await loadPhotoEntities(photoIds);
     final photos = await _mapEntitiesToPhotos(photoEntities, resolvePath: true);
     return _buildEvent(
       photos: photos,
@@ -94,9 +95,11 @@ class EventEntity {
     );
   }
 
-  Future<Event> toPreviewModel(Isar isar) async {
+  Future<Event> toPreviewModel({
+    required Future<List<PhotoEntity>> Function(List<int> ids) loadPhotoEntities,
+  }) async {
     final coverIds = photoIds.take(3).toList(growable: false);
-    final coverEntities = await _loadPhotoEntities(isar, coverIds);
+    final coverEntities = await loadPhotoEntities(coverIds);
     final coverPhotos = await _mapEntitiesToPhotos(
       coverEntities,
       resolvePath: false,
@@ -106,18 +109,6 @@ class EventEntity {
       coverPhotos: coverPhotos,
       photoCountOverride: photoCount > 0 ? photoCount : photoIds.length,
     );
-  }
-
-  Future<List<PhotoEntity>> _loadPhotoEntities(Isar isar, List<int> ids) async {
-    if (ids.isEmpty) {
-      return const <PhotoEntity>[];
-    }
-    return isar
-        .collection<PhotoEntity>()
-        .where()
-        .anyOf(ids, (q, id) => q.idEqualTo(id))
-        .sortByTimestamp()
-        .findAll();
   }
 
   Future<List<Photo>> _mapEntitiesToPhotos(

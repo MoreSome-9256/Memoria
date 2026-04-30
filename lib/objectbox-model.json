@@ -118,10 +118,715 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "3:3706685449652874661",
+      "lastPropertyId": "14:35139977642350748",
+      "name": "MediaAssetEntity",
+      "properties": [
+        {
+          "id": "1:6723634045089132307",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:4781431958805256968",
+          "name": "assetId",
+          "type": 9,
+          "flags": 34848,
+          "indexId": "10:7061928661549383362"
+        },
+        {
+          "id": "3:3531710304455670230",
+          "name": "status",
+          "type": 6,
+          "flags": 8,
+          "indexId": "11:6998698843797223193"
+        },
+        {
+          "id": "4:2576814999952975561",
+          "name": "width",
+          "type": 6
+        },
+        {
+          "id": "5:3362105321552974083",
+          "name": "height",
+          "type": 6
+        },
+        {
+          "id": "6:948934701514226272",
+          "name": "createTimeMs",
+          "type": 6,
+          "flags": 8,
+          "indexId": "12:8100244403719913586"
+        },
+        {
+          "id": "7:3343841699836769170",
+          "name": "modifiedTimeMs",
+          "type": 6
+        },
+        {
+          "id": "8:5056006668954573792",
+          "name": "durationMs",
+          "type": 6
+        },
+        {
+          "id": "9:7841302066166796728",
+          "name": "subtype",
+          "type": 6
+        },
+        {
+          "id": "10:1217438387521924669",
+          "name": "contentHash",
+          "type": 9
+        },
+        {
+          "id": "11:4356943265814068379",
+          "name": "modelVersion",
+          "type": 9,
+          "flags": 2048,
+          "indexId": "13:2658585446303106614"
+        },
+        {
+          "id": "12:4355283222130900811",
+          "name": "embeddingUpdatedAtMs",
+          "type": 6
+        },
+        {
+          "id": "13:2595015486792734704",
+          "name": "errorMessage",
+          "type": 9
+        },
+        {
+          "id": "14:35139977642350748",
+          "name": "embedding",
+          "type": 28,
+          "flags": 8,
+          "indexId": "14:8217548525443029473"
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "4:6631215468714728593",
+      "lastPropertyId": "19:1272920529961893533",
+      "name": "CreateRecommendationEntity",
+      "properties": [
+        {
+          "id": "1:6110990432128941041",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:3452579491103672132",
+          "name": "recommendationKey",
+          "type": 9,
+          "flags": 2048,
+          "indexId": "15:8594432814669500454"
+        },
+        {
+          "id": "3:4092813151609697220",
+          "name": "presetId",
+          "type": 9,
+          "flags": 2048,
+          "indexId": "16:3288454763747309232"
+        },
+        {
+          "id": "4:7696596219499534556",
+          "name": "group",
+          "type": 9
+        },
+        {
+          "id": "5:5067888291600189399",
+          "name": "label",
+          "type": 9
+        },
+        {
+          "id": "6:4368225791145024304",
+          "name": "title",
+          "type": 9
+        },
+        {
+          "id": "7:6101446256718518029",
+          "name": "subtitle",
+          "type": 9
+        },
+        {
+          "id": "8:7304201992343209552",
+          "name": "query",
+          "type": 9
+        },
+        {
+          "id": "9:9148006286756477745",
+          "name": "photoIds",
+          "type": 27
+        },
+        {
+          "id": "10:8203635277938598362",
+          "name": "coverPhotoIds",
+          "type": 27
+        },
+        {
+          "id": "11:4311184649648069750",
+          "name": "matchedCount",
+          "type": 6
+        },
+        {
+          "id": "12:4450840330685782172",
+          "name": "priority",
+          "type": 6
+        },
+        {
+          "id": "13:4799748757857110891",
+          "name": "createdAt",
+          "type": 6
+        },
+        {
+          "id": "14:5591376488410002229",
+          "name": "updatedAt",
+          "type": 6
+        },
+        {
+          "id": "15:7883195091063747124",
+          "name": "lastCheckedAt",
+          "type": 6
+        },
+        {
+          "id": "16:8160637988640247163",
+          "name": "lastRecommendedAt",
+          "type": 6
+        },
+        {
+          "id": "17:8447352626102400191",
+          "name": "nextCheckAt",
+          "type": 6
+        },
+        {
+          "id": "18:2424340669176915702",
+          "name": "status",
+          "type": 9,
+          "flags": 2048,
+          "indexId": "17:5495228715567788037"
+        },
+        {
+          "id": "19:1272920529961893533",
+          "name": "resultFingerprint",
+          "type": 9
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "5:128441826552307992",
+      "lastPropertyId": "12:8442182548902413472",
+      "name": "DigitalAlbumBookEntity",
+      "properties": [
+        {
+          "id": "1:8737211843640785820",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:2854930670885265689",
+          "name": "storyId",
+          "type": 6,
+          "flags": 8,
+          "indexId": "18:1193218995668502262"
+        },
+        {
+          "id": "3:3081993589849959210",
+          "name": "title",
+          "type": 9
+        },
+        {
+          "id": "4:7425829437988421113",
+          "name": "subtitle",
+          "type": 9
+        },
+        {
+          "id": "5:3906872136130335560",
+          "name": "theme",
+          "type": 9
+        },
+        {
+          "id": "6:1725746111060699326",
+          "name": "pageWidth",
+          "type": 8
+        },
+        {
+          "id": "7:669451058064791229",
+          "name": "pageHeight",
+          "type": 8
+        },
+        {
+          "id": "8:4231724711932256703",
+          "name": "spreadCount",
+          "type": 6
+        },
+        {
+          "id": "9:8455502471268438979",
+          "name": "layoutSource",
+          "type": 9
+        },
+        {
+          "id": "10:8559717923029469263",
+          "name": "contentJson",
+          "type": 9
+        },
+        {
+          "id": "11:4734418014720061385",
+          "name": "createdAt",
+          "type": 6
+        },
+        {
+          "id": "12:8442182548902413472",
+          "name": "updatedAt",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "6:3926337819421343438",
+      "lastPropertyId": "19:6313840889632033066",
+      "name": "EventEntity",
+      "properties": [
+        {
+          "id": "1:8871351537616994550",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:822233894775010537",
+          "name": "title",
+          "type": 9
+        },
+        {
+          "id": "3:9129793704349747830",
+          "name": "startTime",
+          "type": 6
+        },
+        {
+          "id": "4:6829979710249293239",
+          "name": "endTime",
+          "type": 6
+        },
+        {
+          "id": "5:8537098862600537228",
+          "name": "avgLatitude",
+          "type": 8
+        },
+        {
+          "id": "6:535941467110940264",
+          "name": "avgLongitude",
+          "type": 8
+        },
+        {
+          "id": "7:7721853646780256243",
+          "name": "city",
+          "type": 9
+        },
+        {
+          "id": "8:291788654664688104",
+          "name": "province",
+          "type": 9
+        },
+        {
+          "id": "9:1407472110807071837",
+          "name": "district",
+          "type": 9
+        },
+        {
+          "id": "10:468048676327968686",
+          "name": "locationName",
+          "type": 9
+        },
+        {
+          "id": "11:4950080236907131844",
+          "name": "formattedAddress",
+          "type": 9
+        },
+        {
+          "id": "12:4853632464867974713",
+          "name": "photoIds",
+          "type": 27
+        },
+        {
+          "id": "13:514693883577505562",
+          "name": "coverPhotoId",
+          "type": 6
+        },
+        {
+          "id": "14:2919682554633082524",
+          "name": "tags",
+          "type": 30
+        },
+        {
+          "id": "15:3069742163500191306",
+          "name": "photoCount",
+          "type": 6
+        },
+        {
+          "id": "16:6986305379221653513",
+          "name": "joyScore",
+          "type": 8
+        },
+        {
+          "id": "17:5635202819530130171",
+          "name": "aiThemes",
+          "type": 30
+        },
+        {
+          "id": "18:3526096329326959828",
+          "name": "isLlmGenerated",
+          "type": 1
+        },
+        {
+          "id": "19:6313840889632033066",
+          "name": "analyzedPhotoCount",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "7:3339457610811574795",
+      "lastPropertyId": "21:8921465637920455968",
+      "name": "FaceEntity",
+      "properties": [
+        {
+          "id": "1:7776236899442712071",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:7131303606616938841",
+          "name": "photoId",
+          "type": 6,
+          "flags": 8,
+          "indexId": "19:141842966962215639"
+        },
+        {
+          "id": "3:1845507237152489740",
+          "name": "assetId",
+          "type": 9,
+          "flags": 2048,
+          "indexId": "20:8301874375029988909"
+        },
+        {
+          "id": "4:2444292589733532004",
+          "name": "faceIndex",
+          "type": 6
+        },
+        {
+          "id": "5:7045804588886637475",
+          "name": "left",
+          "type": 8
+        },
+        {
+          "id": "6:8201759121342649277",
+          "name": "top",
+          "type": 8
+        },
+        {
+          "id": "7:1364170857005444352",
+          "name": "right",
+          "type": 8
+        },
+        {
+          "id": "8:2056997771814153632",
+          "name": "bottom",
+          "type": 8
+        },
+        {
+          "id": "9:448491205545806684",
+          "name": "roll",
+          "type": 8
+        },
+        {
+          "id": "10:3440615949674866604",
+          "name": "yaw",
+          "type": 8
+        },
+        {
+          "id": "11:290619765390624309",
+          "name": "smilingProbability",
+          "type": 8
+        },
+        {
+          "id": "12:8557685869996534108",
+          "name": "leftEyeOpenProbability",
+          "type": 8
+        },
+        {
+          "id": "13:6461544384345056337",
+          "name": "rightEyeOpenProbability",
+          "type": 8
+        },
+        {
+          "id": "14:1893597081891421629",
+          "name": "debugCropPath",
+          "type": 9
+        },
+        {
+          "id": "15:6053554261379970698",
+          "name": "embedding",
+          "type": 29
+        },
+        {
+          "id": "16:255291117573236882",
+          "name": "embeddingModelVersion",
+          "type": 9
+        },
+        {
+          "id": "17:4057586332052547336",
+          "name": "qualityScore",
+          "type": 8
+        },
+        {
+          "id": "18:6047981156118786463",
+          "name": "clusterId",
+          "type": 6,
+          "flags": 8,
+          "indexId": "21:8378632429911101766"
+        },
+        {
+          "id": "19:8293386477103860842",
+          "name": "isPrimaryFace",
+          "type": 1
+        },
+        {
+          "id": "20:1100219698640993232",
+          "name": "createdAt",
+          "type": 6
+        },
+        {
+          "id": "21:8921465637920455968",
+          "name": "updatedAt",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "8:8597624262250363654",
+      "lastPropertyId": "25:2523304659420016161",
+      "name": "PhotoEntity",
+      "properties": [
+        {
+          "id": "1:3076457560713973584",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:1609715510270330476",
+          "name": "assetId",
+          "type": 9,
+          "flags": 2048,
+          "indexId": "22:1781012535905654001"
+        },
+        {
+          "id": "3:2232375867588271532",
+          "name": "path",
+          "type": 9
+        },
+        {
+          "id": "4:8839707266003132640",
+          "name": "timestamp",
+          "type": 6
+        },
+        {
+          "id": "5:5071279312886053083",
+          "name": "width",
+          "type": 6
+        },
+        {
+          "id": "6:8061469740558880136",
+          "name": "height",
+          "type": 6
+        },
+        {
+          "id": "7:8770471069324031269",
+          "name": "latitude",
+          "type": 8
+        },
+        {
+          "id": "8:4670590233167497352",
+          "name": "longitude",
+          "type": 8
+        },
+        {
+          "id": "9:7084540059340995884",
+          "name": "province",
+          "type": 9,
+          "flags": 2048,
+          "indexId": "23:6652619865406493950"
+        },
+        {
+          "id": "10:2411083182601246587",
+          "name": "city",
+          "type": 9,
+          "flags": 2048,
+          "indexId": "24:6164127907857215831"
+        },
+        {
+          "id": "11:6738160506724768430",
+          "name": "district",
+          "type": 9
+        },
+        {
+          "id": "12:3408794665271959396",
+          "name": "locationName",
+          "type": 9
+        },
+        {
+          "id": "13:2992636217807983314",
+          "name": "formattedAddress",
+          "type": 9
+        },
+        {
+          "id": "14:974637116546315242",
+          "name": "adcode",
+          "type": 9
+        },
+        {
+          "id": "15:1633660929943653901",
+          "name": "isLocationProcessed",
+          "type": 1
+        },
+        {
+          "id": "16:5657545613158985579",
+          "name": "aiTags",
+          "type": 30
+        },
+        {
+          "id": "17:7210162465475152848",
+          "name": "isAiAnalyzed",
+          "type": 1
+        },
+        {
+          "id": "18:6609499047369451321",
+          "name": "aiCaption",
+          "type": 9
+        },
+        {
+          "id": "19:4084377876437935359",
+          "name": "imageEmbedding",
+          "type": 29
+        },
+        {
+          "id": "20:962431409346480570",
+          "name": "ocrText",
+          "type": 9
+        },
+        {
+          "id": "21:2721484133566894565",
+          "name": "ocrTags",
+          "type": 30
+        },
+        {
+          "id": "22:7271014871182816021",
+          "name": "faceCount",
+          "type": 6
+        },
+        {
+          "id": "23:4511687326635043919",
+          "name": "smileProb",
+          "type": 8
+        },
+        {
+          "id": "24:6428585887325972403",
+          "name": "joyScore",
+          "type": 8
+        },
+        {
+          "id": "25:2523304659420016161",
+          "name": "eventId",
+          "type": 6,
+          "flags": 8,
+          "indexId": "25:4477625239667923326"
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "9:1998729358182538669",
+      "lastPropertyId": "12:1514215392286596427",
+      "name": "StoryEntity",
+      "properties": [
+        {
+          "id": "1:7644336574004328075",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:6889058360260629718",
+          "name": "title",
+          "type": 9
+        },
+        {
+          "id": "3:4326161548329055360",
+          "name": "subtitle",
+          "type": 9
+        },
+        {
+          "id": "4:8465443514937530671",
+          "name": "content",
+          "type": 9
+        },
+        {
+          "id": "5:4954696596947524044",
+          "name": "createdAt",
+          "type": 6
+        },
+        {
+          "id": "6:6161947646806929454",
+          "name": "updatedAt",
+          "type": 6
+        },
+        {
+          "id": "7:7215074744161046604",
+          "name": "isHorizontal",
+          "type": 1
+        },
+        {
+          "id": "8:8614247265968657218",
+          "name": "targetPlatform",
+          "type": 9
+        },
+        {
+          "id": "9:8720485849283863613",
+          "name": "eventId",
+          "type": 6
+        },
+        {
+          "id": "10:1053423065816094911",
+          "name": "photoIds",
+          "type": 27
+        },
+        {
+          "id": "11:4540083781270415707",
+          "name": "photoCount",
+          "type": 6
+        },
+        {
+          "id": "12:1514215392286596427",
+          "name": "isLlmGenerated",
+          "type": 1
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "2:8545569770623572711",
-  "lastIndexId": "9:513319743638822687",
+  "lastEntityId": "9:1998729358182538669",
+  "lastIndexId": "25:4477625239667923326",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

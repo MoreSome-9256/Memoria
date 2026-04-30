@@ -28,7 +28,8 @@ import '../../service/photo_service.dart';
 import '../widgets/path_image.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
 import '../../models/entity/face_entity.dart';
-import 'package:isar/isar.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class StoryVideoPage extends StatefulWidget {
   final String title;
@@ -193,16 +194,15 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   Future<void> _loadFaceDataAsync() async {
     try {
       // 拿到本地数据库实例
-      final isar = PhotoService().isar;
+      final _faceBox = ObjectBoxService().store.box<FaceEntity>();
 
       for (int i = 0; i < _localSections.length; i++) {
         final photo = _localSections[i].photo;
 
         // 🚀 极速查询：根据 assetId 去 FaceEntity 表里捞出这张照片对应的所有人脸
-        final faces = await isar.faceEntitys
-            .filter()
-            .assetIdEqualTo(photo.id)
-            .findAll();
+        final _fq = _faceBox.query(FaceEntity_.assetId.equals(photo.id)).build();
+        final faces = _fq.find();
+        _fq.close();
 
         if (faces.isNotEmpty && mounted) {
           setState(() {

@@ -13,6 +13,8 @@ import '../../utils/ocr_policy.dart';
 import '../widgets/path_image.dart';
 import 'digital_album_book_page.dart';
 import 'story_video_page.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class StoryResultPage extends StatefulWidget {
   const StoryResultPage({
@@ -300,8 +302,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
     });
 
     try {
-      final isar = PhotoService().isar;
-      final story = await isar.collection<StoryEntity>().get(widget.storyEntityId!);
+      final story = ObjectBoxService().store.box<StoryEntity>().get(widget.storyEntityId!);
       if (story == null) {
         throw StateError('Story not found');
       }

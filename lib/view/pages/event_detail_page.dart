@@ -1,7 +1,6 @@
 ﻿import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../models/event.dart';
@@ -15,6 +14,8 @@ import '../widgets/deferred_path_image.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/path_image.dart';
 import 'story_queue_page.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 enum _EventSelectionMenuAction { selectAll, clear, cancel }
 enum _EventActionMode { none, story, delete }
@@ -74,12 +75,11 @@ class _EventDetailPageState extends State<EventDetailPage> {
       return;
     }
 
-    final entities = await PhotoService().isar
-        .collection<PhotoEntity>()
-        .filter()
-        .eventIdEqualTo(eventId)
-        .sortByTimestamp()
-        .findAll();
+    final _pb = ObjectBoxService().store.box<PhotoEntity>();
+    final _q = _pb.query(PhotoEntity_.eventId.equals(eventId))
+        .order(PhotoEntity_.timestamp).build();
+    final entities = _q.find();
+    _q.close();
 
     final hydrated = <Photo>[];
     for (final entity in entities) {
@@ -395,14 +395,10 @@ class _EventDetailPageState extends State<EventDetailPage> {
     }
 
     final selectedAssetIds = _selectedPhotoIds.toList(growable: false);
-    final entities = await PhotoService().isar
-        .collection<PhotoEntity>()
-        .filter()
-        .anyOf(
-          selectedAssetIds,
-          (query, assetId) => query.assetIdEqualTo(assetId),
-        )
-        .findAll();
+    final _pb2 = ObjectBoxService().store.box<PhotoEntity>();
+    final _q2 = _pb2.query(PhotoEntity_.assetId.oneOf(selectedAssetIds)).build();
+    final entities = _q2.find();
+    _q2.close();
 
     var removedCount = 0;
     for (final entity in entities) {

@@ -3,7 +3,6 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/mobileclip_embedding_service.dart';
@@ -17,6 +16,8 @@ import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import '../widgets/path_image.dart';
 import 'config_page.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class CreatePage extends StatefulWidget {
   const CreatePage({super.key});
@@ -109,12 +110,11 @@ class _CreatePageState extends State<CreatePage> {
       return _cachedAnalyzedPhotos!;
     }
 
-    final photos = await PhotoService().isar
-        .collection<PhotoEntity>()
-        .filter()
-        .isAiAnalyzedEqualTo(true)
-        .sortByTimestampDesc()
-        .findAll();
+    final _pb = ObjectBoxService().store.box<PhotoEntity>();
+    final _q = _pb.query(PhotoEntity_.isAiAnalyzed.equals(true))
+        .order(PhotoEntity_.timestamp, flags: Order.descending).build();
+    final photos = _q.find();
+    _q.close();
 
     _cachedAnalyzedPhotos = photos;
     _cachedLocations = _buildLocationDictionary(photos);

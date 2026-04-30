@@ -56,6 +56,7 @@ class _ConfigPageState extends State<ConfigPage> {
   VideoAspectRatio _selectedAspectRatio = VideoAspectRatio.vertical;
   PublishingPlatform _selectedPlatform = PublishingPlatform.xiaohongshu;
   StoryGenerationMode _selectedStoryMode = StoryGenerationMode.deepseekTags;
+  String? _selectedStoryTemplateId;
   // 🌟 新增：音乐相关状态
   MusicSource _selectedMusicSource = MusicSource.aiGenerated;
   String? _customMusicPath;
@@ -311,6 +312,7 @@ class _ConfigPageState extends State<ConfigPage> {
             manualCaptionsText: _manualCaptionsController.text.trim(),
             semanticSearchQuery: widget.semanticSearchQuery?.trim(),
             preserveSelectionOrder: widget.preservePhotoOrder,
+            storyTemplateId: _selectedStoryTemplateId,
           ),
         ),
       ),
@@ -592,10 +594,12 @@ Sandal Leap
             builder: (context) => StoryResultPage.fromStoryEntity(
               storyEntity: story,
               photos: photoEntities,
+              storyTemplateId: _selectedStoryTemplateId,
               customMusicPath: _customMusicPath,
               // 🌟 新增：把刚才拿到的云端节拍数据一起传过去！
               dynamicBeatData: dynamicBeatData,
-              captions: finalCaptions,
+              videoCaptions: finalCaptions,
+              photoOverrides: widget.selectedPhotos,
               isHorizontal: _selectedAspectRatio == VideoAspectRatio.horizontal,
               targetPlatform: platformName,
             ),
@@ -847,6 +851,8 @@ Sandal Leap
           const Divider(height: 48),
           _buildStoryModeSection(),
           const SizedBox(height: 24),
+          _buildStoryTemplateSection(),
+          const SizedBox(height: 24),
 
           // 🌟 AI 台词生成开关
           SwitchListTile(
@@ -1036,14 +1042,16 @@ Sandal Leap
         ),
         const SizedBox(height: 8),
         Text(
-          '默认使用 DeepSeek 根据标签、时间和地点生成；如果想更贴近画面细节，可以切换到本地 VLM 模式。',
+          '默认使用 DeepSeek 根据标签、时间和地点生成；如果想让画面理解更贴近图片细节，可以先用本地 VLM 补充视觉描述，再交给 DeepSeek 串成故事。',
           style: Theme.of(
             context,
           ).textTheme.bodySmall?.copyWith(color: Colors.grey[600], height: 1.4),
         ),
         const SizedBox(height: 12),
         Column(
-          children: StoryGenerationMode.values.map((mode) {
+          children: StoryGenerationMode.values
+              .where((mode) => mode != StoryGenerationMode.localDirectVlm)
+              .map((mode) {
             final selected = _selectedStoryMode == mode;
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
@@ -1111,6 +1119,151 @@ Sandal Leap
             );
           }).toList(growable: false),
         ),
+      ],
+    );
+  }
+  Widget _buildStoryTemplateSection() {
+    final selectedTemplate = storyPromptTemplateById(_selectedStoryTemplateId);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '文案模板（可选）',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '只影响 DeepSeek 生成故事时的写法与风格，不影响本地 VLM 打 caption。你可以不选，也可以从某一类模板里选一个。',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: Colors.grey[600], height: 1.4),
+        ),
+        const SizedBox(height: 12),
+        if (selectedTemplate != null) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Theme.of(context)
+                  .colorScheme
+                  .primaryContainer
+                  .withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${selectedTemplate.category.title} · ${selectedTemplate.title}',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  selectedTemplate.preview,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[700],
+                        height: 1.45,
+                      ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _selectedStoryTemplateId == null
+                ? null
+                : () {
+                    setState(() {
+                      _selectedStoryTemplateId = null;
+                    });
+                  },
+            icon: const Icon(Icons.layers_clear_rounded),
+            label: const Text('不使用模板'),
+          ),
+        ),
+        const SizedBox(height: 4),
+        ...StoryTemplateCategory.values.map((category) {
+          final templates = storyPromptTemplatesForCategory(category);
+          final isExpanded = templates.any(
+            (template) => template.id == _selectedStoryTemplateId,
+          );
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+            ),
+            child: Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                key: PageStorageKey<String>('story-template-${category.name}'),
+                initiallyExpanded: isExpanded,
+                tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                title: Text(
+                  category.title,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                subtitle: Text(
+                  category.subtitle,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[600],
+                        height: 1.35,
+                      ),
+                ),
+                children: templates.map((template) {
+                  final selected = template.id == _selectedStoryTemplateId;
+                  return ListTile(
+                    onTap: () {
+                      setState(() {
+                        _selectedStoryTemplateId = template.id;
+                      });
+                    },
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    leading: Icon(
+                      selected
+                          ? Icons.radio_button_checked_rounded
+                          : Icons.radio_button_off_rounded,
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.grey[500],
+                    ),
+                    title: Text(
+                      template.title,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    subtitle: Text(
+                      template.preview,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.grey[700],
+                            height: 1.45,
+                          ),
+                    ),
+                  );
+                }).toList(growable: false),
+              ),
+            ),
+          );
+        }),
       ],
     );
   }

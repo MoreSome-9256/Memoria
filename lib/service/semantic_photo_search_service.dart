@@ -50,15 +50,36 @@ class SemanticPhotoSearchService {
 
   Future<SemanticSearchResult> search(String rawQuery) async {
     final allPhotos = await _loadAllPhotos();
+    final query = await _queryParser.parseQuery(
+      rawQuery,
+      locationDictionary: _cachedLocations ?? const <String>{},
+    );
+    return _searchParsedQuery(
+      rawQuery: rawQuery,
+      query: query,
+      allPhotos: allPhotos,
+    );
+  }
+
+  Future<SemanticSearchResult> searchWithQuery(SemanticSearchQuery query) async {
+    final allPhotos = await _loadAllPhotos();
+    return _searchParsedQuery(
+      rawQuery: query.rawQuery,
+      query: query,
+      allPhotos: allPhotos,
+    );
+  }
+
+  Future<SemanticSearchResult> _searchParsedQuery({
+    required String rawQuery,
+    required SemanticSearchQuery query,
+    required List<PhotoEntity> allPhotos,
+  }) async {
     final photos = allPhotos
         .where((photo) => photo.isAiAnalyzed)
         .toList(growable: false);
     final activeModelVersion = await _mobileClipEmbeddingService
         .getSelectedModelVersion();
-    final query = await _queryParser.parseQuery(
-      rawQuery,
-      locationDictionary: _cachedLocations ?? const <String>{},
-    );
 
     if (rawQuery.trim().isEmpty || allPhotos.isEmpty) {
       return _emptyResult(query, photos.length);

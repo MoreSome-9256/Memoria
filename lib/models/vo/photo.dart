@@ -5,6 +5,7 @@ class Photo {
   final DateTime dateTaken;
   final List<String> tags;
   final String? caption;
+  final String? vlmCaption;
   final String? ocrSummary;
   final List<String> ocrTags;
   final bool isSelected;
@@ -22,6 +23,7 @@ class Photo {
     required this.dateTaken,
     this.tags = const [],
     this.caption,
+    this.vlmCaption = '',
     this.ocrSummary,
     this.ocrTags = const [],
     this.isSelected = false,
@@ -38,6 +40,7 @@ class Photo {
     DateTime? dateTaken,
     List<String>? tags,
     String? caption,
+    String? vlmCaption,
     String? ocrSummary,
     List<String>? ocrTags,
     bool? isSelected,
@@ -52,6 +55,7 @@ class Photo {
       dateTaken: dateTaken ?? this.dateTaken,
       tags: tags ?? this.tags,
       caption: caption ?? this.caption,
+      vlmCaption: vlmCaption ?? this.vlmCaption,
       ocrSummary: ocrSummary ?? this.ocrSummary,
       ocrTags: ocrTags ?? this.ocrTags,
       isSelected: isSelected ?? this.isSelected,

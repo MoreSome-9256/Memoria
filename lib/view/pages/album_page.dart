@@ -150,6 +150,11 @@ class _AlbumPageState extends State<AlbumPage> {
               return;
             }
             final scanSummary = result.scanSummary;
+            final scannedCount = scanSummary.scannedCount;
+            final insertedCount = scanSummary.insertedCount;
+            final nonInsertedCount = scannedCount > insertedCount
+                ? (scannedCount - insertedCount)
+                : 0;
             final handoffText = result.aiAlreadyRunning
                 ? '后台 AI 已在运行，新照片已并入当前队列。'
                 : 'AI 已转入后台继续打标。';
@@ -160,7 +165,9 @@ class _AlbumPageState extends State<AlbumPage> {
                 : result.requeuedCount > 0
                 ? result.recentPhotoLimit == null
                       ? '相册已更新，并将 ${result.requeuedCount} 张旧照片重新加入中文打标队列。'
-                      : '已刷新下一批 ${result.recentPhotoLimit} 张照片，并将新增的 ${result.requeuedCount} 张加入中文打标队列。'
+                      : nonInsertedCount > 0
+                      ? '已扫描下一批 ${result.recentPhotoLimit} 张照片，实际新增入库 $insertedCount 张，并将其中 ${result.requeuedCount} 张加入中文打标队列；其余 $nonInsertedCount 张未入库。'
+                      : '已扫描下一批 ${result.recentPhotoLimit} 张照片，并将新增入库的 ${result.requeuedCount} 张加入中文打标队列。'
                 : result.recentPhotoLimit == null
                 ? '相册已更新。$handoffText'
                 : '下一批 ${result.recentPhotoLimit} 张照片已刷新。$handoffText';
@@ -227,7 +234,7 @@ class _AlbumPageState extends State<AlbumPage> {
         return AlertDialog(
           title: const Text('清空本地缓存'),
           content: const Text(
-            '将只清空本 app 的 Isar 本地缓存（照片、事件、故事、已扫描结果），'
+            '将清空本 app 的本地数据库缓存（Isar + ObjectBox，包括照片、事件、故事、已扫描结果与向量索引），'
             '不会删除或修改手机系统相册中的任何图片。是否继续？',
           ),
           actions: [
@@ -251,6 +258,7 @@ class _AlbumPageState extends State<AlbumPage> {
     setState(() => _isClearingCache = true);
     try {
       await AIService().stopAnalysisAndWait();
+      AlbumRefreshService().resetScanOffsets();
       await PhotoService().clearAllCachedData();
       AIService().clearPendingJunkCleanupReport();
       _lastPromptedJunkCleanupReportId = null;
@@ -380,26 +388,17 @@ class _AlbumPageState extends State<AlbumPage> {
           remainingCandidates.map((candidate) => candidate.photoId),
         );
       }
-      final retriedCount = remainingCandidates.isEmpty
-          ? 0
-          : await PhotoService().requeuePhotosForAiByIds(
-              remainingCandidates.map((candidate) => candidate.photoId),
-            );
-      if (retriedCount > 0 && !AIService().isAnalyzing) {
-        unawaited(
-          AIService().analyzePhotosInBackground(maxPhotos: retriedCount),
-        );
-      }
       if (!mounted) {
         return;
       }
       AIService().clearPendingJunkCleanupReport();
+      final keptCount = remainingCandidates.length;
       final message = removedCount <= 0
-          ? retriedCount > 0
-                ? '未删除本地记录，已将 $retriedCount 张候选重新加入正常打标队列。'
+          ? keptCount > 0
+                ? '未删除本地记录，已保留 $keptCount 张低质量候选，不会自动重新打标。'
                 : '没有删除任何本地数据库记录。'
-          : retriedCount > 0
-          ? '已删除 $removedCount 张低质量图片记录，其余 $retriedCount 张已重新尝试正常打标。'
+          : keptCount > 0
+          ? '已删除 $removedCount 张低质量图片记录，并保留其余 $keptCount 张候选，不会自动重新打标。'
           : '已从本地数据库删除 $removedCount 张低质量图片记录，系统相册原图未受影响。';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(behavior: SnackBarBehavior.floating, content: Text(message)),
@@ -418,26 +417,7 @@ class _AlbumPageState extends State<AlbumPage> {
   }
 
   void _dismissJunkCleanupBanner() {
-    final report = AIService().latestJunkCleanupReport;
     AIService().clearPendingJunkCleanupReport();
-    if (report == null || report.candidates.isEmpty) {
-      return;
-    }
-    unawaited(_requeueRemainingJunkCandidates(report.candidates));
-  }
-
-  Future<void> _requeueRemainingJunkCandidates(
-    List<JunkPhotoCleanupCandidate> candidates,
-  ) async {
-    AIService().markJunkCandidatesAsKept(
-      candidates.map((candidate) => candidate.photoId),
-    );
-    final retriedCount = await PhotoService().requeuePhotosForAiByIds(
-      candidates.map((candidate) => candidate.photoId),
-    );
-    if (retriedCount > 0 && !AIService().isAnalyzing) {
-      unawaited(AIService().analyzePhotosInBackground(maxPhotos: retriedCount));
-    }
   }
 
   @override
@@ -477,7 +457,7 @@ class _AlbumPageState extends State<AlbumPage> {
       if (photo.isAiAnalyzed) {
         analyzedPhotoCount += 1;
       }
-      if (_albumTagBrowserService.hasClassifiableTag(photo)) {
+      if (_albumTagBrowserService.hasBrowsableCategory(photo)) {
         taggedPhotos.add(photo);
       }
 
@@ -715,27 +695,40 @@ class _AlbumPageState extends State<AlbumPage> {
                   },
                 ),
               ),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 250),
-                child: progress.isVisible
-                    ? _buildAnalysisProgressBanner(progress)
-                    : const SizedBox.shrink(),
-              ),
-              ValueListenableBuilder<JunkPhotoCleanupReport?>(
-                valueListenable: AIService().junkCleanupReportListenable,
-                builder: (context, report, _) {
-                  return AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 250),
-                    child: report == null || !report.hasCandidates
-                        ? const SizedBox.shrink()
-                        : JunkPhotoCleanupBanner(
-                            key: ValueKey<String>(report.reportId),
-                            report: report,
-                            onReview: () => _showJunkCleanupDialog(report),
-                            onDismiss: _dismissJunkCleanupBanner,
-                          ),
-                  );
-                },
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.34,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        child: progress.isVisible
+                            ? _buildAnalysisProgressBanner(progress)
+                            : const SizedBox.shrink(),
+                      ),
+                      ValueListenableBuilder<JunkPhotoCleanupReport?>(
+                        valueListenable: AIService().junkCleanupReportListenable,
+                        builder: (context, report, _) {
+                          return AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 250),
+                            child: report == null || !report.hasCandidates
+                                ? const SizedBox.shrink()
+                                : JunkPhotoCleanupBanner(
+                                    key: ValueKey<String>(report.reportId),
+                                    report: report,
+                                    onReview: () =>
+                                        _showJunkCleanupDialog(report),
+                                    onDismiss: _dismissJunkCleanupBanner,
+                                  ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
               ),
               Expanded(
                 child: IndexedStack(
@@ -1198,10 +1191,10 @@ class _AlbumPageState extends State<AlbumPage> {
     } else if (taggedPhotoCount <= 0) {
       title = '已完成分析，但暂未形成标签预览';
       subtitle =
-          '当前已有 $analyzedPhotoCount 张照片完成分析，但还没有可聚类的标签结果。可以稍后再看，或继续补扫、补打标。';
+          '当前已有 $analyzedPhotoCount 张照片完成分析，但还没有可用于标签浏览的分类结果。可以稍后再看，或继续补扫、补打标。';
       icon = Icons.label_outline;
     } else {
-      title = '暂时还没有可浏览的标签聚类';
+      title = '暂时还没有可浏览的标签分类';
       subtitle = '标签结果正在整理中，请稍候再试。';
       icon = Icons.sell_outlined;
     }

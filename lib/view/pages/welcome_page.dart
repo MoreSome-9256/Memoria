@@ -25,6 +25,7 @@ class WelcomePage extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 30.0), // 整体侧边距
               child: SingleChildScrollView(
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start, // 默认让所有东西靠左
                   children: [
                     const SizedBox(height: 110),
@@ -87,7 +88,7 @@ class WelcomePage extends StatelessWidget {
                       ),
                     ),
 
-                    const Spacer(),
+                    const SizedBox(height: 140),
 
                     // --- 3. 底部按钮组 (保持居中或充满宽度) ---
                     _buildStandardButton(

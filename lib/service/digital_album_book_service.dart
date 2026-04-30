@@ -55,4 +55,18 @@ class DigitalAlbumBookService {
       await _isar.collection<DigitalAlbumBookEntity>().put(entity);
     });
   }
+
+  Future<void> deleteByStoryId(int storyId) async {
+    final existing = await _isar
+        .collection<DigitalAlbumBookEntity>()
+        .filter()
+        .storyIdEqualTo(storyId)
+        .findFirst();
+    if (existing == null) {
+      return;
+    }
+    await _isar.writeTxn(() async {
+      await _isar.collection<DigitalAlbumBookEntity>().delete(existing.id);
+    });
+  }
 }

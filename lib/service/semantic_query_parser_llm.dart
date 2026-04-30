@@ -151,6 +151,26 @@ $rawQuery
     );
 
     final jsonObject = _decodeJsonObject(response);
+    return _buildStructuredQueryFromJsonObject(
+      rawQuery: rawQuery,
+      jsonObject: jsonObject,
+      locationDictionary: locationDictionary,
+      usedLlm: true,
+      llmConfigured: true,
+      parserSource: 'llm',
+      baseNotes: _noteLlm,
+    );
+  }
+
+  SemanticSearchQuery _buildStructuredQueryFromJsonObject({
+    required String rawQuery,
+    required Map<String, dynamic> jsonObject,
+    required Set<String> locationDictionary,
+    required bool usedLlm,
+    required bool llmConfigured,
+    required String parserSource,
+    required String baseNotes,
+  }) {
     final timeRanges = _readTimeRanges(
       jsonObject['time_ranges'] ?? jsonObject['time'],
     );
@@ -177,7 +197,7 @@ $rawQuery
         _readEstimatedResultCount(jsonObject['estimated_result_count']) ??
         _estimateResultCount(rawQuery, queryType);
 
-    var notes = _noteLlm;
+    var notes = baseNotes;
     if (queryType == SemanticSearchQueryType.metadata) {
       positiveSemantics = const <SemanticSearchSemanticItem>[];
       recallSemantics = const <SemanticSearchSemanticItem>[];
@@ -210,9 +230,9 @@ $rawQuery
       recallSemantics: recallSemantics,
       negativeSemantics: negativeSemantics,
       estimatedResultCount: estimatedResultCount,
-      usedLlm: true,
-      llmConfigured: true,
-      parserSource: 'llm',
+      usedLlm: usedLlm,
+      llmConfigured: llmConfigured,
+      parserSource: parserSource,
       debugJson: _prettyJson.convert(jsonObject),
       notes: notes,
     );

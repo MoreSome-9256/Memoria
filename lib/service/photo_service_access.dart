@@ -37,6 +37,13 @@ extension PhotoServiceAccess on PhotoService {
         final refreshedFile = await _resolveReadableFile(asset);
         if (refreshedFile != null && refreshedFile.existsSync()) {
           photo.path = refreshedFile.path;
+          final refreshedTimestamp = _resolveBestTimestampMs(
+            asset,
+            refreshedFile,
+          );
+          if (PhotoFilterHelper.hasValidTimestamp(refreshedTimestamp)) {
+            photo.timestamp = refreshedTimestamp;
+          }
           repairedPhotos.add(photo);
         } else {
           removedIds.add(photo.id);

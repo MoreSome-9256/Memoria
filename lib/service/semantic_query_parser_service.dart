@@ -23,6 +23,27 @@ class SemanticQueryParserService {
   final LLMService _llmService = LLMService();
   final SemanticMatchingService _semanticService = SemanticMatchingService();
 
+  SemanticSearchQuery buildQueryFromStructuredJson({
+    required String rawQuery,
+    required Map<String, dynamic> jsonObject,
+    Set<String> locationDictionary = const <String>{},
+  }) {
+    final localFallback = _buildLocalFallbackQuery(
+      rawQuery,
+      locationDictionary,
+    );
+    final primary = _buildStructuredQueryFromJsonObject(
+      rawQuery: rawQuery,
+      jsonObject: jsonObject,
+      locationDictionary: locationDictionary,
+      usedLlm: false,
+      llmConfigured: true,
+      parserSource: 'preset_json',
+      baseNotes: _notePresetJson,
+    );
+    return _mergeQueries(primary, localFallback);
+  }
+
   Future<SemanticSearchQuery> parseQuery(
     String rawQuery, {
     Set<String> locationDictionary = const <String>{},

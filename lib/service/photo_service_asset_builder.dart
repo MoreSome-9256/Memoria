@@ -10,7 +10,9 @@ class _PhotoAssetBuilder {
     required bool skipExisting,
   }) async {
     final existingAssetIds = <String>{};
+    final existingPhotosByAssetId = <String, PhotoEntity>{};
     final buildResults = <_SingleAssetBuildResult>[];
+    final refreshedExistingPhotos = <PhotoEntity>[];
 
     if (skipExisting && assets.isNotEmpty) {
       final assetIdsToCheck = assets
@@ -32,6 +34,11 @@ class _PhotoAssetBuilder {
               .map((photo) => photo.assetId)
               .where((id) => id.isNotEmpty),
         );
+        for (final photo in existingPhotos) {
+          if (photo.assetId.isNotEmpty) {
+            existingPhotosByAssetId[photo.assetId] = photo;
+          }
+        }
       }
     }
 
@@ -51,6 +58,16 @@ class _PhotoAssetBuilder {
 
           final asset = assets[index];
           if (skipExisting && existingAssetIds.contains(asset.id)) {
+            final existingPhoto = existingPhotosByAssetId[asset.id];
+            if (existingPhoto != null) {
+              final refreshed = await refreshExistingPhotoFromAsset(
+                existingPhoto,
+                asset,
+              );
+              if (refreshed != null) {
+                refreshedExistingPhotos.add(refreshed);
+              }
+            }
             continue;
           }
 
@@ -82,6 +99,14 @@ class _PhotoAssetBuilder {
       0,
       (sum, item) => sum + item.skippedScreenshot,
     );
+
+    if (refreshedExistingPhotos.isNotEmpty) {
+      await _service._isar.writeTxn(() async {
+        await _service._isar.collection<PhotoEntity>().putAll(
+          refreshedExistingPhotos,
+        );
+      });
+    }
 
     return _ScanBuildResult(
       photos: photos,
@@ -131,7 +156,7 @@ class _PhotoAssetBuilder {
       logAssetExtInfo(asset: asset, filePath: file.path, latLong: latLong);
     }
 
-    final timestamp = asset.createDateTime.millisecondsSinceEpoch;
+    final timestamp = resolveBestTimestampMs(asset, file);
     if (!PhotoFilterHelper.hasValidTimestamp(timestamp)) {
       return _SingleAssetBuildResult(
         skippedInvalidTime: 1,
@@ -177,6 +202,76 @@ class _PhotoAssetBuilder {
     }
 
     return null;
+  }
+
+  Future<PhotoEntity?> refreshExistingPhotoFromAsset(
+    PhotoEntity existingPhoto,
+    AssetEntity asset,
+  ) async {
+    final file = await resolveReadableFile(asset);
+    if (file == null) {
+      return null;
+    }
+
+    final refreshedTimestamp = resolveBestTimestampMs(asset, file);
+    final refreshedWidth = asset.width;
+    final refreshedHeight = asset.height;
+
+    var changed = false;
+    if (PhotoFilterHelper.hasValidTimestamp(refreshedTimestamp) &&
+        existingPhoto.timestamp != refreshedTimestamp) {
+      existingPhoto.timestamp = refreshedTimestamp;
+      changed = true;
+    }
+    if (file.path.isNotEmpty && existingPhoto.path != file.path) {
+      existingPhoto.path = file.path;
+      changed = true;
+    }
+    if (refreshedWidth > 0 && existingPhoto.width != refreshedWidth) {
+      existingPhoto.width = refreshedWidth;
+      changed = true;
+    }
+    if (refreshedHeight > 0 && existingPhoto.height != refreshedHeight) {
+      existingPhoto.height = refreshedHeight;
+      changed = true;
+    }
+
+    if (!changed) {
+      return null;
+    }
+    return existingPhoto;
+  }
+
+  int resolveBestTimestampMs(AssetEntity asset, File file) {
+    final createMs = asset.createDateTime.millisecondsSinceEpoch;
+    final modifiedMs = asset.modifiedDateTime.millisecondsSinceEpoch;
+    final fileNameMs = PhotoFilterHelper.extractTimestampFromFileName(
+      file.path,
+    );
+
+    final candidates = <int>[
+      if (fileNameMs != null && PhotoFilterHelper.hasValidTimestamp(fileNameMs))
+        fileNameMs,
+      if (PhotoFilterHelper.hasValidTimestamp(createMs)) createMs,
+      if (PhotoFilterHelper.hasValidTimestamp(modifiedMs)) modifiedMs,
+    ]..sort();
+
+    if (candidates.isEmpty) {
+      return 0;
+    }
+
+    final resolved = candidates.first;
+    if (PhotoService._verboseAssetLogging) {
+      final createIso = asset.createDateTime.toIso8601String();
+      final modifiedIso = asset.modifiedDateTime.toIso8601String();
+      final resolvedIso = DateTime.fromMillisecondsSinceEpoch(
+        resolved,
+      ).toIso8601String();
+      debugPrint(
+        'Resolved photo time assetId=${asset.id} resolved=$resolvedIso create=$createIso modified=$modifiedIso file=${file.path}',
+      );
+    }
+    return resolved;
   }
 
   void logAssetExtInfo({

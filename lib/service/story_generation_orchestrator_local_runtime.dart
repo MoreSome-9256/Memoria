@@ -211,6 +211,17 @@ extension _StoryGenerationOrchestratorLocalRuntime
         : '\n用户这次是通过语义搜索选图进入的，原始搜索内容是：$semanticSearchQuery。'
               '\n请把这句话当作用户想表达的主题线索和关注重点，但不要生硬地让每张图片都强行贴合搜索词。';
 
+    final selectedTemplate = storyPromptTemplateById(request.storyTemplateId);
+    final selectedTemplateExample = storyPromptTemplateExampleById(
+      request.storyTemplateId,
+    );
+    final templateHint = selectedTemplate == null
+        ? ''
+        : '\n\nSelected writing template: ${selectedTemplate.category.title} / ${selectedTemplate.title}'
+              '\nTemplate preview: ${selectedTemplate.preview}'
+              '\nTemplate instruction: ${selectedTemplate.instruction}'
+              '${selectedTemplateExample.isEmpty ? '' : '\nTemplate example for style reference only:\n$selectedTemplateExample'}';
+
     return '''
 请基于下面这组$orderingHint的图片素材，生成一份适合相册故事页展示的结构化 JSON。
 
@@ -227,7 +238,7 @@ extension _StoryGenerationOrchestratorLocalRuntime
 10. 如果 preferred_caption_source 是 "local_vlm"，不要让 tags 或 existing_caption 覆盖这条本地视觉描述。
 11. existing_caption 只是本地 caption 不可用时的回退线索。
 12. tags、ocr_tags 和 ocr_summary 都只是辅助线索，不能替代图片主体描述。
-$semanticHint
+$semanticHint$templateHint
 
 输出 JSON 格式：
 {

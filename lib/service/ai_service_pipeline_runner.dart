@@ -253,25 +253,45 @@ class _AiPipelineRunner {
             }
 
             final pendingFetchWatch = Stopwatch()..start();
-            final fetchedCandidates = await isar
-                .collection<PhotoEntity>()
-                .filter()
-                .isAiAnalyzedEqualTo(false)
-                .sortByTimestampDesc()
-                .limit(currentBatchSize * 4)
-                .findAll();
-            final photosToAnalyze = fetchedCandidates
-                .where(
-                  (photo) =>
-                      !attemptedPhotoIds.contains(photo.id) &&
-                      !queuedPhotoIds.contains(photo.id),
-                )
-                .take(currentBatchSize)
-                .toList(growable: false);
+            var candidateLimit = math.max(
+              currentBatchSize * 4,
+              maxBuffered * 2,
+            );
+            var fetchedCount = 0;
+            final photosToAnalyze = <PhotoEntity>[];
+            while (true) {
+              final fetchedCandidates = await isar
+                  .collection<PhotoEntity>()
+                  .filter()
+                  .isAiAnalyzedEqualTo(false)
+                  .sortByTimestampDesc()
+                  .limit(candidateLimit)
+                  .findAll();
+              fetchedCount = fetchedCandidates.length;
+
+              photosToAnalyze
+                ..clear()
+                ..addAll(
+                  fetchedCandidates
+                      .where(
+                        (photo) =>
+                            !attemptedPhotoIds.contains(photo.id) &&
+                            !queuedPhotoIds.contains(photo.id),
+                      )
+                      .take(currentBatchSize),
+                );
+
+              final exhaustedWindow = fetchedCandidates.length < candidateLimit;
+              if (photosToAnalyze.isNotEmpty || exhaustedWindow) {
+                break;
+              }
+
+              candidateLimit = math.min(candidateLimit * 2, targetTotal * 2);
+            }
             pendingFetchWatch.stop();
             pipelineProfiler.recordPendingFetch(
               fetchMs: pendingFetchWatch.elapsedMicroseconds / 1000.0,
-              fetchedCandidates: fetchedCandidates.length,
+              fetchedCandidates: fetchedCount,
               scheduledPhotos: photosToAnalyze.length,
             );
 

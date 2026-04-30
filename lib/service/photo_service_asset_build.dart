@@ -29,4 +29,8 @@ extension PhotoServiceAssetBuild on PhotoService {
       latLong: latLong,
     );
   }
+
+  int _resolveBestTimestampMs(AssetEntity asset, File file) {
+    return _assetBuilder.resolveBestTimestampMs(asset, file);
+  }
 }

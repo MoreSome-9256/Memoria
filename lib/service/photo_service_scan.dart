@@ -7,12 +7,15 @@ extension PhotoServiceScan on PhotoService {
     ).prepareRebuild(maxAssets: maxAssets);
 
     await _isar.writeTxn(() async {
+      await _isar.collection<DigitalAlbumBookEntity>().clear();
+      await _isar.collection<CreateRecommendationEntity>().clear();
       await _isar.collection<StoryEntity>().clear();
       await _isar.collection<EventEntity>().clear();
       await _isar.collection<FaceEntity>().clear();
       await _isar.collection<PhotoEntity>().clear();
       await _isar.collection<PhotoEntity>().putAll(plan.built.photos);
     });
+    _photoAccessCache.clear();
     _photoEmbeddingIndexRepository.deleteAll();
     _faceEmbeddingIndexRepository.deleteAll();
 
@@ -47,15 +50,18 @@ extension PhotoServiceScan on PhotoService {
       offsetFromNewest: offsetFromNewest,
     );
 
+    var insertedPhotoIds = const <int>[];
     if (plan.built.photos.isNotEmpty) {
+      late final List<int> storedIds;
       await _isar.writeTxn(() async {
-        await _isar.collection<PhotoEntity>().putAll(plan.built.photos);
+        storedIds = await _isar.collection<PhotoEntity>().putAll(
+          plan.built.photos,
+        );
       });
+      insertedPhotoIds = storedIds
+          .where((id) => id > 0)
+          .toList(growable: false);
     }
-    final insertedPhotoIds = plan.built.photos
-        .map((photo) => photo.id)
-        .where((id) => id > 0)
-        .toList(growable: false);
 
     debugPrint(
       "鉁?鍩虹鏁版嵁鍚屾瀹屾垚: 鍒犻櫎=${plan.removedCount} 鍏ュ簱=${plan.built.insertedCount} "

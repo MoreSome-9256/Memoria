@@ -5,6 +5,7 @@ import 'package:isar/isar.dart';
 
 import '../models/entity/photo_entity.dart';
 import '../models/entity/story_entity.dart';
+import '../models/vo/photo.dart';
 import '../models/vo/story_generation_models.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
@@ -154,8 +155,16 @@ class StoryGenerationOrchestrator {
             .map((photo) => photo.path)
             .toList(growable: false),
       );
+      final requestPhotoByAssetId = <String, Photo>{
+        for (final photo in request.selectedPhotos) photo.id: photo,
+      };
       final materials = sortedPhotos
-          .map(_buildPhotoMaterial)
+          .map(
+            (photo) => _buildPhotoMaterial(
+              photo,
+              requestPhotoByAssetId[photo.assetId],
+            ),
+          )
           .toList(growable: false);
       completeStep(
         'clues',

@@ -5,7 +5,6 @@ import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 
-import 'local_vlm_test_page.dart';
 import 'face_cluster_debug_page.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
@@ -356,23 +355,6 @@ class _ProfilePageState extends State<ProfilePage> {
                                   ?.copyWith(fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(height: 20),
-                            ListTile(
-                              leading: const Icon(Icons.smart_toy_outlined),
-                              title: const Text('本地 VLM 测试'),
-                              subtitle: const Text(
-                                '使用手机本地 Qwen3.5-0.8B 生成 caption 或多图故事',
-                              ),
-                              trailing: const Icon(Icons.chevron_right),
-                              onTap: () {
-                                Navigator.of(context).pop();
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (context) =>
-                                        const LocalVlmTestPage(),
-                                  ),
-                                );
-                              },
-                            ),
                             ListTile(
                               leading: const Icon(Icons.analytics_outlined),
                               title: const Text('MobileCLIP Benchmark'),

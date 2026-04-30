@@ -9,6 +9,7 @@ class _StoryPhotoMaterial {
     required this.ocrTags,
     required this.ocrSummary,
     required this.existingCaption,
+    required this.existingVlmCaption,
   });
 
   final PhotoEntity photo;
@@ -18,23 +19,27 @@ class _StoryPhotoMaterial {
   final List<String> ocrTags;
   final String ocrSummary;
   final String? existingCaption;
+  final String? existingVlmCaption;
 
   Map<String, dynamic> toJson({
     required int index,
     _CaptionResult? localCaptionResult,
   }) {
+    final storedVlmCaption = existingVlmCaption?.trim() ?? '';
+    final hasStoredVlmCaption = storedVlmCaption.isNotEmpty;
     final localCaption = localCaptionResult?.source == _CaptionSource.localVlm
         ? localCaptionResult!.text
-        : '';
-    final preferredCaption =
-        (localCaptionResult?.text.trim().isNotEmpty ?? false)
-        ? localCaptionResult!.text
+        : storedVlmCaption;
+    final preferredCaption = localCaption.trim().isNotEmpty
+        ? localCaption
         : (existingCaption ?? '');
-    final preferredSource =
-        localCaptionResult?.source.apiValue ??
-        ((existingCaption?.trim().isNotEmpty ?? false)
-            ? _CaptionSource.existingAiFallback.apiValue
-            : _CaptionSource.none.apiValue);
+    final preferredSource = localCaption.trim().isNotEmpty
+        ? _CaptionSource.localVlm.apiValue
+        : localCaptionResult?.source.apiValue ??
+              (hasStoredVlmCaption ? _CaptionSource.localVlm.apiValue : null) ??
+              ((existingCaption?.trim().isNotEmpty ?? false)
+                  ? _CaptionSource.existingAiFallback.apiValue
+                  : _CaptionSource.none.apiValue);
     return <String, dynamic>{
       'index': index,
       'captured_at': timeText,
@@ -51,7 +56,10 @@ class _StoryPhotoMaterial {
       'existing_caption': existingCaption ?? '',
       'local_vlm_caption': localCaption,
       'local_vlm_caption_source':
-          localCaptionResult?.source.apiValue ?? _CaptionSource.none.apiValue,
+          localCaptionResult?.source.apiValue ??
+          (hasStoredVlmCaption
+              ? _CaptionSource.localVlm.apiValue
+              : _CaptionSource.none.apiValue),
       'preferred_caption': preferredCaption,
       'preferred_caption_source': preferredSource,
     };

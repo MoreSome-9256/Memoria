@@ -134,6 +134,31 @@ class StoryQueueService {
     queueListenable.value = List<StoryQueueItem>.unmodifiable(next);
   }
 
+  void updatePhotoCaption(String photoId, String caption) {
+    final normalizedId = photoId.trim();
+    if (normalizedId.isEmpty) {
+      return;
+    }
+
+    final next = List<StoryQueueItem>.from(queueListenable.value);
+    final index = next.indexWhere((item) => item.photo.id == normalizedId);
+    if (index < 0) {
+      return;
+    }
+
+    final existing = next[index];
+    final trimmedCaption = caption.trim();
+    final currentCaption = existing.photo.caption?.trim() ?? '';
+    if (currentCaption == trimmedCaption) {
+      return;
+    }
+
+    next[index] = existing.copyWith(
+      photo: existing.photo.copyWith(caption: trimmedCaption),
+    );
+    queueListenable.value = List<StoryQueueItem>.unmodifiable(next);
+  }
+
   String? combinedSemanticSearchQuery() {
     final queries = queueListenable.value
         .map((item) => item.semanticSearchQuery?.trim() ?? '')
@@ -200,6 +225,7 @@ class StoryQueueService {
       dateTaken: DateTime.fromMillisecondsSinceEpoch(photo.timestamp),
       tags: TagSanitizer.sanitizeVisualTags(photo.aiTags ?? const <String>[]),
       caption: photo.aiCaption?.trim(),
+      vlmCaption: '',
       ocrSummary: OcrPolicy.effectiveSummary(
         tags: photo.ocrTags ?? const <String>[],
         text: photo.ocrText,

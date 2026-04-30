@@ -73,7 +73,7 @@ class AIService {
         defaultValue: 'always_compress',
       );
   static const int _minFaceDetectorInputSize = 32;
-  static const int _maxParallelWorkers = 8;
+  static const int _maxParallelWorkers = 4;
   static const int _maxConcurrentCaptionWorkers = 2;
   static const String _autoResumeKey = 'ai_auto_resume';
   static const String _runtimeActiveKey = 'ai_runtime_active';

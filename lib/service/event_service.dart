@@ -74,6 +74,7 @@ class EventService {
     enableCrossDayTravelMerge: true,
   );
   static const int minPhotosForDisplay = 5;
+  static const int minPhotosForTimelineDisplay = 1;
 
   static bool shouldResolvePhotoLocation({
     required int eventPhotoCount,
@@ -118,7 +119,7 @@ class EventService {
       photos: photos,
       config: _clusterConfig,
     );
-    final clusters = clusterResult.clusters;
+    final clusters = _splitClustersByLocalDay(clusterResult.clusters);
 
     print(
       "✅ 聚类完成: 初分簇=${clusterResult.initialClusterCount} 合并=${clusterResult.mergedCount} 最终事件=${clusters.length}",
@@ -593,13 +594,74 @@ class EventService {
         .watch(fireImmediately: true)
         .map(
           (events) => events
-              .where((event) => event.photoCount >= minPhotosForDisplay)
+              .where((event) => event.photoCount >= minPhotosForTimelineDisplay)
               .toList(),
         );
   }
 
   // 🧠 核心方法：增量刷新事件的智能信息（混合标题生成）
   // 此方法由 AIService 在分析完一批照片后调用
+  List<List<PhotoEntity>> _splitClustersByLocalDay(
+    List<List<PhotoEntity>> clusters,
+  ) {
+    final buckets = <String, List<PhotoEntity>>{};
+    for (final cluster in clusters) {
+      if (cluster.isEmpty) {
+        continue;
+      }
+      for (final photo in cluster) {
+        final key = _localDayKey(photo.timestamp);
+        buckets.putIfAbsent(key, () => <PhotoEntity>[]).add(photo);
+      }
+    }
+
+    final orderedKeys = buckets.keys.toList()..sort();
+    final dayGroups = orderedKeys
+        .map((key) {
+          final group =
+              buckets[key]!..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+          return _DayPhotoGroup(dateKey: key, photos: group);
+        })
+        .toList(growable: false);
+
+    final mergedGroups = <List<PhotoEntity>>[];
+    var index = 0;
+    while (index < dayGroups.length) {
+      final current = dayGroups[index];
+      if (current.photos.length <= 5 && index + 1 < dayGroups.length) {
+        final next = dayGroups[index + 1];
+        if (_isAdjacentDay(current.dateKey, next.dateKey)) {
+          final merged = <PhotoEntity>[
+            ...current.photos,
+            ...next.photos,
+          ]..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+          mergedGroups.add(merged);
+          index += 2;
+          continue;
+        }
+      }
+
+      mergedGroups.add(current.photos);
+      index += 1;
+    }
+
+    mergedGroups.sort((a, b) => b.first.timestamp.compareTo(a.first.timestamp));
+    return mergedGroups;
+  }
+
+  String _localDayKey(int timestampMs) {
+    final date = DateTime.fromMillisecondsSinceEpoch(timestampMs);
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
+  }
+
+  bool _isAdjacentDay(String earlier, String later) {
+    final start = DateTime.parse(earlier);
+    final end = DateTime.parse(later);
+    return end.difference(start).inDays == 1;
+  }
+
   Future<void> refreshEventSmartInfo(
     List<int> eventIds, {
     bool allowLlm = true,
@@ -895,4 +957,14 @@ class EventService {
 
     return true;
   }
+}
+
+class _DayPhotoGroup {
+  const _DayPhotoGroup({
+    required this.dateKey,
+    required this.photos,
+  });
+
+  final String dateKey;
+  final List<PhotoEntity> photos;
 }

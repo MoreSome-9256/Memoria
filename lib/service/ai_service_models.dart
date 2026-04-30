@@ -145,6 +145,7 @@ class _AsyncCaptionTask {
   const _AsyncCaptionTask({
     required this.photoId,
     required this.imageFile,
+    required this.deleteImageFileAfterUse,
     required this.captionService,
     required this.visualTags,
     required this.ocrTags,
@@ -157,6 +158,7 @@ class _AsyncCaptionTask {
 
   final Id photoId;
   final File imageFile;
+  final bool deleteImageFileAfterUse;
   final PhotoCaptionService captionService;
   final List<String> visualTags;
   final List<String> ocrTags;

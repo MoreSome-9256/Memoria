@@ -11,8 +11,8 @@ class _PhotoScanCoordinator {
 
     debugPrint(
       maxAssets == null
-          ? "馃П 寮€濮嬪畨鍏ㄩ噸寤虹浉鍐岀紦瀛橈紙鍏ㄩ噺锛?.."
-          : "馃П 寮€濮嬪畨鍏ㄩ噸寤虹浉鍐岀紦瀛橈紙鏈€杩?${prepared.fetchCount} / ${prepared.totalCount} 寮狅級...",
+          ? 'Starting safe album cache rebuild (all photos)...'
+          : 'Starting safe album cache rebuild (${prepared.fetchCount} / ${prepared.totalCount})...',
     );
 
     final built = await _service._buildPhotoEntities(
@@ -22,7 +22,7 @@ class _PhotoScanCoordinator {
     if (built.photos.isEmpty) {
       throw const PhotoScanException(
         PhotoScanError.noEligiblePhoto,
-        '鏈壘鍒板彲鐢ㄧ収鐗囷細璇风‘璁ょ浉鍐屼腑瀛樺湪鍖呭惈鏈夋晥鏃堕棿鐨勭浉鏈哄浘鐗囪祫婧愩€?',
+        'No eligible photos were found. Please check photo permission and local albums.',
       );
     }
 
@@ -46,8 +46,8 @@ class _PhotoScanCoordinator {
 
     debugPrint(
       maxAssets == null
-          ? "馃殌 寮€濮嬫壂鎻忕浉鍐岋紙鍏ㄩ噺锛?.."
-          : "馃殌 寮€濮嬫壂鎻忕浉鍐岋紙鏈€杩?${prepared.fetchCount} / ${prepared.totalCount} 寮狅級...",
+          ? 'Starting album scan (all photos)...'
+          : 'Starting album scan (${prepared.fetchCount} / ${prepared.totalCount})...',
     );
 
     final built = await _service._buildPhotoEntities(
@@ -69,81 +69,63 @@ class _PhotoScanCoordinator {
   }) async {
     if (Platform.isAndroid) {
       final photosStatus = await Permission.photos.request();
-      debugPrint('馃摳 Android photos 鏉冮檺璇锋眰缁撴灉: $photosStatus');
+      debugPrint('Android photos permission: $photosStatus');
 
       final locationStatus = await Permission.accessMediaLocation.request();
-      if (locationStatus.isGranted) {
-        debugPrint("鉁?鎴愬姛鑾峰緱璇诲彇鐓х墖鐪熷疄 GPS 鐨勭壒鏉?");
-      } else {
-        debugPrint("鈿狅笍 鐢ㄦ埛鎷掔粷浜嗕綅缃壒鏉冿紝鐓х墖缁忕含搴﹀皢琚郴缁熸姽闄や负 null");
-      }
+      debugPrint('Android media-location permission: $locationStatus');
     }
 
     final permissionState = await PhotoManager.requestPermissionExtend();
     final isLimited = permissionState == PermissionState.limited;
     debugPrint(
-      '馃摳 鐩稿唽鏉冮檺鐘舵€? $permissionState isAuth=${permissionState.isAuth} hasAccess=${permissionState.hasAccess}',
+      'Photo permission: $permissionState isAuth=${permissionState.isAuth} hasAccess=${permissionState.hasAccess}',
     );
     if (!permissionState.isAuth && !permissionState.hasAccess) {
       throw const PhotoScanException(
         PhotoScanError.permissionDenied,
-        '鏈幏寰楃浉鍐岃闂潈闄愶紝璇峰湪绯荤粺璁剧疆涓厑璁歌闂収鐗囥€?',
+        'Photo access was not granted. Please allow photo access in system settings.',
       );
     }
 
     final safeFilter = FilterOptionGroup(
-      orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)],
+      orders: <OrderOption>[
+        OrderOption(type: OrderOptionType.createDate, asc: false),
+      ],
     );
 
+    return _prepareScanViaAllPhotosOrGlobal(
+      safeFilter: safeFilter,
+      isLimited: isLimited,
+      maxAssets: maxAssets,
+      offsetFromNewest: offsetFromNewest,
+    );
+  }
+
+  Future<_PreparedScanData> _prepareScanViaAllPhotosOrGlobal({
+    required FilterOptionGroup safeFilter,
+    required bool isLimited,
+    required int? maxAssets,
+    required int offsetFromNewest,
+  }) async {
     final preferredAlbums = await PhotoManager.getAssetPathList(
       type: RequestType.image,
       onlyAll: true,
       filterOption: safeFilter,
     );
-    var albums = preferredAlbums;
-    if (albums.isEmpty) {
-      albums = await PhotoManager.getAssetPathList(
-        type: RequestType.image,
-        onlyAll: false,
-        filterOption: safeFilter,
-      );
-    }
 
     AssetPathEntity? selectedAlbum;
     var selectedCount = -1;
-    final albumCountResults = await Future.wait(
-      albums.map((album) async {
-        final count = await album.assetCountAsync;
-        return MapEntry<AssetPathEntity, int>(album, count);
-      }),
-    );
-    for (final entry in albumCountResults) {
-      final album = entry.key;
-      final count = entry.value;
-      debugPrint('馃搨 鐩稿唽 [${album.name}] 鍐呮湁 $count 寮犲浘鐗?');
-      if (count > selectedCount) {
-        selectedAlbum = album;
-        selectedCount = count;
-      }
-    }
-
-    if ((selectedAlbum == null || selectedCount <= 0) &&
-        preferredAlbums.isNotEmpty) {
-      final fallbackAlbums = await PhotoManager.getAssetPathList(
-        type: RequestType.image,
-        onlyAll: false,
-        filterOption: safeFilter,
-      );
-      final fallbackCountResults = await Future.wait(
-        fallbackAlbums.map((album) async {
+    if (preferredAlbums.isNotEmpty) {
+      final albumCountResults = await Future.wait(
+        preferredAlbums.map((album) async {
           final count = await album.assetCountAsync;
           return MapEntry<AssetPathEntity, int>(album, count);
         }),
       );
-      for (final entry in fallbackCountResults) {
+      for (final entry in albumCountResults) {
         final album = entry.key;
         final count = entry.value;
-        debugPrint('馃搨 鍏滃簳鐩稿唽 [${album.name}] 鍐呮湁 $count 寮犲浘鐗?');
+        debugPrint('All-photos album [${album.name}] count=$count');
         if (count > selectedCount) {
           selectedAlbum = album;
           selectedCount = count;
@@ -151,86 +133,93 @@ class _PhotoScanCoordinator {
       }
     }
 
-    if (albums.isEmpty || selectedAlbum == null || selectedCount <= 0) {
-      debugPrint('鈿狅笍 鐩稿唽鍒楄〃涓虹┖鎴栧叏閮ㄤ负绌哄３锛屽垏鎹㈠埌鍏ㄥ眬濯掍綋搴撴壂鎻忓厹搴?');
-      final fallback = await _prepareGlobalScan(maxAssets: maxAssets);
-      if (fallback.assets.isNotEmpty) {
-        return fallback;
-      }
+    if (selectedAlbum != null && selectedCount > 0) {
+      final totalCount = selectedCount;
+      final normalizedOffset = math.max(0, offsetFromNewest);
+      final startOffset = maxAssets == null
+          ? 0
+          : math.min(normalizedOffset, totalCount);
+      final remainingCount = math.max(0, totalCount - startOffset);
+      final fetchCount = maxAssets == null
+          ? totalCount
+          : math.min(maxAssets, remainingCount);
+      final endIndex = startOffset + fetchCount;
+      final assets = await selectedAlbum.getAssetListRange(
+        start: startOffset,
+        end: endIndex,
+      );
+      assets.sort(
+        (a, b) => b.createDateTime.millisecondsSinceEpoch.compareTo(
+          a.createDateTime.millisecondsSinceEpoch,
+        ),
+      );
 
-      if (isLimited) {
-        throw const PhotoScanException(
-          PhotoScanError.permissionDenied,
-          '褰撳墠绯荤粺浠呮巿浜堜簡鈥滈儴鍒嗙収鐗団€濇潈闄愶紝涓斿凡鎺堟潈鍒楄〃涓虹┖銆傝鍒扮郴缁熻缃皢鐓х墖鏉冮檺鏀逛负銆屽厑璁告墍鏈夌収鐗囥€嶏紝鎴栧厛鍦ㄧ郴缁熸潈闄愰潰鏉夸腑鍕鹃€夎嚦灏戜竴寮犵収鐗囧悗閲嶈瘯銆?',
-        );
-      }
-
-      throw const PhotoScanException(
-        PhotoScanError.noAlbum,
-        '鏈壘鍒板彲璇诲彇鐨勭浉鍐屻€傝纭绯荤粺鐓х墖鏉冮檺宸叉巿浜堬紝骞舵鏌ョ郴缁熺浉鍐屼腑鏄惁瀛樺湪鍥剧墖銆?',
+      return _PreparedScanData(
+        assets: assets,
+        totalCount: totalCount,
+        fetchCount: fetchCount,
+        startOffset: startOffset,
       );
     }
 
-    debugPrint('鉁?鏈鎵弿閫変腑鐩稿唽: ${selectedAlbum.name} ($selectedCount 寮?');
-    final totalCount = selectedCount;
-    final normalizedOffset = math.max(0, offsetFromNewest);
-    final startOffset = maxAssets == null
-        ? 0
-        : math.min(normalizedOffset, totalCount);
-    final remainingCount = math.max(0, totalCount - startOffset);
-    final fetchCount = maxAssets == null
-        ? totalCount
-        : math.min(maxAssets, remainingCount);
-    final endIndex = startOffset + fetchCount;
-    final assets = await selectedAlbum.getAssetListRange(
-      start: startOffset,
-      end: endIndex,
+    final fallback = await _prepareGlobalScan(
+      safeFilter: safeFilter,
+      maxAssets: maxAssets,
+      offsetFromNewest: offsetFromNewest,
     );
-    assets.sort(
-      (a, b) => b.createDateTime.millisecondsSinceEpoch.compareTo(
-        a.createDateTime.millisecondsSinceEpoch,
-      ),
-    );
+    if (fallback.assets.isNotEmpty) {
+      return fallback;
+    }
 
-    return _PreparedScanData(
-      assets: assets,
-      totalCount: totalCount,
-      fetchCount: fetchCount,
-      startOffset: startOffset,
+    if (isLimited) {
+      throw const PhotoScanException(
+        PhotoScanError.permissionDenied,
+        'Photo access is limited and the authorized list is empty. Please allow all photos or select at least one photo in system settings.',
+      );
+    }
+
+    throw const PhotoScanException(
+      PhotoScanError.noAlbum,
+      'No readable album was found. Please check photo permission and local albums.',
     );
   }
 
-  Future<_PreparedScanData> _prepareGlobalScan({int? maxAssets}) async {
+  Future<_PreparedScanData> _prepareGlobalScan({
+    required FilterOptionGroup safeFilter,
+    required int? maxAssets,
+    required int offsetFromNewest,
+  }) async {
     const pageSize = 200;
     final assets = <AssetEntity>[];
     var page = 0;
-
-    final safeFilter = FilterOptionGroup(
-      orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)],
-    );
+    final normalizedOffset = math.max(0, offsetFromNewest);
+    final targetCount = maxAssets == null
+        ? null
+        : normalizedOffset + math.max(1, maxAssets);
+    var reachedEnd = false;
 
     while (true) {
-      final remaining = maxAssets == null
+      final remaining = targetCount == null
           ? pageSize
-          : maxAssets - assets.length;
+          : targetCount - assets.length;
       if (remaining <= 0) {
         break;
       }
 
       final batch = await PhotoManager.getAssetListPaged(
         page: page,
-        pageCount: remaining < pageSize ? remaining : pageSize,
+        pageCount: remaining < pageSize ? remaining.toInt() : pageSize,
         type: RequestType.image,
         filterOption: safeFilter,
       );
-      debugPrint('馃О 鍏ㄥ眬濯掍綋搴撶 ${page + 1} 椤佃繑鍥?${batch.length} 寮犲浘鐗?');
-
       if (batch.isEmpty) {
+        reachedEnd = true;
         break;
       }
 
       assets.addAll(batch);
       if (batch.length < pageSize) {
+        reachedEnd = true;
         break;
       }
       page++;
@@ -241,16 +230,32 @@ class _PhotoScanCoordinator {
         a.createDateTime.millisecondsSinceEpoch,
       ),
     );
-    if (maxAssets != null && assets.length > maxAssets) {
-      assets.removeRange(maxAssets, assets.length);
+
+    final totalCount = reachedEnd
+        ? assets.length
+        : math.max(
+            assets.length,
+            normalizedOffset + (maxAssets ?? assets.length),
+          );
+    if (normalizedOffset >= assets.length) {
+      return _PreparedScanData(
+        assets: const <AssetEntity>[],
+        totalCount: totalCount,
+        fetchCount: 0,
+        startOffset: normalizedOffset,
+      );
     }
 
-    debugPrint('鉁?鍏ㄥ眬濯掍綋搴撳厹搴曞叡鎷垮埌 ${assets.length} 寮犲浘鐗?');
+    final fetchEnd = maxAssets == null
+        ? assets.length
+        : math.min(normalizedOffset + maxAssets, assets.length);
+    final slicedAssets = assets.sublist(normalizedOffset, fetchEnd);
+
     return _PreparedScanData(
-      assets: assets,
-      totalCount: assets.length,
-      fetchCount: assets.length,
-      startOffset: 0,
+      assets: slicedAssets,
+      totalCount: totalCount,
+      fetchCount: slicedAssets.length,
+      startOffset: normalizedOffset,
     );
   }
 }

@@ -1,7 +1,7 @@
 part of 'ai_service.dart';
 
 extension AIServicePipeline on AIService {
-  Future<void> analyzePhotosInBackground({int batchSize = 10, int? maxPhotos}) {
+  Future<void> analyzePhotosInBackground({int batchSize = 6, int? maxPhotos}) {
     return _AiPipelineRunner(
       service: this,
       batchSize: batchSize,
@@ -53,7 +53,7 @@ extension AIServicePipeline on AIService {
         'error=$error',
       );
     } finally {
-      if (task.imageFile.existsSync()) {
+      if (task.deleteImageFileAfterUse && task.imageFile.existsSync()) {
         try {
           await task.imageFile.delete();
         } catch (_) {}
@@ -85,7 +85,9 @@ extension AIServicePipeline on AIService {
       return 1;
     }
     final cpuCores = Platform.numberOfProcessors;
-    final suggested = cpuCores <= 2 ? 1 : math.max(2, cpuCores - 1);
+    final suggested = Platform.isAndroid || Platform.isIOS
+        ? (cpuCores <= 4 ? 2 : 3)
+        : (cpuCores <= 2 ? 1 : math.max(2, cpuCores - 1));
     final bounded = math.min(AIService._maxParallelWorkers, suggested);
     return math.max(1, math.min(bounded, workItems));
   }

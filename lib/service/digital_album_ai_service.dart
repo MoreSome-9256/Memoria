@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import '../models/vo/album_book_models.dart';
 import '../models/vo/story_section.dart';
+import '../models/vo/story_generation_models.dart';
 import 'digital_album_layout_service.dart';
 import 'llm_service.dart';
 
@@ -128,6 +129,7 @@ class DigitalAlbumAiService {
     required String subtitle,
     required List<StorySection> sections,
     required AlbumBookDocument document,
+    String? storyTemplateId,
   }) async {
     if (!isAvailable) {
       throw StateError('DeepSeek / LLM is not configured.');
@@ -141,6 +143,7 @@ class DigitalAlbumAiService {
       subtitle: subtitle,
       sections: sections,
       document: document,
+      storyTemplateId: storyTemplateId,
     );
     final requestTimeout = _timeoutForSectionCount(sections.length);
     String? response;
@@ -960,13 +963,38 @@ $suggestedGroupsJson
     required String subtitle,
     required List<StorySection> sections,
     required AlbumBookDocument document,
+    String? storyTemplateId,
   }) {
+    final selectedTemplate = storyPromptTemplateById(storyTemplateId);
+    final selectedTemplateExample = storyPromptTemplateExampleById(
+      storyTemplateId,
+    );
     final materialJson = jsonEncode(
       <Map<String, dynamic>>[
         for (var i = 0; i < sections.length; i++) _buildMaterialEntry(i, sections[i]),
       ],
     );
     final spreadJson = jsonEncode(_buildCopyTargets(document));
+    final templateHint = selectedTemplate == null
+        ? ''
+        : '''
+
+Selected writing template for this album:
+- category: ${selectedTemplate.category.title}
+- template: ${selectedTemplate.title}
+- intended feeling: ${selectedTemplate.preview}
+- guidance: ${selectedTemplate.instruction}
+${selectedTemplateExample.isEmpty ? '' : '- reference example: $selectedTemplateExample'}
+
+How to use this template in the digital album:
+- inherit the template's tone, rhythm, emotional focus, and sentence texture
+- DO NOT write long story paragraphs like the story result page
+- compress the expression so it fits premium album typography and short editorial copy
+- titles should stay crisp, memorable, and layout-friendly
+- bodies should feel refined and condensed, like a polished album paragraph rather than a full narrative scene
+- notes / captions / art words should be even shorter and more controlled
+- learn from the example's writing method, but never copy its imagery, place names, or sentence content directly
+''';
     return '''
 You are a premium Chinese photo-book copywriter.
 The layout is already fixed. You must NOT redesign, reorder, move, resize, add, or delete layout elements.
@@ -988,6 +1016,7 @@ Goal:
 - do not write text on top of images in your reasoning; all text you produce will be placed into reserved text slots only
 - rewrite the current copy instead of echoing it; existing_text is only a weak reference for role meaning, not text to preserve
 - every non-meta slot that already exists should usually receive new wording unless it is truly already optimal
+- this digital album is not the long-form story page: every piece of writing must be more concise, more typographic, and easier to place on a spread$templateHint
 
 Template guidance:
 - hero_full_bleed / portrait_feature:

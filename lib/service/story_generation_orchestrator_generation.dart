@@ -140,7 +140,10 @@ extension _StoryGenerationOrchestratorGeneration
     ];
   }
 
-  _StoryPhotoMaterial _buildPhotoMaterial(PhotoEntity photo) {
+  _StoryPhotoMaterial _buildPhotoMaterial(
+    PhotoEntity photo,
+    Photo? requestPhoto,
+  ) {
     final aiTags = TagSanitizer.sanitizeVisualTags(
       photo.aiTags ?? const <String>[],
     );
@@ -151,6 +154,8 @@ extension _StoryGenerationOrchestratorGeneration
           text: photo.ocrText,
         ) ??
         '';
+    final overriddenCaption = requestPhoto?.caption?.trim();
+    final overriddenVlmCaption = requestPhoto?.vlmCaption?.trim();
     return _StoryPhotoMaterial(
       photo: photo,
       timeText: _formatDateTime(photo.timestamp),
@@ -158,7 +163,12 @@ extension _StoryGenerationOrchestratorGeneration
       aiTags: aiTags,
       ocrTags: ocrTags,
       ocrSummary: ocrSummary,
-      existingCaption: photo.aiCaption?.trim(),
+      existingCaption: (overriddenCaption?.isNotEmpty ?? false)
+          ? overriddenCaption
+          : photo.aiCaption?.trim(),
+      existingVlmCaption: (overriddenVlmCaption?.isNotEmpty ?? false)
+          ? overriddenVlmCaption
+          : null,
     );
   }
 

@@ -10,38 +10,67 @@ class EventCard extends StatelessWidget {
 
   final Event event;
 
+  bool _isMeaninglessTitle(String raw) {
+    final title = raw.trim();
+    if (title.isEmpty) {
+      return true;
+    }
+
+    if (title.contains('未知地点')) {
+      return true;
+    }
+
+    const blockedTitles = <String>{
+      '未知地点的回忆',
+      '未知地点回忆',
+      '回忆',
+      '时光',
+    };
+    if (blockedTitles.contains(title)) {
+      return true;
+    }
+
+    final dateLike = RegExp(
+      r'^\d{1,4}年?\d{0,2}月?\d{0,2}日?(\s*[-~至到]\s*\d{1,4}年?\d{0,2}月?\d{0,2}日?)?$',
+    );
+    return dateLike.hasMatch(title);
+  }
+
   String? _displayTitle() {
     for (final theme in event.aiThemes) {
       final candidate = theme.title.trim();
-      if (candidate.isNotEmpty) {
+      if (!_isMeaninglessTitle(candidate)) {
         return candidate;
       }
     }
 
     final title = event.title.trim();
-    if (title.isEmpty) {
-      return null;
-    }
-    if (title.contains('未知地点')) {
-      return null;
-    }
-    final dateLike = RegExp(
-      r'^\d{1,4}年?\d{0,2}月?\d{0,2}日?(\s*[-~至到]\s*\d{1,4}年?\d{0,2}月?\d{0,2}日?)?$',
-    );
-    if (dateLike.hasMatch(title)) {
+    if (_isMeaninglessTitle(title)) {
       return null;
     }
     return title;
   }
 
   String _dateLine() {
-    final date =
+    final start =
         '${event.startDate.year}年${event.startDate.month.toString().padLeft(2, '0')}月${event.startDate.day.toString().padLeft(2, '0')}日';
+    final sameDay = event.startDate.year == event.endDate.year &&
+        event.startDate.month == event.endDate.month &&
+        event.startDate.day == event.endDate.day;
+    if (sameDay) {
+      return start;
+    }
+    final end =
+        '${event.endDate.month.toString().padLeft(2, '0')}月${event.endDate.day.toString().padLeft(2, '0')}日';
+    return '$start - $end';
+  }
+
+  String? _locationLine() {
     final location = event.location.trim();
     if (location.isEmpty || location == '未知地点') {
-      return date;
+      return null;
     }
-    return '$date · $location';
+    return location;
   }
 
   List<String> _visibleTags(double maxWidth) {
@@ -64,6 +93,7 @@ class EventCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final title = _displayTitle();
+    final locationLine = _locationLine();
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       clipBehavior: Clip.antiAlias,
@@ -97,33 +127,62 @@ class EventCard extends StatelessWidget {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        Icons.calendar_today,
-                        size: 14,
-                        color: Colors.grey[600],
-                      ),
-                      const SizedBox(width: 4),
                       Expanded(
-                        child: Text(
-                          _dateLine(),
-                          style: TextStyle(color: Colors.grey[600]),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.calendar_today,
+                              size: 14,
+                              color: Colors.grey[600],
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                _dateLine(),
+                                style: TextStyle(color: Colors.grey[600]),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Icon(
-                        Icons.photo_library,
-                        size: 14,
-                        color: Colors.grey[600],
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${event.photoCount} 张照片',
-                        style: TextStyle(color: Colors.grey[600]),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.photo_library,
+                            size: 14,
+                            color: Colors.grey[600],
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${event.photoCount} 张照片',
+                            style: TextStyle(color: Colors.grey[600]),
+                          ),
+                        ],
                       ),
                     ],
                   ),
+                  if (locationLine != null) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.place_rounded,
+                          size: 16,
+                          color: Colors.grey[600],
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            locationLine,
+                            style: TextStyle(color: Colors.grey[600]),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   if (event.tags.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     LayoutBuilder(

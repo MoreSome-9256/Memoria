@@ -17,6 +17,8 @@ const String _noteLlmSupplemented =
     'DeepSeek \u672a\u8fd4\u56de\u6709\u6548\u7684\u6b63\u5411\u8bed\u4e49\uff0c\u5df2\u8865\u5145\u672c\u5730\u8bed\u4e49\u63d0\u793a';
 const String _noteFallbackMerged =
     '\u672c\u5730\u89c4\u5219\u5df2\u4f5c\u4e3a\u8865\u5145\u515c\u5e95';
+const String _notePresetJson =
+    '\u5f53\u524d\u4f7f\u7528\u9884\u7f6e\u7ed3\u6784\u5316\u67e5\u8be2\uff0c\u672a\u8c03\u7528 DeepSeek';
 
 const List<SemanticSearchSemanticItem>
 _defaultNegativeSemantics = <SemanticSearchSemanticItem>[

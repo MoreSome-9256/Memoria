@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../models/entity/create_recommendation_entity.dart';
 import '../models/entity/face_entity.dart';
 import '../models/entity/digital_album_book_entity.dart';
 import '../models/entity/photo_entity.dart';
@@ -57,6 +58,7 @@ class PhotoService {
         FaceEntitySchema,
         EventEntitySchema,
         StoryEntitySchema,
+        CreateRecommendationEntitySchema,
         DigitalAlbumBookEntitySchema,
       ], // 注册所有实体
       directory: dir.path,
@@ -66,11 +68,14 @@ class PhotoService {
 
   Future<void> clearAllCachedData() async {
     await _isar.writeTxn(() async {
+      await _isar.collection<DigitalAlbumBookEntity>().clear();
+      await _isar.collection<CreateRecommendationEntity>().clear();
       await _isar.collection<StoryEntity>().clear();
       await _isar.collection<EventEntity>().clear();
       await _isar.collection<FaceEntity>().clear();
       await _isar.collection<PhotoEntity>().clear();
     });
+    _photoAccessCache.clear();
     _photoEmbeddingIndexRepository.deleteAll();
     _faceEmbeddingIndexRepository.deleteAll();
 

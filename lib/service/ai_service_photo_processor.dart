@@ -208,6 +208,7 @@ class _AiPhotoProcessor {
         deferredCaptionTask = _AsyncCaptionTask(
           photoId: request.photo.id,
           imageFile: prepared.file,
+          deleteImageFileAfterUse: false,
           captionService: request.photoCaptionService,
           visualTags: visualTags,
           ocrTags: ocrResult.tags,

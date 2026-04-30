@@ -100,9 +100,11 @@ class _StoryGenerationProgressPageState
           builder: (context) => StoryResultPage.fromStoryEntity(
             storyEntity: output.story,
             photos: output.photos,
+            storyTemplateId: widget.request.storyTemplateId,
             customMusicPath: videoPreparation?.customMusicPath,
             dynamicBeatData: videoPreparation?.dynamicBeatData,
-            captions: videoPreparation?.captions,
+            videoCaptions: videoPreparation?.captions,
+            photoOverrides: widget.request.selectedPhotos,
             isHorizontal: widget.request.isHorizontal,
             targetPlatform: widget.request.targetPlatform,
           ),

@@ -624,11 +624,11 @@ class _EventDetailPageState extends State<EventDetailPage> {
                           children: [
                             Text(theme.emoji),
                             const SizedBox(width: 4),
-                            // 馃専 淇鐐?2锛氱敤 Flexible 闄愬埗 AI 鐢熸垚鐨勮秴闀挎爣棰?
+                            // Limit long AI-generated titles with Flexible.
                             Flexible(
                               child: Text(
                                 theme.title,
-                                overflow: TextOverflow.ellipsis, // 瓒呭嚭鍙樼渷鐣ュ彿
+                                overflow: TextOverflow.ellipsis,
                                 maxLines: 1,
                               ),
                             ),

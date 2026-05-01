@@ -562,7 +562,7 @@ class _HomePageState extends State<HomePage> {
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.85),
+            color: Colors.white.withValues(alpha: 0.85),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: Colors.purple.shade100),
           ),
@@ -595,7 +595,7 @@ class _HomePageState extends State<HomePage> {
         color: Colors.grey.shade300,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -617,7 +617,7 @@ class _HomePageState extends State<HomePage> {
                           height: double.infinity,
                           fit: BoxFit.cover,
                         ),
-                        Container(color: Colors.black.withOpacity(0.35)),
+                        Container(color: Colors.black.withValues(alpha: 0.35)),
                       ],
                     )
                   : const Center(
@@ -665,7 +665,7 @@ class _HomePageState extends State<HomePage> {
                     );
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white.withOpacity(0.95),
+                    backgroundColor: Colors.white.withValues(alpha: 0.95),
                     foregroundColor: Colors.purple.shade900,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(20),
@@ -809,7 +809,7 @@ class _HomePageState extends State<HomePage> {
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.03),
+              color: Colors.black.withValues(alpha: 0.03),
               blurRadius: 8,
               offset: const Offset(0, 4),
             ),

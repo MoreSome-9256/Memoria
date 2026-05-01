@@ -124,7 +124,7 @@ class _PhotoAssetBuilder {
     final file = await resolveReadableFile(asset);
     if (file == null) {
       debugPrint(
-        '鈿狅笍 璧勬簮鏃犳硶瑙ｆ瀽涓烘湰鍦版枃浠? assetId=${asset.id} title=${asset.title}',
+        'Asset could not resolve to local file assetId=${asset.id} title=${asset.title}',
       );
       return const _SingleAssetBuildResult(skippedNonCamera: 1);
     }
@@ -196,7 +196,7 @@ class _PhotoAssetBuilder {
     final originFile = await asset.originFile;
     if (originFile != null && originFile.path.isNotEmpty) {
       debugPrint(
-        '鈩癸笍 璧勬簮浣跨敤 originFile 鍏滃簳: assetId=${asset.id} path=${originFile.path}',
+        'Asset fell back to originFile assetId=${asset.id} path=${originFile.path}',
       );
       return originFile;
     }
@@ -288,7 +288,7 @@ class _PhotoAssetBuilder {
     );
 
     debugPrint(
-      '馃Ь [EXTINFO] id=${asset.id} file=${filePath ?? 'null'} '
+      '[EXTINFO] id=${asset.id} file=${filePath ?? 'null'} '
       'time=${asset.createDateTime.toIso8601String()} modified=${modified.toIso8601String()} '
       'size=${asset.width}x${asset.height} '
       'lat=${latLong?.latitude.toStringAsFixed(6) ?? 'null'} '

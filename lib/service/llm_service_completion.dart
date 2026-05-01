@@ -55,14 +55,14 @@ extension LLMServiceCompletion on LLMService {
     try {
       final text = await _chatCompletion(prompt);
       if (text == null || text.isEmpty) {
-        print("鈿狅笍 LLM 杩斿洖涓虹┖");
+        print('LLM 返回为空');
         return null;
       }
 
-      print("鉁?LLM 鎴愬姛鐢熸垚鍗氬鍐呭");
+      print('LLM 成功生成博客内容');
       return text.trim();
     } catch (e) {
-      print("鉂?LLM 鍗氬鐢熸垚澶辫触: $e");
+      print('LLM 博客生成失败: $e');
       return null;
     }
   }
@@ -105,7 +105,7 @@ extension LLMServiceCompletion on LLMService {
     );
 
     final data = response.data;
-    print('馃摜 [LLM RESPONSE STATUS] ${response.statusCode}');
+    print('[LLM RESPONSE STATUS] ${response.statusCode}');
     if (data is! Map<String, dynamic>) {
       return null;
     }
@@ -172,7 +172,7 @@ extension LLMServiceCompletion on LLMService {
     );
 
     final data = response.data;
-    print('馃摜 [LLM VISION RESPONSE STATUS] ${response.statusCode}');
+    print('[LLM VISION RESPONSE STATUS] ${response.statusCode}');
     if (data is! Map<String, dynamic>) {
       return null;
     }
@@ -271,7 +271,7 @@ extension LLMServiceCompletion on LLMService {
     required String mimeType,
     required bool useChatCompletions,
   }) {
-    const systemText = '浣犳槸涓€涓皑鎱庣殑涓枃鍥剧墖鎻忚堪鍔╂墜銆傚彧鑳芥弿杩板浘涓彲瑙佷簨瀹烇紝涓嶈鑴戣ˉ鑱屼笟銆佸叧绯汇€佸墽鎯呭拰韬唤銆?;';
+    const systemText = '你是一个谨慎的中文图片描述助手。只能描述图中可见事实，不要脑补职业、关系、剧情和身份。';
     final imageDataUrl = 'data:$mimeType;base64,${base64Encode(imageBytes)}';
 
     if (useChatCompletions) {

@@ -156,7 +156,7 @@ class _AnalysisInputLoader {
       );
     } catch (error) {
       thumbnailWatch.stop();
-      debugPrint('鈿狅笍 璇诲彇绯荤粺缂╃暐鍥惧け璐?photoId=${photo.id}: $error');
+      debugPrint('读取系统缩略图失败 photoId=${photo.id}: $error');
       return _ThumbnailReadAttempt(
         bytes: null,
         readMs: thumbnailWatch.elapsedMicroseconds / 1000.0,

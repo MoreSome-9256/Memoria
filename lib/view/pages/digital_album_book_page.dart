@@ -2193,7 +2193,7 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
         _buildOverlayAction(
           context: context,
           icon: Icons.arrow_back,
-          tooltip: '杩斿洖',
+          tooltip: '返回',
           onTap: () => unawaited(_closePage()),
         ),
         const Spacer(),

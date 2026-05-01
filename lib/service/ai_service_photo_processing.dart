@@ -38,8 +38,7 @@ extension AIServicePhotoProcessing on AIService {
       return result;
     } catch (error) {
       debugPrint(
-        '鈿狅笍 AI apply processed photo failed '
-        'photoId=${result.profile.photoId} error=$error',
+        'AI 写入照片分析结果失败 photoId=${result.profile.photoId} error=$error',
       );
       result.profile.outcome = 'error';
       result.profile.error = error.toString();
@@ -142,7 +141,7 @@ Future<(int, int)?> _readImageDimensions(
     final baked = img.bakeOrientation(decoded);
     return (baked.width, baked.height);
   } catch (error) {
-    debugPrint('鈿狅笍 璇诲彇鍒嗘瀽鍥惧昂瀵稿け璐?path=${imageFile.path}: $error');
+    debugPrint('读取分析图片尺寸失败 path=${imageFile.path}: $error');
     return null;
   }
 }

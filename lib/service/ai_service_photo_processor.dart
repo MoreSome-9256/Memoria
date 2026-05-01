@@ -253,7 +253,7 @@ class _AiPhotoProcessor {
         profile: profile,
       );
     } catch (error) {
-      debugPrint('鉂?AI 鍒嗘瀽澶辫触 photoId=${request.photo.id}: $error');
+      debugPrint('AI analysis failed photoId=${request.photo.id}: $error');
       profile.outcome = 'error';
       profile.error = error.toString();
       return _PhotoProcessResult.failed(profile: profile);
@@ -264,7 +264,7 @@ class _AiPhotoProcessor {
         try {
           await analysisFile.delete();
         } catch (error) {
-          debugPrint('鈿狅笍 娓呯悊涓存椂鏂囦欢澶辫触: $error');
+          debugPrint('Failed to delete temporary analysis file: $error');
         }
       }
     }
@@ -283,7 +283,8 @@ class _AiPhotoProcessor {
       if (RegExp(r'^\d{1,2}:\d{2}$').hasMatch(normalized)) {
         continue;
       }
-      if (normalized.contains('鏅鸿兘褰辫') || normalized.contains('鎴戠殑鐩稿唽')) {
+      if (normalized.contains('\u667a\u80fd\u5f71\u8bb0') ||
+          normalized.contains('\u6211\u7684\u76f8\u518c')) {
         continue;
       }
       sanitized.add(normalized);
@@ -338,7 +339,7 @@ class _AiPhotoProcessor {
       }
     } catch (error) {
       fallbackReason = 'thumbnail_error';
-      debugPrint('鈿狅笍 璇诲彇绯荤粺缂╃暐鍥惧け璐?photoId=${photo.id}: $error');
+      debugPrint('Failed to read system thumbnail photoId=${photo.id}: $error');
     }
 
     if (mobileClipBytes == null || mobileClipBytes.isEmpty) {
@@ -384,7 +385,7 @@ class _AiPhotoProcessor {
       quality: 80,
     );
     if (bytes == null || bytes.isEmpty) {
-      throw Exception('鍘嬬缉澶辫触');
+      throw Exception('image compression failed');
     }
     final file = File(targetPath);
     await file.writeAsBytes(bytes, flush: true);

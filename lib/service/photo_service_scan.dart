@@ -20,9 +20,9 @@ extension PhotoServiceScan on PhotoService {
     _faceEmbeddingIndexRepository.deleteAll();
 
     debugPrint(
-      "鉁?瀹夊叏閲嶅缓瀹屾垚: 娓呯┖鏃ф暟鎹?${plan.totalBefore} 鍏ュ簱=${plan.built.insertedCount} "
-      "鏃燝PS=${plan.built.insertedNoGps} 璺宠繃[鏃犳椂闂?${plan.built.skippedInvalidTime} "
-      "闈炵浉鏈?${plan.built.skippedNonCamera} 鎴浘=${plan.built.skippedScreenshot}]",
+      '安全重建完成: 清空旧数据=${plan.totalBefore} 入库=${plan.built.insertedCount} '
+      '无GPS=${plan.built.insertedNoGps} 无效时间=${plan.built.skippedInvalidTime} '
+      '非相机=${plan.built.skippedNonCamera} 截图=${plan.built.skippedScreenshot}',
     );
 
     return PhotoScanSummary(
@@ -64,16 +64,16 @@ extension PhotoServiceScan on PhotoService {
     }
 
     debugPrint(
-      "鉁?鍩虹鏁版嵁鍚屾瀹屾垚: 鍒犻櫎=${plan.removedCount} 鍏ュ簱=${plan.built.insertedCount} "
-      "鍏朵腑鏃燝PS鍏ュ簱=${plan.built.insertedNoGps} 璺宠繃[鏃犳椂闂?${plan.built.skippedInvalidTime} "
-      "闈炵浉鏈?${plan.built.skippedNonCamera} 鎴浘=${plan.built.skippedScreenshot}]",
+      '基础数据同步完成: 删除=${plan.removedCount} 入库=${plan.built.insertedCount} '
+      '无GPS=${plan.built.insertedNoGps} 无效时间=${plan.built.skippedInvalidTime} '
+      '非相机=${plan.built.skippedNonCamera} 截图=${plan.built.skippedScreenshot}',
     );
 
     final totalAfter = await _isar.collection<PhotoEntity>().count();
     if (totalAfter == 0) {
       throw const PhotoScanException(
         PhotoScanError.noEligiblePhoto,
-        '鏈壘鍒板彲鐢ㄧ収鐗囷細璇风‘璁ょ浉鍐屼腑瀛樺湪鍖呭惈鏈夋晥鏃堕棿鐨勫浘鐗囪祫婧愩€?',
+        '没有找到可用照片。请检查相册权限和本地相册。',
       );
     }
 

@@ -68,65 +68,18 @@ class _AlbumPageState extends State<AlbumPage> {
   bool _draggingMomentsFastScroller = false;
   String? _momentsFastScrollerLabel;
 
-  // 馃専 1. 鏀逛负鐩存帴鐩戝惉鏈€缁?UI 鏁版嵁缁撴瀯鐨?Stream
+  // UI streams for moments and tag browser data.
   late Stream<Map<String, List<Event>>> _uiEventsStream;
   late Stream<_AlbumTagBrowserData> _albumTagBrowserStream;
 
-  static const int _fullRefreshOption = -1;
+  // Keep this in sync with _fullRefreshOption.
   static const List<int> _refreshPhotoOptions = <int>[
     100,
     300,
     500,
-    _fullRefreshOption,
+    // Keep this in sync with _fullRefreshOption.
   ];
 
-  // 馃攧 鍒锋柊鏁版嵁锛氭壂鎻忕浉鍐?+ 杩愯鑱氱被
-  /*Future<void> _refreshData({bool clearCacheFirst = false}) async {
-    if (_isRefreshing) return; // 闃叉閲嶅鐐瑰嚮
-
-    setState(() => _isRefreshing = true);
-
-    try {
-      if (clearCacheFirst) {
-        await PhotoService().clearAllCachedData();
-      }
-
-      // 1. 鎵弿鐩稿唽锛堜粎鍏ュ簱鍘熷鍙敤鏁版嵁锛?
-      final scanSummary = await PhotoService().scanAndSyncPhotos();
-
-      // 2. 杩愯鑱氱被绠楁硶锛堜細鑷姩瑙﹀彂鍦板潃瑙ｆ瀽锛?
-      await EventService().runClustering();
-
-      // 3. 鑱氱被瀹屾垚鍚庡啀鍋?AI 鍒嗘瀽锛岀‘淇?eventId 宸插缓绔?
-      await AIService().analyzePhotosInBackground();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              clearCacheFirst
-                  ? '鉁?宸叉竻绌虹紦瀛樺苟瀹屾垚閲嶆壂锛氭柊澧?{scanSummary.insertedCount}寮狅紝鍙敤鎬绘暟${scanSummary.totalAfter}寮?
-                  : '鉁?鏁版嵁宸叉洿鏂帮細鏂板${scanSummary.insertedCount}寮狅紝鍙敤鎬绘暟${scanSummary.totalAfter}寮?,
-            ),
-          ),
-        );
-      }
-    } on PhotoScanException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('鈿狅笍 ${e.message}')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('鉂?鏇存柊澶辫触: $e')));
-      }
-    } finally {
-      setState(() => _isRefreshing = false);
-    }
-  }*/
   void _startRefresh({bool clearCacheFirst = false, int? recentPhotoLimit}) {
     if (_isClearingCache || AlbumRefreshService().isRunning) {
       return;
@@ -311,7 +264,7 @@ class _AlbumPageState extends State<AlbumPage> {
                   subtitle: Text('先只跑最近一部分照片，或者全量运行'),
                 ),
                 ..._refreshPhotoOptions.map((option) {
-                  // 杩欓噷鍋囪浣犵殑浠ｇ爜閲屽畾涔変簡 _fullRefreshOption锛屽鏋滄病鏈夎鏇挎崲涓轰綘瀹為檯鐨勫€?
+                  // Keep this in sync with _fullRefreshOption.
                   final isFull = option == -1;
                   final label = isFull ? '全部运行' : '跑下一批 $option 张';
                   final subtitle = isFull
@@ -340,7 +293,7 @@ class _AlbumPageState extends State<AlbumPage> {
     }
 
     _startRefresh(
-      recentPhotoLimit: selected == _fullRefreshOption ? null : selected,
+      // Keep this in sync with _fullRefreshOption.
     );
   }
 
@@ -520,7 +473,7 @@ class _AlbumPageState extends State<AlbumPage> {
   }
 
   Future<List<PhotoEntity>> _loadAllPhotosForTagBrowser() async {
-    // 浠呭姞杞芥渶杩戜竴娈垫暟鎹紝閬垮厤澶у浘搴撴瘡娆″彉鏇撮兘瑙﹀彂鍏ㄩ噺鎺掑簭銆?
+    // Load a bounded recent window to avoid full-library resorting on every change.
     return _loadAlbumTagBrowserSourcePhotos();
   }
 
@@ -853,7 +806,7 @@ class _AlbumPageState extends State<AlbumPage> {
     return '${duration.inSeconds}秒';
   }
 
-  // 馃帹 1. 鏋勫缓绌虹姸鎬佺晫闈?
+  // Empty state.
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -1230,7 +1183,7 @@ class _AlbumPageState extends State<AlbumPage> {
     );
   }
 
-  // 馃帹 2. 鏋勫缓閿欒鎻愮ず鐣岄潰
+  // Error state.
   Widget _buildErrorState(String errorMessage) {
     return Center(
       child: Column(

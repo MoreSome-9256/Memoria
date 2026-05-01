@@ -9,7 +9,8 @@ part 'llm_service_titles.dart';
 part 'llm_service_completion.dart';
 part 'llm_service_story_music.dart';
 
-/// LLM 服务 - 通过 OpenAI 兼容第三方中转站生成内容
+/// LLM service for generating stories, titles, captions, and music prompts
+/// through OpenAI-compatible API providers.
 class LLMService {
   static final LLMService _instance = LLMService._internal();
   factory LLMService() => _instance;
@@ -69,7 +70,7 @@ class LLMService {
     );
   }
 
-  // 通过 --dart-define 配置，避免硬编码凭证
+  // Configure through --dart-define to avoid hard-coded credentials.
   static const String _defaultApiKey = String.fromEnvironment(
     'LLM_API_KEY',
     defaultValue: '',

@@ -1,3 +1,5 @@
+/// ONNX 人脸嵌入服务，负责调用 ONNX 模型提取人脸向量。
+
 import 'dart:io';
 import 'dart:math' as math;
 

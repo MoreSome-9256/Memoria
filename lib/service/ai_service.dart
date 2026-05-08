@@ -1,3 +1,5 @@
+/// AI 分析主编排服务，协调照片处理、标签、向量、人脸和 OCR 流程。
+
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';

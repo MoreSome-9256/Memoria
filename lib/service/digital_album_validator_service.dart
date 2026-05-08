@@ -1,3 +1,5 @@
+/// 数字相册校验服务，验证页面内容、布局和资源完整性。
+
 import 'dart:math' as math;
 
 import 'package:flutter/painting.dart';

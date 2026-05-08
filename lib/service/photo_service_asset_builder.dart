@@ -1,3 +1,5 @@
+/// 照片资产构建服务，封装资源扫描结果到实体对象的转换。
+
 part of 'photo_service.dart';
 
 class _PhotoAssetBuilder {

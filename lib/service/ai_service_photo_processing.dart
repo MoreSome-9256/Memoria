@@ -1,3 +1,5 @@
+/// AI 服务中的照片处理分组，包含预处理、提取和结果整合逻辑。
+
 part of 'ai_service.dart';
 
 extension AIServicePhotoProcessing on AIService {

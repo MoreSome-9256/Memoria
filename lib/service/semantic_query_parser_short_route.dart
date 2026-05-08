@@ -1,3 +1,5 @@
+/// 语义查询短路路径，用于快速命中简单意图的解析结果。
+
 part of 'semantic_query_parser_service.dart';
 
 extension _SemanticQueryParserShortRoute on SemanticQueryParserService {

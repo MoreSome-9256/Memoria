@@ -1,3 +1,5 @@
+/// MobileCLIP 后端偏好服务，记录当前可用推理后端及其选择策略。
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

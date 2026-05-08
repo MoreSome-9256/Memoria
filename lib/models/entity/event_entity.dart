@@ -1,4 +1,6 @@
-﻿import 'dart:io';
+﻿/// 事件聚合的 ObjectBox 实体，保存时间、地点和分析后的事件信息。
+
+import 'dart:io';
 
 import 'package:isar/isar.dart';
 import 'package:photo_manager/photo_manager.dart';

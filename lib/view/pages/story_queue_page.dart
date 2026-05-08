@@ -1,3 +1,5 @@
+/// 故事队列页面，用于查看当前排队和进行中的任务。
+
 import 'package:flutter/material.dart';
 
 import '../../service/story_queue_service.dart';

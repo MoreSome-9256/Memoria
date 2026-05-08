@@ -1,3 +1,5 @@
+/// 语义查询解析的 LLM 路径实现，负责把自然语言转为结构化意图。
+
 part of 'semantic_query_parser_service.dart';
 
 extension _SemanticQueryParserLlm on SemanticQueryParserService {

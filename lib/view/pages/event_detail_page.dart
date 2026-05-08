@@ -1,4 +1,6 @@
-﻿import 'dart:async';
+﻿/// 事件详情页面，展示单个事件的照片、信息和操作。
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';

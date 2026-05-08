@@ -1,3 +1,5 @@
+/// 故事生成流程使用的值对象和枚举，描述模式、模板和输出选项。
+
 import '../ai_theme.dart';
 import '../entity/photo_entity.dart';
 import '../entity/story_entity.dart';

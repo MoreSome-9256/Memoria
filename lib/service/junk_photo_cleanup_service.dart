@@ -1,3 +1,5 @@
+/// 垃圾照片清理服务，负责筛选、确认和清除低价值照片。
+
 import 'dart:async';
 
 import '../models/entity/event_entity.dart';

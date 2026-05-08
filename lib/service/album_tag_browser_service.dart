@@ -1,3 +1,5 @@
+/// 专辑标签浏览服务，负责按标签组织和筛选照片集合。
+
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
 import '../utils/tag_sanitizer.dart';

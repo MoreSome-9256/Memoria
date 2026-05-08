@@ -1,3 +1,5 @@
+/// 照片访问辅助服务，封装对相册资源的读取和授权检查。
+
 part of 'photo_service.dart';
 
 extension PhotoServiceAccess on PhotoService {

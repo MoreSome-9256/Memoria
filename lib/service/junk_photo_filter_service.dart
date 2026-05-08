@@ -1,3 +1,5 @@
+/// 垃圾照片过滤服务，用于识别截图、模糊图和低质量内容。
+
 import 'dart:math' as math;
 
 import '../models/entity/photo_entity.dart';

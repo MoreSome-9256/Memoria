@@ -1,3 +1,5 @@
+/// 语义查询解析主服务，协调 LLM、规则和本地回退路径。
+
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';

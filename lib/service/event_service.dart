@@ -1,3 +1,5 @@
+/// 事件聚合服务，负责按时间、位置和内容把照片整理成事件。
+
 import 'package:dio/dio.dart';
 import 'package:isar/isar.dart';
 import '../data/tag_taxonomy_v2.dart';

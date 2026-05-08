@@ -1,3 +1,5 @@
+/// 故事生成编排中的故事构建模块，把照片集合拼装成故事草稿。
+
 part of 'story_generation_orchestrator.dart';
 
 extension _StoryGenerationOrchestratorStoryBuilder

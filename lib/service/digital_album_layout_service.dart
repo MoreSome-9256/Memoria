@@ -1,3 +1,5 @@
+/// 数字相册版式服务，计算页面结构、排版和样式配置。
+
 import 'dart:math' as math;
 
 import '../models/vo/album_book_models.dart';

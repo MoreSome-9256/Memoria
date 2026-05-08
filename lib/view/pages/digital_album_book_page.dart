@@ -1,4 +1,6 @@
-﻿import 'dart:async';
+﻿/// 数字相册书页面，展示和编辑书册式相册内容。
+
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';

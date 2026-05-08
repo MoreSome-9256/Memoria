@@ -1,3 +1,5 @@
+/// 故事结果页面，展示生成后的故事内容和分享入口。
+
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';

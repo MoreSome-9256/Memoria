@@ -1,3 +1,5 @@
+/// 旅行记忆检测服务，识别具有旅行特征的照片事件。
+
 import 'dart:isolate';
 
 import 'package:isar/isar.dart';

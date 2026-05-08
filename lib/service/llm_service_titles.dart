@@ -1,3 +1,5 @@
+/// LLM 标题生成服务，专门处理事件和故事标题的生成逻辑。
+
 part of 'llm_service.dart';
 
 extension LLMServiceTitles on LLMService {

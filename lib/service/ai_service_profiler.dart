@@ -1,3 +1,5 @@
+/// AI 服务的性能分析辅助模块，记录阶段耗时和诊断信息。
+
 part of 'ai_service.dart';
 
 class _AiPhotoProfile {

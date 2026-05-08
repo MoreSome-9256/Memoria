@@ -1,3 +1,5 @@
+/// 照片扫描协调器，调度扫描、增量更新和缓存同步任务。
+
 part of 'photo_service.dart';
 
 class _PhotoScanCoordinator {

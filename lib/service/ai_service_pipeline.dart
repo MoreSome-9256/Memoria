@@ -1,3 +1,5 @@
+/// AI 服务的主处理管线，串联输入准备、分析执行和结果落盘。
+
 part of 'ai_service.dart';
 
 extension AIServicePipeline on AIService {

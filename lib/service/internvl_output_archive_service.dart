@@ -1,3 +1,5 @@
+/// InternVL 输出归档服务，保存和读取模型实验生成的中间结果。
+
 import 'dart:convert';
 import 'dart:io';
 

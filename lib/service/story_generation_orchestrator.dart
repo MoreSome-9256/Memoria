@@ -1,3 +1,5 @@
+/// 故事生成编排主服务，统筹选图、生成、排队和结果交付。
+
 import 'dart:convert';
 import 'dart:async';
 

@@ -1,3 +1,5 @@
+/// 照片主服务，集中管理相册访问、缓存、实体转换和同步流程。
+
 import 'dart:io';
 import 'dart:math' as math;
 

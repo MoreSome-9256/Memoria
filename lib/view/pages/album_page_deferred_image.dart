@@ -1,3 +1,5 @@
+/// 相册页延迟图片组件文件，承载按需加载的相册图片逻辑。
+
 part of 'album_page.dart';
 
 class _DeferredImageTicket {

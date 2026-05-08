@@ -1,3 +1,5 @@
+/// 人脸聚类服务，计算人脸向量分组并输出聚类结果。
+
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';

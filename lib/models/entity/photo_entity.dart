@@ -1,3 +1,5 @@
+/// 照片元数据的核心 ObjectBox 实体，保存尺寸、位置、标签和向量信息。
+
 import 'package:isar/isar.dart';
 
 part 'photo_entity.g.dart';

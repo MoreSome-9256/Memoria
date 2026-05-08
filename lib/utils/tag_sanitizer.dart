@@ -1,3 +1,5 @@
+/// 标签清洗辅助工具，过滤无效 OCR 标签、噪声词和不适合的视觉标签。
+
 class TagSanitizer {
   TagSanitizer._();
 

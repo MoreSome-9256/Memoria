@@ -1,3 +1,5 @@
+/// 照片扫描服务，负责遍历相册资源并读取元数据。
+
 part of 'photo_service.dart';
 
 extension PhotoServiceScan on PhotoService {

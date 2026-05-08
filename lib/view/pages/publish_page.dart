@@ -1,3 +1,5 @@
+/// 发布页面，提供故事分享和发布相关功能。
+
 import 'dart:ui'; // 🌟 新增：用于实现毛玻璃高斯模糊效果
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

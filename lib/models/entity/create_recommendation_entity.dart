@@ -1,5 +1,7 @@
 import 'package:isar/isar.dart';
 
+/// 推荐生成记录的 ObjectBox 实体，保存预设类型和生成元数据。
+
 part 'create_recommendation_entity.g.dart';
 
 @Collection()

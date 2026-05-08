@@ -1,3 +1,5 @@
+/// 照片服务的 AI 重置模块，处理分析状态和缓存的重置逻辑。
+
 part of 'photo_service.dart';
 
 extension PhotoServiceAiReset on PhotoService {

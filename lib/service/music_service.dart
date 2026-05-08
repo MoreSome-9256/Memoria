@@ -1,3 +1,5 @@
+/// 音乐服务，管理播放、选择和音乐资源的协调。
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;

@@ -1,3 +1,5 @@
+/// 故事生成编排的本地运行时支撑，管理任务状态和执行环境。
+
 part of 'story_generation_orchestrator.dart';
 
 extension _StoryGenerationOrchestratorLocalRuntime

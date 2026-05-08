@@ -1,3 +1,5 @@
+/// ONNX 会话提供服务，负责模型会话的初始化与复用。
+
 import 'dart:io';
 import 'dart:typed_data';
 

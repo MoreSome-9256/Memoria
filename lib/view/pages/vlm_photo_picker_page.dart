@@ -1,3 +1,5 @@
+/// VLM 照片选择页面，辅助选择用于视觉语言分析的照片。
+
 import 'dart:io';
 import 'dart:typed_data';
 

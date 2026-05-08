@@ -1,3 +1,5 @@
+/// AI 服务的输入模型，定义单次分析所需的照片与控制参数。
+
 part of 'ai_service.dart';
 
 enum _AnalysisInputStrategy {

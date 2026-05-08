@@ -1,3 +1,5 @@
+/// LLM 补全能力封装，处理文本生成请求的通用调用路径。
+
 part of 'llm_service.dart';
 
 extension LLMServiceCompletion on LLMService {

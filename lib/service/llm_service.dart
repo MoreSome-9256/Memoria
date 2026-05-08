@@ -1,3 +1,5 @@
+/// LLM 服务主入口，封装标题、文案、音乐提示词和对话请求。
+
 import 'dart:convert';
 import 'dart:typed_data';
 

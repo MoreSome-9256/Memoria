@@ -1,3 +1,5 @@
+/// AI 管线执行器，负责按步骤调度单张照片的分析任务。
+
 part of 'ai_service.dart';
 
 class _AiPipelineRunner {

@@ -1,3 +1,5 @@
+/// 故事生成编排共享模型，描述阶段、任务和上下文数据。
+
 part of 'story_generation_orchestrator.dart';
 
 class _StoryPhotoMaterial {

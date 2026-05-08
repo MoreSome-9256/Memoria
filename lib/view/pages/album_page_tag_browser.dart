@@ -1,3 +1,5 @@
+/// 相册标签浏览页面，按标签层次快速浏览照片。
+
 part of 'album_page.dart';
 
 class _AlbumTagBrowserData {

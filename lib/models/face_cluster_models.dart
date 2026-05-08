@@ -1,3 +1,5 @@
+/// 人脸聚类相关数据模型，包含成员、质量分数和向量版本等信息。
+
 class FaceClusterMember {
   const FaceClusterMember({
     required this.faceId,

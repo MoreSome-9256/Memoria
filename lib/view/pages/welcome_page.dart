@@ -1,3 +1,5 @@
+/// 欢迎页，作为未登录用户的入口与引导界面。
+
 import 'package:flutter/material.dart';
 import 'package:photo_album/view/pages/sign_in_page.dart';
 import 'package:photo_album/view/pages/sign_up_page.dart';

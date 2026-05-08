@@ -1,3 +1,5 @@
+/// AI 服务生命周期控制模块，负责启动、暂停、恢复和停止分析流程。
+
 part of 'ai_service.dart';
 
 extension AIServiceLifecycle on AIService {

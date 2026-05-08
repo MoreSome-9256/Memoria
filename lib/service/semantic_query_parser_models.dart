@@ -1,3 +1,5 @@
+/// 语义查询解析模型，描述解析结果、路由状态和候选条件。
+
 part of 'semantic_query_parser_service.dart';
 
 class _CoarseSeed {

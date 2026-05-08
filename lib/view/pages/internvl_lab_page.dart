@@ -1,3 +1,5 @@
+/// InternVL 实验页面，用于调试和验证本地视觉语言能力。
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';

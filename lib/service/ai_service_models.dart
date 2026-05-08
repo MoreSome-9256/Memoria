@@ -1,3 +1,5 @@
+/// AI 服务内部使用的模型定义，汇总分析流程中的共享数据结构。
+
 part of 'ai_service.dart';
 
 class _PreparedAnalysisInput {

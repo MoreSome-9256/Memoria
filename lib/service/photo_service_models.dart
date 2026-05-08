@@ -1,3 +1,5 @@
+/// 照片服务共享模型，保存扫描、同步和处理过程中的状态数据。
+
 part of 'photo_service.dart';
 
 class _PreparedScanData {

@@ -1,3 +1,5 @@
+/// 照片过滤辅助工具，负责识别截图、校验时间戳和解析文件名日期。
+
 class PhotoFilterHelper {
   const PhotoFilterHelper._();
 

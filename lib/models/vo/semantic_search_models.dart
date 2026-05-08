@@ -1,3 +1,5 @@
+/// 语义检索相关类型集合，定义查询严格度和路由模式等枚举。
+
 import '../entity/photo_entity.dart';
 
 enum SemanticSearchRouteType {

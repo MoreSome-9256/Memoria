@@ -1,3 +1,5 @@
+/// 照片资产构建辅助模块，负责从相册资源生成内部照片实体。
+
 part of 'photo_service.dart';
 
 extension PhotoServiceAssetBuild on PhotoService {

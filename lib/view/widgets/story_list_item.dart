@@ -1,3 +1,5 @@
+/// 故事列表项组件，用于展示故事预览和入口信息。
+
 import 'package:flutter/material.dart';
 
 import '../../models/story.dart';

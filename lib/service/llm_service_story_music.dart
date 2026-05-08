@@ -1,3 +1,5 @@
+/// 故事配乐生成服务，负责为叙事内容挑选或生成音乐提示。
+
 part of 'llm_service.dart';
 
 extension LLMServiceStoryMusic on LLMService {

@@ -1,3 +1,5 @@
+/// 语义查询解析的本地回退实现，在离线或失败时提供保底解析。
+
 part of 'semantic_query_parser_service.dart';
 
 extension _SemanticQueryParserLocalFallback on SemanticQueryParserService {

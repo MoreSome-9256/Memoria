@@ -1,3 +1,5 @@
+/// 事件领域模型，表示一组按时间和上下文聚合的照片及其主题信息。
+
 import 'vo/photo.dart';
 import 'ai_theme.dart';
 

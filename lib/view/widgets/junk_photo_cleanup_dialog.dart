@@ -1,3 +1,5 @@
+/// 垃圾照片清理确认对话框，用于执行删除前的二次确认。
+
 import 'package:flutter/material.dart';
 
 import '../../service/junk_photo_filter_service.dart';

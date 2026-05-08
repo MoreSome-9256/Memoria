@@ -1,3 +1,5 @@
+/// MobileCLIP 标签服务，把图像向量映射到可读的视觉标签。
+
 import 'dart:async';
 import 'dart:math' as math;
 

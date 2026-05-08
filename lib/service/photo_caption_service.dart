@@ -1,3 +1,5 @@
+/// 照片描述服务，负责生成单张照片的标题和说明文字。
+
 import 'dart:io';
 import 'dart:math' as math;
 

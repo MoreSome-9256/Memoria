@@ -1,6 +1,8 @@
+/// 延迟加载路径图片组件，适合在列表或相册中按需解码。
+
 import 'dart:async';
 import 'dart:collection';
-
+import 'package:flutter/widget_previews.dart';
 import 'package:flutter/material.dart';
 
 import 'path_image.dart';
@@ -127,3 +129,4 @@ class _DeferredImageLoadScheduler {
     }
   }
 }
+

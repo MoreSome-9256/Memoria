@@ -1,3 +1,5 @@
+/// 人脸向量索引仓库，负责存取和查询人脸嵌入数据。
+
 import '../../models/entity/face_entity.dart';
 import '../../objectbox.g.dart';
 import '../objectbox/entities/face_embedding_index_entity.dart';

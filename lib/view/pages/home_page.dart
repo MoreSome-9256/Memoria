@@ -1,3 +1,5 @@
+/// 首页，展示精选事件、最近照片和推荐入口。
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';

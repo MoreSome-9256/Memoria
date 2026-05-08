@@ -1,3 +1,5 @@
+/// 故事生成编排中的生成阶段，负责组装最终故事文本和元数据。
+
 part of 'story_generation_orchestrator.dart';
 
 extension _StoryGenerationOrchestratorGeneration

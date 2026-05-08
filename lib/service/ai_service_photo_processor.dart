@@ -1,3 +1,5 @@
+/// AI 服务的照片处理器分组，封装具体的图片分析实现。
+
 part of 'ai_service.dart';
 
 class _AiPhotoProcessor {

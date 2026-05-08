@@ -1,3 +1,5 @@
+/// 语义查询解析常量，定义路由提示、阈值和提示词模板。
+
 part of 'semantic_query_parser_service.dart';
 
 const JsonEncoder _prettyJson = JsonEncoder.withIndent('  ');

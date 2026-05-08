@@ -1,3 +1,5 @@
+/// 人脸聚类调试页面，用于查看聚类结果和中间状态。
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';

@@ -1,3 +1,5 @@
+/// 个人资料页面，提供设置、调试入口和账户信息展示。
+
 import 'dart:async';
 
 import 'package:amplify_flutter/amplify_flutter.dart';

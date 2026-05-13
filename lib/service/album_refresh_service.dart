@@ -165,12 +165,12 @@ class AlbumRefreshService {
     await PhotoService().requeuePhotosForAiByIds(scanResult.insertedPhotoIds);
     _scheduleMediaIndexRefresh(batchSize: batchSize);
 
-    _setProgress(
-      AlbumRefreshStage.clustering,
-      0.50,
-      '正在整理相册分类',
-      '已 requeue ${scanResult.insertedCount} 张，正在重建事件索引',
-    );
+    // _setProgress(
+    //   AlbumRefreshStage.clustering,
+    //   0.50,
+    //   '正在整理相册分类',
+    //   '已 requeue ${scanResult.insertedCount} 张，正在重建事件索引',
+    // );
 
     // step 3: 事件聚类
     await EventService().runClustering();

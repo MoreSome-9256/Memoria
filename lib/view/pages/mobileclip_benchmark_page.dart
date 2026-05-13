@@ -1,3 +1,5 @@
+/// MobileCLIP 基准测试页面，用于测试模型性能和资源占用。
+
 import 'package:flutter/material.dart';
 
 import '../../models/mobileclip_benchmark.dart';

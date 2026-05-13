@@ -1,3 +1,5 @@
+/// 故事生成进度页面，展示故事任务的实时执行状态。
+
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 

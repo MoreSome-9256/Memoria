@@ -1,3 +1,5 @@
+/// 故事领域模型，承载封面图、分段内容和生成时间等叙事信息。
+
 import 'vo/photo.dart';
 
 class StoryBlock {

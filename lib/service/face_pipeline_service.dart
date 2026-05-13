@@ -1,3 +1,5 @@
+/// 人脸检测处理管线，串联检测、裁剪和质量评估流程。
+
 import 'dart:io';
 import 'dart:math' as math;
 

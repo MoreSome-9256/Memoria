@@ -1,3 +1,5 @@
+/// 主题子聚类的抽象框架，包含面向人物的聚类实现。
+
 import 'dart:math' as math;
 
 import '../models/entity/photo_entity.dart';

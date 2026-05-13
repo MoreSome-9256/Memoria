@@ -24,7 +24,7 @@ class VignetteEffect extends StatelessWidget {
                 radius: 1.0,
                 colors: [
                   Colors.transparent,
-                  Colors.black.withOpacity(0.6), // 边缘暗化强度
+                  Colors.black.withValues(alpha: 0.6), // 边缘暗化强度
                 ],
                 stops: const [0.5, 1.0], // 0.5以内全透明，边缘快速变暗
               ),
@@ -188,9 +188,9 @@ class _GlowRingPainter extends CustomPainter {
     final RadialGradient gradient = RadialGradient(
       colors: [
         Colors.transparent,
-        colorOuter.withOpacity(0.15),
-        colorInner.withOpacity(glowAlpha * 0.6),
-        colorOuter.withOpacity(glowAlpha * 0.4),
+        colorOuter.withValues(alpha: 0.15),
+        colorInner.withValues(alpha: glowAlpha * 0.6),
+        colorOuter.withValues(alpha: glowAlpha * 0.4),
         Colors.transparent,
       ],
       // 这里的 stops 完美对应了你原代码的 addColorStop
@@ -205,14 +205,14 @@ class _GlowRingPainter extends CustomPainter {
     // 2. 绘制主光环 (Ring stroke)
     final Paint strokePaint1 = Paint()
       ..style = PaintingStyle.stroke
-      ..color = colorInner.withOpacity(0.5)
+      ..color = colorInner.withValues(alpha: 0.5)
       ..strokeWidth = maxSize * ringWidth * 0.08;
     canvas.drawCircle(center, r, strokePaint1);
 
     // 3. 绘制内测细光环 (Inner ring)
     final Paint strokePaint2 = Paint()
       ..style = PaintingStyle.stroke
-      ..color = colorInner.withOpacity(0.25)
+      ..color = colorInner.withValues(alpha: 0.25)
       ..strokeWidth = 1.5;
     canvas.drawCircle(center, innerR, strokePaint2);
 

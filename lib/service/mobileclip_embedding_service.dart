@@ -1,3 +1,5 @@
+/// MobileCLIP 图像嵌入服务，负责提取图片语义向量。
+
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';

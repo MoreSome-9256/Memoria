@@ -1,3 +1,5 @@
+/// 认证令牌辅助服务，负责缓存和刷新 API 调用所需的 token。
+
 import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/foundation.dart';

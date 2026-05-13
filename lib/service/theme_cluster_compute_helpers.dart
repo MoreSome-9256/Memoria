@@ -1,3 +1,5 @@
+/// 主题聚类计算辅助函数，提取共用的向量和评分计算逻辑。
+
 import 'dart:math' as math;
 
 import '../models/entity/photo_entity.dart';

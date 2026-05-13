@@ -1,3 +1,5 @@
+/// 端侧 InternVL 服务，提供本地视觉语言模型的推理能力。
+
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';

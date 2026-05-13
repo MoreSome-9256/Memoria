@@ -1,3 +1,5 @@
+/// AI 服务的输入模型，定义单次分析所需的照片与控制参数。
+
 part of 'ai_service.dart';
 
 enum _AnalysisInputStrategy {
@@ -156,7 +158,7 @@ class _AnalysisInputLoader {
       );
     } catch (error) {
       thumbnailWatch.stop();
-      debugPrint('鈿狅笍 璇诲彇绯荤粺缂╃暐鍥惧け璐?photoId=${photo.id}: $error');
+      debugPrint('读取系统缩略图失败 photoId=${photo.id}: $error');
       return _ThumbnailReadAttempt(
         bytes: null,
         readMs: thumbnailWatch.elapsedMicroseconds / 1000.0,

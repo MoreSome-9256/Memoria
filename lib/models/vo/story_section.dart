@@ -1,3 +1,5 @@
+/// 故事章节值对象，表示一个故事分段及其关联照片。
+
 import 'photo.dart';
 
 class StorySection {

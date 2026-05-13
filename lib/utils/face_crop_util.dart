@@ -1,3 +1,5 @@
+/// 人脸裁剪辅助工具，提供裁剪框换算和图片裁切的通用逻辑。
+
 import 'dart:io';
 import 'dart:typed_data';
 

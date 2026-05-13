@@ -1,3 +1,5 @@
+/// AI 评分辅助工具，封装照片情绪和质量分数的计算逻辑。
+
 class AIScoreHelper {
   const AIScoreHelper._();
 

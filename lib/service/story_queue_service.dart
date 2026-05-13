@@ -1,3 +1,5 @@
+/// 故事队列服务，管理待生成、进行中和已完成的故事任务。
+
 import 'package:flutter/foundation.dart';
 
 import '../models/ai_theme.dart';

@@ -1,4 +1,4 @@
-import 'dart:convert';
+/// 事件聚合服务，负责按时间、位置和内容把照片整理成事件。
 
 import 'package:dio/dio.dart';
 import 'package:isar/isar.dart';
@@ -193,9 +193,7 @@ class EventService {
 
     for (final event in events) {
       try {
-        print(
-          "开始解析事件地址: id=${event.id} lat=${event.avgLatitude} lon=${event.avgLongitude}",
-        );
+        print("开始解析事件地址: id=${event.id}");
         final regeocode = await _reverseGeocodeWithAmap(
           latitude: event.avgLatitude!,
           longitude: event.avgLongitude!,
@@ -246,8 +244,9 @@ class EventService {
         });
 
         print(
-          "📍 事件地址解析成功: ${event.title} -> ${locationName ?? district ?? city ?? province ?? '未知地点'} "
-          "(adcode=${adcode ?? '-'} citycode=${citycode ?? '-'})",
+          "📍 事件地址解析成功: id=${event.id} city=${city ?? '-'} "
+          "district=${district ?? '-'} adcode=${adcode ?? '-'} "
+          "citycode=${citycode ?? '-'}",
         );
       } catch (e) {
         print("❌ 地址解析失败: $e");
@@ -359,7 +358,8 @@ class EventService {
         });
 
         print(
-          "📌 照片地址解析成功: id=${photo.id} location=${locationName ?? city ?? '-'} district=${district ?? '-'}",
+          "📌 照片地址解析成功: id=${photo.id} city=${city ?? '-'} "
+          "district=${district ?? '-'} adcode=${adcode ?? '-'}",
         );
       } catch (e) {
         print("❌ 照片地址解析失败: id=${photo.id} error=$e");
@@ -390,11 +390,15 @@ class EventService {
 
     final body = response.data;
 
-    print("高德地图返回值${jsonEncode(body)}");
-
     if (body is! Map<String, dynamic>) {
       throw Exception('高德返回格式异常');
     }
+
+    print(
+      "高德逆地址响应: status=${body['status'] ?? '-'} "
+      "hasRegeocode=${body['regeocode'] is Map<String, dynamic>} "
+      "extensions=$extensions",
+    );
 
     if (body['status'] != '1') {
       throw Exception('高德返回失败: ${body['info'] ?? '未知错误'}');

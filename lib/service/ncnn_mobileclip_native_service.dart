@@ -1,3 +1,5 @@
+/// NCNN MobileCLIP 原生服务，封装本地推理桥接与结果转换。
+
 import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:typed_data';

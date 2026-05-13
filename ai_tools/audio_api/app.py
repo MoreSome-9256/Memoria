@@ -14,6 +14,7 @@ from jose import jwt, JWTError
 import logging
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from httpx import AsyncClient
 
 # 🔐 日志配置
 logging.basicConfig(level=logging.INFO)
@@ -294,6 +295,45 @@ async def get_current_user(
         )
     return await verify_cognito_token(token)
 
+
+@app.post("/chat/completions")  # to use the same auth dependency for both endpoints, this used for routing Deepseek's chat completions, 
+async def ask_deepseek(
+    request: Request,
+    user_info: dict = Security(get_current_user),
+):
+    """Deepseek 的聊天接口（需要 Cognito JWT 鉴权）"""
+    deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    deepseek_api_url = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions")
+    if not deepseek_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="服务端未配置 DEEPSEEK_API_KEY",
+        )
+    
+    # 此处直接转发请求 body 到 Deepseek API，使用 Deepseek 的 API Key 鉴权，完全异步、透明，不要有任何响应的差别
+    try:
+
+        httpx_aclient = AsyncClient(timeout=600)  # 全局复用的 Async HTTP Client，超时设置为 10 分钟，给 AI 充足的时间来处理复杂请求
+
+        body = await request.body()
+        headers = {
+            "Authorization": f"Bearer {deepseek_api_key}",
+            "Content-Type": "application/json"
+        }
+        # Call Deepseek API here
+        logger.info(f"🚀 转发请求到 Deepseek API: url={deepseek_api_url} user={user_info.get('username')}")
+        response = await httpx_aclient.post(deepseek_api_url, headers=headers, content=body)
+        return response.read()
+    except Exception as e:
+        logger.error(f"❌ 调用 Deepseek API 失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="调用 Deepseek API 失败"
+        )
+    finally:
+        await httpx_aclient.aclose()
+
+
 @app.post("/api/analyze_beats")
 async def analyze_beats(
     request: Request,
@@ -407,7 +447,7 @@ async def analyze_beats(
 # if __name__ == "__main__":
 #     import uvicorn
 #     uvicorn.run(app, host="0.0.0.0", port=8000)
-# 启动命令: 
+# 启动命令:
 # 1. 设置环境变量：
 #    export AWS_REGION=ap-southeast-1
 #    export COGNITO_USER_POOL_ID=ap-southeast-1_XXXXXXXXX

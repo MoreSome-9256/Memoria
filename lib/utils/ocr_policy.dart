@@ -1,3 +1,5 @@
+/// OCR 策略开关和判断逻辑，用于控制文字识别能力的启用方式。
+
 import 'tag_sanitizer.dart';
 
 class OcrPolicy {

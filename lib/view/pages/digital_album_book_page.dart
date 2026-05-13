@@ -1,4 +1,6 @@
-﻿import 'dart:async';
+﻿/// 数字相册书页面，展示和编辑书册式相册内容。
+
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -2193,7 +2195,7 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
         _buildOverlayAction(
           context: context,
           icon: Icons.arrow_back,
-          tooltip: '杩斿洖',
+          tooltip: '返回',
           onTap: () => unawaited(_closePage()),
         ),
         const Spacer(),

@@ -1,5 +1,7 @@
 import 'entity/photo_entity.dart';
 
+/// 主题聚类相关的数据模型，描述照片分组、评分和嵌入向量信息。
+
 class ThemeDefinition {
 	const ThemeDefinition({
 		required this.id,

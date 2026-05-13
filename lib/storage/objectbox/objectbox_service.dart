@@ -1,3 +1,7 @@
+/// ObjectBox 数据库入口服务，负责初始化存储并提供全局 store 访问。
+
+import 'dart:io';
+
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -27,8 +31,10 @@ class ObjectBoxService {
       return;
     }
 
-    final directory = await getApplicationDocumentsDirectory();
-    _store = await openStore(directory: p.join(directory.path, 'objectbox'));
+    final directory = await getApplicationSupportDirectory();
+    final objectBoxDirectory = Directory(p.join(directory.path, 'objectbox'));
+    await objectBoxDirectory.create(recursive: true);
+    _store = await openStore(directory: objectBoxDirectory.path);
   }
 
   Box<T>? tryBox<T>() {

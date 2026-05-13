@@ -1,3 +1,5 @@
+/// 事件聚类辅助工具，处理时间和距离规则下的合并与配置。
+
 import 'dart:math';
 
 import '../models/entity/photo_entity.dart';

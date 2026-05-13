@@ -1,3 +1,5 @@
+/// 推荐生成服务，负责把查询条件转换为可展示的精选集合。
+
 import 'package:isar/isar.dart';
 
 import '../models/entity/create_recommendation_entity.dart';

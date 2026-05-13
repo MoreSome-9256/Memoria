@@ -1,3 +1,5 @@
+/// 全屏照片查看器组件，提供放大浏览和过渡动画。
+
 import 'package:flutter/material.dart';
 
 import 'path_image.dart';

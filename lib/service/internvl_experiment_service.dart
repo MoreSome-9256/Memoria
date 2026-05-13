@@ -1,3 +1,5 @@
+/// InternVL 实验服务，用于临时验证和调试视觉语言模型能力。
+
 import 'dart:convert';
 import 'dart:io';
 

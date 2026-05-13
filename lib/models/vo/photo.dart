@@ -1,3 +1,5 @@
+/// 面向 UI 展示的照片值对象，整合标签、描述和人脸信息。
+
 class Photo {
   final String id;
   String? location;

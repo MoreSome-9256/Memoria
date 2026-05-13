@@ -1,3 +1,5 @@
+/// 语义照片搜索服务，串联查询解析、向量检索和结果排序。
+
 import 'package:flutter/foundation.dart';
 import 'package:isar/isar.dart';
 import '../data/tag_taxonomy_v2.dart';

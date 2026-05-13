@@ -1,3 +1,5 @@
+/// 创作中心页面，聚合故事和推荐相关的创建入口。
+
 import 'dart:async';
 import 'dart:ui';
 

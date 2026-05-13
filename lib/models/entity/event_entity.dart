@@ -1,6 +1,8 @@
+﻿/// 事件聚合的 ObjectBox 实体，保存时间、地点和分析后的事件信息。
+
 import 'dart:io';
 
-import 'package:isar/isar.dart';
+import 'package:objectbox/objectbox.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../ai_theme.dart';
@@ -10,47 +12,49 @@ import '../../utils/ocr_policy.dart';
 import '../../utils/tag_sanitizer.dart';
 import '../vo/photo.dart';
 
-part 'event_entity.g.dart';
-
-@Collection()
+@Entity()
 class EventEntity {
-  Id id = Isar.autoIncrement;
+  @Id()
+  int id = 0;
 
-  // 📅 事件基本信息
+  // 事件基本信息
   late String title; // 事件标题，默认为日期（如 "8月15日-8月18日"）
+  @Index()
   late int startTime; // 开始时间戳 (毫秒)
+  @Index()
   late int endTime; // 结束时间戳 (毫秒)
 
-  // 📍 聚类中心点坐标 (可能为空，如果所有照片都没有GPS)
+  // 聚类中心点坐标 (可能为空，如果所有照片都没有 GPS)
   double? avgLatitude;
   double? avgLongitude;
 
-  // 🏙️ 地理位置信息 (从高德解析)
+  // 地理位置信息 (从高德解析)
   String? city; // 城市名称（如 "青岛市"）
   String? province; // 省份（如 "山东省"）
   String? district; // 区县名称（如 "历城区"）
   String? locationName; // 更细粒度地点：学校/商场/园区/楼栋/POI
   String? formattedAddress; // 完整逆地址解析结果
 
-  // 📸 关联的照片
-  List<int> photoIds = []; // 关联的 PhotoEntity 的 id 列表
+  // 关联的照片
+  List<int> photoIds = []; // 关联的 PhotoEntity id 列表
 
-  // 🖼️ 封面图
-  int? coverPhotoId; // 封面图的 PhotoEntity id (智能选图：最高 joyScore)
+  // 封面图
+  int? coverPhotoId; // 封面图的 PhotoEntity id
 
-  // 🏷️ 标签和主题
+  // 标签和主题
   List<String> tags = []; // 聚合的标签（从照片 AI 标签统计得出）
 
-  // 📊 统计信息
+  // 统计信息
+  @Index()
   int photoCount = 0; // 照片数量（冗余字段，方便查询）
 
-  // 😊 AI 智能增强字段
+  // AI 智能增强字段
   double? joyScore; // 事件平均欢乐值 (0.0 - 1.0)
   List<String>? aiThemes; // AI 生成的标题列表（本地规则：1个，LLM：3-5个）
   bool isLlmGenerated = false; // 标记当前标题是否由 LLM 生成
   int analyzedPhotoCount = 0; // 已分析照片数量（进度追踪）
 
-  // 🎨 季节推导 (根据月份自动计算)
+  // 季节推导 (根据月份自动计算)
   String get season {
     final date = DateTime.fromMillisecondsSinceEpoch(startTime);
     final month = date.month;
@@ -60,17 +64,17 @@ class EventEntity {
     return '冬天';
   }
 
-  // 📅 年份
+  // 年份
   int get year {
     final date = DateTime.fromMillisecondsSinceEpoch(startTime);
     return date.year;
   }
 
-  // 🌆 位置描述（优先使用 city，如果为空则返回 "未知地点"）
+  // 位置描述（优先使用 locationName/district/city/province）
   String get location =>
       locationName ?? district ?? city ?? province ?? '未知地点';
 
-  // 📆 格式化日期范围
+  // 格式化日期范围
   String get dateRangeText {
     final start = DateTime.fromMillisecondsSinceEpoch(startTime);
     final end = DateTime.fromMillisecondsSinceEpoch(endTime);
@@ -83,23 +87,47 @@ class EventEntity {
     return '$startStr - $endStr';
   }
 
-  // 🔄 转换为 UI 层的 Event 模型
-  Future<Event> toUIModel(Isar isar) async {
-    // 1. 根据 photoIds 查询出所有照片
-    final photoEntities = await isar
-        .collection<PhotoEntity>()
-        .where()
-        .anyOf(photoIds, (q, id) => q.idEqualTo(id))
-        .sortByTimestamp() // 按时间顺序排列
-        .findAll();
+  // 转换为 UI 层的 Event 模型
+  Future<Event> toUIModel({
+    required Future<List<PhotoEntity>> Function(List<int> ids) loadPhotoEntities,
+  }) async {
+    final photoEntities = await loadPhotoEntities(photoIds);
+    final photos = await _mapEntitiesToPhotos(photoEntities, resolvePath: true);
+    return _buildEvent(
+      photos: photos,
+      coverPhotos: photos.take(3).toList(growable: false),
+      photoCountOverride: photoCount > 0 ? photoCount : photos.length,
+    );
+  }
 
-    // 2. 转换为 UI 层的 Photo 对象（优先使用 assetId 解析当前可用路径）
+  Future<Event> toPreviewModel({
+    required Future<List<PhotoEntity>> Function(List<int> ids) loadPhotoEntities,
+  }) async {
+    final coverIds = photoIds.take(3).toList(growable: false);
+    final coverEntities = await loadPhotoEntities(coverIds);
+    final coverPhotos = await _mapEntitiesToPhotos(
+      coverEntities,
+      resolvePath: false,
+    );
+    return _buildEvent(
+      photos: const <Photo>[],
+      coverPhotos: coverPhotos,
+      photoCountOverride: photoCount > 0 ? photoCount : photoIds.length,
+    );
+  }
+
+  Future<List<Photo>> _mapEntitiesToPhotos(
+    List<PhotoEntity> photoEntities, {
+    required bool resolvePath,
+  }) async {
     final photos = <Photo>[];
     for (final entity in photoEntities) {
-      final resolvedPath = await _resolvePhotoPath(entity);
+      final resolvedPath = resolvePath
+          ? await _resolvePhotoPath(entity)
+          : entity.path;
       photos.add(
         Photo(
-          id: entity.assetId, // 使用 assetId 作为 Photo 的 id
+          id: entity.assetId,
           path: resolvedPath,
           dateTaken: DateTime.fromMillisecondsSinceEpoch(entity.timestamp),
           tags: TagSanitizer.sanitizeVisualTags(
@@ -116,10 +144,15 @@ class EventEntity {
         ),
       );
     }
+    return photos;
+  }
 
-    // 3. 构造 Event 对象
+  Event _buildEvent({
+    required List<Photo> photos,
+    required List<Photo> coverPhotos,
+    required int photoCountOverride,
+  }) {
     final themes = _buildAiThemes();
-
     return Event(
       id: id.toString(),
       title: title,
@@ -129,13 +162,15 @@ class EventEntity {
       startDate: DateTime.fromMillisecondsSinceEpoch(startTime),
       endDate: DateTime.fromMillisecondsSinceEpoch(endTime),
       photos: photos,
+      coverPhotos: coverPhotos,
+      photoCount: photoCountOverride,
       tags: TagSanitizer.sanitizeDisplayTags(tags),
       aiThemes: themes,
     );
   }
 
   Future<String> _resolvePhotoPath(PhotoEntity entity) async {
-    if (entity.path.trim().isNotEmpty && File(entity.path).existsSync()) {
+    if (entity.path.trim().isNotEmpty && await File(entity.path).exists()) {
       return entity.path;
     }
     final asset = await AssetEntity.fromId(entity.assetId);
@@ -200,7 +235,7 @@ class EventEntity {
     return '$title，值得再次回看';
   }
 
-  // 📊 从照片列表生成事件的工厂方法
+  // 从照片列表生成事件的工厂方法
   static EventEntity fromPhotos(List<PhotoEntity> photos) {
     if (photos.isEmpty) {
       throw ArgumentError('Cannot create event from empty photo list');
@@ -236,7 +271,7 @@ class EventEntity {
           photosWithGPS.length;
     }
 
-    // 聚合标签（取出现频率最高的前5个）
+    // 聚合标签（取出现频率最高的前 5 个）
     final tagCounts = <String, int>{};
     for (var photo in photos) {
       if (photo.aiTags != null) {

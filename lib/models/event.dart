@@ -1,3 +1,5 @@
+/// 事件领域模型，表示一组按时间和上下文聚合的照片及其主题信息。
+
 import 'vo/photo.dart';
 import 'ai_theme.dart';
 
@@ -10,6 +12,8 @@ class Event {
   final DateTime startDate;
   final DateTime endDate;
   final List<Photo> photos;
+  final List<Photo> coverPhotos;
+  final int photoCount;
   final List<String> tags;
   final List<AITheme> aiThemes;
 
@@ -21,13 +25,16 @@ class Event {
     required this.location,
     required this.startDate,
     required this.endDate,
-    required this.photos,
+    this.photos = const <Photo>[],
+    List<Photo>? coverPhotos,
+    int? photoCount,
     this.tags = const [],
     this.aiThemes = const [],
-  });
-
-  // Get cover photos (first 3)
-  List<Photo> get coverPhotos => photos.take(3).toList();
+  }) : coverPhotos =
+           List<Photo>.unmodifiable(
+             coverPhotos ?? photos.take(3).toList(growable: false),
+           ),
+       photoCount = photoCount ?? photos.length;
 
   // Get formatted date range
   String get dateRangeText {

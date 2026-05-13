@@ -1,13 +1,15 @@
+/// 故事视频页面，负责视频预览和播放相关体验。
+
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'story_result_page.dart';
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:math' as math;
+import '../../models/vo/story_section.dart';
 import '../../effects/subtitle_effect.dart';
 import '../../effects/glitch_effect.dart';
 import '../../effects/static_filters.dart';
@@ -20,8 +22,15 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:gal/gal.dart';
 import 'publish_page.dart';
+import 'export_manager.dart';
+import 'offscreen_render_worker.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
+import '../widgets/path_image.dart';
+import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
+import '../../models/entity/face_entity.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class StoryVideoPage extends StatefulWidget {
   final String title;
@@ -79,6 +88,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   double _lastAudioPositionMs = 0; // 上一次拿到的播放进度
   int _singleLoopMs = 15000; // 单首音乐的真实长度
 
+  // 🌟 1. 声明一个本地的可变切片列表
+  late List<StorySection> _localSections;
+
   int _currentLyricIndex = 0;
   String _currentLyricText = "";
   // 🎛️ VFX 控制台参数
@@ -122,6 +134,11 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   @override
   void initState() {
     super.initState();
+    // 🌟 2. 拷贝一份传进来的切片，让它变成可以修改的状态
+    _localSections = List.from(widget.sections);
+
+    // 🌟 3. 启动人脸雷达：去数据库捞取人脸数据
+    _loadFaceDataAsync();
     _vfxController = AnimationController(
       vsync: this,
       duration: Duration(milliseconds: 500), // 先随便给个值，后面会被覆盖
@@ -132,6 +149,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(); // 无限重复！
+
+    _autoConfigVFXAndSubtitles();
 
     // 先给一个最小可播放节拍，随后异步替换为后端分析结果。
     _beatData = [
@@ -170,6 +189,38 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       "🎵 成功加载真实节拍！BPM: ${bpmRaw.toDouble()}, 间隔: ${_beatIntervalMs}ms, 共 ${_beatData.length} 拍",
     );
   }
+  // ==========================================
+  // 🎯 人脸数据后台加载与热更新
+  // ==========================================
+  Future<void> _loadFaceDataAsync() async {
+    try {
+      // 拿到本地数据库实例
+      final _faceBox = ObjectBoxService().store.box<FaceEntity>();
+
+      for (int i = 0; i < _localSections.length; i++) {
+        final photo = _localSections[i].photo;
+
+        // 🚀 极速查询：根据 assetId 去 FaceEntity 表里捞出这张照片对应的所有人脸
+        final _fq = _faceBox.query(FaceEntity_.assetId.equals(photo.id)).build();
+        final faces = _fq.find();
+        _fq.close();
+
+        if (faces.isNotEmpty && mounted) {
+          setState(() {
+            // 🌟 核心魔法：用带有人脸数据的新 Photo 替换旧的。
+            // 此时屏幕如果正在渲染这张照片，Alignment 会瞬间更新，镜头完美对准人脸！
+            _localSections[i] = StorySection(
+              text: _localSections[i].text,
+              photo: photo.copyWith(faces: faces),
+            );
+          });
+        }
+      }
+      debugPrint("🎯 所有人脸数据加载完毕，智能裁切已全面激活！");
+    } catch (e) {
+      debugPrint("⚠️ 加载人脸数据失败: $e");
+    }
+  }
 
   Future<void> _loadBeatDataFromBackend() async {
     // 优先使用上一个页面已经分析好的数据。
@@ -205,12 +256,43 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   int _currentBeatIndexForPreview = -1; // 记录当前演到第几拍了
 
   Future<void> _initAudioAndListener() async {
-    // 🌟 1. 获取这首歌的真实时长（比如 15000 毫秒）
-    await _audioPlayer.setSourceDeviceFile(widget.customMusicPath!);
+    // ==========================================
+    // 🌟 1. 安全降级：获取这首歌的真实时长（修复空指针崩溃！）
+    // ==========================================
+    if (widget.customMusicPath != null && widget.customMusicPath!.isNotEmpty) {
+      await _audioPlayer.setSourceDeviceFile(widget.customMusicPath!);
+    } else {
+      // 队友没生成音乐/网络失败时，也给监听器喂一口本地测试音乐！
+      await _audioPlayer.setSourceAsset('audio/sandal_leap.mp3');
+    }
+
+    // 给老旧安卓机一点缓冲时间，防止 getDuration 拿不到数据
+    await Future.delayed(const Duration(milliseconds: 150));
+
     Duration? songDuration = await _audioPlayer.getDuration();
     // 🌟 修复：把获取到的时长存进我们刚才定义的全局变量里！
     _singleLoopMs = songDuration?.inMilliseconds ?? 15000;
     int singleLoopMs = _singleLoopMs;
+
+    // ==========================================
+    // 🌟 核心修复补丁：填补兜底节拍的“14秒真空期”！
+    // ==========================================
+    // 如果发现还是最初那 3 个孤零零的节拍（说明云端检测失败了）
+    // 那我们就老老实实根据歌曲总时长，按 500ms 一下，铺满整首歌！
+    if (_beatData.length <= 3) {
+      List<Map<String, dynamic>> denseBeats = [];
+      int fallbackInterval = 500; // 默认 120 BPM 的节奏
+      for (int i = 0; i < singleLoopMs; i += fallbackInterval) {
+        denseBeats.add({
+          "ms": i,
+          // 顺便模拟个动次打次的起伏：整秒能量高(0.6)，半秒能量低(0.2)
+          "energy": (i % 1000 == 0) ? 0.6 : 0.2,
+        });
+      }
+      _beatData = denseBeats;
+      _beatIntervalMs = fallbackInterval;
+      debugPrint("⚠️ 已触发本地动态兜底：根据音频时长生成 ${_beatData.length} 个密集节拍");
+    }
 
     // 🌟 2. 核心补丁：无限繁衍节拍数据！
     // 假设我们粗暴地把它复制 20 遍（足以应付 5 分钟的视频）
@@ -252,30 +334,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
       // 🌟 真实的连续时间 = 当前播放条位置 + (已经循环的圈数 * 一圈的总时长)
       double currentTimeMs = currentPosMs + (_audioLoopCount * _singleLoopMs);
-
-      // ==========================================
-      // 🌟 核心升级：根据 BPM 动态计算片头结束的确切时间！
-      // ==========================================
-      // 第一张图（片头）固定在第 8 拍时切换到正片
-      double firstCutTimeMs = 8 * _beatIntervalMs.toDouble();
-
-      // 动态获取当前选中转场的卡点时间
-      int offset = _currentTransition.offsetMs;
-      int duration = _currentTransition.durationMs;
-      // 开始时间 = 切图点 - 提前量
-      double transitionStartMs = firstCutTimeMs - offset;
-      // 🌟 结束时间 = 开始时间 + 转场总长（保证它一定能完完整整播完！）
-      double transitionEndMs = transitionStartMs + duration;
-
-      bool shouldShow =
-          currentTimeMs >= transitionStartMs &&
-          currentTimeMs <= transitionEndMs;
-
-      if (_showPreviewTransition != shouldShow) {
-        setState(() {
-          _showPreviewTransition = shouldShow;
-        });
-      }
 
       // 1. 找当前是第几拍
       int targetBeatIndex = 0;
@@ -369,6 +427,187 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       });
     }
   }
+  // ==========================================
+  // 🤖 智能导演：自动分配字幕样式与画面特效
+  // ==========================================
+  void _autoConfigVFXAndSubtitles() {
+    // 1. 🎲 盲盒抽取：随机字幕样式
+    final subtitleStyles = [
+      'standard',
+      'hero',
+      'cards',
+      'layered',
+      'outline',
+      'typewriter',
+    ];
+    _currentTextStyle =
+        subtitleStyles[math.Random().nextInt(subtitleStyles.length)];
+
+    // 2. 🎬 阅卷打分：根据视频风格选择【唯一】特效
+    // 我们把标题和副标题拼起来，转成小写，方便检索
+    final combinedText = "${widget.title} ${widget.subtitle}".toLowerCase();
+
+    // 先把所有特效重置为 false（一票否决制）
+    _useVignette = false;
+    _useGrain = false;
+    _useCameraFrame = false;
+    _useGlowRing = false;
+    _useCloudBorder = false;
+
+    // 根据关键词计算各特效的契合度
+    int vignetteScore = [
+      '怀旧',
+      '老照片',
+      '记忆',
+      '过去',
+      '伤感',
+      '历史',
+      'nostalgic',
+      'memory',
+      'sad',
+    ].where((w) => combinedText.contains(w)).length;
+    int grainScore = [
+      '胶片',
+      '电影',
+      '质感',
+      '艺术',
+      '故事',
+      'film',
+      'cinematic',
+      'art',
+      'story',
+    ].where((w) => combinedText.contains(w)).length;
+    int cameraScore = [
+      '摄影',
+      '记录',
+      '旅途',
+      '游记',
+      '拍',
+      'vlog',
+      'travel',
+      'photo',
+      'trip',
+    ].where((w) => combinedText.contains(w)).length;
+    int glowScore = [
+      '派对',
+      '赛博',
+      '夜晚',
+      '科技',
+      '炫酷',
+      'party',
+      'night',
+      'cyber',
+      'cool',
+      'neon',
+    ].where((w) => combinedText.contains(w)).length;
+    int cloudScore = [
+      '可爱',
+      '治愈',
+      '宝宝',
+      '宠物',
+      '温暖',
+      '天空',
+      'cute',
+      'warm',
+      'baby',
+      'pet',
+      'sweet',
+    ].where((w) => combinedText.contains(w)).length;
+
+    Map<String, int> scores = {
+      'vignette': vignetteScore,
+      'grain': grainScore,
+      'camera': cameraScore,
+      'glow': glowScore,
+      'cloud': cloudScore,
+    };
+
+    String topVFX = 'camera'; // 兜底默认值
+    int maxScore = 0;
+
+    // 选出得分最高的特效
+    scores.forEach((key, score) {
+      if (score > maxScore) {
+        maxScore = score;
+        topVFX = key;
+      }
+    });
+
+    // 如果标题完全没有命中关键词 (maxScore == 0)，就在适合大众的几个特效里随机抽一个
+    if (maxScore == 0) {
+      final fallbackVFX = ['vignette', 'grain', 'camera', 'cloud'];
+      topVFX = fallbackVFX[math.Random().nextInt(fallbackVFX.length)];
+    }
+
+    // 正式激活当选的特效
+    switch (topVFX) {
+      case 'vignette':
+        _useVignette = true;
+        debugPrint("🎬 智能分配特效：复古暗角 (vignette)");
+        break;
+      case 'grain':
+        _useGrain = true;
+        debugPrint("🎬 智能分配特效：胶片噪点 (grain)");
+        break;
+      case 'camera':
+        _useCameraFrame = true;
+        debugPrint("🎬 智能分配特效：相机取景器 (camera)");
+        break;
+      case 'glow':
+        _useGlowRing = true;
+        debugPrint("🎬 智能分配特效：霓虹光圈 (glow)");
+        break;
+      case 'cloud':
+        _useCloudBorder = true;
+        debugPrint("🎬 智能分配特效：云朵边框 (cloud)");
+        break;
+    }
+    debugPrint("🔤 智能分配字幕：$_currentTextStyle");
+
+    // ==========================================
+    // 3. 💥 智能白光闪烁 (Flash) 双重鉴权
+    // ==========================================
+
+    // 第一重：计算这首歌的“暴力指数”（平均能量和暴击率）
+    double totalEnergy = 0.0;
+    int highEnergyBeats = 0;
+
+    if (_beatData.isNotEmpty) {
+      for (var beat in _beatData) {
+        double e = (beat['energy'] as num?)?.toDouble() ?? 0.0;
+        totalEnergy += e;
+        if (e > 0.3) highEnergyBeats++; // 记录出现过多少次重击
+      }
+
+      double avgEnergy = totalEnergy / _beatData.length;
+      double highEnergyRatio = highEnergyBeats / _beatData.length;
+
+      // 综合判断：如果得分偏高，说明是真·动感音乐
+      bool isAudioViolent = (avgEnergy > 0.2) || (highEnergyRatio > 0.15);
+
+      // 第二重：语义一票否决权
+      bool isVisualViolent = glowScore > 0; // 只要带有赛博/派对/夜晚属性
+      bool isVisualPeaceful = cloudScore > 0 || vignetteScore > 0; // 治愈/怀旧属性
+
+      if (isVisualPeaceful) {
+        // 如果主题是治愈或怀旧，哪怕配了动感音乐，也绝对不许瞎闪！
+        _enableFlash = false;
+        debugPrint("💥 智能闪光：强制关闭 (触发治愈/怀旧保护机制)");
+      } else if (isVisualViolent || isAudioViolent) {
+        // 如果主题是狂欢，或者音乐本身的重低音足够猛，那就闪起来！
+        _enableFlash = true;
+        debugPrint(
+          "💥 智能闪光：开启 (Audio暴力指数: ${avgEnergy.toStringAsFixed(2)}, Visual: $glowScore)",
+        );
+      } else {
+        // 兜底：既不猛烈也不治愈的普通照片，默认不开
+        _enableFlash = false;
+        debugPrint("💥 智能闪光：关闭 (日常平淡模式)");
+      }
+    } else {
+      _enableFlash = false; // 没拿到音频数据就不开
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -449,8 +688,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                     child: AnimatedSwitcher(
                       duration: 800.ms,
                       child: _buildPureImageLayer(
-                        currentSection.photo.path,
-                        subtitleLayer, // 👆 刚才被抽空的字幕层在这里被渲染
+                        currentSection.photo,
+                        subtitleLayer,
                       ),
                     ),
                   ),
@@ -507,7 +746,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                   // 🎭 核心新增：预览专属的转场替身！
                   // ⚠️ 注意条件：只在规定的时间显示，并且导出时绝对不显示！
                   // ==========================================
-                  if (_showPreviewTransition && !_isExporting)
+                  /*if (_showPreviewTransition && !_isExporting)
                     Positioned.fill(
                       child: IgnorePointer(
                         // 用 BoxFit.cover 撑满整个屏幕
@@ -525,7 +764,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                           shadowColor: Color(0x80EAD9EC),
                         ),
                       ),
-                    ),
+                    ),*/
                 ],
               ),
             ),
@@ -548,7 +787,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         screenBody = Stack(
           fit: StackFit.expand,
           children: [
-            Image.file(File(currentSection.photo.path), fit: BoxFit.cover),
+            PathImage(path: currentSection.photo.path, fit: BoxFit.cover),
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
               child: Container(color: Colors.black.withValues(alpha: 0.6)),
@@ -560,7 +799,15 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         );
       }
     } else {
-      screenBody = RepaintBoundary(key: _renderKey, child: videoContent);
+      // 用 SizedBox 或 AspectRatio 给它一个绝对偶数的逻辑容器
+screenBody = Center(
+  child: SizedBox(
+    // 取决于你手机的逻辑分辨率，这里给一个标准的 9:16 偶数容器
+    width: 360,  // 360 * pixelRatio(2.0) = 720 (偶数)
+    height: 640, // 640 * pixelRatio(2.0) = 1280 (偶数)
+    child: RepaintBoundary(key: _renderKey, child: videoContent),
+  ),
+);
     }
 
     return Scaffold(
@@ -586,8 +833,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         return Transform.scale(
           scale: scale,
           child: file.existsSync()
-              ? Image.file(
-                  file,
+              ? PathImage(
+                  path: file.path,
                   fit: BoxFit.cover,
                   width: double.infinity,
                   height: double.infinity,
@@ -599,8 +846,10 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   }*/
 
   // 🎬 核心特效：根据长宽比自适应的视觉层（已支持字幕嵌入）
-  Widget _buildAdaptiveImageLayer(String imagePath, Widget subtitle) {
-    final file = File(imagePath);
+  Widget _buildAdaptiveImageLayer(var photo, Widget subtitle) {
+    final file = File(photo.path);
+    // 🎯 呼叫智能裁切雷达
+    final Alignment smartAlignment = _calculateFaceAlignment(photo);
 
     // 1. 基础的 Ken Burns 放大动画
     Widget kenBurnsAnimation = TweenAnimationBuilder(
@@ -610,9 +859,10 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         return Transform.scale(
           scale: scale,
           child: file.existsSync()
-              ? Image.file(
-                  file,
+              ? PathImage(
+                  path: file.path,
                   fit: BoxFit.cover,
+                  alignment: smartAlignment,
                   width: double.infinity,
                   height: double.infinity,
                 )
@@ -634,18 +884,18 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     // 🌟 竖屏模式：依然铺满全屏
     if (!widget.isHorizontal) {
       return SizedBox.expand(
-        key: ValueKey<String>(imagePath),
+        key: ValueKey<String>(photo.path),
         child: containerContent,
       );
     }
     // 🌟 横屏模式：16:9 居中，字幕会被 ClipRect 限制在框内
     else {
       return Stack(
-        key: ValueKey<String>(imagePath),
+        key: ValueKey<String>(photo.path),
         fit: StackFit.expand,
         children: [
           // 底层模糊背景
-          if (file.existsSync()) Image.file(file, fit: BoxFit.cover),
+          if (file.existsSync()) PathImage(path: file.path, fit: BoxFit.cover),
           BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
             child: Container(color: Colors.black.withValues(alpha: 0.6)),
@@ -708,8 +958,43 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                     color: Colors.pinkAccent,
                   ),
                   onPressed: () {
-                    // 点击后直接执行我们写的那个硬核导出循环
-                    _startExport();
+                    // 🌟 核心改变：把任务外包给 ExportManager，然后直接关掉当前页面！
+                    ExportManager.instance.startBackgroundExport(
+                      context: context,
+                      title: widget.title,
+                      subtitle: widget.subtitle,
+                      sections: widget.sections,
+                      customMusicPath: widget.customMusicPath,
+                      dynamicBeatData: _beatData.isNotEmpty
+                          ? {'data': _beatData, 'bpm': 60000 / _beatIntervalMs}
+                          : null,
+                      targetPlatform: widget.targetPlatform,
+                      isHorizontal: widget.isHorizontal, // 解决画幅不对的问题
+                      currentTextStyle: _currentTextStyle,
+                      textYPosition: _textYPosition,
+                      textSize: _textSize,
+                      textBlurIntensity: _textBlurIntensity,
+                      shakeIntensity: _shakeIntensity,
+                      shakeFrequency: _shakeFrequency,
+                      glitchIntensity: _glitchIntensity,
+                      enableFlash: _enableFlash,
+                      useVignette: _useVignette,
+                      useGrain: _useGrain,
+                      useCameraFrame: _useCameraFrame,
+                      useGlowRing: _useGlowRing,
+                      useCloudBorder: _useCloudBorder,
+                    );
+
+                    // 弹个 Toast 安抚用户
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('🚀 正在后台静默加速渲染中，您可以去干点别的，完成后将通知您~'),
+                        backgroundColor: Colors.pinkAccent,
+                      ),
+                    );
+
+                    // 潇洒离场，回首页！
+                    Navigator.pop(context);
                   },
                 ),
               ],
@@ -744,76 +1029,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     );
   }
 
-  // 1. 定义你的素材库 (假设你目前准备了这几个)
-  final List<TransitionMaterial> _transitions = const [
-    TransitionMaterial(
-      id: 'none',
-      name: '无转场',
-      movPath: '',
-      webpPath: '',
-      offsetMs: 0,
-      durationMs: 0,
-    ),
-    TransitionMaterial(
-      id: 'orange_and_red',
-      name: '橙色动画',
-      movPath: 'assets/transitions/orange_and_red.mov',
-      webpPath: 'assets/transitions/orange_and_red.webp',
-      offsetMs: 800, // 提前 0.8 秒
-      durationMs: 2000,
-    ),
-    TransitionMaterial(
-      id: 'white_circle',
-      name: '白底圆圈',
-      movPath: 'assets/transitions/white_circle.mov',
-      webpPath: 'assets/transitions/white_circle.webp',
-      offsetMs: 500, // 动作快，提前 0.5 秒就够了
-      durationMs: 2000,
-    ),
-    TransitionMaterial(
-      id: 'light',
-      name: '光效转场',
-      movPath: 'assets/transitions/light.mov',
-      webpPath: 'assets/transitions/light.webp',
-      offsetMs: 500, 
-      durationMs: 2000,
-    ),
-    TransitionMaterial(
-      id: 'blue_circle',
-      name: '蓝色圆形',
-      movPath: 'assets/transitions/blue_circle.mov',
-      webpPath: 'assets/transitions/blue_circle.webp',
-      offsetMs: 500,
-      durationMs: 1000,
-    ),
-    TransitionMaterial(
-      id: 'red',
-      name: '红色箭头',
-      movPath: 'assets/transitions/red.mov',
-      webpPath: 'assets/transitions/red.webp',
-      offsetMs: 500, 
-      durationMs: 1000,
-    ),
-    TransitionMaterial(
-      id: 'green',
-      name: '彩色切分',
-      movPath: 'assets/transitions/green.mov',
-      webpPath: 'assets/transitions/green.webp',
-      offsetMs: 0,
-      durationMs: 3000,
-    ),
-    TransitionMaterial(
-      id: 'glass',
-      name: '蓝色玻璃',
-      movPath: 'assets/transitions/glass.mov',
-      webpPath: 'assets/transitions/glass.webp',
-      offsetMs: 500,
-      durationMs: 3000,
-    ),
-  ];
-
-  // 2. 记住用户当前选了哪个（默认选漏光）
-  late TransitionMaterial _currentTransition = _transitions[1];
 
   // 🎛️ 导演控制台面板
   void _showVfxPanel() {
@@ -1096,36 +1311,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                                   ),
                                 ],
                               ),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text(
-                                    '片头转场',
-                                    style: TextStyle(color: Colors.white70),
-                                  ),
-                                  DropdownButton<TransitionMaterial>(
-                                    value: _currentTransition,
-                                    dropdownColor: Colors.grey[900],
-                                    style: const TextStyle(
-                                      color: Colors.orangeAccent,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                    underline: const SizedBox(),
-                                    items: _transitions.map((material) {
-                                      return DropdownMenuItem(
-                                        value: material,
-                                        child: Text(material.name),
-                                      );
-                                    }).toList(),
-                                    onChanged: (val) {
-                                      if (val != null) {
-                                        setModalState(() => _currentTransition = val);
-                                        setState(() {});
-                                      }
-                                    },
-                                  ),
-                                ],
-                              ),
                               const Divider(color: Colors.white24),
                               CheckboxListTile(
                                 title: const Text(
@@ -1236,6 +1421,65 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       ),
     );
   }
+  // ==========================================
+  // 🎯 智能裁切：基于面积加权的人脸重心计算
+  // ==========================================
+  Alignment _calculateFaceAlignment(dynamic photo) {
+    // ⚠️ 提取数据：这里假设 photo 有 width, height 和关联的人脸列表
+    // 根据你的 Isar 模型，如果 photo.faces 是 IsarLinks，你可能需要 photo.faces.toList()
+    final int imageWidth = photo.width ?? 0;
+    final int imageHeight = photo.height ?? 0;
+    final List<dynamic> faces = photo.faces?.toList() ?? [];
+
+    // 1. 如果没有脸、或者图片宽高无效，直接老老实实居中
+    if (faces.isEmpty || imageWidth <= 0 || imageHeight <= 0) {
+      return Alignment.center;
+    }
+
+    double totalWeight = 0.0;
+    double weightedX = 0.0;
+    double weightedY = 0.0;
+
+    // 2. 遍历所有检测到的人脸
+    for (var face in faces) {
+      // 算出这张脸的绝对中心坐标 (像素)
+      double faceCenterX = face.left + (face.width / 2);
+      double faceCenterY = face.top + (face.height / 2);
+
+      // 🌟 核心魔法：使用人脸的面积作为权重 (Area Weighting)
+      // 脸越大，对最终重心的牵引力就越强！
+      double weight = face.area;
+      if (weight <= 0) continue;
+
+      weightedX += faceCenterX * weight;
+      weightedY += faceCenterY * weight;
+      totalWeight += weight;
+    }
+
+    // 防御性判断：如果全是无效面积，退回居中
+    if (totalWeight <= 0) {
+      return Alignment.center;
+    }
+
+    // 3. 计算加权后的“绝对视觉重心”（像素坐标）
+    double avgX = weightedX / totalWeight;
+    double avgY = weightedY / totalWeight;
+
+    // 4. 归一化：把像素坐标转变成 0.0 ~ 1.0 的相对比例
+    double normalizedX = avgX / imageWidth;
+    double normalizedY = avgY / imageHeight;
+
+    // 5. 坐标系映射：Flutter 的 Alignment 要求是 -1.0 (左/上) 到 1.0 (右/下)
+    double alignX = (normalizedX * 2) - 1.0;
+    double alignY = (normalizedY * 2) - 1.0;
+
+    debugPrint(
+      "🎯 智能裁切：检测到 ${faces.length} 张脸，加权重心 Alignment(${alignX.toStringAsFixed(2)}, ${alignY.toStringAsFixed(2)})",
+    );
+
+    // 钳制在合法范围内 (-1.0 到 1.0)，防止把图片推出黑边
+    return Alignment(alignX.clamp(-1.0, 1.0), alignY.clamp(-1.0, 1.0));
+  }
 
   void _updateStateForFrame(int frameIndex) {
     if (_beatData.isEmpty) return;
@@ -1285,266 +1529,61 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       _currentLyricText = widget.sections[_currentIndex].text;
     });
   }
-
-  Future<Uint8List?> _captureFrame() async {
+  // 📸 全新：直接抓取 RGBA 原始像素，并强制裁剪为偶数分辨率
+  Future<(Uint8List?, int, int)> _captureFrameRgba() async {
     try {
-      // 找到那根“虚拟取景器”的边界
       RenderRepaintBoundary boundary =
           _renderKey.currentContext!.findRenderObject()
               as RenderRepaintBoundary;
 
-      // 🚀 提速点 1：把 pixelRatio 从 2.0 降回 1.0 (测试时甚至可改 0.5)
-      ui.Image image = await boundary.toImage(pixelRatio: 1.0);
+      // 这里的 pixelRatio 控制清晰度，2.0 大约等于 1080p。如果想要更快，可以改成 1.5。
+      ui.Image rawImage = await boundary.toImage(pixelRatio: 2.0);
 
-      // 洗出相片：转成 PNG 格式的字节流
-      ByteData? byteData = await image.toByteData(
-        format: ui.ImageByteFormat.png,
+      int width = rawImage.width;
+      int height = rawImage.height;
+
+      // 🌟 核心保命机制：硬件编码器强制要求长宽为偶数！
+      if (width % 2 != 0) width -= 1;
+      if (height % 2 != 0) height -= 1;
+
+      ui.Image finalImage = rawImage;
+
+      // 如果原图有奇数边，我们在内存里用画布把它强行切成偶数
+      if (width != rawImage.width || height != rawImage.height) {
+        final recorder = ui.PictureRecorder();
+        final canvas = ui.Canvas(recorder);
+        canvas.drawImageRect(
+          rawImage,
+          Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+          Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+          Paint(),
+        );
+        finalImage = await recorder.endRecording().toImage(width, height);
+      }
+
+      // 洗出相片：直接输出原始内存像素 RGBA！彻底告别 PNG 压缩和硬盘 I/O！
+      ByteData? byteData = await finalImage.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
       );
-      return byteData?.buffer.asUint8List();
+      return (byteData?.buffer.asUint8List(), width, height);
     } catch (e) {
       debugPrint("❌ 抓拍当前帧失败: $e");
-      return null;
+      return (null, 0, 0);
     }
   }
 
-  // 🌟 新增一个变量，用来装这个“未来的文案”
-  Future<String>? _aiCopyFuture;
-
-  Future<void> _startExport() async {
-    if (_isPlaying) await _togglePlay();
-
-    // ==========================================
-    // 🚀 核心优化：提前呼叫 AI，让它在后台默默写小作文
-    // 注意这里千万别加 await，我们不要等它，让它自己跑！
-    // ==========================================
-    List<String> currentCaptions = widget.sections.map((s) => s.text).toList();
-    _aiCopyFuture = LLMService().generateSocialMediaCopy(
-      platform: widget.targetPlatform,
-      title: widget.title,
-      subtitle: widget.subtitle,
-      captions: currentCaptions,
-    );
-
-    // ==========================================
-    // 🌟 彻底以图片数量为准计算最终视频时长
-    // ==========================================
-
-    // 1. 算人头：每张图固定展示 8 拍，算出总共需要多少拍
-    int totalBeatsNeeded = widget.sections.length * 8;
-
-    // 2. 算基础时间：需要的拍数 × 每一拍的平均毫秒数
-    int finalExportDurationMs = totalBeatsNeeded * _beatIntervalMs;
-
-    // 3. 追求极致卡点：去我们那本“无限繁衍的节拍字典”里查准确的毫秒时间！
-    if (_beatData.length > totalBeatsNeeded) {
-      // 完美命中：直接取第 totalBeatsNeeded 拍的绝对真实时间
-      finalExportDurationMs = (_beatData[totalBeatsNeeded]['ms'] as num)
-          .toInt();
-    } else if (_beatData.isNotEmpty) {
-      // 极端兜底：万一用户丧心病狂选了 300 张图，超出了我们复制 20 遍的节拍本
-      // 那就在字典最后一页的时间基础上，加上缺失的平均时间
-      int missingBeats = totalBeatsNeeded - _beatData.length;
-      finalExportDurationMs =
-          (_beatData.last['ms'] as num).toInt() +
-          (missingBeats * _beatIntervalMs);
-    }
-
-    // 🌟 彻底砸掉以前那把 `math.min(visual, audio)` 的锁！
-    // 4. 直接把算出的话事权（精确到秒）交给 FFmpeg！
-    double exactExportSeconds = finalExportDurationMs / 1000.0;
-
-    final directory = await getTemporaryDirectory();
-    final frameDir = Directory('${directory.path}/story_frames');
-    if (frameDir.existsSync()) {
-      frameDir.deleteSync(recursive: true);
-    }
-    frameDir.createSync();
-
-    setState(() {
-      _isExporting = true;
-      _exportProgress = 0.0;
-    });
-
-    // 4. 按 24 FPS 算出到底需要截多少帧
-    int fps = 24;
-    int totalFrames = (finalExportDurationMs / 1000 * fps).floor();
-    // 🌟 新增：准备一个篮子，装所有的写入任务
-    List<Future> writeTasks = [];
-
-    for (int i = 0; i < totalFrames; i++) {
-      _updateStateForFrame(i); // ⚠️ 记得去把 _updateStateForFrame 里的 30.0 改成 24.0
-
-      setState(() => _exportProgress = i / totalFrames);
-
-      await Future.delayed(const Duration(milliseconds: 16));
-
-      final frameBytes = await _captureFrame();
-      if (frameBytes != null) {
-        final file = File(
-          '${frameDir.path}/frame_${i.toString().padLeft(5, '0')}.png',
-        );
-        // 🌟 把写入任务丢进篮子里，不要在这里死等
-        writeTasks.add(file.writeAsBytes(frameBytes));
-      }
-    }
-    setState(() => _exportProgress = 0.95); // 给用户一点心理安慰
-
-    // 🌟 修复：强行等篮子里的所有图片确确实实全都写进硬盘了，再往下走！
-    await Future.wait(writeTasks);
-
-    await _runFFmpegCombine(frameDir.path, exactExportSeconds);
-  }
-
-  Future<void> _runFFmpegCombine(
-    String frameDirPath,
-    double exactSeconds,
-  ) async {
-    setState(() {
-      _exportProgress = 0.99;
-    });
-
-    try {
-      final docDir = await getApplicationDocumentsDirectory();
-      String audioPath;
-
-      // 1. 准备音频路径
-      if (widget.customMusicPath != null) {
-        File originalAudio = File(widget.customMusicPath!);
-        File safeAudioFile = File('${docDir.path}/safe_custom_audio.mp3');
-        if (safeAudioFile.existsSync()) safeAudioFile.deleteSync();
-        await originalAudio.copy(safeAudioFile.path);
-        audioPath = safeAudioFile.path;
-      } else {
-        final ByteData audioData = await rootBundle.load(
-          'assets/audio/sandal_leap.mp3',
-        );
-        final File tempAudioFile = File('${docDir.path}/temp_audio.mp3');
-        await tempAudioFile.writeAsBytes(audioData.buffer.asUint8List());
-        audioPath = tempAudioFile.path;
-      }
-
-      // 2. 定义最终输出路径
-      final String outputPath =
-          "${docDir.path}/FINAL_STORY_${DateTime.now().millisecondsSinceEpoch}.mp4";
-
-      String command;
-
-      // ==========================================
-      // 🌟 核心分流逻辑：判断用户是否选择了带有转场的特效
-      // ==========================================
-      if (_currentTransition.id != 'none') {
-        // 🎬 走【带转场】的高级合成通道
-
-        // 提取对应的转场素材路径
-        String transitionPath = await _extractAssetForFFmpeg(
-          _currentTransition.movPath,
-          '${_currentTransition.id}.mov',
-        );
-
-        // 动态计算转场开始的时间
-        double firstCutTimeMs = 8 * _beatIntervalMs.toDouble();
-        double transitionStartTime =
-            (firstCutTimeMs - _currentTransition.offsetMs) / 1000.0;
-        if (transitionStartTime < 0) transitionStartTime = 0;
-
-        // 构造带 overlay 滤镜的合并咒语
-        command = [
-          "-y",
-          "-framerate", "24",
-          "-start_number", "0",
-          "-i", "'$frameDirPath/frame_%05d.png'", // 0: 帧序列
-          "-i", "'$transitionPath'", // 1: 动态转场 MOV
-          "-stream_loop", "-1", // 🌟 核心魔法：让紧跟在后面的音频无限循环！
-          "-i", "'$audioPath'", // 2: 音频
-          "-t", "$exactSeconds",
-          "-filter_complex",
-          "[1:v]setpts=PTS-STARTPTS+($transitionStartTime/TB)[trans];" +
-              "[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[bg];" +
-              "[bg][trans]overlay=eof_action=pass[outv]",
-          "-map", "[outv]",
-          "-map", "2:a", // 用第3个输入的声音
-          "-c:v", "libx264",
-          "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "'$outputPath'",
-        ].join(" ");
-
-        debugPrint("🎬 FFmpeg 带转场合成开始 [${_currentTransition.name}]: $command");
-      } else {
-        // 🎞️ 走【无转场】的极速合成通道
-
-        // 最基础的序列帧+音频合并咒语，去掉复杂的滤镜叠加
-        command = [
-          "-y",
-          "-framerate", "24",
-          "-start_number", "0",
-          "-i", "'$frameDirPath/frame_%05d.png'",
-          "-stream_loop", "-1", // 🌟 核心魔法：让紧跟在后面的音频无限循环！
-          "-i", "'$audioPath'",
-          "-t", "$exactSeconds",
-          "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", // 确保宽度高度为偶数
-          "-c:v", "libx264",
-          "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "'$outputPath'",
-        ].join(" ");
-
-        debugPrint("🎬 FFmpeg 普通合成开始 (无片头转场): $command");
-      }
-
-      // 4. 执行命令
-      await FFmpegKit.execute(command).then((session) async {
-        final returnCode = await session.getReturnCode();
-        if (ReturnCode.isSuccess(returnCode)) {
-          debugPrint("✅✅✅ 完美导出！");
-          _handleExportSuccess(outputPath);
-        } else {
-          final logs = await session.getLogsAsString();
-          debugPrint("❌ FFmpeg 失败原因:\n$logs");
-        }
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isExporting = false;
-          _exportProgress = 0.0;
-        });
-      }
-    }
-  }
-
-  // 辅助方法：处理成功后的跳转（提取出你原有的逻辑）
-  void _handleExportSuccess(String outputPath) async {
-    try {
-      await Gal.putVideo(outputPath);
-      if (mounted) {
-        List<String> currentCaptions = widget.sections
-            .map((s) => s.text)
-            .toList();
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => PublishPage(
-              title: widget.title,
-              subtitle: widget.subtitle,
-              captions: currentCaptions,
-              targetPlatform: widget.targetPlatform,
-              exportedVideoPath: outputPath,
-              generatedCopyFuture: _aiCopyFuture,
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      debugPrint("❌ 保存到相册失败: $e");
-    }
-  }
 
   // 🎬 专门给取景器提供纯净画面的层（无黑边）
-  Widget _buildPureImageLayer(String imagePath, Widget subtitle) {
-    final file = File(imagePath);
+  // 🌟 修改点 1：把参数里的 String imagePath 改成 var photo (或者 PhotoEntity photo)
+  Widget _buildPureImageLayer(var photo, Widget subtitle) {
+    // 🌟 修改点 2：从传进来的 photo 对象里提取真正的路径
+    final file = File(photo.path);
+
+    // 🎯 呼叫智能裁切雷达
+    final Alignment smartAlignment = _calculateFaceAlignment(photo);
+
     return Stack(
-      key: ValueKey<String>(imagePath),
+      key: ValueKey<String>(photo.path), // 🌟 这里也要改成 photo.path
       fit: StackFit.expand,
       children: [
         TweenAnimationBuilder(
@@ -1554,9 +1593,10 @@ class _StoryVideoPageState extends State<StoryVideoPage>
             return Transform.scale(
               scale: scale,
               child: file.existsSync()
-                  ? Image.file(
-                      file,
+                  ? PathImage(
+                      path: file.path,
                       fit: BoxFit.cover,
+                      alignment: smartAlignment, // 🎯 装备雷达
                       width: double.infinity,
                       height: double.infinity,
                     )
@@ -1564,7 +1604,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
             );
           },
         ),
-        subtitle, // 字幕层
+        subtitle,
       ],
     );
   }

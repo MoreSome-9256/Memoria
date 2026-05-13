@@ -1,3 +1,5 @@
+/// 主题聚类页面，展示按语义主题组织的照片分组。
+
 import 'dart:async';
 import 'dart:collection';
 
@@ -20,6 +22,7 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
   late Future<List<ThemeCluster>> _clustersFuture;
   bool _pureEmbeddingOnly = false;
   bool _deferredUiReady = false;
+  static const int _themePageMaxNewEmbeddingsPerRun = 0;
 
   static const Map<String, IconData> _themeIcons = <String, IconData>{
     'people': Icons.people_alt_outlined,
@@ -42,11 +45,15 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
   @override
   void initState() {
     super.initState();
-    _clustersFuture = ThemeClusterService().loadClusters(
-      pureEmbeddingOnly: _pureEmbeddingOnly,
-      maxNewEmbeddingsPerRun: 300,
-    );
+    _clustersFuture = _loadClustersForCurrentMode();
     _scheduleDeferredUiReveal();
+  }
+
+  Future<List<ThemeCluster>> _loadClustersForCurrentMode() {
+    return ThemeClusterService().loadClusters(
+      pureEmbeddingOnly: _pureEmbeddingOnly,
+      maxNewEmbeddingsPerRun: _themePageMaxNewEmbeddingsPerRun,
+    );
   }
 
   void _scheduleDeferredUiReveal() {
@@ -63,10 +70,7 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
 
   Future<void> _reload() async {
     setState(() {
-      _clustersFuture = ThemeClusterService().loadClusters(
-        pureEmbeddingOnly: _pureEmbeddingOnly,
-        maxNewEmbeddingsPerRun: 300,
-      );
+      _clustersFuture = _loadClustersForCurrentMode();
     });
     _scheduleDeferredUiReveal();
   }
@@ -74,10 +78,7 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
   void _toggleClusteringMode() {
     setState(() {
       _pureEmbeddingOnly = !_pureEmbeddingOnly;
-      _clustersFuture = ThemeClusterService().loadClusters(
-        pureEmbeddingOnly: _pureEmbeddingOnly,
-        maxNewEmbeddingsPerRun: 300,
-      );
+      _clustersFuture = _loadClustersForCurrentMode();
     });
     _scheduleDeferredUiReveal();
 
@@ -120,9 +121,7 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (context) => const StoriesPage(),
-                ),
+                MaterialPageRoute(builder: (context) => StoriesPage()),
               );
             },
             icon: const Icon(Icons.auto_stories_outlined),
@@ -133,16 +132,16 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
       body: Column(
         children: [
           ValueListenableBuilder<int>(
-            valueListenable: _DeferredThemeImageScheduler.pendingCountListenable,
+            valueListenable:
+                _DeferredThemeImageScheduler.pendingCountListenable,
             builder: (context, pendingCount, _) {
-              return AnimatedSwitcher(
-                duration: const Duration(milliseconds: 180),
-                child: pendingCount > 0
-                    ? const LinearProgressIndicator(
-                        key: ValueKey<String>('theme-images-loading'),
-                        minHeight: 2.5,
-                      )
-                    : const SizedBox.shrink(),
+              return SizedBox(
+                height: 2.5,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 180),
+                  opacity: pendingCount > 0 ? 1 : 0,
+                  child: const LinearProgressIndicator(minHeight: 2.5),
+                ),
               );
             },
           ),
@@ -175,7 +174,9 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
                                   padding: const EdgeInsets.only(top: 8),
                                   child: Text(
                                     '复用向量 ${progress.cachedEmbeddings} · 新算 ${progress.newEmbeddings}',
-                                    style: Theme.of(context).textTheme.bodySmall,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
                                   ),
                                 ),
                             ],
@@ -193,11 +194,18 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(Icons.error_outline, size: 56, color: Colors.redAccent),
+                          const Icon(
+                            Icons.error_outline,
+                            size: 56,
+                            color: Colors.redAccent,
+                          ),
                           const SizedBox(height: 12),
                           Text('主题聚类加载失败: ${snapshot.error}'),
                           const SizedBox(height: 12),
-                          FilledButton(onPressed: _reload, child: const Text('重试')),
+                          FilledButton(
+                            onPressed: _reload,
+                            child: const Text('重试'),
+                          ),
                         ],
                       ),
                     ),
@@ -217,15 +225,20 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
                   child: ListView.separated(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                     itemCount: clusters.length + 1,
-                    separatorBuilder: (context, index) => const SizedBox(height: 14),
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(height: 14),
                     itemBuilder: (context, index) {
                       if (index == 0) {
                         return const _IntroCard();
                       }
 
                       final cluster = clusters[index - 1];
-                      final color = _themeColors[cluster.definition.id] ?? Theme.of(context).colorScheme.primary;
-                      final icon = _themeIcons[cluster.definition.id] ?? Icons.category_outlined;
+                      final color =
+                          _themeColors[cluster.definition.id] ??
+                          Theme.of(context).colorScheme.primary;
+                      final icon =
+                          _themeIcons[cluster.definition.id] ??
+                          Icons.category_outlined;
 
                       return _ThemeClusterCard(
                         cluster: cluster,
@@ -265,8 +278,9 @@ class _DeferredThemeImageTicket {
 
 class _DeferredThemeImageScheduler {
   static const int _maxConcurrent = 4;
-  static final ValueNotifier<int> pendingCountListenable =
-      ValueNotifier<int>(0);
+  static final ValueNotifier<int> pendingCountListenable = ValueNotifier<int>(
+    0,
+  );
   static final Queue<(_DeferredThemeImageTicket, VoidCallback)> _queue =
       Queue<(_DeferredThemeImageTicket, VoidCallback)>();
   static int _active = 0;
@@ -344,11 +358,7 @@ class ThemeClusterDetailPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _ThemeClusterDetailBody(
-      cluster: cluster,
-      color: color,
-      icon: icon,
-    );
+    return _ThemeClusterDetailBody(cluster: cluster, color: color, icon: icon);
   }
 }
 
@@ -364,7 +374,8 @@ class _ThemeClusterDetailBody extends StatefulWidget {
   final IconData icon;
 
   @override
-  State<_ThemeClusterDetailBody> createState() => _ThemeClusterDetailBodyState();
+  State<_ThemeClusterDetailBody> createState() =>
+      _ThemeClusterDetailBodyState();
 }
 
 class _ThemeClusterDetailBodyState extends State<_ThemeClusterDetailBody> {
@@ -395,9 +406,7 @@ class _ThemeClusterDetailBodyState extends State<_ThemeClusterDetailBody> {
   @override
   Widget build(BuildContext context) {
     if (!_deferredBodyReady) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     final selectedSubcluster = widget.cluster.subclusters.firstWhere(
@@ -414,93 +423,93 @@ class _ThemeClusterDetailBodyState extends State<_ThemeClusterDetailBody> {
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
             sliver: SliverList(
-              delegate: SliverChildListDelegate(
-                [
-                  Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: widget.color.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Row(
-              children: [
+              delegate: SliverChildListDelegate([
                 Container(
-                  width: 52,
-                  height: 52,
+                  padding: const EdgeInsets.all(18),
                   decoration: BoxDecoration(
-                    color: widget.color.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(18),
+                    color: widget.color.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(24),
                   ),
-                  child: Icon(widget.icon, color: widget.color),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Text(
-                        widget.cluster.definition.title,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
+                      Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                          color: widget.color.withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(18),
                         ),
+                        child: Icon(widget.icon, color: widget.color),
                       ),
-                      const SizedBox(height: 4),
-                      Text(widget.cluster.definition.subtitle),
-                      const SizedBox(height: 6),
-                      Text(
-                        '共 ${widget.cluster.totalPhotos} 张 · ${widget.cluster.subclusters.length} 个子簇 · 按月份串联',
-                        style: TextStyle(color: Colors.grey[700]),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.cluster.definition.title,
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(widget.cluster.definition.subtitle),
+                            const SizedBox(height: 6),
+                            Text(
+                              '共 ${widget.cluster.totalPhotos} 张 · ${widget.cluster.subclusters.length} 个子簇 · 按月份串联',
+                              style: TextStyle(color: Colors.grey[700]),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
                 ),
-              ],
-            ),
-          ),
-          if (widget.cluster.subclusters.length > 1) ...[
-            const SizedBox(height: 16),
-            Text(
-              '子簇切换',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 10),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: widget.cluster.subclusters.map((subcluster) {
-                  final isSelected = subcluster.id == selectedSubcluster.id;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: _SubclusterSelectorCard(
-                      subcluster: subcluster,
-                      color: widget.color,
-                      isSelected: isSelected,
-                      onTap: () {
-                        setState(() {
-                          _selectedSubclusterId = subcluster.id;
-                        });
-                      },
+                if (widget.cluster.subclusters.length > 1) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    '子簇切换',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
                     ),
-                  );
-                }).toList(growable: false),
-              ),
-            ),
-          ],
-          const SizedBox(height: 18),
-          _SubclusterSummaryCard(
-            subcluster: selectedSubcluster,
-            color: widget.color,
-          ),
-          const SizedBox(height: 10),
-          _ClusterPresentationHint(
-            compactDisplayPreferred: compactDisplayPreferred,
-            cohesion: selectedSubcluster.cohesion,
-            color: widget.color,
-          ),
+                  ),
+                  const SizedBox(height: 10),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: widget.cluster.subclusters
+                          .map((subcluster) {
+                            final isSelected =
+                                subcluster.id == selectedSubcluster.id;
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 12),
+                              child: _SubclusterSelectorCard(
+                                subcluster: subcluster,
+                                color: widget.color,
+                                isSelected: isSelected,
+                                onTap: () {
+                                  setState(() {
+                                    _selectedSubclusterId = subcluster.id;
+                                  });
+                                },
+                              ),
+                            );
+                          })
+                          .toList(growable: false),
+                    ),
+                  ),
                 ],
-              ),
+                const SizedBox(height: 18),
+                _SubclusterSummaryCard(
+                  subcluster: selectedSubcluster,
+                  color: widget.color,
+                ),
+                const SizedBox(height: 10),
+                _ClusterPresentationHint(
+                  compactDisplayPreferred: compactDisplayPreferred,
+                  cohesion: selectedSubcluster.cohesion,
+                  color: widget.color,
+                ),
+              ]),
             ),
           ),
           SliverPadding(
@@ -526,10 +535,7 @@ class _ThemeClusterDetailBodyState extends State<_ThemeClusterDetailBody> {
 }
 
 class _SubclusterSummaryCard extends StatelessWidget {
-  const _SubclusterSummaryCard({
-    required this.subcluster,
-    required this.color,
-  });
+  const _SubclusterSummaryCard({required this.subcluster, required this.color});
 
   final ThemeSubcluster subcluster;
   final Color color;
@@ -549,12 +555,15 @@ class _SubclusterSummaryCard extends StatelessWidget {
         children: [
           Text(
             subcluster.title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 6),
-          Text(subcluster.subtitle, style: TextStyle(color: Colors.grey[700], height: 1.4)),
+          Text(
+            subcluster.subtitle,
+            style: TextStyle(color: Colors.grey[700], height: 1.4),
+          ),
           const SizedBox(height: 8),
           Text(
             '${subcluster.totalPhotos} 张 · ${subcluster.groups.length} 个时间段',
@@ -588,17 +597,23 @@ class _SubclusterSummaryCard extends StatelessWidget {
             SizedBox(
               height: 72,
               child: Row(
-                children: subcluster.coverPhotos.take(4).map((photo) {
-                  return Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: _DeferredThemeImage(path: photo.path, fit: BoxFit.cover),
-                      ),
-                    ),
-                  );
-                }).toList(growable: false),
+                children: subcluster.coverPhotos
+                    .take(4)
+                    .map((photo) {
+                      return Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(14),
+                            child: _DeferredThemeImage(
+                              path: photo.path,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        ),
+                      );
+                    })
+                    .toList(growable: false),
               ),
             ),
           ],
@@ -648,9 +663,9 @@ class _SubclusterSelectorCard extends StatelessWidget {
               subcluster.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 4),
             Text(
@@ -659,27 +674,29 @@ class _SubclusterSelectorCard extends StatelessWidget {
             ),
             if (cohesion != null) ...[
               const SizedBox(height: 6),
-              _CohesionBadge(
-                cohesion: cohesion,
-                color: color,
-                compact: true,
-              ),
+              _CohesionBadge(cohesion: cohesion, color: color, compact: true),
             ],
             const SizedBox(height: 10),
             SizedBox(
               height: 54,
               child: Row(
-                children: subcluster.coverPhotos.take(3).map((photo) {
-                  return Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: _DeferredThemeImage(path: photo.path, fit: BoxFit.cover),
-                      ),
-                    ),
-                  );
-                }).toList(growable: false),
+                children: subcluster.coverPhotos
+                    .take(3)
+                    .map((photo) {
+                      return Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: _DeferredThemeImage(
+                              path: photo.path,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        ),
+                      );
+                    })
+                    .toList(growable: false),
               ),
             ),
           ],
@@ -743,9 +760,9 @@ class _IntroCard extends StatelessWidget {
         children: [
           Text(
             '先用 MobileCLIP2 512维向量做一层主题聚类',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
           Text(
@@ -806,9 +823,8 @@ class _ThemeClusterCard extends StatelessWidget {
                       children: [
                         Text(
                           cluster.definition.title,
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -824,22 +840,31 @@ class _ThemeClusterCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              Text(cluster.definition.subtitle, style: TextStyle(color: Colors.grey[800])),
+              Text(
+                cluster.definition.subtitle,
+                style: TextStyle(color: Colors.grey[800]),
+              ),
               const SizedBox(height: 14),
               SizedBox(
                 height: 88,
                 child: Row(
-                  children: cluster.coverPhotos.take(4).map((photo) {
-                    return Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: _DeferredThemeImage(path: photo.path, fit: BoxFit.cover),
-                        ),
-                      ),
-                    );
-                  }).toList(growable: false),
+                  children: cluster.coverPhotos
+                      .take(4)
+                      .map((photo) {
+                        return Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: _DeferredThemeImage(
+                                path: photo.path,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                        );
+                      })
+                      .toList(growable: false),
                 ),
               ),
             ],
@@ -879,7 +904,9 @@ class _ClusterPresentationHint extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            compactDisplayPreferred ? Icons.view_carousel_outlined : Icons.grid_view_outlined,
+            compactDisplayPreferred
+                ? Icons.view_carousel_outlined
+                : Icons.grid_view_outlined,
             color: color,
             size: 18,
           ),
@@ -890,9 +917,9 @@ class _ClusterPresentationHint extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -942,12 +969,15 @@ class _TimelineGroupSection extends StatelessWidget {
           children: [
             Text(
               group.title,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(width: 8),
-            Text('${group.totalPhotos} 张', style: TextStyle(color: Colors.grey[600])),
+            Text(
+              '${group.totalPhotos} 张',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
           ],
         ),
         const SizedBox(height: 10),
@@ -1087,7 +1117,10 @@ class _ThemePhotoTile extends StatelessWidget {
                         tagText,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                        ),
                       ),
                   ],
                 ),

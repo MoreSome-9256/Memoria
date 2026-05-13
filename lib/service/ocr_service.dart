@@ -1,3 +1,5 @@
+/// OCR 服务，负责从照片中提取文字并做基础去噪。
+
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';

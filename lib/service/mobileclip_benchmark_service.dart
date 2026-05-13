@@ -1,15 +1,17 @@
+/// MobileCLIP 基准测试服务，负责收集模型运行时性能数据。
+
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:isar/isar.dart';
-
 import '../models/entity/photo_entity.dart';
 import '../models/mobileclip_benchmark.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'mobileclip_vision_service.dart';
 import 'ncnn_mobileclip_native_service.dart';
-import 'photo_service.dart';
+import 'onnx_session_provider_service.dart';
 
 abstract class MobileClipBenchmarkAdapter {
   const MobileClipBenchmarkAdapter();
@@ -25,34 +27,64 @@ abstract class MobileClipBenchmarkAdapter {
   Future<MobileClipAdapterRunResult> encodeImageBytes(
     Uint8List imageBytes, {
     Float32List? sharedInput,
+    double? sharedPreprocessMs,
     required MobileClipBenchmarkSample sample,
   });
+
+  Future<void> dispose() async {}
 }
 
 class OnnxMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
   OnnxMobileClipBenchmarkAdapter({
+    required this.adapterId,
+    required this.adapterDisplayName,
+    required OnnxSessionProviderPreference providerPreference,
     MobileClipVisionService? visionService,
     MobileClipTagService? tagService,
-  }) : _visionService = visionService ?? MobileClipVisionService(),
+  }) : _visionService =
+           visionService ??
+           MobileClipVisionService.withProviderPreference(providerPreference),
        _tagService = tagService ?? MobileClipTagService();
 
+  final String adapterId;
+  final String adapterDisplayName;
   final MobileClipVisionService _visionService;
   final MobileClipTagService _tagService;
 
   @override
-  String get id => 'onnx';
+  String get id => adapterId;
 
   @override
-  String get displayName => 'ONNX Runtime';
+  String get displayName {
+    final providerLabel = _visionService.executionProviderLabel;
+    if (providerLabel == 'Pending session init') {
+      return adapterDisplayName;
+    }
+    return '$adapterDisplayName ($providerLabel)';
+  }
 
   @override
   bool get usesSharedPreprocessing => true;
 
   @override
-  Future<bool> isAvailable() async => true;
+  Future<bool> isAvailable() async {
+    try {
+      await _visionService.warmUp();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   @override
-  Future<String?> unavailableReason() async => null;
+  Future<String?> unavailableReason() async {
+    try {
+      await _visionService.warmUp();
+      return null;
+    } catch (error) {
+      return error.toString();
+    }
+  }
 
   @override
   Future<double> warmUp() async {
@@ -67,13 +99,20 @@ class OnnxMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
   Future<MobileClipAdapterRunResult> encodeImageBytes(
     Uint8List imageBytes, {
     Float32List? sharedInput,
+    double? sharedPreprocessMs,
     required MobileClipBenchmarkSample sample,
   }) async {
-    final preprocessWatch = Stopwatch()..start();
-    final input =
-        sharedInput ??
-        await _visionService.preprocessImageBytesForBenchmark(imageBytes);
-    preprocessWatch.stop();
+    final Float32List input;
+    final double preprocessMs;
+    if (sharedInput != null) {
+      input = sharedInput;
+      preprocessMs = sharedPreprocessMs ?? 0.0;
+    } else {
+      final preprocessWatch = Stopwatch()..start();
+      input = await _visionService.preprocessImageBytesForBenchmark(imageBytes);
+      preprocessWatch.stop();
+      preprocessMs = preprocessWatch.elapsedMicroseconds / 1000.0;
+    }
     final rssBefore = ProcessInfo.currentRss;
     final inferenceWatch = Stopwatch()..start();
     final embedding = await _visionService.embedPreprocessedInput(input);
@@ -88,17 +127,22 @@ class OnnxMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
       adapterId: id,
       displayName: displayName,
       embedding: embedding,
-      preprocessMs: preprocessWatch.elapsedMicroseconds / 1000.0,
+      preprocessMs: preprocessMs,
       inferenceMs: inferenceWatch.elapsedMicroseconds / 1000.0,
       tagRetrievalMs: tagWatch.elapsedMicroseconds / 1000.0,
       totalMs:
-          preprocessWatch.elapsedMicroseconds / 1000.0 +
+          preprocessMs +
           inferenceWatch.elapsedMicroseconds / 1000.0 +
           tagWatch.elapsedMicroseconds / 1000.0,
       rssBeforeBytes: rssBefore,
       rssAfterBytes: rssAfter,
       tags: tags,
     );
+  }
+
+  @override
+  Future<void> dispose() async {
+    await _visionService.dispose();
   }
 }
 
@@ -166,6 +210,7 @@ class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
   Future<MobileClipAdapterRunResult> encodeImageBytes(
     Uint8List imageBytes, {
     Float32List? sharedInput,
+    double? sharedPreprocessMs,
     required MobileClipBenchmarkSample sample,
   }) async {
     final rssBefore = ProcessInfo.currentRss;
@@ -192,126 +237,189 @@ class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
       tags: tags,
     );
   }
+
+  @override
+  Future<void> dispose() async {
+    await _nativeService.dispose();
+  }
 }
 
 class MobileClipBenchmarkService {
   MobileClipBenchmarkService({
     List<MobileClipBenchmarkAdapter>? adapters,
-    PhotoService? photoService,
-    MobileClipVisionService? visionService,
-  }) : _adapters =
-           adapters ??
-           <MobileClipBenchmarkAdapter>[
-             OnnxMobileClipBenchmarkAdapter(visionService: visionService),
-             NcnnMobileClipBenchmarkAdapter(),
-           ],
-       _photoService = photoService ?? PhotoService();
+    MobileClipVisionService? sharedPreprocessingVisionService,
+  }) : _adapters = adapters ?? _buildDefaultAdapters(),
+       _sharedPreprocessingVisionService =
+           sharedPreprocessingVisionService ??
+           MobileClipVisionService.withProviderPreference(
+             OnnxSessionProviderPreference.cpu,
+           );
 
   final List<MobileClipBenchmarkAdapter> _adapters;
-  final PhotoService _photoService;
-  Future<MobileClipBenchmarkReport> runBenchmark({
-    int sampleCount = 24,
-  }) async {
-    final warnings = <String>[];
-    final samples = await _loadSamples(sampleCount);
-    if (samples.isEmpty) {
-      return MobileClipBenchmarkReport(
-        generatedAt: DateTime.now(),
-        sampleCount: 0,
-        usesSharedPreprocessing: false,
-        adapterSummaries: const <MobileClipAdapterSummary>[],
-        comparisons: const <MobileClipEmbeddingComparisonSummary>[],
-        warnings: <String>['没有找到可用于 benchmark 的本地照片样本。'],
-      );
+  final MobileClipVisionService _sharedPreprocessingVisionService;
+
+  static List<MobileClipBenchmarkAdapter> _buildDefaultAdapters() {
+    final adapters = <MobileClipBenchmarkAdapter>[
+      OnnxMobileClipBenchmarkAdapter(
+        adapterId: 'onnx_nnapi_hardware',
+        adapterDisplayName: 'ONNX NNAPI hardware',
+        providerPreference: OnnxSessionProviderPreference.nnapiHardwareOnly,
+      ),
+      OnnxMobileClipBenchmarkAdapter(
+        adapterId: 'onnx_cpu',
+        adapterDisplayName: 'ONNX CPU',
+        providerPreference: OnnxSessionProviderPreference.cpu,
+      ),
+    ];
+
+    if (!Platform.isAndroid) {
+      return <MobileClipBenchmarkAdapter>[
+        OnnxMobileClipBenchmarkAdapter(
+          adapterId: 'onnx_cpu',
+          adapterDisplayName: 'ONNX CPU',
+          providerPreference: OnnxSessionProviderPreference.cpu,
+        ),
+      ];
     }
 
-    final availableAdapters = <MobileClipBenchmarkAdapter>[];
-    final unavailableAdapters = <MobileClipBenchmarkAdapter>[];
-    for (final adapter in _adapters) {
-      if (await adapter.isAvailable()) {
-        availableAdapters.add(adapter);
-      } else {
-        unavailableAdapters.add(adapter);
-      }
-    }
-    for (final adapter in unavailableAdapters) {
-      final reason = await adapter.unavailableReason();
-      warnings.add(
-        '${adapter.displayName} 当前不可用：${reason ?? 'unknown reason'}',
-      );
-    }
+    return adapters;
+  }
 
-    final warmUpTimes = <String, double>{};
-    for (final adapter in availableAdapters) {
-      warmUpTimes[adapter.id] = await adapter.warmUp();
-    }
-
-    final runsByAdapter = <String, List<MobileClipAdapterRunResult>>{
-      for (final adapter in availableAdapters) adapter.id: <MobileClipAdapterRunResult>[],
-    };
-
-    for (final sample in samples) {
-      final file = File(sample.path);
-      if (!file.existsSync()) {
-        warnings.add('样本 ${sample.photoId} 的文件不存在，已跳过。');
-        continue;
-      }
-
-      final bytes = await file.readAsBytes();
-
-      for (final adapter in availableAdapters) {
-        final runResult = await adapter.encodeImageBytes(
-          bytes,
-          sharedInput: null,
-          sample: sample,
+  Future<MobileClipBenchmarkReport> runBenchmark({int sampleCount = 24}) async {
+    try {
+      final warnings = <String>[];
+      final samples = await _loadSamples(sampleCount);
+      if (samples.isEmpty) {
+        return MobileClipBenchmarkReport(
+          generatedAt: DateTime.now(),
+          sampleCount: 0,
+          usesSharedPreprocessing: false,
+          adapterSummaries: const <MobileClipAdapterSummary>[],
+          comparisons: const <MobileClipEmbeddingComparisonSummary>[],
+          warnings: <String>['没有找到可用于 benchmark 的本地照片样本。'],
         );
-        runsByAdapter[adapter.id]!.add(runResult);
       }
-    }
 
-    final summaries = availableAdapters
-        .map((adapter) => _buildSummary(
-              adapter: adapter,
-              runs: runsByAdapter[adapter.id] ?? const <MobileClipAdapterRunResult>[],
-              warmUpMs: warmUpTimes[adapter.id] ?? 0,
-            ))
-        .toList(growable: false);
+      final availableAdapters = <MobileClipBenchmarkAdapter>[];
+      for (final adapter in _adapters) {
+        if (await adapter.isAvailable()) {
+          availableAdapters.add(adapter);
+          continue;
+        }
 
-    final comparisons = <MobileClipEmbeddingComparisonSummary>[];
-    if (availableAdapters.length >= 2) {
-      for (var i = 0; i < availableAdapters.length; i++) {
-        for (var j = i + 1; j < availableAdapters.length; j++) {
-          final left = availableAdapters[i];
-          final right = availableAdapters[j];
-          comparisons.add(
-            _buildComparison(
-              leftRuns: runsByAdapter[left.id] ?? const <MobileClipAdapterRunResult>[],
-              rightRuns: runsByAdapter[right.id] ?? const <MobileClipAdapterRunResult>[],
-            ),
-          );
+        final reason = await adapter.unavailableReason();
+        warnings.add(
+          '${adapter.displayName} 当前不可用：${reason ?? 'unknown reason'}',
+        );
+      }
+
+      final warmedAdapters = <MobileClipBenchmarkAdapter>[];
+      final warmUpTimes = <String, double>{};
+      await MobileClipTagService().warmUp();
+      for (final adapter in availableAdapters) {
+        try {
+          warmUpTimes[adapter.id] = await adapter.warmUp();
+          warmedAdapters.add(adapter);
+        } catch (error) {
+          warnings.add('${adapter.displayName} 预热失败：$error');
         }
       }
-    }
 
-    return MobileClipBenchmarkReport(
-      generatedAt: DateTime.now(),
-      sampleCount: samples.length,
-      usesSharedPreprocessing:
-          availableAdapters.isNotEmpty &&
-          availableAdapters.every((adapter) => adapter.usesSharedPreprocessing),
-      adapterSummaries: summaries,
-      comparisons: comparisons,
-      warnings: warnings,
-    );
+      final runsByAdapter = <String, List<MobileClipAdapterRunResult>>{
+        for (final adapter in warmedAdapters)
+          adapter.id: <MobileClipAdapterRunResult>[],
+      };
+      final sharedPreprocessingEnabled =
+          warmedAdapters.isNotEmpty &&
+          warmedAdapters.every((adapter) => adapter.usesSharedPreprocessing);
+
+      for (final sample in samples) {
+        final file = File(sample.path);
+        if (!file.existsSync()) {
+          warnings.add('样本 ${sample.photoId} 的文件不存在，已跳过。');
+          continue;
+        }
+
+        final bytes = await file.readAsBytes();
+        Float32List? sharedInput;
+        double? sharedPreprocessMs;
+        if (sharedPreprocessingEnabled) {
+          final preprocessWatch = Stopwatch()..start();
+          sharedInput = await _sharedPreprocessingVisionService
+              .preprocessImageBytesForBenchmark(bytes);
+          preprocessWatch.stop();
+          sharedPreprocessMs = preprocessWatch.elapsedMicroseconds / 1000.0;
+        }
+
+        for (final adapter in warmedAdapters) {
+          final runResult = await adapter.encodeImageBytes(
+            bytes,
+            sharedInput: adapter.usesSharedPreprocessing ? sharedInput : null,
+            sharedPreprocessMs: adapter.usesSharedPreprocessing
+                ? sharedPreprocessMs
+                : null,
+            sample: sample,
+          );
+          runsByAdapter[adapter.id]!.add(runResult);
+        }
+      }
+
+      final summaries = warmedAdapters
+          .map(
+            (adapter) => _buildSummary(
+              adapter: adapter,
+              runs:
+                  runsByAdapter[adapter.id] ??
+                  const <MobileClipAdapterRunResult>[],
+              warmUpMs: warmUpTimes[adapter.id] ?? 0,
+            ),
+          )
+          .toList(growable: false);
+
+      final comparisons = <MobileClipEmbeddingComparisonSummary>[];
+      if (warmedAdapters.length >= 2) {
+        for (var i = 0; i < warmedAdapters.length; i++) {
+          for (var j = i + 1; j < warmedAdapters.length; j++) {
+            final left = warmedAdapters[i];
+            final right = warmedAdapters[j];
+            comparisons.add(
+              _buildComparison(
+                leftRuns:
+                    runsByAdapter[left.id] ??
+                    const <MobileClipAdapterRunResult>[],
+                rightRuns:
+                    runsByAdapter[right.id] ??
+                    const <MobileClipAdapterRunResult>[],
+              ),
+            );
+          }
+        }
+      }
+
+      return MobileClipBenchmarkReport(
+        generatedAt: DateTime.now(),
+        sampleCount: samples.length,
+        usesSharedPreprocessing: sharedPreprocessingEnabled,
+        adapterSummaries: summaries,
+        comparisons: comparisons,
+        warnings: warnings,
+      );
+    } finally {
+      await _sharedPreprocessingVisionService.dispose();
+      for (final adapter in _adapters) {
+        await adapter.dispose();
+      }
+    }
   }
 
   Future<List<MobileClipBenchmarkSample>> _loadSamples(int sampleCount) async {
-    final candidates = await _photoService.isar
-        .collection<PhotoEntity>()
-        .where()
-        .sortByTimestampDesc()
-        .limit(math.max(sampleCount * 4, sampleCount))
-        .findAll();
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final q = photoBox.query()
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    q.limit = math.max(sampleCount * 4, sampleCount);
+    final candidates = q.find();
+    q.close();
 
     final samples = <MobileClipBenchmarkSample>[];
     for (final photo in candidates) {
@@ -343,27 +451,29 @@ class MobileClipBenchmarkService {
     required List<MobileClipAdapterRunResult> runs,
     required double warmUpMs,
   }) {
-    final totalLatencies = runs.map((run) => run.totalMs).toList(growable: false)
-      ..sort();
+    final totalLatencies =
+        runs.map((run) => run.totalMs).toList(growable: false)..sort();
     final meanPreprocess = runs.isEmpty
-      ? 0.0
-      : runs.map((run) => run.preprocessMs).reduce((a, b) => a + b) /
-        runs.length;
+        ? 0.0
+        : runs.map((run) => run.preprocessMs).reduce((a, b) => a + b) /
+              runs.length;
     final meanInference = runs.isEmpty
-      ? 0.0
-      : runs.map((run) => run.inferenceMs).reduce((a, b) => a + b) /
-        runs.length;
+        ? 0.0
+        : runs.map((run) => run.inferenceMs).reduce((a, b) => a + b) /
+              runs.length;
     final meanTagRetrieval = runs.isEmpty
-      ? 0.0
-      : runs.map((run) => run.tagRetrievalMs).reduce((a, b) => a + b) /
-        runs.length;
+        ? 0.0
+        : runs.map((run) => run.tagRetrievalMs).reduce((a, b) => a + b) /
+              runs.length;
     final meanTotal = totalLatencies.isEmpty
         ? 0.0
-      : totalLatencies.reduce((a, b) => a + b) / totalLatencies.length;
+        : totalLatencies.reduce((a, b) => a + b) / totalLatencies.length;
     final meanRssDelta = runs.isEmpty
         ? 0.0
-        : runs.map((run) => run.rssDeltaBytes.toDouble()).reduce((a, b) => a + b) /
-            runs.length;
+        : runs
+                  .map((run) => run.rssDeltaBytes.toDouble())
+                  .reduce((a, b) => a + b) /
+              runs.length;
 
     return MobileClipAdapterSummary(
       adapterId: adapter.id,
@@ -408,7 +518,9 @@ class MobileClipBenchmarkService {
           rightTags: right.tags,
         ),
       );
-      if (left.tags.isNotEmpty && right.tags.isNotEmpty && left.tags.first == right.tags.first) {
+      if (left.tags.isNotEmpty &&
+          right.tags.isNotEmpty &&
+          left.tags.first == right.tags.first) {
         top1AgreementCount++;
       }
       overlapCount += _top5Overlap(left.tags, right.tags);

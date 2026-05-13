@@ -1,14 +1,28 @@
+/// 应用入口文件。
+///
+/// 这里负责启动 Flutter 应用，并在首屏展示前完成基础运行时准备：
+/// 初始化绑定、配置 Amplify Cognito、启动 ObjectBox、恢复待处理的 AI
+/// 分析任务，以及根据登录状态在欢迎页和主应用树之间分流。
+///
+/// 文件里还定义了两个可通过 `--dart-define` 控制的开关：
+/// `MOBILECLIP_VECTOR_PROBE` 会直接进入向量探测页，
+/// `ENABLE_STARTUP_MOBILECLIP_WARMUP` 会在应用启动后延迟预热 MobileCLIP。
+
 import 'dart:async';
 
 import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/painting.dart';
 import 'package:photo_album/service/amplify_cognito_config.dart';
 import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_tag_service.dart';
+import 'package:photo_album/service/media_asset_sync_service.dart';
+import 'package:photo_album/service/media_embedding_index_service.dart';
 import 'package:photo_album/service/photo_service.dart';
 import 'package:photo_album/service/ai_progress_notification_service.dart';
+import 'package:photo_album/storage/objectbox/objectbox_service.dart';
 import 'package:photo_album/utils/ocr_policy.dart';
 import 'package:photo_album/view/pages/mobileclip_vector_probe_page.dart';
 import 'view/pages/welcome_page.dart';
@@ -26,6 +40,8 @@ const bool _enableStartupMobileClipWarmUp = bool.fromEnvironment(
 void main() async {
   // 保证绑定可用后尽快 runApp，把重初始化放到应用内异步执行。
   WidgetsFlutterBinding.ensureInitialized();
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 200 * 1024 * 1024;
+  PaintingBinding.instance.imageCache.maximumSize = 800;
   runApp(const MyApp());
 }
 
@@ -114,7 +130,29 @@ class _AppStartupCoordinator {
     _startupFuture = Future<void>(() async {
       await AIProgressNotificationService().initialize();
       await _configureAmplifyAuth();
+      try {
+        await ObjectBoxService().init();
+      } catch (error) {
+        debugPrint(
+          'ObjectBox init skipped, falling back to legacy vectors: $error',
+        );
+      }
       await PhotoService().init();
+      unawaited(
+        Future<void>(() async {
+          try {
+            await MediaAssetSyncService().reconcile();
+            await MediaAssetSyncService().startChangeNotify();
+            await MediaEmbeddingIndexService().encodePending(
+              maxConcurrency: 2,
+              batchSize: 300,
+              inputSize: 336,
+            );
+          } catch (error) {
+            debugPrint('Media asset index warm sync skipped: $error');
+          }
+        }),
+      );
       unawaited(
         Future<void>.delayed(
           const Duration(milliseconds: 800),

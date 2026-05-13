@@ -1,3 +1,5 @@
+/// MobileCLIP 视觉推理服务，负责图片输入和模型输出的封装。
+
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -6,13 +8,22 @@ import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:onnxruntime/onnxruntime.dart';
 
+import 'onnx_session_provider_service.dart';
+
 class MobileClipVisionService {
-  MobileClipVisionService._internal();
+  MobileClipVisionService._internal({
+    OnnxSessionProviderPreference providerPreference =
+        OnnxSessionProviderPreference.auto,
+  }) : _providerPreference = providerPreference;
 
   static final MobileClipVisionService _instance =
       MobileClipVisionService._internal();
 
   factory MobileClipVisionService() => _instance;
+  factory MobileClipVisionService.withProviderPreference(
+    OnnxSessionProviderPreference providerPreference,
+  ) =>
+      MobileClipVisionService._internal(providerPreference: providerPreference);
 
   static const String _defaultModelAssetPath =
       'assets/mobileclip2/s2/vision_model.onnx';
@@ -30,11 +41,14 @@ class MobileClipVisionService {
   );
 
   late final int _inputImageSize = _resolveInputImageSize();
+  final OnnxSessionProviderPreference _providerPreference;
 
   OrtSession? _session;
   String? _inputName;
   List<String>? _outputNames;
   _PreprocessSpec _preprocessSpec = const _PreprocessSpec.mobileclip2();
+  OnnxExecutionProvider? _executionProvider;
+  List<String> _providerFallbacks = const <String>[];
 
   Future<void> warmUp() async {
     await _loadSession();
@@ -50,38 +64,76 @@ class MobileClipVisionService {
   }
 
   Future<List<double>> embedImageBytes(Uint8List imageBytes) async {
-    final input = await preprocessImageBytesForBenchmark(imageBytes);
-    return embedPreprocessedInput(input);
+    final profile = await profileImageBytes(imageBytes);
+    return profile.embedding;
   }
 
   Future<Float32List> preprocessImageBytesForBenchmark(
     Uint8List imageBytes,
   ) async {
-    return compute<_MobileClipPreprocessRequest, Float32List>(
-      _preprocessImageForMobileClip,
-      _MobileClipPreprocessRequest(
-        imageBytes: imageBytes,
-        inputImageSize: _inputImageSize,
-        mean: _preprocessSpec.mean,
-        std: _preprocessSpec.std,
-      ),
+    final profile = await profileImageBytesForBenchmark(imageBytes);
+    return profile.input;
+  }
+
+  Future<MobileClipVisionPreprocessProfile> profileImageBytesForBenchmark(
+    Uint8List imageBytes,
+  ) async {
+    final payload =
+        await compute<_MobileClipPreprocessRequest, Map<String, Object?>>(
+          _preprocessImageForMobileClip,
+          _MobileClipPreprocessRequest(
+            imageBytes: imageBytes,
+            inputImageSize: _inputImageSize,
+            mean: _preprocessSpec.mean,
+            std: _preprocessSpec.std,
+          ),
+        );
+    return MobileClipVisionPreprocessProfile(
+      input: payload['input']! as Float32List,
+      decodeMs: (payload['decodeMs']! as num).toDouble(),
+      resizeNormalizeMs: (payload['resizeNormalizeMs']! as num).toDouble(),
+    );
+  }
+
+  Future<MobileClipVisionEmbeddingProfile> profileImageBytes(
+    Uint8List imageBytes,
+  ) async {
+    final preprocessProfile = await profileImageBytesForBenchmark(imageBytes);
+    final runProfile = await profilePreprocessedInput(preprocessProfile.input);
+    return MobileClipVisionEmbeddingProfile(
+      embedding: runProfile.embedding,
+      decodeMs: preprocessProfile.decodeMs,
+      resizeNormalizeMs: preprocessProfile.resizeNormalizeMs,
+      tensorBuildMs: runProfile.tensorBuildMs,
+      inferenceMs: runProfile.inferenceMs,
     );
   }
 
   Future<List<double>> embedPreprocessedInput(Float32List input) async {
+    final profile = await profilePreprocessedInput(input);
+    return profile.embedding;
+  }
+
+  Future<MobileClipVisionRunProfile> profilePreprocessedInput(
+    Float32List input,
+  ) async {
     final session = await _loadSession();
+    final tensorWatch = Stopwatch()..start();
     final inputTensor = OrtValueTensor.createTensorWithDataList(input, <int>[
       1,
       3,
       _inputImageSize,
       _inputImageSize,
     ]);
+    tensorWatch.stop();
     final runOptions = OrtRunOptions();
 
     try {
+      final inferenceWatch = Stopwatch()..start();
       final outputs = session.run(runOptions, <String, OrtValue>{
         _inputName!: inputTensor,
       }, _outputNames);
+      inferenceWatch.stop();
       try {
         if (outputs.isEmpty || outputs.first == null) {
           throw StateError('MobileCLIP ONNX 输出为空');
@@ -92,7 +144,11 @@ class MobileClipVisionService {
           throw StateError('MobileCLIP ONNX 输出为空');
         }
 
-        return _l2Normalize(embedding);
+        return MobileClipVisionRunProfile(
+          embedding: _l2Normalize(embedding),
+          tensorBuildMs: tensorWatch.elapsedMicroseconds / 1000.0,
+          inferenceMs: inferenceWatch.elapsedMicroseconds / 1000.0,
+        );
       } finally {
         for (final output in outputs) {
           output?.release();
@@ -105,12 +161,21 @@ class MobileClipVisionService {
   }
 
   int get inputImageSize => _inputImageSize;
+  String get executionProviderLabel =>
+      _executionProvider?.label ?? 'Pending session init';
+  String get executionProviderDescription =>
+      _executionProvider?.description ??
+      'ONNX Runtime provider has not been initialized yet.';
+  List<String> get providerFallbacks =>
+      List<String>.unmodifiable(_providerFallbacks);
 
   Future<void> dispose() async {
     _session?.release();
     _session = null;
     _inputName = null;
     _outputNames = null;
+    _executionProvider = null;
+    _providerFallbacks = const <String>[];
   }
 
   Future<OrtSession> _loadSession() async {
@@ -122,18 +187,15 @@ class MobileClipVisionService {
     final modelLoadResult = await _loadModelBytes();
     final modelBytes = modelLoadResult.bytes;
     _preprocessSpec = const _PreprocessSpec.mobileclip2();
-    final sessionOptions = OrtSessionOptions();
-    sessionOptions.setIntraOpNumThreads(2);
-    sessionOptions.setInterOpNumThreads(1);
-    sessionOptions.setSessionGraphOptimizationLevel(
-      GraphOptimizationLevel.ortEnableAll,
+    final loadResult = await OnnxSessionProviderService.createSession(
+      modelBytes: modelBytes,
+      intraOpNumThreads: 2,
+      interOpNumThreads: 1,
+      preference: _providerPreference,
     );
-
-    try {
-      _session = OrtSession.fromBuffer(modelBytes, sessionOptions);
-    } finally {
-      sessionOptions.release();
-    }
+    _session = loadResult.session;
+    _executionProvider = loadResult.executionProvider;
+    _providerFallbacks = loadResult.fallbacks;
 
     if (_session!.inputNames.isEmpty) {
       throw StateError('MobileCLIP ONNX 未找到输入张量');
@@ -145,8 +207,13 @@ class MobileClipVisionService {
     _inputName = _session!.inputNames.first;
     _outputNames = List<String>.from(_session!.outputNames, growable: false);
     debugPrint(
-      '🧠 MobileCLIP ONNX 就绪 source=${modelLoadResult.source} input=$_inputName outputs=$_outputNames size=$_inputImageSize mean=${_preprocessSpec.mean} std=${_preprocessSpec.std}',
+      '🧠 MobileCLIP ONNX 就绪 source=${modelLoadResult.source} input=$_inputName outputs=$_outputNames size=$_inputImageSize mean=${_preprocessSpec.mean} std=${_preprocessSpec.std} provider=$executionProviderLabel',
     );
+    if (_providerFallbacks.isNotEmpty) {
+      debugPrint(
+        '⚠️ MobileCLIP ONNX provider fallback chain: ${_providerFallbacks.join(' -> ')}',
+      );
+    }
     return _session!;
   }
 
@@ -170,8 +237,9 @@ class MobileClipVisionService {
       return _ModelLoadResult(bytes: bytes, source: assetPath);
     }
 
-    final bytes =
-        (await rootBundle.load(_defaultModelAssetPath)).buffer.asUint8List();
+    final bytes = (await rootBundle.load(
+      _defaultModelAssetPath,
+    )).buffer.asUint8List();
     return _ModelLoadResult(bytes: bytes, source: _defaultModelAssetPath);
   }
 
@@ -242,22 +310,33 @@ class _MobileClipPreprocessRequest {
   final List<double> std;
 }
 
-Float32List _preprocessImageForMobileClip(_MobileClipPreprocessRequest request) {
+Map<String, Object?> _preprocessImageForMobileClip(
+  _MobileClipPreprocessRequest request,
+) {
+  final decodeWatch = Stopwatch()..start();
   final decoded = img.decodeImage(request.imageBytes);
+  decodeWatch.stop();
   if (decoded == null) {
     throw ArgumentError('无法解码图片数据');
   }
 
+  final resizeNormalizeWatch = Stopwatch()..start();
   final preprocessed = _preprocessMobileClipImage(
     decoded,
     request.inputImageSize,
   );
-  return _toMobileClipNchw(
+  final input = _toMobileClipNchw(
     preprocessed,
     request.inputImageSize,
     request.mean,
     request.std,
   );
+  resizeNormalizeWatch.stop();
+  return <String, Object?>{
+    'input': input,
+    'decodeMs': decodeWatch.elapsedMicroseconds / 1000.0,
+    'resizeNormalizeMs': resizeNormalizeWatch.elapsedMicroseconds / 1000.0,
+  };
 }
 
 img.Image _preprocessMobileClipImage(img.Image source, int inputImageSize) {
@@ -328,4 +407,48 @@ Float32List _toMobileClipNchw(
   }
 
   return buffer;
+}
+
+class MobileClipVisionPreprocessProfile {
+  const MobileClipVisionPreprocessProfile({
+    required this.input,
+    required this.decodeMs,
+    required this.resizeNormalizeMs,
+  });
+
+  final Float32List input;
+  final double decodeMs;
+  final double resizeNormalizeMs;
+
+  double get preprocessMs => decodeMs + resizeNormalizeMs;
+}
+
+class MobileClipVisionRunProfile {
+  const MobileClipVisionRunProfile({
+    required this.embedding,
+    required this.tensorBuildMs,
+    required this.inferenceMs,
+  });
+
+  final List<double> embedding;
+  final double tensorBuildMs;
+  final double inferenceMs;
+}
+
+class MobileClipVisionEmbeddingProfile {
+  const MobileClipVisionEmbeddingProfile({
+    required this.embedding,
+    required this.decodeMs,
+    required this.resizeNormalizeMs,
+    required this.tensorBuildMs,
+    required this.inferenceMs,
+  });
+
+  final List<double> embedding;
+  final double decodeMs;
+  final double resizeNormalizeMs;
+  final double tensorBuildMs;
+  final double inferenceMs;
+
+  double get preprocessMs => decodeMs + resizeNormalizeMs;
 }

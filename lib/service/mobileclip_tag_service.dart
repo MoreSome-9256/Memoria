@@ -1,3 +1,5 @@
+/// MobileCLIP 标签服务，把图像向量映射到可读的视觉标签。
+
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -115,6 +117,7 @@ class MobileClipTagService {
     _warmUpFuture = Future<void>(() async {
       await _semanticService.warmUp();
       for (final definition in memoriaMasterTagDefinitions) {
+        debugPrint('🧠 正在预热 Master 标签: ${definition.label}'); // 加上这行
         final promptVectors = await _embedPromptsSequentially(
           definition.prompts,
         );

@@ -1,16 +1,16 @@
-import 'dart:convert';
+/// 事件聚合服务，负责按时间、位置和内容把照片整理成事件。
 
 import 'package:dio/dio.dart';
-import 'package:isar/isar.dart';
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/entity/event_entity.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 import '../utils/event_cluster_helper.dart';
 import '../utils/smart_title_generator.dart';
 import '../service/llm_service.dart';
-import 'photo_service.dart';
 
 class EventService {
   static final EventService _instance = EventService._internal();
@@ -74,6 +74,7 @@ class EventService {
     enableCrossDayTravelMerge: true,
   );
   static const int minPhotosForDisplay = 5;
+  static const int minPhotosForTimelineDisplay = 1;
 
   static bool shouldResolvePhotoLocation({
     required int eventPhotoCount,
@@ -91,13 +92,17 @@ class EventService {
   Future<void> runClustering({
     int? maxPhotos,
   }) async {
-    final isar = PhotoService().isar;
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
+    final eventBox = store.box<EventEntity>();
 
     // 1. 读取照片
-    final query = isar.collection<PhotoEntity>().where().sortByTimestampDesc();
-    final recentPhotos = maxPhotos == null
-        ? await query.findAll()
-        : await query.limit(maxPhotos).findAll();
+    final query = photoBox.query()
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    if (maxPhotos != null) query.limit = maxPhotos;
+    final recentPhotos = query.find();
+    query.close();
 
     if (recentPhotos.isEmpty) {
       print("⚠️ 没有照片可以聚类");
@@ -110,7 +115,7 @@ class EventService {
           : "🔍 开始聚类分析（最近 ${recentPhotos.length} 张照片）",
     );
 
-    // 2. 反转为时间升序（方便按时间顺序处理）
+    // 2. 反转为时间升序
     final photos = recentPhotos.reversed.toList();
 
     // 3. 聚类逻辑
@@ -118,34 +123,31 @@ class EventService {
       photos: photos,
       config: _clusterConfig,
     );
-    final clusters = clusterResult.clusters;
+    final clusters = _splitClustersByLocalDay(clusterResult.clusters);
 
     print(
       "✅ 聚类完成: 初分簇=${clusterResult.initialClusterCount} 合并=${clusterResult.mergedCount} 最终事件=${clusters.length}",
     );
 
     // 4. 将聚类结果存入数据库并设置 eventId 反向关联
-    await isar.writeTxn(() async {
-      final photosWithEvent = await isar
-          .collection<PhotoEntity>()
-          .filter()
-          .eventIdIsNotNull()
-          .findAll();
+    store.runInTransaction(TxMode.write, () {
+      // 清空旧 eventId
+      final withEventQ = photoBox.query(PhotoEntity_.eventId.notNull()).build();
+      final photosWithEvent = withEventQ.find();
+      withEventQ.close();
       for (final photo in photosWithEvent) {
         photo.eventId = null;
       }
-      await isar.collection<PhotoEntity>().putAll(photosWithEvent);
+      photoBox.putMany(photosWithEvent);
 
       // 清空旧事件
-      await isar.collection<EventEntity>().clear();
+      eventBox.removeAll();
 
       // 插入新事件并更新照片的 eventId
       final photosToUpdate = <PhotoEntity>[];
       for (final cluster in clusters) {
         final event = EventEntity.fromPhotos(cluster);
-        final eventId = await isar.collection<EventEntity>().put(event);
-
-        // 🔗 关键：将此事件的 ID 写入每张照片的 eventId 字段
+        final eventId = eventBox.put(event);
         for (final photo in cluster) {
           photo.eventId = eventId;
           photosToUpdate.add(photo);
@@ -153,35 +155,35 @@ class EventService {
       }
 
       if (photosToUpdate.isNotEmpty) {
-        await isar.collection<PhotoEntity>().putAll(photosToUpdate);
+        photoBox.putMany(photosToUpdate);
       }
     });
 
     print("💾 事件已存入数据库，照片关联已建立");
 
-    // 5. 启动地址解析（事件中心点 + 可展示事件中的逐图地址）
+    // 5. 启动地址解析
     _resolveEventLocations();
     _resolvePhotoLocationsForVisibleEvents();
   }
 
-  // 🌏 后台任务：为事件解析地址（仅解析中心点）
   Future<void> _resolveEventLocations() async {
     if (_amapWebKey.trim().isEmpty) {
       print("⚠️ AMAP_WEB_KEY 未配置，跳过地址解析");
       return;
     }
 
-    final isar = PhotoService().isar;
+    final store = ObjectBoxService().store;
+    final eventBox = store.box<EventEntity>();
 
     // 查询需要解析地址的事件（有GPS但还没有细粒度地点）
-    final events = await isar
-        .collection<EventEntity>()
-        .filter()
-        .avgLatitudeIsNotNull()
-        .photoCountGreaterThan(minPhotosForDisplay - 1)
-      .locationNameIsNull()
-        .limit(10) // 每次最多处理 10 个事件
-        .findAll();
+    final q = eventBox.query(
+      EventEntity_.avgLatitude.notNull()
+          .and(EventEntity_.photoCount.greaterThan(minPhotosForDisplay - 1))
+          .and(EventEntity_.locationName.isNull()),
+    ).build();
+    q.limit = 10;
+    final events = q.find();
+    q.close();
 
     if (events.isEmpty) {
       print("✅ 所有事件地址已解析完成");
@@ -192,9 +194,7 @@ class EventService {
 
     for (final event in events) {
       try {
-        print(
-          "开始解析事件地址: id=${event.id} lat=${event.avgLatitude} lon=${event.avgLongitude}",
-        );
+        print("开始解析事件地址: id=${event.id}");
         final regeocode = await _reverseGeocodeWithAmap(
           latitude: event.avgLatitude!,
           longitude: event.avgLongitude!,
@@ -212,9 +212,7 @@ class EventService {
         city ??= province;
         final adcode = _extractNonEmptyString(data, ['adcode']);
         final citycode = _extractNonEmptyString(data, ['citycode']);
-        final formattedAddress = _extractNonEmptyString(regeocode, [
-          'formatted_address',
-        ]);
+        final formattedAddress = _extractNonEmptyString(regeocode, ['formatted_address']);
         final locationName = _extractLocationName(
           regeocode,
           data,
@@ -223,74 +221,68 @@ class EventService {
           formattedAddress: formattedAddress,
         );
 
-        await isar.writeTxn(() async {
-          final e = await isar.collection<EventEntity>().get(event.id);
-          if (e == null) {
-            return;
-          }
-
+        store.runInTransaction(TxMode.write, () {
+          final e = eventBox.get(event.id);
+          if (e == null) return;
           e.province = province;
           e.city = city;
           e.district = district;
           e.locationName = locationName;
           e.formattedAddress = formattedAddress;
-
-          if (e.location.isNotEmpty) {
-            e.title = "${e.location} · ${e.dateRangeText}";
+          final displayLocation = e.locationName ?? e.district ?? e.city ?? e.province;
+          if ((displayLocation?.trim().isNotEmpty ?? false)) {
+            e.title = "${displayLocation!.trim()} · ${e.dateRangeText}";
           }
-
-          await isar.collection<EventEntity>().put(e);
+          eventBox.put(e);
         });
 
         print(
-          "📍 事件地址解析成功: ${event.title} -> ${locationName ?? district ?? city ?? province ?? '未知地点'} "
-          "(adcode=${adcode ?? '-'} citycode=${citycode ?? '-'})",
+          "📍 事件地址解析成功: id=${event.id} city=${city ?? '-'} "
+          "district=${district ?? '-'} adcode=${adcode ?? '-'} "
+          "citycode=${citycode ?? '-'}",
         );
       } catch (e) {
         print("❌ 地址解析失败: $e");
       }
 
-      // 延时，避免触发高德 API 限流
       await Future.delayed(const Duration(milliseconds: 1300));
     }
 
-    // 🔄 递归调用，处理剩余事件
     _resolveEventLocations();
   }
 
-  // 🌏 后台任务：为可展示事件中的照片逐张解析地址（带缓存跳过）
   Future<void> _resolvePhotoLocationsForVisibleEvents() async {
     if (_amapWebKey.trim().isEmpty) {
       return;
     }
 
-    final isar = PhotoService().isar;
-    final visibleEvents = await isar
-        .collection<EventEntity>()
-        .filter()
-        .photoCountGreaterThan(minPhotosForDisplay - 1)
-        .findAll();
-    if (visibleEvents.isEmpty) {
-      return;
-    }
+    final store = ObjectBoxService().store;
+    final eventBox = store.box<EventEntity>();
+    final photoBox = store.box<PhotoEntity>();
 
-    final eventIds = visibleEvents.map((event) => event.id).toList();
+    final evQ = eventBox.query(
+      EventEntity_.photoCount.greaterThan(minPhotosForDisplay - 1),
+    ).build();
+    final visibleEvents = evQ.find();
+    evQ.close();
+    if (visibleEvents.isEmpty) return;
+
+    final eventIds = visibleEvents.map((e) => e.id).toList(growable: false);
     final eventPhotoCountById = {
       for (final event in visibleEvents) event.id: event.photoCount,
     };
-    final photos = await isar
-        .collection<PhotoEntity>()
-        .filter()
-        .anyOf(eventIds, (q, eventId) => q.eventIdEqualTo(eventId))
-        .isLocationProcessedEqualTo(false)
-        .latitudeIsNotNull()
-        .longitudeIsNotNull()
-        .limit(20)
-        .findAll();
 
-    if (photos.isEmpty) {
-      return;
-    }
+    final photoQ = photoBox.query(
+      PhotoEntity_.eventId.oneOf(eventIds)
+          .and(PhotoEntity_.isLocationProcessed.equals(false))
+          .and(PhotoEntity_.latitude.notNull())
+          .and(PhotoEntity_.longitude.notNull()),
+    ).build();
+    photoQ.limit = 20;
+    final photos = photoQ.find();
+    photoQ.close();
+
+    if (photos.isEmpty) return;
 
     print("🌏 开始逐图解析地址，本批次: ${photos.length} 张");
 
@@ -308,9 +300,7 @@ class EventService {
 
       final lat = photo.latitude;
       final lon = photo.longitude;
-      if (lat == null || lon == null) {
-        continue;
-      }
+      if (lat == null || lon == null) continue;
 
       try {
         final regeocode = await _reverseGeocodeWithAmap(
@@ -323,9 +313,7 @@ class EventService {
           throw Exception('高德返回缺少addressComponent');
         }
 
-        final formattedAddress = _extractNonEmptyString(regeocode, [
-          'formatted_address',
-        ]);
+        final formattedAddress = _extractNonEmptyString(regeocode, ['formatted_address']);
         final district = _extractNonEmptyString(addressComponent, ['district']);
         final adcode = _extractNonEmptyString(addressComponent, ['adcode']);
         final province = _extractNonEmptyString(addressComponent, ['province']);
@@ -340,11 +328,9 @@ class EventService {
           formattedAddress: formattedAddress,
         );
 
-        await isar.writeTxn(() async {
-          final latest = await isar.collection<PhotoEntity>().get(photo.id);
-          if (latest == null) {
-            return;
-          }
+        store.runInTransaction(TxMode.write, () {
+          final latest = photoBox.get(photo.id);
+          if (latest == null) return;
           latest.province = province;
           latest.city = city;
           latest.district = district;
@@ -352,21 +338,20 @@ class EventService {
           latest.adcode = adcode;
           latest.formattedAddress = formattedAddress;
           latest.isLocationProcessed = true;
-          await isar.collection<PhotoEntity>().put(latest);
+          photoBox.put(latest);
         });
 
         print(
-          "📌 照片地址解析成功: id=${photo.id} location=${locationName ?? city ?? '-'} district=${district ?? '-'}",
+          "📌 照片地址解析成功: id=${photo.id} city=${city ?? '-'} "
+          "district=${district ?? '-'} adcode=${adcode ?? '-'}",
         );
       } catch (e) {
         print("❌ 照片地址解析失败: id=${photo.id} error=$e");
       }
 
-      // 逐图解析限流，避免触发高德 API 限频
       await Future.delayed(const Duration(milliseconds: 450));
     }
 
-    // 递归处理剩余未解析照片
     _resolvePhotoLocationsForVisibleEvents();
   }
 
@@ -387,11 +372,15 @@ class EventService {
 
     final body = response.data;
 
-    print("高德地图返回值${jsonEncode(body)}");
-
     if (body is! Map<String, dynamic>) {
       throw Exception('高德返回格式异常');
     }
+
+    print(
+      "高德逆地址响应: status=${body['status'] ?? '-'} "
+      "hasRegeocode=${body['regeocode'] is Map<String, dynamic>} "
+      "extensions=$extensions",
+    );
 
     if (body['status'] != '1') {
       throw Exception('高德返回失败: ${body['info'] ?? '未知错误'}');
@@ -568,87 +557,135 @@ class EventService {
     return true;
   }
 
-  // 📊 获取事件统计信息
   Future<Map<String, int>> getEventStats() async {
-    final isar = PhotoService().isar;
-    final total = await isar.collection<EventEntity>().count();
-    final withLocation = await isar
-        .collection<EventEntity>()
-        .filter()
-        .cityIsNotNull()
-        .count();
-
+    final eventBox = ObjectBoxService().store.box<EventEntity>();
+    final total = eventBox.count();
+    final withLocationQ = eventBox.query(EventEntity_.city.notNull()).build();
+    final withLocation = withLocationQ.count();
+    withLocationQ.close();
     return {'total': total, 'withLocation': withLocation};
   }
 
-  // 🔄 获取事件流（UI 监听用）
   Stream<List<EventEntity>> watchEvents() {
-    final isar = PhotoService().isar;
-    return isar
-        .collection<EventEntity>()
-        .where()
-        .sortByStartTimeDesc() // 按时间倒序
-        .watch(fireImmediately: true)
-        .map(
-          (events) => events
-              .where((event) => event.photoCount >= minPhotosForDisplay)
-              .toList(),
-        );
+    final eventBox = ObjectBoxService().store.box<EventEntity>();
+    return eventBox
+        .query(
+          EventEntity_.photoCount.greaterThan(
+            minPhotosForTimelineDisplay - 1,
+          ),
+        )
+        .order(EventEntity_.startTime, flags: Order.descending)
+        .watch(triggerImmediately: true)
+        .map((query) => query.find());
   }
 
   // 🧠 核心方法：增量刷新事件的智能信息（混合标题生成）
   // 此方法由 AIService 在分析完一批照片后调用
+  List<List<PhotoEntity>> _splitClustersByLocalDay(
+    List<List<PhotoEntity>> clusters,
+  ) {
+    final buckets = <String, List<PhotoEntity>>{};
+    for (final cluster in clusters) {
+      if (cluster.isEmpty) {
+        continue;
+      }
+      for (final photo in cluster) {
+        final key = _localDayKey(photo.timestamp);
+        buckets.putIfAbsent(key, () => <PhotoEntity>[]).add(photo);
+      }
+    }
+
+    final orderedKeys = buckets.keys.toList()..sort();
+    final dayGroups = orderedKeys
+        .map((key) {
+          final group =
+              buckets[key]!..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+          return _DayPhotoGroup(dateKey: key, photos: group);
+        })
+        .toList(growable: false);
+
+    final mergedGroups = <List<PhotoEntity>>[];
+    var index = 0;
+    while (index < dayGroups.length) {
+      final current = dayGroups[index];
+      if (current.photos.length <= 5 && index + 1 < dayGroups.length) {
+        final next = dayGroups[index + 1];
+        if (_isAdjacentDay(current.dateKey, next.dateKey)) {
+          final merged = <PhotoEntity>[
+            ...current.photos,
+            ...next.photos,
+          ]..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+          mergedGroups.add(merged);
+          index += 2;
+          continue;
+        }
+      }
+
+      mergedGroups.add(current.photos);
+      index += 1;
+    }
+
+    mergedGroups.sort((a, b) => b.first.timestamp.compareTo(a.first.timestamp));
+    return mergedGroups;
+  }
+
+  String _localDayKey(int timestampMs) {
+    final date = DateTime.fromMillisecondsSinceEpoch(timestampMs);
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
+  }
+
+  bool _isAdjacentDay(String earlier, String later) {
+    final start = DateTime.parse(earlier);
+    final end = DateTime.parse(later);
+    return end.difference(start).inDays == 1;
+  }
+
   Future<void> refreshEventSmartInfo(
     List<int> eventIds, {
     bool allowLlm = true,
   }) async {
     if (eventIds.isEmpty) return;
 
-    final isar = PhotoService().isar;
+    final store = ObjectBoxService().store;
+    final eventBox = store.box<EventEntity>();
+    final photoBox = store.box<PhotoEntity>();
 
     print("🧠 开始刷新 ${eventIds.length} 个事件的智能信息...");
 
     for (final eventId in eventIds) {
       try {
-        // 1. 获取事件
-        final event = await isar.collection<EventEntity>().get(eventId);
+        final event = eventBox.get(eventId);
         if (event == null) continue;
         if (event.photoCount < minPhotosForDisplay) {
           print("  ℹ️ 事件 $eventId 照片数(${event.photoCount})低于展示阈值，跳过智能信息刷新");
           continue;
         }
 
-        // 2. 查询该事件下所有已分析的照片
-        final analyzedPhotos = await isar
-            .collection<PhotoEntity>()
-            .filter()
-            .eventIdEqualTo(eventId)
-            .isAiAnalyzedEqualTo(true)
-            .findAll();
+        final analyzedQ = photoBox.query(
+          PhotoEntity_.eventId.equals(eventId)
+              .and(PhotoEntity_.isAiAnalyzed.equals(true)),
+        ).build();
+        final analyzedPhotos = analyzedQ.find();
+        analyzedQ.close();
 
         if (analyzedPhotos.isEmpty) {
           print("  ⚠️ 事件 $eventId 暂无已分析照片，跳过");
           continue;
         }
 
-        // 3. 计算统计数据
         final stats = _calculateEventStats(analyzedPhotos);
-
-        // 4. 计算分析进度
         final progress = SmartTitleGenerator.calculateProgress(
           stats['analyzedCount'] as int,
           event.photoCount,
         );
 
-        // 5. 决定使用哪种标题生成策略
         List<String> generatedTitles;
         bool shouldUseLLM = false;
 
         if (allowLlm && progress >= 100) {
-          // ✅ 分析完成：尝试使用 LLM
           shouldUseLLM = true;
-
-          // 检查是否已经生成过 LLM 标题（避免浪费 API 额度）
           if (event.isLlmGenerated) {
             print("  ℹ️ 事件 $eventId 已有 LLM 标题，跳过重复生成");
             continue;
@@ -658,20 +695,13 @@ class EventService {
         final topTags = _extractTopTags(stats, 5);
         var isLlmGenerated = false;
         if (shouldUseLLM) {
-          // 📡 Phase 2: LLM 生成创意标题
           try {
             final llmService = LLMService();
             if (llmService.isApiKeyConfigured) {
-              generatedTitles = await llmService.generateCreativeTitles(
-                event,
-                topTags,
-              );
+              generatedTitles = await llmService.generateCreativeTitles(event, topTags);
             } else {
               print("  ⚠️ LLM API Key 未配置，使用模拟模式");
-              generatedTitles = await llmService.generateCreativeTitlesMock(
-                event,
-                topTags,
-              );
+              generatedTitles = await llmService.generateCreativeTitlesMock(event, topTags);
             }
             isLlmGenerated = true;
             print("  🎨 [LLM] 生成 ${generatedTitles.length} 个创意标题");
@@ -680,33 +710,23 @@ class EventService {
             generatedTitles = [_generateLocalTitle(event, stats)];
           }
         } else {
-          // 📋 Phase 1: 本地规则生成
           generatedTitles = [_generateLocalTitle(event, stats)];
-          print(
-            "  🏠 [本地] 生成规则标题: ${generatedTitles.first} (进度: $progress%)",
-          );
+          print("  🏠 [本地] 生成规则标题: ${generatedTitles.first} (进度: $progress%)");
         }
 
-        await isar.writeTxn(() async {
-          final e = await isar.collection<EventEntity>().get(eventId);
-          if (e == null) {
-            return;
-          }
-
-          // 更新基础 AI 数据
+        store.runInTransaction(TxMode.write, () {
+          final e = eventBox.get(eventId);
+          if (e == null) return;
           e.joyScore = stats['avgJoyScore'];
           e.analyzedPhotoCount = stats['analyzedCount'] as int;
           e.coverPhotoId = stats['bestPhotoId'] as int?;
           e.tags = topTags;
           e.aiThemes = generatedTitles;
           e.isLlmGenerated = isLlmGenerated;
-
-          // 更新默认显示标题（使用第一个生成的标题）
           if (generatedTitles.isNotEmpty) {
             e.title = generatedTitles.first;
           }
-
-          await isar.collection<EventEntity>().put(e);
+          eventBox.put(e);
           print(
             "  ✅ 事件 $eventId 已更新：封面=${e.coverPhotoId} 欢乐=${e.joyScore?.toStringAsFixed(2)} 进度=$progress%",
           );
@@ -893,4 +913,14 @@ class EventService {
 
     return true;
   }
+}
+
+class _DayPhotoGroup {
+  const _DayPhotoGroup({
+    required this.dateKey,
+    required this.photos,
+  });
+
+  final String dateKey;
+  final List<PhotoEntity> photos;
 }

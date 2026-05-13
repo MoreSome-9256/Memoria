@@ -1,3 +1,5 @@
+/// ONNX 人脸嵌入服务，负责调用 ONNX 模型提取人脸向量。
+
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -8,10 +10,9 @@ import 'package:onnxruntime/onnxruntime.dart';
 
 import 'face_embedding_service.dart';
 
-class OnnxFaceEmbeddingService implements FaceEmbeddingService {
-  OnnxFaceEmbeddingService({
-    FaceEmbeddingService? fallbackService,
-  }) : _fallbackService = fallbackService;
+class OnnxFaceEmbeddingService extends FaceEmbeddingService {
+  OnnxFaceEmbeddingService({FaceEmbeddingService? fallbackService})
+    : _fallbackService = fallbackService;
 
   static const String _modelFilePathOverride = String.fromEnvironment(
     'FACE_EMBEDDING_ONNX_FILE',
@@ -103,23 +104,23 @@ class OnnxFaceEmbeddingService implements FaceEmbeddingService {
   }
 
   @override
-  Future<FaceEmbeddingResult?> embedFaceCrop(File imageFile) async {
-    if (!imageFile.existsSync()) {
+  Future<FaceEmbeddingResult?> embedFaceCropBytes(Uint8List imageBytes) async {
+    if (imageBytes.isEmpty) {
       return null;
     }
 
     await warmUp();
     if (!_isAvailable) {
-      return _fallbackService?.embedFaceCrop(imageFile);
+      return _fallbackService?.embedFaceCropBytes(imageBytes);
     }
 
     final session = _session;
     if (session == null) {
-      return _fallbackService?.embedFaceCrop(imageFile);
+      return _fallbackService?.embedFaceCropBytes(imageBytes);
     }
 
     try {
-      final input = await _preprocessImage(imageFile);
+      final input = _preprocessImageBytes(imageBytes);
       final tensor = OrtValueTensor.createTensorWithDataList(
         input,
         _isNhwcInput
@@ -128,18 +129,16 @@ class OnnxFaceEmbeddingService implements FaceEmbeddingService {
       );
       final runOptions = OrtRunOptions();
       try {
-        final outputs = session.run(
-          runOptions,
-          <String, OrtValue>{_inputName!: tensor},
-          _outputNames,
-        );
+        final outputs = session.run(runOptions, <String, OrtValue>{
+          _inputName!: tensor,
+        }, _outputNames);
         try {
           if (outputs.isEmpty || outputs.first == null) {
-            return _fallbackService?.embedFaceCrop(imageFile);
+            return _fallbackService?.embedFaceCropBytes(imageBytes);
           }
           final embedding = _l2Normalize(_flattenOutput(outputs.first!.value));
           if (embedding.isEmpty) {
-            return _fallbackService?.embedFaceCrop(imageFile);
+            return _fallbackService?.embedFaceCropBytes(imageBytes);
           }
           return FaceEmbeddingResult(
             embedding: embedding,
@@ -159,7 +158,7 @@ class OnnxFaceEmbeddingService implements FaceEmbeddingService {
         '⚠️ Face ONNX 推理失败，回退 baseline: $error'
         '${_unavailableReason == null ? '' : ' ($_unavailableReason)'}',
       );
-      return _fallbackService?.embedFaceCrop(imageFile);
+      return _fallbackService?.embedFaceCropBytes(imageBytes);
     }
   }
 
@@ -214,11 +213,10 @@ class OnnxFaceEmbeddingService implements FaceEmbeddingService {
     );
   }
 
-  Future<Float32List> _preprocessImage(File imageFile) async {
-    final bytes = await imageFile.readAsBytes();
-    final decoded = img.decodeImage(bytes);
+  Float32List _preprocessImageBytes(Uint8List imageBytes) {
+    final decoded = img.decodeImage(imageBytes);
     if (decoded == null) {
-      throw ArgumentError('无法解码人脸 crop: ${imageFile.path}');
+      throw ArgumentError('Unable to decode face crop bytes');
     }
 
     final baked = img.bakeOrientation(decoded);

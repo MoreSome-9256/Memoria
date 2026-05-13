@@ -1,3 +1,5 @@
+/// 语义匹配服务，负责把照片向量与查询向量做相似度计算。
+
 import 'dart:math' as math;
 
 import 'clip_tokenizer_service.dart';

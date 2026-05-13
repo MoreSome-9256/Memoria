@@ -1,13 +1,16 @@
-import 'package:isar/isar.dart';
+/// 故事服务，负责故事内容的保存、读取和更新。
+
 import 'package:photo_manager/photo_manager.dart';
 
 import '../data/tag_taxonomy_v2.dart';
+import '../models/entity/digital_album_book_entity.dart';
 import '../models/entity/story_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
-import 'photo_service.dart';
 import 'llm_service.dart';
 import 'event_service.dart';
 
@@ -201,9 +204,9 @@ class StoryService {
       // story.bgmUrl = bgmUrl;
 
       // 6. 存入数据库
-      final isar = PhotoService().isar;
-      await isar.writeTxn(() async {
-        await isar.collection<StoryEntity>().put(story);
+      final store = ObjectBoxService().store;
+      store.runInTransaction(TxMode.write, () {
+        store.box<StoryEntity>().put(story);
       });
 
       print("✅ 综合视听故事生成成功：ID=${story.id}");
@@ -401,76 +404,74 @@ class StoryService {
     );
   }*/
 
-  /// 📊 获取所有故事
   Future<List<StoryEntity>> getAllStories() async {
-    final isar = PhotoService().isar;
-    return await isar
-        .collection<StoryEntity>()
-        .where()
-        .sortByCreatedAtDesc()
-        .findAll();
+    final storyBox = ObjectBoxService().store.box<StoryEntity>();
+    final stories = storyBox.getAll()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return stories;
   }
 
-  /// 🔍 根据事件 ID 获取故事
   Future<List<StoryEntity>> getStoriesByEventId(int eventId) async {
-    final isar = PhotoService().isar;
-    return await isar
-        .collection<StoryEntity>()
-        .filter()
-        .eventIdEqualTo(eventId)
-        .sortByCreatedAtDesc()
-        .findAll();
+    final storyBox = ObjectBoxService().store.box<StoryEntity>();
+    final q = storyBox.query(StoryEntity_.eventId.equals(eventId)).build();
+    final stories = q.find()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    q.close();
+    return stories;
   }
 
-  /// 💾 更新故事内容（保存编辑）
   Future<bool> updateStory(StoryEntity story) async {
-    final isar = PhotoService().isar;
     story.updatedAt = DateTime.now().millisecondsSinceEpoch;
-
-    await isar.writeTxn(() async {
-      await isar.collection<StoryEntity>().put(story);
-    });
-
+    final store = ObjectBoxService().store;
+    store.runInTransaction(TxMode.write, () => store.box<StoryEntity>().put(story));
     print("💾 故事已更新：ID=${story.id}");
     return true;
   }
 
-  /// 🗑️ 删除故事
   Future<bool> deleteStory(int storyId) async {
-    final isar = PhotoService().isar;
-    await isar.writeTxn(() async {
-      await isar.collection<StoryEntity>().delete(storyId);
-    });
-    print("🗑️ 故事已删除：ID=$storyId");
-    return true;
+    final deletedCount = await deleteStories(<int>[storyId]);
+    return deletedCount > 0;
   }
 
-  /// 📸 根据 photoIds 加载照片实体
-  Future<List<PhotoEntity>> loadPhotos(List<int> photoIds) async {
-    final isar = PhotoService().isar;
-    final photos = await isar
-        .collection<PhotoEntity>()
-        .where()
-        .anyOf(photoIds, (q, id) => q.idEqualTo(id))
-        .sortByTimestamp()
-        .findAll();
+  Future<int> deleteStories(Iterable<int> storyIds) async {
+    final store = ObjectBoxService().store;
+    final ids = storyIds.where((id) => id > 0).toSet().toList(growable: false);
+    if (ids.isEmpty) return 0;
 
-    // 优先基于 assetId 解析当前可用路径，避免读取临时文件失效
+    final albumBox = store.box<DigitalAlbumBookEntity>();
+    final storyBox = store.box<StoryEntity>();
+
+    final linkedQ = albumBox.query(DigitalAlbumBookEntity_.storyId.oneOf(ids)).build();
+    final linkedAlbums = linkedQ.find();
+    linkedQ.close();
+
+    var deletedCount = 0;
+    store.runInTransaction(TxMode.write, () {
+      if (linkedAlbums.isNotEmpty) {
+        albumBox.removeMany(linkedAlbums.map((a) => a.id).toList(growable: false));
+      }
+      storyBox.removeMany(ids);
+      deletedCount = ids.length;
+    });
+    print("🗑️ 故事已删除：$deletedCount/${ids.length}");
+    return deletedCount;
+  }
+
+  Future<List<PhotoEntity>> loadPhotos(List<int> photoIds) async {
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final photos = photoBox.getMany(photoIds).whereType<PhotoEntity>().toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
     for (final photo in photos) {
       final asset = await AssetEntity.fromId(photo.assetId);
       final file = await asset?.file;
       final latestPath = file?.path;
-      if (latestPath != null &&
-          latestPath.isNotEmpty &&
-          latestPath != photo.path) {
+      if (latestPath != null && latestPath.isNotEmpty && latestPath != photo.path) {
         photo.path = latestPath;
       }
     }
 
-    await isar.writeTxn(() async {
-      await isar.collection<PhotoEntity>().putAll(photos);
-    });
-
+    final store = ObjectBoxService().store;
+    store.runInTransaction(TxMode.write, () => store.box<PhotoEntity>().putMany(photos));
     return photos;
   }
 }

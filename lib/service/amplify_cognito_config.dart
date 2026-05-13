@@ -1,3 +1,5 @@
+/// Amplify Cognito 配置生成器，为应用提供统一的认证配置字符串。
+
 import 'dart:convert';
 
 /// Build Amplify Auth(Cognito) configuration from dart-defines.

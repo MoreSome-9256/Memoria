@@ -1,13 +1,17 @@
+/// 个人资料页面，提供设置、调试入口和账户信息展示。
+
+import 'dart:async';
+
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/ai_service.dart';
-import 'package:photo_album/service/ai_progress_notification_service.dart';
+import 'package:photo_album/service/travel_memory_detector.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 
-import 'local_vlm_test_page.dart';
 import 'face_cluster_debug_page.dart';
+import 'junk_photo_trash_page.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
 
@@ -21,7 +25,7 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   final _auth = const CognitoAuthService();
   final _backendPreferenceService = MobileClipBackendPreferenceService();
-  
+
   late bool _autoResumeEnabled;
 
   Future<AuthUser?> _loadUser() async {
@@ -86,9 +90,11 @@ class _ProfilePageState extends State<ProfilePage> {
                             ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 12),
-                      const Text('AI 模型如何表现的相关配置。改动会应用到后续 AI 扫描任务，模型在首次调用时按需加载。'),
+                      const Text(
+                        'AI 模型如何表现的相关配置。改动会应用到后续 AI 扫描任务，模型在首次调用时按需加载。',
+                      ),
                       const SizedBox(height: 20),
-                      
+
                       // 模型类型
                       Text(
                         '模型类型',
@@ -121,7 +127,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         style: TextStyle(color: Colors.grey[700], fontSize: 12),
                       ),
                       const SizedBox(height: 20),
-                      
+
                       // 自动恢复开关
                       Divider(color: Colors.grey[300]),
                       const SizedBox(height: 12),
@@ -151,7 +157,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         ),
                       ),
                       const SizedBox(height: 24),
-                      
+
                       Row(
                         children: [
                           TextButton(
@@ -161,10 +167,11 @@ class _ProfilePageState extends State<ProfilePage> {
                           const Spacer(),
                           FilledButton(
                             onPressed: () async {
-                              await _backendPreferenceService.setSelectedBackend(
-                                selected,
+                              await _backendPreferenceService
+                                  .setSelectedBackend(selected);
+                              await AIService().setAutoResume(
+                                _autoResumeEnabled,
                               );
-                              await AIService().setAutoResume(_autoResumeEnabled);
                               if (!context.mounted) {
                                 return;
                               }
@@ -198,6 +205,59 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
+  Future<void> _showTravelMemoryDebug() async {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text('正在检测最近 180 天的旅行记忆...'),
+      ),
+    );
+
+    try {
+      final summary = await TravelMemoryService().buildDebugSummary(
+        lookbackDays: 180,
+      );
+      if (!mounted) {
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('旅行记忆检测'),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  '$summary\n\n公开截图、博客或 issue 前，请替换城市、区县、adcode 与地点名称。',
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('关闭'),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('旅行记忆检测失败: $error'),
+        ),
+      );
+    }
+  }
+
   void _showAccountDetails() async {
     final attributes = await _loadAttributes();
     if (!mounted) return;
@@ -229,13 +289,24 @@ class _ProfilePageState extends State<ProfilePage> {
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8.0),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        // 如果文字换行了，让它们顶部对齐会更好看
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             _getAttributeLabel(attr.userAttributeKey.key),
                             style: const TextStyle(fontWeight: FontWeight.w500),
                           ),
-                          Text(attr.value),
+                          const SizedBox(width: 16), // 给 Key 和 Value 之间留点呼吸空间
+                          // 🌟 核心修复：用 Expanded 占据剩余所有空间，防止溢出
+                          Expanded(
+                            child: Text(
+                              attr.value,
+                              textAlign: TextAlign.right, // 保持靠右对齐的视觉效果
+                              // 如果你不想让它换行，而是想显示省略号，可以解开下面两行的注释：
+                              // overflow: TextOverflow.ellipsis,
+                              // maxLines: 1,
+                            ),
+                          ),
                         ],
                       ),
                     );
@@ -317,6 +388,19 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           _buildSettingsTile(
             context,
+            Icons.recycling,
+            '低价值照片回收站',
+            '查看已标记的低质量图片，并恢复为普通照片',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const JunkPhotoTrashPage(),
+                ),
+              );
+            },
+          ),
+          _buildSettingsTile(
+            context,
             Icons.developer_mode,
             "开发者设置",
             "谨慎调整内部设置，除非你很清楚自己在做什么！",
@@ -324,6 +408,7 @@ class _ProfilePageState extends State<ProfilePage> {
               // 对比性能和提取示例向量两个功能 entry point，后续可以扩展更多开发者工具
               showModalBottomSheet(
                 context: context,
+                isScrollControlled: true,
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                 ),
@@ -331,78 +416,77 @@ class _ProfilePageState extends State<ProfilePage> {
                   return SafeArea(
                     child: Padding(
                       padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '开发者工具',
-                            style: Theme.of(context).textTheme.headlineSmall
-                                ?.copyWith(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 20),
-                          ListTile(
-                            leading: const Icon(Icons.smart_toy_outlined),
-                            title: const Text('本地 VLM 测试'),
-                            subtitle: const Text(
-                              '使用手机本地 Qwen3.5-0.8B 生成 caption 或多图故事',
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '开发者工具',
+                              style: Theme.of(context).textTheme.headlineSmall
+                                  ?.copyWith(fontWeight: FontWeight.bold),
                             ),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () {
-                              Navigator.of(context).pop();
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (context) =>
-                                      const LocalVlmTestPage(),
-                                ),
-                              );
-                            },
-                          ),
-                          ListTile(
-                            leading: const Icon(Icons.analytics_outlined),
-                            title: const Text('MobileCLIP Benchmark'),
-                            subtitle: const Text('对比 ONNX 基线与未来 ncnn 接入'),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (context) =>
-                                      const MobileClipBenchmarkPage(),
-                                ),
-                              );
-                            },
-                          ),
-                          ListTile(
-                            leading: const Icon(Icons.science_outlined),
-                            title: const Text('MobileCLIP Vector Probe'),
-                            subtitle: const Text('检查示例图片在手机端 ONNX / NCNN 的向量'),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (context) =>
-                                      const MobileClipVectorProbePage(),
-                                ),
-                              );
-                            },
-                          ),
-                          ListTile(
-                            leading: const Icon(
-                              Icons.face_retouching_natural_outlined,
+                            const SizedBox(height: 20),
+                            ListTile(
+                              leading: const Icon(Icons.analytics_outlined),
+                              title: const Text('MobileCLIP Benchmark'),
+                              subtitle: const Text(
+                                '对比 ONNX 在 CPU 与 NNAPI hardware 上的速度',
+                              ),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (context) =>
+                                        const MobileClipBenchmarkPage(),
+                                  ),
+                                );
+                              },
                             ),
-                            title: const Text('Face Cluster Debug'),
-                            subtitle: const Text('观察按脸聚类结果，不影响主题主链路'),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (context) =>
-                                      const FaceClusterDebugPage(),
-                                ),
-                              );
-                            },
-                          ),
-                        ],
+                            ListTile(
+                              leading: const Icon(Icons.science_outlined),
+                              title: const Text('MobileCLIP Vector Probe'),
+                              subtitle: const Text(
+                                '检查示例图片在手机端 ONNX / NCNN 的向量',
+                              ),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (context) =>
+                                        const MobileClipVectorProbePage(),
+                                  ),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(
+                                Icons.face_retouching_natural_outlined,
+                              ),
+                              title: const Text('Face Cluster Debug'),
+                              subtitle: const Text('观察按脸聚类结果，不影响主题主链路'),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (context) =>
+                                        const FaceClusterDebugPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.travel_explore),
+                              title: const Text('旅行记忆检测'),
+                              subtitle: const Text('按城市停留轨迹检测最近 180 天的旅行候选'),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).pop();
+                                unawaited(_showTravelMemoryDebug());
+                              },
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   );

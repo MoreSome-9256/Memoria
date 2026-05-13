@@ -1,4 +1,7 @@
+/// 人脸向量计算服务，负责从图片中提取脸部嵌入向量。
+
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_embedding_service.dart';
@@ -21,13 +24,20 @@ abstract class FaceEmbeddingService {
 
   Future<void> warmUp();
   void resetWarmState();
-  Future<FaceEmbeddingResult?> embedFaceCrop(File imageFile);
+  Future<FaceEmbeddingResult?> embedFaceCropBytes(Uint8List imageBytes);
+
+  Future<FaceEmbeddingResult?> embedFaceCrop(File imageFile) async {
+    if (!imageFile.existsSync()) {
+      return null;
+    }
+    final bytes = await imageFile.readAsBytes();
+    return embedFaceCropBytes(bytes);
+  }
 }
 
-class MobileClipFaceEmbeddingService implements FaceEmbeddingService {
-  MobileClipFaceEmbeddingService({
-    MobileClipEmbeddingService? embeddingService,
-  }) : _embeddingService = embeddingService ?? MobileClipEmbeddingService();
+class MobileClipFaceEmbeddingService extends FaceEmbeddingService {
+  MobileClipFaceEmbeddingService({MobileClipEmbeddingService? embeddingService})
+    : _embeddingService = embeddingService ?? MobileClipEmbeddingService();
 
   final MobileClipEmbeddingService _embeddingService;
   MobileClipBackend? _cachedBackend;
@@ -50,14 +60,14 @@ class MobileClipFaceEmbeddingService implements FaceEmbeddingService {
   }
 
   @override
-  Future<FaceEmbeddingResult?> embedFaceCrop(File imageFile) async {
-    if (!imageFile.existsSync()) {
+  Future<FaceEmbeddingResult?> embedFaceCropBytes(Uint8List imageBytes) async {
+    if (imageBytes.isEmpty) {
       return null;
     }
 
     await warmUp();
-    final embedding = await _embeddingService.embedImageFileWithBackend(
-      imageFile,
+    final embedding = await _embeddingService.embedImageBytesWithBackend(
+      imageBytes,
       _cachedBackend!,
     );
     if (embedding.isEmpty) {

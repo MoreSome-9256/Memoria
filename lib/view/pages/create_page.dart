@@ -1,19 +1,24 @@
+/// 创作流程页面，承载故事生成的具体操作步骤。
+
 import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/photo_entity.dart';
-import '../../service/photo_service.dart';
+import '../../service/mobileclip_embedding_service.dart';
 import '../../service/semantic_matching_service.dart';
+import '../../storage/vector_index/photo_embedding_index_repository.dart';
 import '../../utils/ocr_policy.dart';
 import '../../utils/tag_sanitizer.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
+import '../widgets/path_image.dart';
 import 'config_page.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class CreatePage extends StatefulWidget {
   const CreatePage({super.key});
@@ -25,6 +30,10 @@ class CreatePage extends StatefulWidget {
 class _CreatePageState extends State<CreatePage> {
   final TextEditingController _searchController = TextEditingController();
   final SemanticMatchingService _semanticService = SemanticMatchingService();
+  final MobileClipEmbeddingService _mobileClipEmbeddingService =
+      MobileClipEmbeddingService();
+  final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
+      PhotoEmbeddingIndexRepository();
   bool _isSearching = false;
   static const double _minSemanticSimilarity = 0.18;
   static const int _maxSemanticResults = 300;
@@ -102,12 +111,11 @@ class _CreatePageState extends State<CreatePage> {
       return _cachedAnalyzedPhotos!;
     }
 
-    final photos = await PhotoService().isar
-        .collection<PhotoEntity>()
-        .filter()
-        .isAiAnalyzedEqualTo(true)
-        .sortByTimestampDesc()
-        .findAll();
+    final _pb = ObjectBoxService().store.box<PhotoEntity>();
+    final _q = _pb.query(PhotoEntity_.isAiAnalyzed.equals(true))
+        .order(PhotoEntity_.timestamp, flags: Order.descending).build();
+    final photos = _q.find();
+    _q.close();
 
     _cachedAnalyzedPhotos = photos;
     _cachedLocations = _buildLocationDictionary(photos);
@@ -276,7 +284,9 @@ class _CreatePageState extends State<CreatePage> {
     // ==========================================
     // 💡 阶段四：文本向量检索（语义排序）
     // ==========================================
-    final semanticQuery = remainingQuery.isNotEmpty ? remainingQuery : query.trim();
+    final semanticQuery = remainingQuery.isNotEmpty
+        ? remainingQuery
+        : query.trim();
     final semanticPrompt = _resolveSemanticPrompt(semanticQuery);
     final taxonomyLabel = _resolveTaxonomyLabel(query.trim());
     List<PhotoEntity> matchedPhotos;
@@ -287,11 +297,14 @@ class _CreatePageState extends State<CreatePage> {
     } else {
       try {
         await _semanticService.warmUp();
+        final activeModelVersion = await _mobileClipEmbeddingService
+            .getSelectedModelVersion();
         final textVector = await _semanticService.embedText(semanticPrompt);
 
         final scored = <MapEntry<PhotoEntity, double>>[];
         for (final photo in candidates) {
-          final imageEmbedding = photo.imageEmbedding;
+          final imageEmbedding = _photoEmbeddingIndexRepository
+              .readEmbeddingForPhoto(photo, modelVersion: activeModelVersion);
           if (imageEmbedding == null || imageEmbedding.isEmpty) {
             continue;
           }
@@ -422,7 +435,8 @@ class _CreatePageState extends State<CreatePage> {
     var boosted = semanticScore;
     if (taxonomyLabel != null && sanitizedTags.contains(taxonomyLabel)) {
       boosted += 0.10;
-    } else if (query.trim().length >= 2 && sanitizedTags.contains(query.trim())) {
+    } else if (query.trim().length >= 2 &&
+        sanitizedTags.contains(query.trim())) {
       boosted += 0.05;
     }
 
@@ -479,10 +493,7 @@ class _CreatePageState extends State<CreatePage> {
       }
     }
 
-    final merged = <PhotoEntity>[
-      ...exactTagMatches,
-      ...semanticOnlyMatches,
-    ];
+    final merged = <PhotoEntity>[...exactTagMatches, ...semanticOnlyMatches];
 
     if (merged.isNotEmpty) {
       return merged;
@@ -501,6 +512,7 @@ class _CreatePageState extends State<CreatePage> {
       }
     });
   }
+
   // 🌟 新增：全选
   void _selectAll() {
     setState(() {
@@ -576,6 +588,7 @@ class _CreatePageState extends State<CreatePage> {
           event: virtualEvent,
           selectedPhotos: virtualEvent.photos,
           selectedTheme: virtualTheme,
+          semanticSearchQuery: _searchController.text.trim(),
         ),
       ),
     );
@@ -644,6 +657,7 @@ class _CreatePageState extends State<CreatePage> {
       ),
     );
   }
+
   // 🌌 极光晕染背景生成器 (终极防黑屏版)
   Widget _buildAmbientBackground() {
     return Container(
@@ -683,6 +697,7 @@ class _CreatePageState extends State<CreatePage> {
       ),
     );
   }
+
   // 🏆 顶部 Header：大大的图标 + 搜索结果文案 + 继续按钮
   Widget _buildHeader() {
     return Padding(
@@ -798,6 +813,7 @@ class _CreatePageState extends State<CreatePage> {
       ),
     );
   }
+
   // 🖼️ 构建无黑罩的照片网格
   Widget _buildPhotoGrid() {
     return GridView.builder(
@@ -826,12 +842,7 @@ class _CreatePageState extends State<CreatePage> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(18),
-                child: Image.file(
-                  file,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) =>
-                      Container(color: Colors.grey.shade300),
-                ),
+                child: PathImage(path: file.path, fit: BoxFit.cover),
               ),
 
               // 2. 右上角的选择指示器 (无黑罩，还原设计图的清爽感)
@@ -871,6 +882,7 @@ class _CreatePageState extends State<CreatePage> {
       },
     );
   }
+
   // 🔎 底部巨型悬浮搜索框 (带渐变遮罩)
   Widget _buildBottomSearchBar() {
     return Container(
@@ -929,7 +941,8 @@ class _CreatePageState extends State<CreatePage> {
                 onChanged: (value) {
                   setState(() {});
                   if (value.trim().isEmpty &&
-                      (_searchResults.isNotEmpty || _selectedPhotoIds.isNotEmpty)) {
+                      (_searchResults.isNotEmpty ||
+                          _selectedPhotoIds.isNotEmpty)) {
                     _resetSearchState();
                   }
                 },
@@ -950,9 +963,10 @@ class _CreatePageState extends State<CreatePage> {
                         label: Text(label),
                         onPressed: () {
                           _searchController.text = label;
-                          _searchController.selection = TextSelection.fromPosition(
-                            TextPosition(offset: label.length),
-                          );
+                          _searchController.selection =
+                              TextSelection.fromPosition(
+                                TextPosition(offset: label.length),
+                              );
                           FocusScope.of(context).unfocus();
                           _performSearch(label);
                         },
@@ -1011,5 +1025,4 @@ class _CreatePageState extends State<CreatePage> {
       ),
     );
   }
-
 }

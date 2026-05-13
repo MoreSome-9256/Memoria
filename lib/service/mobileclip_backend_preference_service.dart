@@ -1,3 +1,5 @@
+/// MobileCLIP 后端偏好服务，记录当前可用推理后端及其选择策略。
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -15,8 +17,9 @@ extension MobileClipBackendX on MobileClipBackend {
   };
 
   String get description => switch (this) {
-    MobileClipBackend.mobileclip2Onnx => '新版默认',
-    MobileClipBackend.ncnn => '兼容性优先，推理更快但是模型更弱',
+    MobileClipBackend.mobileclip2Onnx =>
+      'Android 优先使用 NNAPI hardware，失败时回退到 XNNPACK/CPU',
+    MobileClipBackend.ncnn => '兼容性优先，推理更快但模型更弱',
   };
 
   static MobileClipBackend fromStorageValue(String? value) {

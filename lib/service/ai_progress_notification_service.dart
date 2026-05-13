@@ -1,3 +1,5 @@
+/// AI 进度通知服务，向前台 UI 广播分析状态和操作入口。
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
@@ -42,7 +44,7 @@ class AIProgressNotificationService {
     );
 
     await _plugin.initialize(
-      settings,
+      settings: settings,
       onDidReceiveNotificationResponse: _onForegroundResponse,
       onDidReceiveBackgroundNotificationResponse: _onBackgroundResponse,
     );
@@ -132,7 +134,7 @@ class AIProgressNotificationService {
 
   Future<void> clearProgressNotificationSurfaces() async {
     await initialize();
-    await _plugin.cancel(_notificationId);
+    await _plugin.cancel(id: _notificationId);
   }
 
   Future<void> syncProgress({
@@ -288,7 +290,7 @@ class AIProgressNotificationService {
     required String body,
   }) async {
     if (!isVisible) {
-      await _plugin.cancel(_notificationId);
+      await _plugin.cancel(id: _notificationId);
       return;
     }
 
@@ -327,10 +329,13 @@ class AIProgressNotificationService {
     );
 
     await _plugin.show(
-      _notificationId,
-      title,
-      body,
-      NotificationDetails(android: androidDetails, iOS: iosDetails),
+      id: _notificationId,
+      title: title,
+      body: body,
+      notificationDetails: NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      ),
       payload: navigationAlbum,
     );
   }

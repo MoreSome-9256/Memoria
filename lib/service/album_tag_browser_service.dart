@@ -1,3 +1,5 @@
+/// 专辑标签浏览服务，负责按标签组织和筛选照片集合。
+
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
 import '../utils/tag_sanitizer.dart';
@@ -46,15 +48,11 @@ class AlbumTagBrowserService {
       if (!_hasRenderableFile(photo)) {
         continue;
       }
-      final tags = clusterableTagsForPhoto(photo);
-      if (tags.isEmpty) {
+      final tags = browsableTagsForPhoto(photo);
+      final coarseIds = browsableCoarseIdsForPhoto(photo);
+      if (coarseIds.isEmpty) {
         continue;
       }
-
-      final coarseIds = tags
-          .map((tag) => memoriaAlbumTagLabelToCoarseId[tag])
-          .whereType<String>()
-          .toSet();
       for (final coarseId in coarseIds) {
         clusterPhotos.putIfAbsent(coarseId, () => <PhotoEntity>[]).add(photo);
         final fineCounts = fineCountsByCoarse.putIfAbsent(
@@ -127,9 +125,9 @@ class AlbumTagBrowserService {
     return clusters;
   }
 
-  bool hasClassifiableTag(PhotoEntity photo) {
+  bool hasBrowsableCategory(PhotoEntity photo) {
     return _hasRenderableFile(photo) &&
-        clusterableTagsForPhoto(photo).isNotEmpty;
+        browsableCoarseIdsForPhoto(photo).isNotEmpty;
   }
 
   List<PhotoEntity> photosForCoarseCluster(
@@ -141,10 +139,7 @@ class AlbumTagBrowserService {
           if (!_hasRenderableFile(photo)) {
             return false;
           }
-          final tags = clusterableTagsForPhoto(photo);
-          return tags.any(
-            (tag) => memoriaAlbumTagLabelToCoarseId[tag] == coarseId,
-          );
+          return browsableCoarseIdsForPhoto(photo).contains(coarseId);
         })
         .toList(growable: false);
     filtered.sort((a, b) => b.timestamp.compareTo(a.timestamp));
@@ -160,7 +155,7 @@ class AlbumTagBrowserService {
     final counts = <String, int>{};
     final scores = <String, double>{};
     for (final photo in photos) {
-      final tags = clusterableTagsForPhoto(photo);
+      final tags = browsableTagsForPhoto(photo);
       for (var i = 0; i < tags.length; i++) {
         final tag = tags[i];
         final tagCoarseId = memoriaAlbumTagLabelToCoarseId[tag];
@@ -199,10 +194,8 @@ class AlbumTagBrowserService {
           if (!_hasRenderableFile(photo)) {
             return false;
           }
-          final tags = clusterableTagsForPhoto(photo);
-          final inCoarse = tags.any(
-            (tag) => memoriaAlbumTagLabelToCoarseId[tag] == coarseId,
-          );
+          final tags = browsableTagsForPhoto(photo);
+          final inCoarse = browsableCoarseIdsForPhoto(photo).contains(coarseId);
           if (!inCoarse) {
             return false;
           }
@@ -217,10 +210,7 @@ class AlbumTagBrowserService {
   }
 
   List<String> coarseLabelsForPhoto(PhotoEntity photo) {
-    final coarseIds = clusterableTagsForPhoto(photo)
-        .map((tag) => memoriaAlbumTagLabelToCoarseId[tag])
-        .whereType<String>()
-        .toSet();
+    final coarseIds = browsableCoarseIdsForPhoto(photo);
     return coarseIds
         .map((id) => memoriaCoarseIdToDefinition[id]?.label)
         .whereType<String>()
@@ -235,13 +225,24 @@ class AlbumTagBrowserService {
     return true;
   }
 
-  List<String> clusterableTagsForPhoto(PhotoEntity photo) {
+  List<String> browsableTagsForPhoto(PhotoEntity photo) {
     final raw = TagSanitizer.sanitizeVisualTags(
       photo.aiTags ?? const <String>[],
     );
     return raw
         .where((tag) => memoriaAlbumTagLabelToCoarseId.containsKey(tag))
         .toList(growable: false);
+  }
+
+  Set<String> browsableCoarseIdsForPhoto(PhotoEntity photo) {
+    final coarseIds = <String>{};
+    for (final tag in browsableTagsForPhoto(photo)) {
+      final coarseId = memoriaAlbumTagLabelToCoarseId[tag];
+      if (coarseId != null && coarseId.isNotEmpty) {
+        coarseIds.add(coarseId);
+      }
+    }
+    return coarseIds;
   }
 
   double _weightForRank(int rank) {

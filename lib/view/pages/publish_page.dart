@@ -1,3 +1,5 @@
+/// 发布页面，提供故事分享和发布相关功能。
+
 import 'dart:ui'; // 🌟 新增：用于实现毛玻璃高斯模糊效果
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -149,10 +151,10 @@ class _PublishPageState extends State<PublishPage> {
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: Colors.green.withOpacity(0.1),
+                            color: Colors.green.withValues(alpha: 0.1),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.green.withOpacity(0.2),
+                                color: Colors.green.withValues(alpha: 0.2),
                                 blurRadius: 20,
                                 spreadRadius: 5,
                               ),
@@ -191,10 +193,14 @@ class _PublishPageState extends State<PublishPage> {
                             ), // 调整模糊度
                             child: Container(
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.5), // 半透明白底
+                                color: Colors.white.withValues(
+                                  alpha: 0.5,
+                                ), // 半透明白底
                                 borderRadius: BorderRadius.circular(24),
                                 border: Border.all(
-                                  color: Colors.white.withOpacity(0.8), // 高光描边
+                                  color: Colors.white.withValues(
+                                    alpha: 0.8,
+                                  ), // 高光描边
                                   width: 1.5,
                                 ),
                               ),

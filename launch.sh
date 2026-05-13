@@ -63,5 +63,4 @@ ensure_isar_generated
 
 flutter run \
 	-d "${DEVICE}" \
-	--no-enable-impeller \
 	--dart-define-from-file="${PROFILE_FILE}"

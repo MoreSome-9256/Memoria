@@ -1,3 +1,5 @@
+/// 本地路径图片组件，负责从文件路径渲染图像。
+
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -11,6 +13,8 @@ class PathImage extends StatefulWidget {
   final bool enableSmartCache;
   final VoidCallback? onFirstFrame;
 
+  final AlignmentGeometry alignment;
+
   const PathImage({
     super.key,
     required this.path,
@@ -19,6 +23,7 @@ class PathImage extends StatefulWidget {
     this.height,
     this.enableSmartCache = true,
     this.onFirstFrame,
+    this.alignment = Alignment.center,
   });
 
   @override
@@ -67,6 +72,7 @@ class _PathImageState extends State<PathImage> {
           return Image.network(
             widget.path,
             fit: widget.fit,
+            alignment: widget.alignment,
             width: widget.width,
             height: widget.height,
             cacheWidth: cache.$1,
@@ -81,6 +87,7 @@ class _PathImageState extends State<PathImage> {
         return Image.file(
           file,
           fit: widget.fit,
+          alignment: widget.alignment,
           width: widget.width,
           height: widget.height,
           cacheWidth: cache.$1,
@@ -102,9 +109,11 @@ class _PathImageState extends State<PathImage> {
     }
 
     final dpr = MediaQuery.of(context).devicePixelRatio;
-    final logicalWidth = widget.width ??
+    final logicalWidth =
+        widget.width ??
         (constraints.hasBoundedWidth ? constraints.maxWidth : null);
-    final logicalHeight = widget.height ??
+    final logicalHeight =
+        widget.height ??
         (constraints.hasBoundedHeight ? constraints.maxHeight : null);
 
     int? toCache(double? logical) {
@@ -115,7 +124,22 @@ class _PathImageState extends State<PathImage> {
       return math.max(80, math.min(2200, pixels));
     }
 
-    return (toCache(logicalWidth), toCache(logicalHeight));
+    final cw = toCache(logicalWidth);
+    final ch = toCache(logicalHeight);
+
+    // ==========================================
+    // 🌟 核心修复补丁：绝不能同时限制宽高！
+    // ==========================================
+    if (cw != null && ch != null) {
+      // 取较长的一边作为缓存基准，另一边传 null，完美保持原图比例！
+      if (cw > ch) {
+        return (cw, null);
+      } else {
+        return (null, ch);
+      }
+    }
+
+    return (cw, ch);
   }
 
   File _resolveLocalFile(Uri? uri) {

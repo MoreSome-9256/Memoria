@@ -1,13 +1,15 @@
-import 'dart:async';
-import 'dart:collection';
+/// 相册页面，负责照片浏览、事件查看和标签筛选。
 
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
+import 'dart:collection';
+import 'package:objectbox/objectbox.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/event_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/event.dart';
+import '../../objectbox.g.dart';
 import '../../service/ai_service.dart';
 import '../../service/album_refresh_service.dart';
 import '../../service/album_tag_browser_service.dart';
@@ -15,12 +17,35 @@ import '../../service/event_service.dart';
 import '../../service/junk_photo_cleanup_service.dart';
 import '../../service/junk_photo_filter_service.dart';
 import '../../service/photo_service.dart';
+import '../../service/story_queue_service.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 import '../widgets/event_card.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/junk_photo_cleanup_banner.dart';
 import '../widgets/junk_photo_cleanup_dialog.dart';
 import '../widgets/path_image.dart';
 import 'album_search_page.dart';
+import 'story_queue_page.dart';
+
+part 'album_page_tag_browser.dart';
+part 'album_page_deferred_image.dart';
+
+const int _albumTagBrowserPhotoSoftLimit = 1200;
+
+// Keep the tag overview and detail sheet on the same snapshot window so a
+// fireImmediately refresh cannot overwrite a non-empty cluster with a narrower query.
+Future<List<PhotoEntity>> _loadAlbumTagBrowserSourcePhotos() async {
+  final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+  final q = photoBox.query()
+      .order(PhotoEntity_.timestamp, flags: Order.descending)
+      .build();
+  final photos = q
+      .find()
+      .take(_albumTagBrowserPhotoSoftLimit)
+      .toList(growable: false);
+  q.close();
+  return PhotoService().reconcileAccessiblePhotos(photos);
+}
 
 class AlbumPage extends StatefulWidget {
   const AlbumPage({super.key});
@@ -33,76 +58,36 @@ enum _AlbumViewMode { tags, moments }
 
 class _AlbumPageState extends State<AlbumPage> {
   static const double _contentBottomInset = 118;
-  static const int _tagBrowserPhotoSoftLimit = 1200;
   static const int _tagBrowserYieldChunk = 120;
   bool _isClearingCache = false;
+  bool _tagBrowserAiRecoveryTriggered = false;
   String? _lastPromptedJunkCleanupReportId;
   final TextEditingController _semanticSearchController =
       TextEditingController();
   final FocusNode _semanticSearchFocusNode = FocusNode();
   final AlbumTagBrowserService _albumTagBrowserService =
       AlbumTagBrowserService();
+  final ScrollController _momentsScrollController = ScrollController();
+  final Map<String, GlobalKey> _momentSectionKeys = <String, GlobalKey>{};
+  final GlobalKey _momentsFastScrollerTrackKey = GlobalKey();
   _AlbumViewMode _viewMode = _AlbumViewMode.tags;
+  Timer? _momentsFastScrollerHideTimer;
+  bool _showMomentsFastScroller = false;
+  bool _draggingMomentsFastScroller = false;
+  String? _momentsFastScrollerLabel;
 
-  // 🌟 1. 改为直接监听最终 UI 数据结构的 Stream
+  // UI streams for moments and tag browser data.
   late Stream<Map<String, List<Event>>> _uiEventsStream;
   late Stream<_AlbumTagBrowserData> _albumTagBrowserStream;
 
   static const int _fullRefreshOption = -1;
+  static const int _scanRemainingOption = 0x7fffffff;
   static const List<int> _refreshPhotoOptions = <int>[
     100,
-    300,
-    500,
+    _scanRemainingOption,
     _fullRefreshOption,
   ];
 
-  // 🔄 刷新数据：扫描相册 + 运行聚类
-  /*Future<void> _refreshData({bool clearCacheFirst = false}) async {
-    if (_isRefreshing) return; // 防止重复点击
-
-    setState(() => _isRefreshing = true);
-
-    try {
-      if (clearCacheFirst) {
-        await PhotoService().clearAllCachedData();
-      }
-
-      // 1. 扫描相册（仅入库原始可用数据）
-      final scanSummary = await PhotoService().scanAndSyncPhotos();
-
-      // 2. 运行聚类算法（会自动触发地址解析）
-      await EventService().runClustering();
-
-      // 3. 聚类完成后再做 AI 分析，确保 eventId 已建立
-      await AIService().analyzePhotosInBackground();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              clearCacheFirst
-                  ? '✅ 已清空缓存并完成重扫：新增${scanSummary.insertedCount}张，可用总数${scanSummary.totalAfter}张'
-                  : '✅ 数据已更新：新增${scanSummary.insertedCount}张，可用总数${scanSummary.totalAfter}张',
-            ),
-          ),
-        );
-      }
-    } on PhotoScanException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('⚠️ ${e.message}')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('❌ 更新失败: $e')));
-      }
-    } finally {
-      setState(() => _isRefreshing = false);
-    }
-  }*/
   void _startRefresh({bool clearCacheFirst = false, int? recentPhotoLimit}) {
     if (_isClearingCache || AlbumRefreshService().isRunning) {
       return;
@@ -110,7 +95,9 @@ class _AlbumPageState extends State<AlbumPage> {
 
     final scopeLabel = recentPhotoLimit == null
         ? '全部照片'
-      : '下一批 $recentPhotoLimit 张';
+        : recentPhotoLimit == _scanRemainingOption
+        ? '剩余所有照片'
+        : '下一批 $recentPhotoLimit 张';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
@@ -128,21 +115,22 @@ class _AlbumPageState extends State<AlbumPage> {
             if (result == null || !mounted) {
               return;
             }
-            final scanSummary = result.scanSummary;
+            final scan = result.scanSummary;
             final handoffText = result.aiAlreadyRunning
                 ? '后台 AI 已在运行，新照片已并入当前队列。'
                 : 'AI 已转入后台继续打标。';
-            final message = result.clearCacheFirst
-                ? result.recentPhotoLimit == null
-                      ? '已安全重建缓存，恢复 ${scanSummary.totalAfter} 张照片。$handoffText'
-                      : '已安全重建最近 ${result.recentPhotoLimit} 张照片缓存，恢复 ${scanSummary.totalAfter} 张照片。$handoffText'
-                : result.requeuedCount > 0
-                ? result.recentPhotoLimit == null
-                      ? '相册已更新，并将 ${result.requeuedCount} 张旧照片重新加入中文打标队列。'
-                  : '已刷新下一批 ${result.recentPhotoLimit} 张照片，并将新增的 ${result.requeuedCount} 张加入中文打标队列。'
-                : result.recentPhotoLimit == null
-                ? '相册已更新。$handoffText'
-                : '下一批 ${result.recentPhotoLimit} 张照片已刷新。$handoffText';
+
+            final String message;
+            if (result.clearCacheFirst) {
+              message = result.recentPhotoLimit == null
+                  ? '已安全重建缓存，恢复 ${scan.totalAfter} 张照片。$handoffText'
+                  : '已安全重建最近 ${result.recentPhotoLimit} 张照片缓存。$handoffText';
+            } else if (result.requeuedCount > 0) {
+              message = '新增 ${result.requeuedCount} 张可入库照片，已加入打标队列。$handoffText';
+            } else {
+              message = '从最新往前检查了 ${scan.scannedCount} 张，本轮没有可入库新照片。$handoffText';
+            }
+
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 behavior: SnackBarBehavior.floating,
@@ -163,7 +151,7 @@ class _AlbumPageState extends State<AlbumPage> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 behavior: SnackBarBehavior.floating,
-                content: Text('❌ 更新失败: $error'),
+                content: Text('更新失败: $error'),
               ),
             );
           }),
@@ -206,7 +194,7 @@ class _AlbumPageState extends State<AlbumPage> {
         return AlertDialog(
           title: const Text('清空本地缓存'),
           content: const Text(
-            '将只清空本 app 的 Isar 本地缓存（照片、事件、故事、已扫描结果），'
+            '将清空本 app 的本地数据库缓存（ObjectBox，包括照片、事件、故事、已扫描结果与向量索引），'
             '不会删除或修改手机系统相册中的任何图片。是否继续？',
           ),
           actions: [
@@ -279,22 +267,32 @@ class _AlbumPageState extends State<AlbumPage> {
                   subtitle: Text('先只跑最近一部分照片，或者全量运行'),
                 ),
                 ..._refreshPhotoOptions.map((option) {
-                  // 这里假设你的代码里定义了 _fullRefreshOption，如果没有请替换为你实际的值
-                  final isFull = option == -1; // 假设 -1 代表全部，请根据你的代码调整
-                  final label = isFull ? '全部运行' : '跑下一批 $option 张';
+                  final isFull = option == _fullRefreshOption;
+                  final isRemaining = option == _scanRemainingOption;
+                  final label = isFull
+                      ? '全量安全重建'
+                      : isRemaining
+                      ? '跑剩余所有'
+                      : '跑下一批 $option 张';
                   final subtitle = isFull
-                      ? '扫描全部照片并对全部待处理照片后台打标'
-                    : '按窗口滚动扫描下一批，并仅重排本批新增照片的 AI 打标';
+                      ? '清空本地缓存后重新扫描全部照片，并在后台补齐待处理标签'
+                      : isRemaining
+                      ? '从最新照片开始持续扫描，直到遍历完整个系统相册'
+                      : '从最新照片开始收集 $option 张新照片，并把它们加入 AI 打标队列';
                   return ListTile(
                     leading: Icon(
-                      isFull ? Icons.all_inclusive : Icons.flash_on,
+                      isFull
+                          ? Icons.all_inclusive
+                          : isRemaining
+                          ? Icons.done_all
+                          : Icons.flash_on,
                     ),
                     title: Text(label),
                     subtitle: Text(subtitle),
                     onTap: () => Navigator.pop(context, option),
                   );
                 }),
-                // 留出底部安全距离
+                // 鐣欏嚭搴曢儴瀹夊叏璺濈
                 const SizedBox(height: 24),
               ],
             ),
@@ -308,6 +306,7 @@ class _AlbumPageState extends State<AlbumPage> {
     }
 
     _startRefresh(
+      clearCacheFirst: selected == _fullRefreshOption,
       recentPhotoLimit: selected == _fullRefreshOption ? null : selected,
     );
   }
@@ -359,26 +358,17 @@ class _AlbumPageState extends State<AlbumPage> {
           remainingCandidates.map((candidate) => candidate.photoId),
         );
       }
-      final retriedCount = remainingCandidates.isEmpty
-          ? 0
-          : await PhotoService().requeuePhotosForAiByIds(
-              remainingCandidates.map((candidate) => candidate.photoId),
-            );
-      if (retriedCount > 0 && !AIService().isAnalyzing) {
-        unawaited(
-          AIService().analyzePhotosInBackground(maxPhotos: retriedCount),
-        );
-      }
       if (!mounted) {
         return;
       }
       AIService().clearPendingJunkCleanupReport();
+      final keptCount = remainingCandidates.length;
       final message = removedCount <= 0
-          ? retriedCount > 0
-                ? '未删除本地记录，已将 $retriedCount 张候选重新加入正常打标队列。'
+          ? keptCount > 0
+                ? '未删除本地记录，已保留 $keptCount 张低质量候选，不会自动重新打标。'
                 : '没有删除任何本地数据库记录。'
-          : retriedCount > 0
-          ? '已删除 $removedCount 张低质量图片记录，其余 $retriedCount 张已重新尝试正常打标。'
+          : keptCount > 0
+          ? '已删除 $removedCount 张低质量图片记录，并保留其余 $keptCount 张候选，不会自动重新打标。'
           : '已从本地数据库删除 $removedCount 张低质量图片记录，系统相册原图未受影响。';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(behavior: SnackBarBehavior.floating, content: Text(message)),
@@ -397,26 +387,7 @@ class _AlbumPageState extends State<AlbumPage> {
   }
 
   void _dismissJunkCleanupBanner() {
-    final report = AIService().latestJunkCleanupReport;
     AIService().clearPendingJunkCleanupReport();
-    if (report == null || report.candidates.isEmpty) {
-      return;
-    }
-    unawaited(_requeueRemainingJunkCandidates(report.candidates));
-  }
-
-  Future<void> _requeueRemainingJunkCandidates(
-    List<JunkPhotoCleanupCandidate> candidates,
-  ) async {
-    AIService().markJunkCandidatesAsKept(
-      candidates.map((candidate) => candidate.photoId),
-    );
-    final retriedCount = await PhotoService().requeuePhotosForAiByIds(
-      candidates.map((candidate) => candidate.photoId),
-    );
-    if (retriedCount > 0 && !AIService().isAnalyzing) {
-      unawaited(AIService().analyzePhotosInBackground(maxPhotos: retriedCount));
-    }
   }
 
   @override
@@ -433,13 +404,14 @@ class _AlbumPageState extends State<AlbumPage> {
         .asyncMap((eventEntities) => _groupEvents(eventEntities))
         .asBroadcastStream();
 
-    _albumTagBrowserStream = _debounceStream<void>(
-          PhotoService().isar.collection<PhotoEntity>().watchLazy(fireImmediately: true),
-          const Duration(milliseconds: 700),
-        )
-        .asyncMap((_) => _loadAllPhotosForTagBrowser())
-        .asyncMap(_buildAlbumTagBrowserData)
-        .asBroadcastStream();
+    _albumTagBrowserStream =
+        _debounceStream<void>(
+              ObjectBoxService().store.box<PhotoEntity>().query().watch(triggerImmediately: true).map((_) => null),
+              const Duration(milliseconds: 700),
+            )
+            .asyncMap((_) => _loadAllPhotosForTagBrowser())
+            .asyncMap(_buildAlbumTagBrowserData)
+            .asBroadcastStream();
   }
 
   Future<_AlbumTagBrowserData> _buildAlbumTagBrowserData(
@@ -453,7 +425,7 @@ class _AlbumPageState extends State<AlbumPage> {
       if (photo.isAiAnalyzed) {
         analyzedPhotoCount += 1;
       }
-      if (_albumTagBrowserService.hasClassifiableTag(photo)) {
+      if (_albumTagBrowserService.hasBrowsableCategory(photo)) {
         taggedPhotos.add(photo);
       }
 
@@ -484,6 +456,8 @@ class _AlbumPageState extends State<AlbumPage> {
     AIService().junkCleanupReportListenable.removeListener(
       _onJunkCleanupReportChanged,
     );
+    _momentsFastScrollerHideTimer?.cancel();
+    _momentsScrollController.dispose();
     _semanticSearchController.dispose();
     _semanticSearchFocusNode.dispose();
     super.dispose();
@@ -511,12 +485,8 @@ class _AlbumPageState extends State<AlbumPage> {
   }
 
   Future<List<PhotoEntity>> _loadAllPhotosForTagBrowser() async {
-    // 仅加载最近一段数据，避免大图库每次变更都触发全量排序。
-    return PhotoService().isar.photoEntitys
-        .where()
-        .sortByTimestampDesc()
-        .limit(_tagBrowserPhotoSoftLimit)
-        .findAll();
+    // Load a bounded recent window to avoid full-library resorting on every change.
+    return _loadAlbumTagBrowserSourcePhotos();
   }
 
   Stream<T> _debounceStream<T>(Stream<T> source, Duration delay) {
@@ -693,32 +663,47 @@ class _AlbumPageState extends State<AlbumPage> {
                   },
                 ),
               ),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 250),
-                child: progress.isVisible
-                    ? _buildAnalysisProgressBanner(progress)
-                    : const SizedBox.shrink(),
-              ),
-              ValueListenableBuilder<JunkPhotoCleanupReport?>(
-                valueListenable: AIService().junkCleanupReportListenable,
-                builder: (context, report, _) {
-                  return AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 250),
-                    child: report == null || !report.hasCandidates
-                        ? const SizedBox.shrink()
-                        : JunkPhotoCleanupBanner(
-                            key: ValueKey<String>(report.reportId),
-                            report: report,
-                            onReview: () => _showJunkCleanupDialog(report),
-                            onDismiss: _dismissJunkCleanupBanner,
-                          ),
-                  );
-                },
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.34,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        child: progress.isVisible
+                            ? _buildAnalysisProgressBanner(progress)
+                            : const SizedBox.shrink(),
+                      ),
+                      ValueListenableBuilder<JunkPhotoCleanupReport?>(
+                        valueListenable:
+                            AIService().junkCleanupReportListenable,
+                        builder: (context, report, _) {
+                          return AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 250),
+                            child: report == null || !report.hasCandidates
+                                ? const SizedBox.shrink()
+                                : JunkPhotoCleanupBanner(
+                                    key: ValueKey<String>(report.reportId),
+                                    report: report,
+                                    onReview: () =>
+                                        _showJunkCleanupDialog(report),
+                                    onDismiss: _dismissJunkCleanupBanner,
+                                  ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
               ),
               Expanded(
-                child: _viewMode == _AlbumViewMode.tags
-                    ? _buildAlbumTagBrowserView()
-                    : _buildMomentsView(),
+                child: IndexedStack(
+                  index: _viewMode == _AlbumViewMode.tags ? 0 : 1,
+                  children: [_buildAlbumTagBrowserView(), _buildMomentsView()],
+                ),
               ),
             ],
           );
@@ -795,7 +780,9 @@ class _AlbumPageState extends State<AlbumPage> {
             style: TextStyle(color: Colors.grey[700], fontSize: 12),
           ),
           const SizedBox(height: 12),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               OutlinedButton.icon(
                 onPressed: progress.isStopping
@@ -806,9 +793,10 @@ class _AlbumPageState extends State<AlbumPage> {
                 icon: Icon(progress.isPaused ? Icons.play_arrow : Icons.pause),
                 label: Text(progress.isPaused ? '继续' : '暂停'),
               ),
-              const SizedBox(width: 8),
               TextButton.icon(
-                onPressed: progress.isStopping ? null : aiService.stopAnalysis,
+                onPressed: progress.isStopping
+                    ? null
+                    : () => unawaited(_endCurrentAnalysisRound()),
                 icon: const Icon(Icons.stop_circle_outlined),
                 label: const Text('结束本轮'),
               ),
@@ -817,6 +805,31 @@ class _AlbumPageState extends State<AlbumPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _endCurrentAnalysisRound() async {
+    try {
+      await AIService().endCurrentRoundSafely();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('已安全结束当前 AI 任务队列。'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('结束当前任务失败: $error'),
+        ),
+      );
+    }
   }
 
   String _formatDurationCompact(Duration duration) {
@@ -832,7 +845,7 @@ class _AlbumPageState extends State<AlbumPage> {
     return '${duration.inSeconds}秒';
   }
 
-  // 🎨 1. 构建空状态界面
+  // Empty state.
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -874,8 +887,19 @@ class _AlbumPageState extends State<AlbumPage> {
         final browserData = snapshot.data;
         final clusters =
             browserData?.clusters ?? const <AlbumCoarseTagCluster>[];
+        final totalPhotoCount = browserData?.totalPhotoCount ?? 0;
+        final analyzedPhotoCount = browserData?.analyzedPhotoCount ?? 0;
+        if (totalPhotoCount > 0 &&
+            analyzedPhotoCount <= 0 &&
+            !AIService().isAnalyzing &&
+            !_tagBrowserAiRecoveryTriggered) {
+          _tagBrowserAiRecoveryTriggered = true;
+          unawaited(AIService().analyzePhotosInBackground());
+        } else if (analyzedPhotoCount > 0 || AIService().isAnalyzing) {
+          _tagBrowserAiRecoveryTriggered = false;
+        }
         if (clusters.isEmpty) {
-          return _buildTagBrowserEmptyState();
+          return _buildTagBrowserEmptyState(browserData);
         }
 
         return CustomScrollView(
@@ -928,51 +952,267 @@ class _AlbumPageState extends State<AlbumPage> {
           return _buildEmptyState();
         }
 
-        return ListView(
-          padding: EdgeInsets.fromLTRB(
-            16,
-            16,
-            16,
-            _contentBottomInset + MediaQuery.of(context).padding.bottom,
-          ),
-          children: groupedEvents.entries.map((entry) {
-            final seasonTitle = entry.key;
-            final events = entry.value;
+        final items = <Object>[];
+        final sectionKeys = <String, GlobalKey>{};
+        for (final entry in groupedEvents.entries) {
+          items.add(entry.key);
+          items.addAll(entry.value);
+          sectionKeys[entry.key] = _momentSectionKeys[entry.key] ?? GlobalKey();
+        }
+        _momentSectionKeys
+          ..clear()
+          ..addAll(sectionKeys);
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  child: Text(
-                    seasonTitle,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+        return Stack(
+          children: [
+            NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (notification is ScrollUpdateNotification ||
+                    notification is UserScrollNotification) {
+                  _handleMomentsScrollActivity();
+                }
+                return false;
+              },
+              child: ListView.builder(
+                controller: _momentsScrollController,
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  16,
+                  16,
+                  _contentBottomInset + MediaQuery.of(context).padding.bottom,
                 ),
-                ...events.map((event) => EventCard(event: event)),
-              ],
-            );
-          }).toList(),
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  if (item is String) {
+                    return Padding(
+                      key: _momentSectionKeys[item],
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Text(
+                        item,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    );
+                  }
+                  return EventCard(event: item as Event);
+                },
+              ),
+            ),
+            _buildMomentsFastScroller(
+              groupedEvents.keys.toList(growable: false),
+            ),
+          ],
         );
       },
     );
   }
 
-  Widget _buildTagBrowserEmptyState() {
+  void _handleMomentsScrollActivity() {
+    _updateMomentsFastScrollerLabel();
+    if (!_showMomentsFastScroller && mounted) {
+      setState(() {
+        _showMomentsFastScroller = true;
+      });
+    }
+    _momentsFastScrollerHideTimer?.cancel();
+    _momentsFastScrollerHideTimer = Timer(
+      const Duration(milliseconds: 900),
+      () {
+        if (!mounted || _draggingMomentsFastScroller) {
+          return;
+        }
+        setState(() {
+          _showMomentsFastScroller = false;
+          _momentsFastScrollerLabel = null;
+        });
+      },
+    );
+  }
+
+  void _updateMomentsFastScrollerLabel() {
+    if (_momentSectionKeys.isEmpty) {
+      return;
+    }
+    String? currentLabel;
+    for (final entry in _momentSectionKeys.entries) {
+      final context = entry.value.currentContext;
+      if (context == null) {
+        continue;
+      }
+      final box = context.findRenderObject() as RenderBox?;
+      if (box == null || !box.attached) {
+        continue;
+      }
+      final dy = box.localToGlobal(Offset.zero).dy;
+      if (dy <= 180) {
+        currentLabel = entry.key;
+      } else {
+        break;
+      }
+    }
+    if (currentLabel != null &&
+        currentLabel != _momentsFastScrollerLabel &&
+        mounted) {
+      setState(() {
+        _momentsFastScrollerLabel = currentLabel;
+      });
+    }
+  }
+
+  void _jumpToMomentSection(String label) {
+    final context = _momentSectionKeys[label]?.currentContext;
+    if (context == null) {
+      return;
+    }
+    Scrollable.ensureVisible(
+      context,
+      alignment: 0.04,
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+    );
+  }
+
+  Widget _buildMomentsFastScroller(List<String> labels) {
+    if (labels.length <= 1) {
+      return const SizedBox.shrink();
+    }
+    final visible = _showMomentsFastScroller || _draggingMomentsFastScroller;
+    final bubbleLabel = _momentsFastScrollerLabel;
+    return Positioned(
+      right: 8,
+      top: 110,
+      bottom: 140,
+      child: IgnorePointer(
+        ignoring: !visible,
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 160),
+          opacity: visible ? 1 : 0,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (bubbleLabel != null)
+                Container(
+                  margin: const EdgeInsets.only(right: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(22),
+                  ),
+                  child: Text(
+                    bubbleLabel,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragStart: (_) {
+                  setState(() {
+                    _draggingMomentsFastScroller = true;
+                    _showMomentsFastScroller = true;
+                  });
+                },
+                onVerticalDragUpdate: (details) {
+                  final box =
+                      _momentsFastScrollerTrackKey.currentContext
+                              ?.findRenderObject()
+                          as RenderBox?;
+                  if (box == null || labels.isEmpty) {
+                    return;
+                  }
+                  final local = box.globalToLocal(details.globalPosition);
+                  final height = box.size.height;
+                  final ratio = (local.dy / height).clamp(0.0, 0.999);
+                  final index = (ratio * labels.length).floor().clamp(
+                    0,
+                    labels.length - 1,
+                  );
+                  final label = labels[index];
+                  if (label != _momentsFastScrollerLabel && mounted) {
+                    setState(() {
+                      _momentsFastScrollerLabel = label;
+                    });
+                  }
+                  _jumpToMomentSection(label);
+                },
+                onVerticalDragEnd: (_) {
+                  _momentsFastScrollerHideTimer?.cancel();
+                  setState(() {
+                    _draggingMomentsFastScroller = false;
+                  });
+                  _handleMomentsScrollActivity();
+                },
+                child: Container(
+                  key: _momentsFastScrollerTrackKey,
+                  width: 28,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(
+                    Icons.unfold_more_rounded,
+                    size: 18,
+                    color: Colors.black54,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTagBrowserEmptyState(_AlbumTagBrowserData? browserData) {
+    final totalPhotoCount = browserData?.totalPhotoCount ?? 0;
+    final analyzedPhotoCount = browserData?.analyzedPhotoCount ?? 0;
+    final taggedPhotoCount = browserData?.taggedPhotoCount ?? 0;
+    final aiProgress = AIService().progressListenable.value;
+
+    String title;
+    String subtitle;
+    IconData icon;
+
+    if (totalPhotoCount <= 0) {
+      title = '暂时还没有可浏览的标签聚类';
+      subtitle = '先点击右上角 + 扫描相册，系统再按粗粒度标签自动整理相册。';
+      icon = Icons.sell_outlined;
+    } else if (analyzedPhotoCount <= 0 || aiProgress.isVisible) {
+      title = '照片已入库，正在后台打标';
+      final completedText = aiProgress.total > 0
+          ? '${aiProgress.completed}/${aiProgress.total}'
+          : '$analyzedPhotoCount/$totalPhotoCount';
+      subtitle =
+          '当前已有 $totalPhotoCount 张照片，AI 正在补充标签与文案（$completedText）。打标完成后，这里会自动出现标签预览。';
+      icon = Icons.auto_awesome_outlined;
+    } else if (taggedPhotoCount <= 0) {
+      title = '已完成分析，但暂未形成标签预览';
+      subtitle =
+          '当前已有 $analyzedPhotoCount 张照片完成分析，但还没有可用于标签浏览的分类结果。可以稍后再看，或继续补扫、补打标。';
+      icon = Icons.label_outline;
+    } else {
+      title = '暂时还没有可浏览的标签分类';
+      subtitle = '标签结果正在整理中，请稍候再试。';
+      icon = Icons.sell_outlined;
+    }
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.sell_outlined, size: 64, color: Colors.grey[400]),
+            Icon(icon, size: 64, color: Colors.grey[400]),
             const SizedBox(height: 16),
-            const Text('暂时还没有可浏览的标签聚类'),
+            Text(title),
             const SizedBox(height: 8),
             Text(
-              '先点击右上角 + 扫描并完成一轮 AI 打标，系统就会按粗粒度标签自动整理相册。',
+              subtitle,
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey[600], height: 1.5),
             ),
@@ -982,7 +1222,7 @@ class _AlbumPageState extends State<AlbumPage> {
     );
   }
 
-  // 🎨 2. 构建错误提示界面
+  // Error state.
   Widget _buildErrorState(String errorMessage) {
     return Center(
       child: Column(
@@ -1007,36 +1247,49 @@ class _AlbumPageState extends State<AlbumPage> {
         const LinearProgressIndicator(minHeight: 2.5),
         Expanded(
           child: Center(
-            child: Text(
-              '正在加载相册...',
-              style: TextStyle(color: Colors.grey[600]),
-            ),
+            child: Text('正在加载相册...', style: TextStyle(color: Colors.grey[600])),
           ),
         ),
       ],
     );
   }
 
-  // 将 EventEntity 列表转换为分组的 Event 列表
+  // 灏?EventEntity 鍒楄〃杞崲涓哄垎缁勭殑 Event 鍒楄〃
   Future<Map<String, List<Event>>> _groupEvents(
     List<EventEntity> eventEntities,
   ) async {
     final grouped = <String, List<Event>>{};
-    final isar = PhotoService().isar;
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final coverIds = eventEntities
+        .expand((event) => event.photoIds.take(3))
+        .toSet()
+        .toList(growable: false);
+    final coverEntities = photoBox
+        .getMany(coverIds)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
+    final coverById = {
+      for (final photo in coverEntities) photo.id: photo,
+    };
+    Future<List<PhotoEntity>> loadPhotos(List<int> ids) async =>
+        ids
+            .map((id) => coverById[id])
+            .whereType<PhotoEntity>()
+            .toList(growable: false);
 
-    // 逐条异步转换，避免大批量并发导致主线程瞬时压力过高。
+    // 封面照片已批量加载，这里只做轻量模型转换并定期让出 UI 线程。
     final allEvents = <Event>[];
     for (var i = 0; i < eventEntities.length; i++) {
-      final event = await eventEntities[i].toUIModel(isar);
+      final event = await eventEntities[i].toPreviewModel(loadPhotoEntities: loadPhotos);
       allEvents.add(event);
       if (i % 8 == 0) {
         await Future<void>.delayed(Duration.zero);
       }
     }
 
-    // 2. 快速分组
+    // 2. 一级标题按年份和季节分组，具体到日的信息保留在卡片内部。
     for (final event in allEvents) {
-      final key = '${event.year} · ${event.season}';
+      final key = _seasonGroupKey(event.startDate);
       if (!grouped.containsKey(key)) {
         grouped[key] = [];
       }
@@ -1045,24 +1298,19 @@ class _AlbumPageState extends State<AlbumPage> {
 
     return grouped;
   }
+
+  String _seasonGroupKey(DateTime date) {
+    final season = switch (date.month) {
+      3 || 4 || 5 => '春',
+      6 || 7 || 8 => '夏',
+      9 || 10 || 11 => '秋',
+      _ => '冬',
+    };
+    return '${date.year}年 · $season';
+  }
 }
 
-class _AlbumTagBrowserData {
-  const _AlbumTagBrowserData({
-    required this.totalPhotoCount,
-    required this.analyzedPhotoCount,
-    required this.taggedPhotoCount,
-    required this.photos,
-    required this.clusters,
-  });
-
-  final int totalPhotoCount;
-  final int analyzedPhotoCount;
-  final int taggedPhotoCount;
-  final List<PhotoEntity> photos;
-  final List<AlbumCoarseTagCluster> clusters;
-}
-
+/*
 class _AlbumTagClusterTile extends StatelessWidget {
   const _AlbumTagClusterTile({required this.cluster, required this.onTap});
 
@@ -1147,24 +1395,28 @@ class _AlbumTagClusterSheet extends StatefulWidget {
   State<_AlbumTagClusterSheet> createState() => _AlbumTagClusterSheetState();
 }
 
+enum _ClusterSelectionMenuAction { selectAll, clear, cancel }
+enum _ClusterActionMode { none, story, delete }
+
 class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
   final AlbumTagBrowserService _browserService = AlbumTagBrowserService();
   String? _selectedFineTag;
   static const int _secondaryFilterTopK = 12;
-  static const double _sheetBottomInset = 110;
-  static const int _sheetPhotoSoftLimit = 800;
+  static const double _sheetBottomInset = 168;
   late final Stream<List<PhotoEntity>> _photosStream;
+  _ClusterActionMode _actionMode = _ClusterActionMode.none;
+  final Set<int> _selectedPhotoIds = <int>{};
+
+  bool get _isSelectionMode => _actionMode != _ClusterActionMode.none;
+  bool get _isDeleteMode => _actionMode == _ClusterActionMode.delete;
 
   @override
   void initState() {
     super.initState();
     _photosStream = _debounceStream<void>(
-          PhotoService().isar
-              .collection<PhotoEntity>()
-              .watchLazy(fireImmediately: true),
-          const Duration(milliseconds: 650),
-        )
-        .asyncMap((_) => _loadCurrentPhotos());
+      ObjectBoxService().store.box<PhotoEntity>().query().watch(triggerImmediately: true).map((_) => null),
+      const Duration(milliseconds: 650),
+    ).asyncMap((_) => _loadCurrentPhotos());
   }
 
   Stream<T> _debounceStream<T>(Stream<T> source, Duration delay) {
@@ -1234,9 +1486,11 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
         );
         final monthGroups = _groupPhotosByMonth(clusterPhotos);
 
-        return SizedBox(
-          height: MediaQuery.of(context).size.height * 0.86,
-          child: Column(
+        return Stack(
+          children: [
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.86,
+              child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Padding(
@@ -1334,8 +1588,23 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                                   context,
                                   index,
                                 ) {
+                                  final photo = group.photos[index];
                                   return _AlbumTagPhotoTile(
-                                    photo: group.photos[index],
+                                    photo: photo,
+                                    selectionMode: _isSelectionMode,
+                                    deleteMode: _isDeleteMode,
+                                    selected: _selectedPhotoIds.contains(photo.id),
+                                    onTap: () {
+                                      if (_isSelectionMode) {
+                                        _toggleSelection(photo.id);
+                                        return;
+                                      }
+                                      showFullscreenPhotoViewer(
+                                        context,
+                                        path: photo.path,
+                                        heroTag: 'album-tag-photo-${photo.id}',
+                                      );
+                                    },
                                   );
                                 }, childCount: group.photos.length),
                               ),
@@ -1352,9 +1621,267 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                       ),
               ),
             ],
-          ),
+              ),
+            ),
+            Positioned(
+              right: 16,
+              bottom: 16 + MediaQuery.of(context).padding.bottom,
+              child: _buildFloatingActions(clusterPhotos),
+            ),
+          ],
         );
       },
+    );
+  }
+
+  Widget _buildFloatingActions(List<PhotoEntity> clusterPhotos) {
+    return ValueListenableBuilder<List<StoryQueueItem>>(
+      valueListenable: StoryQueueService().queueListenable,
+      builder: (context, items, _) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (items.isNotEmpty) ...[
+              FloatingActionButton.extended(
+                heroTag: 'tag-cluster-queue',
+                onPressed: _openStoryQueuePage,
+                icon: const Icon(Icons.photo_library_outlined),
+                label: Text('队列 ${items.length}'),
+              ),
+              const SizedBox(height: 10),
+            ],
+            if (_isSelectionMode)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildSelectionMenuButton(
+                    enableSelectAll: clusterPhotos.isNotEmpty,
+                    onSelected: (action) {
+                      switch (action) {
+                        case _ClusterSelectionMenuAction.selectAll:
+                          setState(() {
+                            _selectedPhotoIds.addAll(
+                              clusterPhotos.map((photo) => photo.id),
+                            );
+                          });
+                          break;
+                        case _ClusterSelectionMenuAction.clear:
+                          setState(() {
+                            _selectedPhotoIds.clear();
+                          });
+                          break;
+                        case _ClusterSelectionMenuAction.cancel:
+                          setState(() {
+                            _actionMode = _ClusterActionMode.none;
+                            _selectedPhotoIds.clear();
+                          });
+                          break;
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 10),
+                  FloatingActionButton.extended(
+                    heroTag: 'tag-cluster-story',
+                    onPressed: _isDeleteMode
+                        ? () => _deleteSelectionFromLocalIndex(clusterPhotos)
+                        : () => _addSelectionToQueue(clusterPhotos),
+                    icon: Icon(
+                      _isDeleteMode
+                          ? Icons.delete_outline_rounded
+                          : Icons.playlist_add_rounded,
+                    ),
+                    label: Text(
+                      _selectedPhotoIds.isEmpty
+                          ? (_isDeleteMode ? '删除本地记录' : '加入故事队列')
+                          : (_isDeleteMode
+                              ? '删除本地记录 ${_selectedPhotoIds.length}'
+                              : '加入故事队列 ${_selectedPhotoIds.length}'),
+                    ),
+                  ),
+                ],
+              )
+            else
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FloatingActionButton.small(
+                    heroTag: 'tag-cluster-delete',
+                    onPressed: () {
+                      setState(() {
+                        _actionMode = _ClusterActionMode.delete;
+                        _selectedPhotoIds.clear();
+                      });
+                    },
+                    child: const Icon(Icons.delete_outline_rounded),
+                  ),
+                  const SizedBox(width: 10),
+                  FloatingActionButton.extended(
+                    heroTag: 'tag-cluster-story',
+                    onPressed: () {
+                      setState(() {
+                        _actionMode = _ClusterActionMode.story;
+                        _selectedPhotoIds.clear();
+                      });
+                    },
+                    icon: const Icon(Icons.auto_stories_rounded),
+                    label: const Text('生成故事'),
+                  ),
+                ],
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildSelectionMenuButton({
+    required ValueChanged<_ClusterSelectionMenuAction> onSelected,
+    required bool enableSelectAll,
+  }) {
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      elevation: 4,
+      shadowColor: Colors.black.withValues(alpha: 0.15),
+      shape: const CircleBorder(),
+      child: PopupMenuButton<_ClusterSelectionMenuAction>(
+        tooltip: '选图操作',
+        onSelected: onSelected,
+        itemBuilder: (context) => <PopupMenuEntry<_ClusterSelectionMenuAction>>[
+          PopupMenuItem<_ClusterSelectionMenuAction>(
+            value: _ClusterSelectionMenuAction.selectAll,
+            enabled: enableSelectAll,
+            child: const Text('全选'),
+          ),
+          const PopupMenuItem<_ClusterSelectionMenuAction>(
+            value: _ClusterSelectionMenuAction.clear,
+            child: Text('清空'),
+          ),
+          const PopupMenuItem<_ClusterSelectionMenuAction>(
+            value: _ClusterSelectionMenuAction.cancel,
+            child: Text('取消'),
+          ),
+        ],
+        child: const SizedBox(
+          width: 48,
+          height: 48,
+          child: Icon(Icons.more_horiz_rounded),
+        ),
+      ),
+    );
+  }
+
+  void _toggleSelection(int photoId) {
+    setState(() {
+      if (_selectedPhotoIds.contains(photoId)) {
+        _selectedPhotoIds.remove(photoId);
+      } else {
+        _selectedPhotoIds.add(photoId);
+      }
+    });
+  }
+
+  void _addSelectionToQueue(List<PhotoEntity> clusterPhotos) {
+    if (_selectedPhotoIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请至少选择一张照片加入故事队列')),
+      );
+      return;
+    }
+
+    final selected = clusterPhotos
+        .where((photo) => _selectedPhotoIds.contains(photo.id))
+        .map(StoryQueueService.mapPhotoEntityToQueuePhoto)
+        .toList(growable: false);
+    final addedCount = StoryQueueService().addPhotos(selected);
+
+    setState(() {
+      _actionMode = _ClusterActionMode.none;
+      _selectedPhotoIds.clear();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          addedCount > 0 ? '已加入故事队列 $addedCount 张' : '这些照片已经在故事队列里了',
+        ),
+      ),
+    );
+    _openStoryQueuePage();
+  }
+
+  Future<void> _deleteSelectionFromLocalIndex(
+    List<PhotoEntity> clusterPhotos,
+  ) async {
+    if (_selectedPhotoIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请至少选择一张照片再删除')),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('删除本地记录'),
+          content: Text(
+            '将从 App 本地数据库中删除 ${_selectedPhotoIds.length} 张照片记录，不会删除手机系统相册中的原图。是否继续？',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    final selected = clusterPhotos
+        .where((photo) => _selectedPhotoIds.contains(photo.id))
+        .toList(growable: false);
+
+    var removedCount = 0;
+    for (final entity in selected) {
+      await JunkPhotoCleanupService().removeFromLocalIndex(entity);
+      StoryQueueService().removePhoto(entity.assetId);
+      removedCount += 1;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _actionMode = _ClusterActionMode.none;
+      _selectedPhotoIds.clear();
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          removedCount > 0 ? '已删除 $removedCount 条本地记录' : '没有删除任何本地记录',
+        ),
+      ),
+    );
+  }
+
+  void _openStoryQueuePage() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const StoryQueuePage(),
+      ),
     );
   }
 
@@ -1364,18 +1891,15 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
       return widget.allPhotos;
     }
 
-    return PhotoService().isar.photoEntitys
-        .where()
-        .sortByTimestampDesc()
-        .limit(_sheetPhotoSoftLimit)
-        .findAll();
+    return _loadAlbumTagBrowserSourcePhotos();
   }
 
   List<_AlbumPhotoMonthGroup> _groupPhotosByMonth(List<PhotoEntity> photos) {
     final grouped = <String, List<PhotoEntity>>{};
     for (final photo in photos) {
       final date = DateTime.fromMillisecondsSinceEpoch(photo.timestamp);
-      final key = '${date.year}-${date.month.toString().padLeft(2, '0')}';
+      final key =
+          '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
       grouped.putIfAbsent(key, () => <PhotoEntity>[]).add(photo);
     }
     final keys = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
@@ -1392,10 +1916,10 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
 
   String _formatMonthTitle(String key) {
     final parts = key.split('-');
-    if (parts.length != 2) {
+    if (parts.length != 3) {
       return key;
     }
-    return '${parts[0]}年${parts[1]}月';
+    return '${parts[0]}年${parts[1]}月${parts[2]}日';
   }
 }
 
@@ -1415,8 +1939,9 @@ class _DeferredImageTicket {
 
 class _DeferredImageLoadScheduler {
   static const int _maxConcurrent = 4;
-  static final ValueNotifier<int> pendingCountListenable =
-      ValueNotifier<int>(0);
+  static final ValueNotifier<int> pendingCountListenable = ValueNotifier<int>(
+    0,
+  );
   static final Queue<(_DeferredImageTicket, VoidCallback)> _queue =
       Queue<(_DeferredImageTicket, VoidCallback)>();
   static int _active = 0;
@@ -1481,25 +2006,71 @@ class _DeferredImageLoadScheduler {
 }
 
 class _AlbumTagPhotoTile extends StatelessWidget {
-  const _AlbumTagPhotoTile({required this.photo});
+  const _AlbumTagPhotoTile({
+    required this.photo,
+    required this.selectionMode,
+    required this.deleteMode,
+    required this.selected,
+    required this.onTap,
+  });
 
   final PhotoEntity photo;
+  final bool selectionMode;
+  final bool deleteMode;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final heroTag = 'album-tag-photo-${photo.id}';
     return RepaintBoundary(
       child: GestureDetector(
-        onTap: () => showFullscreenPhotoViewer(
-          context,
-          path: photo.path,
-          heroTag: heroTag,
-        ),
+        onTap: onTap,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(16),
-          child: Hero(
-            tag: heroTag,
-            child: _DeferredPathImage(path: photo.path, fit: BoxFit.cover),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Hero(
+                tag: heroTag,
+                child: _DeferredPathImage(path: photo.path, fit: BoxFit.cover),
+              ),
+              if (selectionMode && !selected)
+                Container(color: Colors.black.withValues(alpha: 0.32)),
+              if (selectionMode)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Container(
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? (deleteMode
+                              ? Theme.of(context).colorScheme.error
+                              : Theme.of(context).colorScheme.primary)
+                          : Colors.white.withValues(alpha: 0.88),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.black.withValues(alpha: 0.08),
+                      ),
+                    ),
+                    child: Icon(
+                      selected
+                          ? (deleteMode
+                              ? Icons.delete_rounded
+                              : Icons.check_rounded)
+                          : Icons.add_rounded,
+                      size: 16,
+                      color: selected
+                          ? Colors.white
+                          : (deleteMode
+                              ? Theme.of(context).colorScheme.error
+                              : Theme.of(context).colorScheme.primary),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -1530,7 +2101,7 @@ class _DeferredPathImageState extends State<_DeferredPathImage> {
   }
 
   void _startDeferredLoad() {
-    // 按路径哈希错峰 + 并发限流，避免短时间触发大量图片解码。
+    // 鎸夎矾寰勫搱甯岄敊宄?+ 骞跺彂闄愭祦锛岄伩鍏嶇煭鏃堕棿瑙﹀彂澶ч噺鍥剧墖瑙ｇ爜銆?
     final delayMs = 30 + (widget.path.hashCode.abs() % 11) * 28;
     _timer = Timer(Duration(milliseconds: delayMs), () {
       if (!mounted || _ticket.completed) {
@@ -1579,3 +2150,4 @@ class _DeferredPathImageState extends State<_DeferredPathImage> {
     );
   }
 }
+*/

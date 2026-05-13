@@ -1,10 +1,11 @@
-import 'package:isar/isar.dart';
+/// 人脸检测结果的 ObjectBox 实体，保存边框、质量和关联照片信息。
 
-part 'face_entity.g.dart';
+import 'package:objectbox/objectbox.dart';
 
-@Collection()
+@Entity()
 class FaceEntity {
-  Id id = Isar.autoIncrement;
+  @Id()
+  int id = 0;
 
   @Index()
   late int photoId;

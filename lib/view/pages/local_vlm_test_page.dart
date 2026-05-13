@@ -1,7 +1,8 @@
+/// 本地 VLM 测试页面，用于调试端侧视觉语言模型推理。
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
 import 'package:path/path.dart' as p;
 
 import '../../models/entity/photo_entity.dart';
@@ -10,6 +11,8 @@ import '../../service/photo_service.dart';
 import '../../service/qwen_llamacpp_service.dart';
 import '../widgets/path_image.dart';
 import 'vlm_photo_picker_page.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 enum LocalVlmTaskMode { captions, story }
 
@@ -96,11 +99,9 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
         continue;
       }
 
-      final photo = await isar
-          .collection<PhotoEntity>()
-          .filter()
-          .assetIdEqualTo(item.assetId)
-          .findFirst();
+      final q = photoBox.query(PhotoEntity_.assetId.equals(item.assetId)).build();
+      final photo = q.findFirst();
+      q.close();
 
       payloads.add(
         LocalVlmImagePayload(
@@ -279,6 +280,7 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
       });
     }
   }
+
 
   String _buildTaskPrompt() {
     final extraPrompt = _extraPromptController.text.trim();

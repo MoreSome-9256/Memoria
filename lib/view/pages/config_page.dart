@@ -1,21 +1,26 @@
+/// 配置页面，提供应用运行参数、调试开关和环境选项。
+
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import '../../models/entity/event_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/entity/story_entity.dart';
-import '../../service/photo_service.dart';
+import '../../models/vo/story_generation_models.dart';
 import '../../service/llm_service.dart';
 import '../../utils/ocr_policy.dart';
 import 'story_result_page.dart';
+import 'story_generation_progress_page.dart';
 import 'package:file_picker/file_picker.dart'; // 🌟 新增
 import '../../service/music_service.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:convert';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 // 🌟 新增：视频长宽比枚举
 enum VideoAspectRatio { vertical, horizontal }
@@ -29,12 +34,16 @@ class ConfigPage extends StatefulWidget {
   final Event event;
   final List<Photo> selectedPhotos;
   final AITheme selectedTheme;
+  final String? semanticSearchQuery;
+  final bool preservePhotoOrder;
 
   const ConfigPage({
     super.key,
     required this.event,
     required this.selectedPhotos,
     required this.selectedTheme,
+    this.semanticSearchQuery,
+    this.preservePhotoOrder = false,
   });
 
   @override
@@ -48,6 +57,8 @@ class _ConfigPageState extends State<ConfigPage> {
   // 🌟 替换掉原来的 StoryLength，改为新的配置项并给默认值
   VideoAspectRatio _selectedAspectRatio = VideoAspectRatio.vertical;
   PublishingPlatform _selectedPlatform = PublishingPlatform.xiaohongshu;
+  StoryGenerationMode _selectedStoryMode = StoryGenerationMode.deepseekTags;
+  String? _selectedStoryTemplateId;
   // 🌟 新增：音乐相关状态
   MusicSource _selectedMusicSource = MusicSource.aiGenerated;
   String? _customMusicPath;
@@ -56,22 +67,179 @@ class _ConfigPageState extends State<ConfigPage> {
   bool _isGenerating = false;
 
   // 🌟 新增：动态加载提示文本
-  String _loadingText = '开始生成';
+  String _loadingText = '生成视频';
   // 🌟 新增：是否自动生成台词开关
   bool _enableAutoCaptions = true;
   late TextEditingController _manualCaptionsController; // 🌟 新增：手动字幕控制器
 
+  // ==========================================
+  // 🌟 新增：动态主题生成相关的状态
+  // ==========================================
+  bool _isGeneratingTheme = false;
+  List<String> _dynamicSubtitles = [];
+
   @override
   void initState() {
     super.initState();
-    _themeController = TextEditingController(text: widget.selectedTheme.title);
-    _selectedSubtitle = widget.selectedTheme.subtitle;
     _manualCaptionsController = TextEditingController();
+
+    // 🌟 1. 核心判定：是否是从“故事队列”进来的？
+    // 只要 preservePhotoOrder 为 true，说明它绝对是从队列页面拼凑过来的！
+    bool isFromQueue = widget.preservePhotoOrder || widget.event.id == '-1';
+
+    if (isFromQueue && widget.selectedPhotos.isNotEmpty) {
+      _themeController = TextEditingController(text: '✨ 正在分析画面提炼主题...');
+      _selectedSubtitle = null;
+      _generateThemeFromPhotos(); // 🚀 启动大模型提炼！
+    } else {
+      // 单一相册正常进入，直接用本地相册名
+      _themeController = TextEditingController(text: _deriveSmartTheme());
+      _selectedSubtitle = _deriveSmartSubtitle();
+    }
+  }
+  // ==========================================
+  // 🌟 核心提炼逻辑：直接调用专用的标题生成 API！
+  // ==========================================
+  Future<void> _generateThemeFromPhotos() async {
+    setState(() => _isGeneratingTheme = true);
+
+    try {
+      // 🌟 2. 核心修复：即使照片没有 AI 标签，也要用时间和地点把 Prompt 喂饱！
+      List<String> topTags = widget.selectedPhotos
+          .map((p) {
+            String desc = p.caption ?? p.ocrSummary ?? p.tags.join(' ');
+
+            // 如果照片完全没被 AI 分析过（比如你刚拍的本地照片），那就提取它的物理信息
+            if (desc.trim().isEmpty) {
+              String loc = p.location != null && p.location != '未知地点'
+                  ? p.location!
+                  : '某地';
+              String date = '${p.dateTaken.year}年${p.dateTaken.month}月';
+              desc = '$date 拍摄于 $loc';
+            }
+            return desc;
+          })
+          .where((s) => s.trim().isNotEmpty)
+          .take(15)
+          .toList();
+
+      // 终极保底，理论上不可能走到这步
+      if (topTags.isEmpty) topTags = ['美好的回忆'];
+
+      final eventEntity = EventEntity()
+        ..id = int.tryParse(widget.event.id) ?? -1
+        ..title = widget.event.title
+        ..startTime = widget.event.startDate.millisecondsSinceEpoch
+        ..endTime = widget.event.endDate.millisecondsSinceEpoch
+        ..locationName = widget.event.location ?? '';
+
+      List<String> generatedTitles = await LLMService().generateCreativeTitles(
+        eventEntity,
+        topTags,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        if (generatedTitles.isNotEmpty) {
+          _themeController.text = generatedTitles.first;
+          if (generatedTitles.length > 1) {
+            _dynamicSubtitles = generatedTitles.sublist(1);
+          } else {
+            _dynamicSubtitles = ['美好时光', '特别的日子', '记忆碎片'];
+          }
+          _selectedSubtitle = _dynamicSubtitles.first;
+        } else {
+          throw Exception("返回的标题列表为空");
+        }
+      });
+    } catch (e) {
+      debugPrint("❌ AI 主题提炼失败: $e");
+      // 失败了就降级回本地的智能推断算法
+      if (mounted) {
+        setState(() {
+          _themeController.text = _deriveSmartTheme();
+          _dynamicSubtitles = ['美好时光', '特别的日子', '跨越时光的相遇'];
+          _selectedSubtitle = _dynamicSubtitles.first;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _isGeneratingTheme = false);
+    }
+  }
+  // ==========================================
+  // 🧠 智能推断 1：核心主题 (Title) 兜底策略
+  // ==========================================
+  String _deriveSmartTheme() {
+    // 优先级 1：搜索词兜底（依然保留这个障眼法，体验很好）
+    if (widget.semanticSearchQuery != null &&
+        widget.semanticSearchQuery!.isNotEmpty) {
+      return widget.semanticSearchQuery!;
+    }
+
+    // 🌟 优先级 2：核心修复，用 preservePhotoOrder 准确判断是否来自故事队列
+    if (widget.preservePhotoOrder && widget.selectedPhotos.isNotEmpty) {
+      final locationCounts = <String, int>{};
+      for (var photo in widget.selectedPhotos) {
+        if (photo.location != null &&
+            photo.location != '未知地点' &&
+            photo.location!.isNotEmpty) {
+          locationCounts[photo.location!] =
+              (locationCounts[photo.location!] ?? 0) + 1;
+        }
+      }
+
+      // 如果有集中出现的地点
+      if (locationCounts.isNotEmpty) {
+        final topLocation = locationCounts.entries
+            .reduce((a, b) => a.value > b.value ? a : b)
+            .key;
+        return '$topLocation纪影';
+      }
+      // 如果连地点都没有，兜底时间
+      final firstDate = widget.selectedPhotos.first.dateTaken;
+      return '${firstDate.year}年${firstDate.month}月精选';
+    }
+
+    // 优先级 3：正常的单一相册进入
+    if (widget.event.title.isNotEmpty) {
+      return widget.event.title;
+    }
+
+    return widget.selectedTheme.title.isEmpty
+        ? '专属回忆'
+        : widget.selectedTheme.title;
+  }
+  // ==========================================
+  // 🧠 智能推断 2：副标题 (Subtitle)
+  // ==========================================
+  String _deriveSmartSubtitle() {
+    // 🥇 优先级 1：单一相册传过来的 AI 推荐副标题
+    if (widget.event.id != '-1' && widget.selectedTheme.subtitle.isNotEmpty) {
+      return widget.selectedTheme.subtitle;
+    }
+
+    // 🥈 优先级 2：如果是搜索出来的，或者是跨相册拼凑的，我们根据时间跨度智能生成
+    if (widget.selectedPhotos.isNotEmpty) {
+      final dates = widget.selectedPhotos.map((p) => p.dateTaken).toList();
+      dates.sort(); // 按时间排序
+      final firstDate = dates.first;
+      final lastDate = dates.last;
+
+      if (firstDate.year == lastDate.year &&
+          firstDate.month == lastDate.month) {
+        return '${firstDate.year}年${firstDate.month}月的记忆碎片';
+      } else {
+        return '跨越时光的相遇';
+      }
+    }
+
+    return '美好时光'; // 🏁 最终兜底
   }
 
   // 🌟 新增：拣选音乐的方法
   Future<void> _pickMusic() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
+    FilePickerResult? result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['mp3', 'wav', 'aac', 'm4a', 'flac', 'ogg'],
       allowMultiple: false,
@@ -92,6 +260,67 @@ class _ConfigPageState extends State<ConfigPage> {
     super.dispose();
   }
 
+  bool _validateCommonThemeInput() {
+    if (_themeController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请输入故事主题')));
+      return false;
+    }
+    return true;
+  }
+
+  String _currentPlatformName() {
+    switch (_selectedPlatform) {
+      case PublishingPlatform.xiaohongshu:
+        return '小红书';
+      case PublishingPlatform.moments:
+        return '朋友圈';
+      case PublishingPlatform.bilibili:
+        return 'B站';
+      case PublishingPlatform.tiktok:
+        return '抖音';
+    }
+  }
+
+  void _openStoryGenerationFlow() {
+    if (_selectedMusicSource == MusicSource.manualImport &&
+        _customMusicPath == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先选择一段本地音乐')));
+      return;
+    }
+    if (!_validateCommonThemeInput()) {
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => StoryGenerationProgressPage(
+          request: StoryGenerationRequest(
+            event: widget.event,
+            selectedPhotos: widget.selectedPhotos,
+            selectedTheme: widget.selectedTheme,
+            title: _themeController.text.trim(),
+            subtitle: (_selectedSubtitle ?? '').trim(),
+            mode: _selectedStoryMode,
+            isHorizontal: _selectedAspectRatio == VideoAspectRatio.horizontal,
+            targetPlatform: _currentPlatformName(),
+            enableAiMusic: _selectedMusicSource == MusicSource.aiGenerated,
+            customMusicPath: _customMusicPath,
+            enableAutoCaptions: _enableAutoCaptions,
+            manualCaptionsText: _manualCaptionsController.text.trim(),
+            semanticSearchQuery: widget.semanticSearchQuery?.trim(),
+            preserveSelectionOrder: widget.preservePhotoOrder,
+            storyTemplateId: _selectedStoryTemplateId,
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _generateStory() async {
     // 校验：如果选择了手动导入但没选文件
     if (_selectedMusicSource == MusicSource.manualImport &&
@@ -101,10 +330,7 @@ class _ConfigPageState extends State<ConfigPage> {
       ).showSnackBar(const SnackBar(content: Text('请先选择一段本地音乐')));
       return;
     }
-    if (_themeController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请输入故事主题')));
+    if (!_validateCommonThemeInput()) {
       return;
     }
 
@@ -115,7 +341,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
     try {
       // 1. 获取 EventEntity（通过 Event.id 查询）
-      final isar = PhotoService().isar;
+      final store = ObjectBoxService().store;
       EventEntity? eventEntity;
 
       if (widget.event.id == '-1') {
@@ -129,7 +355,7 @@ class _ConfigPageState extends State<ConfigPage> {
       } else {
         // 正常走系统自动聚类的相册逻辑
         final eventEntityId = int.parse(widget.event.id);
-        eventEntity = await isar.collection<EventEntity>().get(eventEntityId);
+        eventEntity = store.box<EventEntity>().get(eventEntityId);
       }
 
       if (eventEntity == null) {
@@ -140,12 +366,11 @@ class _ConfigPageState extends State<ConfigPage> {
       final selectedAssetIds = widget.selectedPhotos
           .map((photo) => photo.id)
           .toList();
-      final List<PhotoEntity> photoEntities = await isar
-          .collection<PhotoEntity>()
-          .filter()
-          .anyOf(selectedAssetIds, (q, assetId) => q.assetIdEqualTo(assetId))
-          .sortByTimestamp()
-          .findAll();
+      final photoBox = store.box<PhotoEntity>();
+      final _pq = photoBox.query(PhotoEntity_.assetId.oneOf(selectedAssetIds))
+          .order(PhotoEntity_.timestamp).build();
+      final List<PhotoEntity> photoEntities = _pq.find();
+      _pq.close();
 
       if (photoEntities.isEmpty) {
         throw Exception('No photos found');
@@ -239,21 +464,7 @@ class _ConfigPageState extends State<ConfigPage> {
       // ==========================================
       // 🌟 平台名称转换 (供最终发布页文案生成使用)
       // ==========================================
-      String platformName = '小红书'; // 默认值
-      switch (_selectedPlatform) {
-        case PublishingPlatform.xiaohongshu:
-          platformName = '小红书';
-          break;
-        case PublishingPlatform.moments:
-          platformName = '朋友圈';
-          break;
-        case PublishingPlatform.bilibili:
-          platformName = 'B站';
-          break;
-        case PublishingPlatform.tiktok:
-          platformName = '抖音';
-          break;
-      }
+      final platformName = _currentPlatformName();
       // ==========================================
       // 🌟 第一步：呼叫 VLM 接口生成剧本大纲
       // ==========================================
@@ -373,7 +584,7 @@ Sandal Leap
 
       setState(() {
         _isGenerating = false;
-        _loadingText = '开始生成';
+        _loadingText = '生成视频';
       });
 
       if (story != null) {
@@ -384,10 +595,12 @@ Sandal Leap
             builder: (context) => StoryResultPage.fromStoryEntity(
               storyEntity: story,
               photos: photoEntities,
+              storyTemplateId: _selectedStoryTemplateId,
               customMusicPath: _customMusicPath,
               // 🌟 新增：把刚才拿到的云端节拍数据一起传过去！
               dynamicBeatData: dynamicBeatData,
-              captions: finalCaptions,
+              videoCaptions: finalCaptions,
+              photoOverrides: widget.selectedPhotos,
               isHorizontal: _selectedAspectRatio == VideoAspectRatio.horizontal,
               targetPlatform: platformName,
             ),
@@ -402,7 +615,7 @@ Sandal Leap
     } catch (e) {
       setState(() {
         _isGenerating = false;
-        _loadingText = '开始生成';
+        _loadingText = '生成视频';
       });
 
       if (mounted) {
@@ -463,16 +676,24 @@ Sandal Leap
           const SizedBox(height: 8),
           TextField(
             controller: _themeController,
+            readOnly: _isGeneratingTheme,
             decoration: InputDecoration(
               hintText: '输入故事主题',
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
-              prefixIcon: Text(
-                widget.selectedTheme.emoji,
-                style: const TextStyle(fontSize: 24),
+              prefixIcon: const Icon(
+                Icons.auto_awesome,
+                color: Colors.pinkAccent,
               ),
               prefixIconConstraints: const BoxConstraints(minWidth: 50),
+              // 🌟 正在生成时，右边给个加载小圈圈
+              suffixIcon: _isGeneratingTheme
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : null,
             ),
           ),
           const SizedBox(height: 24),
@@ -485,23 +706,46 @@ Sandal Leap
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [widget.selectedTheme.subtitle, '难忘的回忆', '美好时光', '特别的日子']
-                .map((subtitle) {
-                  final isSelected = subtitle == _selectedSubtitle;
-                  return ChoiceChip(
-                    label: Text(subtitle),
-                    selected: isSelected,
-                    onSelected: (selected) {
-                      setState(() {
-                        _selectedSubtitle = selected ? subtitle : null;
-                      });
-                    },
-                  );
-                })
-                .toList(),
+          if (_isGeneratingTheme)
+            Text(
+              '💡 AI 正在构思文艺文案...',
+              style: TextStyle(
+                color: Colors.pinkAccent.shade200,
+                fontStyle: FontStyle.italic,
+              ),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              // 🌟 核心：优先使用 AI 生成的列表，如果没有，再用兜底列表
+              children:
+                  (_dynamicSubtitles.isNotEmpty
+                          ? _dynamicSubtitles
+                          : <String>[
+                              if (_selectedSubtitle != null &&
+                                  _selectedSubtitle!.isNotEmpty)
+                                _selectedSubtitle!,
+                              if (widget.selectedTheme.subtitle.isNotEmpty)
+                                widget.selectedTheme.subtitle,
+                              '难忘的回忆',
+                              '美好时光',
+                              '特别的日子',
+                            ])
+                      .toSet()
+                      .map((subtitle) {
+                        final isSelected = subtitle == _selectedSubtitle;
+                        return ChoiceChip(
+                          label: Text(subtitle),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              _selectedSubtitle = selected ? subtitle : null;
+                            });
+                          },
+                        );
+                      })
+                      .toList(),
           ),
           const SizedBox(height: 24),
 
@@ -606,6 +850,10 @@ Sandal Leap
           const SizedBox(height: 24),
           _buildMusicSection(),
           const Divider(height: 48),
+          _buildStoryModeSection(),
+          const SizedBox(height: 24),
+          _buildStoryTemplateSection(),
+          const SizedBox(height: 24),
 
           // 🌟 AI 台词生成开关
           SwitchListTile(
@@ -645,8 +893,37 @@ Sandal Leap
 
           const SizedBox(height: 24),
 
-          // Generate button
-          FilledButton(
+          OutlinedButton.icon(
+            onPressed: _isGenerating ? null : _openStoryGenerationFlow,
+            icon: const Icon(Icons.auto_stories_rounded),
+            label: Text(
+              '生成故事',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 15),
+              side: BorderSide(
+                color: Theme.of(context).colorScheme.primary,
+                width: 1.3,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '故事生成完成后，可在结果页通过“播放回忆”进入视频预览与导出。',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurfaceVariant.withValues(alpha: 0.9),
+              height: 1.45,
+            ),
+            textAlign: TextAlign.center,
+          ),
+
+          // Generate video button
+          if (false) FilledButton(
             onPressed: _isGenerating ? null : _generateStory,
             style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 16),
@@ -750,6 +1027,244 @@ Sandal Leap
             ),
           ),
         ],
+      ],
+    );
+  }
+
+  Widget _buildStoryModeSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '生成故事方式',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '默认使用 DeepSeek 根据标签、时间和地点生成；如果想让画面理解更贴近图片细节，可以先用本地 VLM 补充视觉描述，再交给 DeepSeek 串成故事。',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: Colors.grey[600], height: 1.4),
+        ),
+        const SizedBox(height: 12),
+        Column(
+          children: StoryGenerationMode.values
+              .where((mode) => mode != StoryGenerationMode.localDirectVlm)
+              .map((mode) {
+            final selected = _selectedStoryMode == mode;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: () {
+                  setState(() {
+                    _selectedStoryMode = mode;
+                  });
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? Theme.of(
+                            context,
+                          ).colorScheme.primaryContainer.withValues(alpha: 0.92)
+                        : Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.outlineVariant,
+                      width: selected ? 1.6 : 1.0,
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        selected
+                            ? Icons.check_circle_rounded
+                            : Icons.radio_button_unchecked_rounded,
+                        color: selected
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.grey[500],
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              mode.title,
+                              style: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              mode.subtitle,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Colors.grey[700],
+                                    height: 1.4,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }).toList(growable: false),
+        ),
+      ],
+    );
+  }
+  Widget _buildStoryTemplateSection() {
+    final selectedTemplate = storyPromptTemplateById(_selectedStoryTemplateId);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '文案模板（可选）',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '只影响 DeepSeek 生成故事时的写法与风格，不影响本地 VLM 打 caption。你可以不选，也可以从某一类模板里选一个。',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: Colors.grey[600], height: 1.4),
+        ),
+        const SizedBox(height: 12),
+        if (selectedTemplate != null) ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Theme.of(context)
+                  .colorScheme
+                  .primaryContainer
+                  .withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${selectedTemplate.category.title} · ${selectedTemplate.title}',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  selectedTemplate.preview,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[700],
+                        height: 1.45,
+                      ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: _selectedStoryTemplateId == null
+                ? null
+                : () {
+                    setState(() {
+                      _selectedStoryTemplateId = null;
+                    });
+                  },
+            icon: const Icon(Icons.layers_clear_rounded),
+            label: const Text('不使用模板'),
+          ),
+        ),
+        const SizedBox(height: 4),
+        ...StoryTemplateCategory.values.map((category) {
+          final templates = storyPromptTemplatesForCategory(category);
+          final isExpanded = templates.any(
+            (template) => template.id == _selectedStoryTemplateId,
+          );
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+            ),
+            child: Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                key: PageStorageKey<String>('story-template-${category.name}'),
+                initiallyExpanded: isExpanded,
+                tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                title: Text(
+                  category.title,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                subtitle: Text(
+                  category.subtitle,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[600],
+                        height: 1.35,
+                      ),
+                ),
+                children: templates.map((template) {
+                  final selected = template.id == _selectedStoryTemplateId;
+                  return ListTile(
+                    onTap: () {
+                      setState(() {
+                        _selectedStoryTemplateId = template.id;
+                      });
+                    },
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    leading: Icon(
+                      selected
+                          ? Icons.radio_button_checked_rounded
+                          : Icons.radio_button_off_rounded,
+                      color: selected
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.grey[500],
+                    ),
+                    title: Text(
+                      template.title,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    subtitle: Text(
+                      template.preview,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.grey[700],
+                            height: 1.45,
+                          ),
+                    ),
+                  );
+                }).toList(growable: false),
+              ),
+            ),
+          );
+        }),
       ],
     );
   }

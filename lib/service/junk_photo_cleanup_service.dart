@@ -1,10 +1,13 @@
+/// 垃圾照片清理服务，负责筛选、确认和清除低价值照片。
+
 import 'dart:async';
 
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import 'event_service.dart';
 import 'junk_photo_filter_service.dart';
-import 'photo_service.dart';
 
 class JunkPhotoCleanupService {
   JunkPhotoCleanupService._internal();
@@ -20,13 +23,10 @@ class JunkPhotoCleanupService {
     final affectedEventIds = <int>{};
     var removedCount = 0;
 
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
     for (final candidate in candidates) {
-      final photo = await PhotoService().isar
-          .collection<PhotoEntity>()
-          .get(candidate.photoId);
-      if (photo == null) {
-        continue;
-      }
+      final photo = photoBox.get(candidate.photoId);
+      if (photo == null) continue;
       final affectedEventId = await removeFromLocalIndex(photo);
       if (affectedEventId != null) {
         affectedEventIds.add(affectedEventId);
@@ -37,13 +37,8 @@ class JunkPhotoCleanupService {
     if (affectedEventIds.isNotEmpty) {
       unawaited(
         EventService()
-            .refreshEventSmartInfo(
-              affectedEventIds.toList(),
-              allowLlm: false,
-            )
-            .catchError((error) {
-              // Keep cleanup fast; local event title refresh can fail independently.
-            }),
+            .refreshEventSmartInfo(affectedEventIds.toList(), allowLlm: false)
+            .catchError((error) {}),
       );
     }
 
@@ -51,25 +46,27 @@ class JunkPhotoCleanupService {
   }
 
   Future<int?> removeFromLocalIndex(PhotoEntity photo) async {
-    final isar = PhotoService().isar;
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
+    final eventBox = store.box<EventEntity>();
     var affectedEventId = photo.eventId;
 
-    await isar.writeTxn(() async {
-      final currentPhoto = await isar.collection<PhotoEntity>().get(photo.id);
+    store.runInTransaction(TxMode.write, () {
+      final currentPhoto = photoBox.get(photo.id);
       if (currentPhoto == null) {
         affectedEventId = null;
         return;
       }
 
       final currentEventId = currentPhoto.eventId;
-      await isar.collection<PhotoEntity>().delete(currentPhoto.id);
+      photoBox.remove(currentPhoto.id);
 
       if (currentEventId == null) {
         affectedEventId = null;
         return;
       }
 
-      final event = await isar.collection<EventEntity>().get(currentEventId);
+      final event = eventBox.get(currentEventId);
       if (event == null) {
         affectedEventId = null;
         return;
@@ -78,15 +75,13 @@ class JunkPhotoCleanupService {
       final remainingIds = event.photoIds
           .where((photoId) => photoId != currentPhoto.id)
           .toList(growable: false);
-      final remainingPhotos = (await isar
-              .collection<PhotoEntity>()
-              .getAll(remainingIds))
+      final remainingPhotos = photoBox.getMany(remainingIds)
           .whereType<PhotoEntity>()
           .toList(growable: false)
         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
       if (remainingPhotos.isEmpty) {
-        await isar.collection<EventEntity>().delete(currentEventId);
+        eventBox.remove(currentEventId);
         affectedEventId = null;
         return;
       }
@@ -97,7 +92,7 @@ class JunkPhotoCleanupService {
       rebuilt.analyzedPhotoCount = remainingPhotos
           .where((item) => item.isAiAnalyzed)
           .length;
-      await isar.collection<EventEntity>().put(rebuilt);
+      eventBox.put(rebuilt);
       affectedEventId = currentEventId;
     });
 

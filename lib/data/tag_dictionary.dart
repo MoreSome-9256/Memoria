@@ -7,12 +7,12 @@ const Map<String, String> memoriaMasterTaxonomy = {
   '人物': 'a photo of people, portraits, selfies, couples, families or group memories',
 
   // 物体与特写 (Objects & Close-ups)
-  '美食饮品': 'a delicious close-up photo of food, meal, dessert, coffee or drink in a restaurant',
-  '宠物': 'a photo of a cute pet, dog, cat, or animal',
-  '花卉/植物': 'a photo of beautiful flowers, leaves, trees or vibrant indoor plants',
+  '美食饮品': 'a delicious close-up photo of food, meal, dessert, coffee or drink in a restaurant or home setting',
+  '宠物': 'a photo of a cute pet, dog, cat, or home-grown animal that owners love and cherish in their daily life for companionship and joy',
+  '花卉/植物': 'a photo of beautiful flowers, leaves, trees or vibrant indoor plants, which is a close-up shot or at least has a clear focus on the plant',
   '交通工具': 'a photo of a vehicle, car, bus, train, bicycle, motorcycle or airplane',
-  '数码/电子产品': 'a photo of gadgets, smartphone, computer screen, camera or electronics',
-  '手工': 'a photo of a handmade craft, diy project or handicraft item',
+  '数码/电子产品': 'a photo of gadgets, smartphone, computer screen, camera or other types of electronics',
+  '手工': 'a photo of a handmade craft, diy project or handicraft item that people create for fun, hobbies or artistic expression',
 
   // 场景与环境 (Scenes & Environments)
   '自然风光': 'a beautiful nature landscape photo, mountains, lakes, or green forests',

@@ -1,130 +1,140 @@
-import 'package:flutter/material.dart';
+/// 故事结果页面，展示生成后的故事内容和分享入口。
+
 import 'dart:math' as math;
 
-import '../../models/vo/photo.dart';
-import '../../models/story.dart';
-import '../../models/entity/story_entity.dart';
+import 'package:flutter/material.dart';
+
 import '../../models/entity/photo_entity.dart';
-import '../../service/photo_service.dart';
+import '../../models/entity/story_entity.dart';
+import '../../models/story.dart';
+import '../../models/vo/photo.dart';
+import '../../models/vo/story_section.dart';
 import '../../service/story_service.dart';
 import '../../utils/ocr_policy.dart';
 import '../widgets/path_image.dart';
+import 'digital_album_book_page.dart';
 import 'story_video_page.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class StoryResultPage extends StatefulWidget {
-  final String title;
-  final String subtitle;
-  final Photo heroImage;
-  final List<StorySection> sections;
-  final int? storyEntityId;
-  final String? customMusicPath;
-  final Map<String, dynamic>? dynamicBeatData;
-  final bool isHorizontal;
-  final String targetPlatform;
-
   const StoryResultPage({
     super.key,
     required this.title,
     required this.subtitle,
     required this.heroImage,
     required this.sections,
+    this.storyTemplateId,
+    this.videoCaptionByPhotoId = const <String, String>{},
     this.storyEntityId,
     this.customMusicPath,
     this.dynamicBeatData,
     required this.isHorizontal,
     required this.targetPlatform,
+    this.videoCaptions,
   });
+
+  final String title;
+  final String subtitle;
+  final Photo heroImage;
+  final List<StorySection> sections;
+  final String? storyTemplateId;
+  final Map<String, String> videoCaptionByPhotoId;
+  final int? storyEntityId;
+  final String? customMusicPath;
+  final Map<String, dynamic>? dynamicBeatData;
+  final bool isHorizontal;
+  final String targetPlatform;
+  final List<String>? videoCaptions;
 
   factory StoryResultPage.fromStoryEntity({
     required StoryEntity storyEntity,
     required List<PhotoEntity> photos,
+    String? storyTemplateId,
     String? customMusicPath,
     Map<String, dynamic>? dynamicBeatData,
-    List<String>? captions,
+    List<String>? videoCaptions,
+    List<Photo>? photoOverrides,
     required bool isHorizontal,
     required String targetPlatform,
   }) {
-    final Map<String, String> captionMap = {};
-    if (captions != null && captions.isNotEmpty) {
-      for (int i = 0; i < photos.length; i++) {
-        if (i < captions.length) {
-          captionMap[photos[i].assetId] = captions[i];
+    final videoCaptionMap = <String, String>{};
+    if (videoCaptions != null && videoCaptions.isNotEmpty) {
+      for (var i = 0; i < photos.length && i < videoCaptions.length; i++) {
+        final caption = videoCaptions[i].trim();
+        if (caption.isNotEmpty) {
+          videoCaptionMap[photos[i].assetId] = caption;
         }
       }
     }
 
+    final photoOverrideMap = <String, Photo>{
+      for (final photo in photoOverrides ?? const <Photo>[]) photo.id: photo,
+    };
+    final photoEntityById = <String, PhotoEntity>{
+      for (final photo in photos) photo.assetId: photo,
+    };
+
+    final sections = <StorySection>[];
     final sectionMaps = storyEntity.parseToSections(photos);
-    List<StorySection> sections = [];
-
-    if (sectionMaps.isNotEmpty) {
-      sections = sectionMaps.map((map) {
-        final photo = map['photo'] as Photo;
-        final String sectionText =
-            (captionMap.containsKey(photo.id) &&
-                captionMap[photo.id]!.isNotEmpty)
-            ? captionMap[photo.id]!
-            : map['text'] as String;
-
-        return StorySection(text: sectionText, photo: photo);
-      }).toList();
+    for (final map in sectionMaps) {
+      final basePhoto = map['photo'] as Photo;
+      final mergedPhoto = _mergePhotoOverride(
+        _mergePhotoEntityData(basePhoto, photoEntityById[basePhoto.id]),
+        photoOverrideMap[basePhoto.id],
+      );
+      final text = map['text'] as String? ?? '';
+      sections.add(StorySection(text: text, photo: mergedPhoto));
     }
 
-    final usedPhotoIds = sections.map((s) => s.photo.id).toSet();
-    for (var p in photos) {
-      if (!usedPhotoIds.contains(p.assetId)) {
-        sections.add(
-          StorySection(
-            text: captionMap[p.assetId] ?? '',
-            photo: Photo(
-              id: p.assetId,
-              path: p.path,
-              dateTaken: DateTime.fromMillisecondsSinceEpoch(p.timestamp),
-              tags: p.aiTags ?? [],
-              caption: p.aiCaption?.trim(),
-              ocrSummary: OcrPolicy.effectiveSummary(
-                tags: p.ocrTags ?? const <String>[],
-                text: p.ocrText,
-              ),
-              location: p.city ?? p.province ?? '未知地点',
-            ),
-          ),
-        );
+    final usedPhotoIds = sections.map((item) => item.photo.id).toSet();
+    for (final photoEntity in photos) {
+      if (usedPhotoIds.contains(photoEntity.assetId)) {
+        continue;
       }
-    }
-
-    if (sections.isEmpty && photos.isNotEmpty) {
       sections.add(
         StorySection(
-          text: (captions != null && captions.isNotEmpty)
-              ? captions.first
-              : (storyEntity.content ?? '我的专属回忆'),
-          photo: Photo(
-            id: photos.first.assetId,
-            path: photos.first.path,
-            dateTaken: DateTime.fromMillisecondsSinceEpoch(
-              photos.first.timestamp,
-            ),
-            tags: photos.first.aiTags ?? [],
-            location: photos.first.city ?? photos.first.province ?? '未知地点',
+          text: '',
+          photo: _mergePhotoOverride(
+            _buildPhotoFromEntity(photoEntity),
+            photoOverrideMap[photoEntity.assetId],
           ),
         ),
       );
     }
 
-    // 🌟 这里已经去掉了那个会导致页面图片消失的假片头数据！页面恢复纯净！
+    if (sections.isEmpty && photos.isNotEmpty) {
+      final photoEntity = photos.first;
+      sections.add(
+        StorySection(
+          text: storyEntity.content.trim().isEmpty ? '我的专属回忆' : storyEntity.content,
+          photo: _mergePhotoOverride(
+            _buildPhotoFromEntity(photoEntity),
+            photoOverrideMap[photoEntity.assetId],
+          ),
+        ),
+      );
+    }
 
-    final heroPhoto = sections.first.photo;
+    final heroPhoto = sections.isNotEmpty
+        ? sections.first.photo
+        : _mergePhotoOverride(
+            _buildPhotoFromEntity(photos.first),
+            photoOverrideMap[photos.first.assetId],
+          );
 
     return StoryResultPage(
       title: storyEntity.title,
       subtitle: storyEntity.subtitle,
       heroImage: heroPhoto,
       sections: sections,
+      storyTemplateId: storyTemplateId,
+      videoCaptionByPhotoId: Map<String, String>.unmodifiable(videoCaptionMap),
       storyEntityId: storyEntity.id,
       customMusicPath: customMusicPath,
       dynamicBeatData: dynamicBeatData,
       isHorizontal: isHorizontal,
       targetPlatform: targetPlatform,
+      videoCaptions: videoCaptions,
     );
   }
 
@@ -136,9 +146,91 @@ class StoryResultPage extends StatefulWidget {
       sections: story.blocks
           .where((block) => block.photo != null)
           .map((block) => StorySection(text: block.text, photo: block.photo!))
-          .toList(),
+          .toList(growable: false),
+      storyTemplateId: null,
       isHorizontal: story.isHorizontal,
       targetPlatform: '小红书',
+    );
+  }
+
+  static Photo _buildPhotoFromEntity(PhotoEntity photoEntity) {
+    return Photo(
+      id: photoEntity.assetId,
+      location:
+          photoEntity.locationName ??
+          photoEntity.district ??
+          photoEntity.city ??
+          photoEntity.province ??
+          '未知地点',
+      path: photoEntity.path,
+      dateTaken: DateTime.fromMillisecondsSinceEpoch(photoEntity.timestamp),
+      tags: photoEntity.aiTags ?? const <String>[],
+      caption: photoEntity.aiCaption?.trim(),
+      ocrSummary: OcrPolicy.effectiveSummary(
+        tags: photoEntity.ocrTags ?? const <String>[],
+        text: photoEntity.ocrText,
+      ),
+      ocrTags: OcrPolicy.effectiveTags(photoEntity.ocrTags ?? const <String>[]),
+      width: photoEntity.width,
+      height: photoEntity.height,
+    );
+  }
+
+  static Photo _mergePhotoEntityData(Photo basePhoto, PhotoEntity? photoEntity) {
+    if (photoEntity == null) {
+      return basePhoto;
+    }
+
+    final entityPhoto = _buildPhotoFromEntity(photoEntity);
+    return entityPhoto.copyWith(
+      caption: (basePhoto.caption?.trim().isNotEmpty ?? false)
+          ? basePhoto.caption
+          : entityPhoto.caption,
+      vlmCaption: (basePhoto.vlmCaption?.trim().isNotEmpty ?? false)
+          ? basePhoto.vlmCaption
+          : entityPhoto.vlmCaption,
+      location: (basePhoto.location?.trim().isNotEmpty ?? false)
+          ? basePhoto.location
+          : entityPhoto.location,
+      tags: basePhoto.tags.isNotEmpty ? basePhoto.tags : entityPhoto.tags,
+      ocrSummary: (basePhoto.ocrSummary?.trim().isNotEmpty ?? false)
+          ? basePhoto.ocrSummary
+          : entityPhoto.ocrSummary,
+      ocrTags: basePhoto.ocrTags.isNotEmpty ? basePhoto.ocrTags : entityPhoto.ocrTags,
+      width: basePhoto.width > 0 ? basePhoto.width : entityPhoto.width,
+      height: basePhoto.height > 0 ? basePhoto.height : entityPhoto.height,
+      faces: basePhoto.faces ?? entityPhoto.faces,
+    );
+  }
+
+  static Photo _mergePhotoOverride(Photo basePhoto, Photo? overridePhoto) {
+    if (overridePhoto == null) {
+      return basePhoto;
+    }
+
+    final overrideCaption = overridePhoto.caption?.trim();
+    final overrideLocation = overridePhoto.location?.trim();
+    final overrideVlmCaption = overridePhoto.vlmCaption?.trim();
+
+    return basePhoto.copyWith(
+      path: overridePhoto.path.trim().isNotEmpty ? overridePhoto.path : basePhoto.path,
+      location: (overrideLocation?.isNotEmpty ?? false)
+          ? overridePhoto.location
+          : basePhoto.location,
+      caption: (overrideCaption?.isNotEmpty ?? false)
+          ? overrideCaption
+          : basePhoto.caption,
+      vlmCaption: (overrideVlmCaption?.isNotEmpty ?? false)
+          ? overrideVlmCaption
+          : basePhoto.vlmCaption,
+      tags: overridePhoto.tags.isNotEmpty ? overridePhoto.tags : basePhoto.tags,
+      ocrSummary: (overridePhoto.ocrSummary?.trim().isNotEmpty ?? false)
+          ? overridePhoto.ocrSummary
+          : basePhoto.ocrSummary,
+      ocrTags: overridePhoto.ocrTags.isNotEmpty ? overridePhoto.ocrTags : basePhoto.ocrTags,
+      width: overridePhoto.width > 0 ? overridePhoto.width : basePhoto.width,
+      height: overridePhoto.height > 0 ? overridePhoto.height : basePhoto.height,
+      faces: overridePhoto.faces ?? basePhoto.faces,
     );
   }
 
@@ -154,36 +246,37 @@ class _StoryResultPageState extends State<StoryResultPage> {
   @override
   void initState() {
     super.initState();
-    _sections = List.from(widget.sections);
+    _sections = List<StorySection>.from(widget.sections);
   }
 
   void _editText(int index) {
     final controller = TextEditingController(text: _sections[index].text);
 
-    showDialog(
+    showDialog<void>(
       context: context,
       builder: (context) {
         return AlertDialog(
           title: const Text('编辑文字'),
           content: TextField(
             controller: controller,
-            maxLines: 5,
-            decoration: const InputDecoration(border: OutlineInputBorder()),
+            maxLines: 8,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+            ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.of(context).pop(),
               child: const Text('取消'),
             ),
-            TextButton(
+            FilledButton(
               onPressed: () {
                 setState(() {
-                  _sections[index] = StorySection(
-                    text: controller.text,
-                    photo: _sections[index].photo,
+                  _sections[index] = _sections[index].copyWith(
+                    text: controller.text.trim(),
                   );
                 });
-                Navigator.pop(context);
+                Navigator.of(context).pop();
               },
               child: const Text('保存'),
             ),
@@ -194,59 +287,141 @@ class _StoryResultPageState extends State<StoryResultPage> {
   }
 
   Future<void> _saveStory() async {
-    if (_isSaving) return;
+    if (_isSaving) {
+      return;
+    }
     if (widget.storyEntityId == null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('无法保存：缺少故事ID')));
+      ).showSnackBar(const SnackBar(content: Text('无法保存：缺少故事 ID')));
       return;
     }
 
-    setState(() => _isSaving = true);
+    setState(() {
+      _isSaving = true;
+    });
 
     try {
-      final isar = PhotoService().isar;
-      final story = await isar.collection<StoryEntity>().get(
-        widget.storyEntityId!,
-      );
-      if (story == null) throw Exception('Story not found');
+      final story = ObjectBoxService().store.box<StoryEntity>().get(widget.storyEntityId!);
+      if (story == null) {
+        throw StateError('Story not found');
+      }
 
-      final sectionMaps = _sections.map((section) {
-        return {'text': section.text, 'photo': section.photo};
-      }).toList();
+      final sectionMaps = _sections
+          .map((section) => <String, dynamic>{
+                'text': section.text,
+                'photo': section.photo,
+              })
+          .toList(growable: false);
 
-      final updatedContent = StoryEntity.sectionsToMarkdown(sectionMaps);
-      story.content = updatedContent;
+      story.content = StoryEntity.sectionsToMarkdown(sectionMaps);
+      story.updatedAt = DateTime.now().millisecondsSinceEpoch;
       await StoryService().updateStory(story);
 
-      if (!mounted) return;
-      setState(() => _hasSaved = true);
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _hasSaved = true;
+      });
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('故事已保存，可在故事页回查')));
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('保存失败: $e')));
+      ).showSnackBar(const SnackBar(content: Text('故事已保存，可在故事页重新查看')));
+    } catch (error) {
+      if (!mounted) {
+        return;
       }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('保存失败: $error')));
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
     }
   }
 
   void _closePage() {
     if (Navigator.of(context).canPop()) {
-      Navigator.pop(context, _hasSaved);
+      Navigator.of(context).pop(_hasSaved);
       return;
     }
-    Navigator.popUntil(context, (route) => route.isFirst);
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   void _shareStory() {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('分享功能开发中')));
+  }
+
+  Future<void> _openDigitalAlbum() async {
+    final result = await Navigator.of(context).push<DigitalAlbumBookResult>(
+      MaterialPageRoute<DigitalAlbumBookResult>(
+        builder: (context) => DigitalAlbumBookPage(
+          title: widget.title,
+          subtitle: widget.subtitle,
+          sections: _sections,
+          storyTemplateId: widget.storyTemplateId,
+          storyEntityId: widget.storyEntityId,
+        ),
+      ),
+    );
+
+    if (!mounted || result == null) {
+      return;
+    }
+
+    setState(() {
+      _hasSaved = _hasSaved || result.saved;
+    });
+  }
+
+  void _openVideoPreview() {
+    if (_sections.isEmpty) {
+      return;
+    }
+
+    final playbackSections = <StorySection>[];
+    for (var index = 0; index < _sections.length; index++) {
+      final section = _sections[index];
+      final indexedCaption = widget.videoCaptions != null &&
+              index < widget.videoCaptions!.length
+          ? widget.videoCaptions![index].trim()
+          : '';
+      final mappedCaption =
+          widget.videoCaptionByPhotoId[section.photo.id]?.trim() ?? '';
+      final preferredCaption = indexedCaption.isNotEmpty
+          ? indexedCaption
+          : (mappedCaption.isNotEmpty ? mappedCaption : section.text);
+      playbackSections.add(section.copyWith(text: preferredCaption));
+    }
+
+    final random = math.Random();
+    final introPhoto =
+        playbackSections[random.nextInt(playbackSections.length)].photo;
+    final introSection = StorySection(text: '__INTRO__', photo: introPhoto);
+    final finalVideoSections = <StorySection>[
+      introSection,
+      ...playbackSections,
+    ];
+
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => StoryVideoPage(
+          title: widget.title,
+          subtitle: widget.subtitle,
+          sections: finalVideoSections,
+          customMusicPath: widget.customMusicPath,
+          isHorizontal: widget.isHorizontal,
+          dynamicBeatData: widget.dynamicBeatData,
+          targetPlatform: widget.targetPlatform,
+        ),
+      ),
+    );
   }
 
   @override
@@ -298,145 +473,124 @@ class _StoryResultPageState extends State<StoryResultPage> {
               child: Text(
                 widget.subtitle,
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: Colors.grey[600],
-                  fontStyle: FontStyle.italic,
-                ),
+                      color: Colors.grey[600],
+                      fontStyle: FontStyle.italic,
+                    ),
                 textAlign: TextAlign.center,
               ),
             ),
           ),
           SliverList(
-            delegate: SliverChildBuilderDelegate((context, index) {
-              final section = _sections[index];
-              return Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    GestureDetector(
-                      onTap: () => _editText(index),
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[50],
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                section.text,
-                                style: Theme.of(
-                                  context,
-                                ).textTheme.bodyLarge?.copyWith(height: 1.6),
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final section = _sections[index];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      GestureDetector(
+                        onTap: () => _editText(index),
+                        child: Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[50],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  section.text,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyLarge
+                                      ?.copyWith(height: 1.6),
+                                ),
                               ),
-                            ),
-                            Icon(Icons.edit, size: 16, color: Colors.grey[400]),
-                          ],
+                              Icon(
+                                Icons.edit,
+                                size: 16,
+                                color: Colors.grey[400],
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: PathImage(
-                        path: section.photo.path,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
+                      const SizedBox(height: 12),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: PathImage(
+                          path: section.photo.path,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                        ),
                       ),
-                    ),
-                    if ((section.photo.caption?.trim().isNotEmpty ?? false) ||
-                        (section.photo.ocrSummary?.trim().isNotEmpty ??
-                            false)) ...[
-                      const SizedBox(height: 10),
-                      _PhotoContextCard(photo: section.photo),
+                      if ((section.photo.caption?.trim().isNotEmpty ?? false) ||
+                          (section.photo.ocrSummary?.trim().isNotEmpty ?? false)) ...[
+                        const SizedBox(height: 10),
+                        _PhotoContextCard(photo: section.photo),
+                      ],
                     ],
-                  ],
-                ),
-              );
-            }, childCount: _sections.length),
+                  ),
+                );
+              },
+              childCount: _sections.length,
+            ),
           ),
           const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
       ),
-      // ==========================================
-      // 🚀 核心修复：把片头逻辑转移到了“播放”按钮里，且不污染原数据！
-      // ==========================================
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          List<StorySection> finalVideoSections = [];
-          if (_sections.isNotEmpty) {
-            final random = math.Random();
-            final introPhoto =
-                _sections[random.nextInt(_sections.length)].photo;
-
-            final introSection = StorySection(
-              text: '__INTRO__',
-              photo: introPhoto,
-            );
-            // 在传给视频引擎前，临时拼装片头
-            finalVideoSections = [introSection, ..._sections];
-          }
-
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => StoryVideoPage(
-                title: widget.title,
-                subtitle: widget.subtitle,
-                sections: finalVideoSections, // 👈 把带有片头的数据安全地传过去
-                customMusicPath: widget.customMusicPath,
-                isHorizontal: widget.isHorizontal,
-                dynamicBeatData: widget.dynamicBeatData,
-                targetPlatform: widget.targetPlatform,
-              ),
-            ),
-          );
-        },
-        backgroundColor: const Color(0xFFD17EAD),
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.play_circle_fill, size: 28),
-        label: const Text(
-          '播放回忆',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 48),
+        child: FloatingActionButton.extended(
+          onPressed: _openVideoPreview,
+          backgroundColor: const Color(0xFFD17EAD),
+          foregroundColor: Colors.white,
+          icon: const Icon(Icons.play_circle_fill, size: 28),
+          label: const Text(
+            '播放回忆',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
         ),
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endContained,
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: BottomAppBar(
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            TextButton.icon(
-              onPressed: _closePage,
-              icon: const Icon(Icons.close),
-              label: const Text('关闭'),
-            ),
-            FilledButton.icon(
-              onPressed: _isSaving ? null : _saveStory,
-              icon: const Icon(Icons.save),
-              label: Text(_isSaving ? '保存中...' : '保存'),
-            ),
-            TextButton.icon(
-              onPressed: _shareStory,
-              icon: const Icon(Icons.share),
-              label: const Text('分享'),
-            ),
-          ],
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            children: [
+              TextButton.icon(
+                onPressed: _closePage,
+                icon: const Icon(Icons.close),
+                label: const Text('关闭'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: _isSaving ? null : _saveStory,
+                icon: const Icon(Icons.save),
+                label: Text(_isSaving ? '保存中...' : '保存'),
+              ),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: _openDigitalAlbum,
+                icon: const Icon(Icons.auto_stories),
+                label: const Text('数字相册'),
+              ),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: _shareStory,
+                icon: const Icon(Icons.share),
+                label: const Text('分享'),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
-}
-
-class StorySection {
-  final String text;
-  final Photo photo;
-
-  StorySection({required this.text, required this.photo});
 }
 
 class _PhotoContextCard extends StatelessWidget {
@@ -463,13 +617,13 @@ class _PhotoContextCard extends StatelessWidget {
           Text(
             '照片线索',
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              fontWeight: FontWeight.w700,
-              color: Colors.grey[700],
-            ),
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey[700],
+                ),
           ),
           if (caption != null && caption.isNotEmpty) ...[
             const SizedBox(height: 8),
-            _PhotoContextRow(label: 'AI Caption', value: caption),
+            _PhotoContextRow(label: '图片描述', value: caption),
           ],
           if (ocrSummary != null && ocrSummary.isNotEmpty) ...[
             const SizedBox(height: 8),
@@ -482,7 +636,10 @@ class _PhotoContextCard extends StatelessWidget {
 }
 
 class _PhotoContextRow extends StatelessWidget {
-  const _PhotoContextRow({required this.label, required this.value});
+  const _PhotoContextRow({
+    required this.label,
+    required this.value,
+  });
 
   final String label;
   final String value;
@@ -495,17 +652,17 @@ class _PhotoContextRow extends StatelessWidget {
         Text(
           label,
           style: Theme.of(context).textTheme.labelMedium?.copyWith(
-            fontWeight: FontWeight.w700,
-            color: Colors.grey[600],
-          ),
+                fontWeight: FontWeight.w700,
+                color: Colors.grey[600],
+              ),
         ),
         const SizedBox(height: 2),
         Text(
           value,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            height: 1.45,
-            color: Colors.grey[800],
-          ),
+                height: 1.45,
+                color: Colors.grey[800],
+              ),
         ),
       ],
     );

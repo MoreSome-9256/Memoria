@@ -1,17 +1,19 @@
+/// 首页，展示精选事件、最近照片和推荐入口。
+
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
 import 'dart:ui';
 import '../../service/photo_service.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
-import 'create_page.dart';
-import 'package:photo_manager/photo_manager.dart';
+import '../widgets/path_image.dart';
+import 'create_hub_page.dart';
 import 'event_detail_page.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -49,13 +51,11 @@ class _HomePageState extends State<HomePage> {
   // 📸 Hero Card 轮播逻辑 (保持不变)
   // ==========================================
   Future<void> _loadRecentPhotos() async {
-    final isar = PhotoService().isar;
-
-    var recentCandidates = await isar.photoEntitys
-        .where()
-        .sortByTimestampDesc()
-        .limit(100)
-        .findAll();
+    final _pb = ObjectBoxService().store.box<PhotoEntity>();
+    final _q = _pb.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
+    _q.limit = 100;
+    var recentCandidates = _q.find();
+    _q.close();
 
     var filtered = recentCandidates.where((p) {
       final ratio = p.width / p.height;
@@ -69,22 +69,17 @@ class _HomePageState extends State<HomePage> {
       return true;
     }).toList();
 
-    final selection = filtered.take(15).toList();
-    selection.shuffle();
+    final selection = filtered.take(15).toList()..shuffle();
+    final reconciledSelection = await PhotoService().reconcileAccessiblePhotos(
+      selection,
+    );
     // ==========================================
     // 🌟 新增：修复缓存路径失效问题
     // 遍历选中的照片，用永远不变的 assetId 换取最新有效路径
     // ==========================================
-    for (var photo in selection) {
-      final asset = await AssetEntity.fromId(photo.assetId);
-      final file = await asset?.file;
-      if (file != null && file.path.isNotEmpty) {
-        photo.path = file.path; // 将内存中的旧路径替换为新路径
-      }
-    }
-    if (selection.isNotEmpty && mounted) {
+    if (reconciledSelection.isNotEmpty && mounted) {
       setState(() {
-        _displayPhotos = selection;
+        _displayPhotos = reconciledSelection;
       });
       _startBackgroundTimer();
     }
@@ -105,20 +100,19 @@ class _HomePageState extends State<HomePage> {
   // 🧠 核心：本地智能回忆推荐引擎
   // ==========================================
   Future<void> _generateDiscoverCards() async {
-    final isar = PhotoService().isar;
     final now = DateTime.now();
     final List<Map<String, dynamic>> finalCards = [];
     const int maxCards = 2; // 页面最多展示 2 张卡片
 
     // 🥇 规则 1：时间策略（动态感知 年底/月底/往年今日）
-    final timeCard = await _buildTimeRuleCard(isar, now);
+    final timeCard = await _buildTimeRuleCard(now);
     if (timeCard != null) {
       finalCards.add(timeCard);
     }
 
     // 🥈 规则 2：内容画像策略（按照片数量降序）
     if (finalCards.length < maxCards) {
-      final contentCards = await _buildContentRuleCards(isar);
+      final contentCards = await _buildContentRuleCards();
       for (var card in contentCards) {
         if (finalCards.length >= maxCards) break;
         finalCards.add(card);
@@ -128,38 +122,45 @@ class _HomePageState extends State<HomePage> {
     // 🌟 新增：修复发现卡片封面图路径失效问题
     // 只更新每张卡片第一张图（封面）的路径即可，节省性能
     // ==========================================
-    for (var card in finalCards) {
-      List<PhotoEntity> photos = card['photos'];
-      if (photos.isNotEmpty) {
-        final firstPhoto = photos.first;
-        final asset = await AssetEntity.fromId(firstPhoto.assetId);
-        final file = await asset?.file;
-        if (file != null && file.path.isNotEmpty) {
-          firstPhoto.path = file.path;
-        }
-      }
-    }
-
     // 🥉 规则 3：地点保底策略
     if (finalCards.length < maxCards) {
-      final locationCards = await _buildLocationRuleCards(isar);
+      final locationCards = await _buildLocationRuleCards();
       for (var card in locationCards) {
         if (finalCards.length >= maxCards) break;
         finalCards.add(card);
       }
     }
 
+    final reconciledCards = <Map<String, dynamic>>[];
+    for (final card in finalCards) {
+      final photos =
+          (card['photos'] as List<PhotoEntity>?) ?? const <PhotoEntity>[];
+      final reconciledPhotos = await PhotoService().reconcileAccessiblePhotos(
+        photos,
+      );
+      if (reconciledPhotos.isEmpty) {
+        continue;
+      }
+      reconciledCards.add(<String, dynamic>{
+        ...card,
+        'photos': reconciledPhotos,
+      });
+      if (reconciledCards.length >= maxCards) {
+        break;
+      }
+    }
+
     if (mounted) {
       setState(() {
-        _discoverCards = finalCards;
+        _discoverCards = reconciledCards;
       });
     }
   }
 
   Future<Map<String, dynamic>?> _buildTimeRuleCard(
-    Isar isar,
     DateTime now,
   ) async {
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
     // 1. 年度总结 (12.20 - 1.10)
     if ((now.month == 12 && now.day >= 20) ||
         (now.month == 1 && now.day <= 10)) {
@@ -173,10 +174,10 @@ class _HomePageState extends State<HomePage> {
         59,
         59,
       ).millisecondsSinceEpoch;
-      final photos = await isar.photoEntitys
-          .filter()
-          .timestampBetween(start, end)
-          .findAll();
+      final _tq = photoBox.query(
+        PhotoEntity_.timestamp.between(start, end)).build();
+      final photos = _tq.find();
+      _tq.close();
 
       if (photos.length >= 10) {
         return _createCard(
@@ -202,10 +203,10 @@ class _HomePageState extends State<HomePage> {
         59,
         59,
       ).millisecondsSinceEpoch;
-      final photos = await isar.photoEntitys
-          .filter()
-          .timestampBetween(start, end)
-          .findAll();
+      final _tq = photoBox.query(
+        PhotoEntity_.timestamp.between(start, end)).build();
+      final photos = _tq.find();
+      _tq.close();
 
       if (photos.length >= 8) {
         return _createCard(
@@ -237,10 +238,10 @@ class _HomePageState extends State<HomePage> {
         59,
         59,
       ).millisecondsSinceEpoch;
-      final photos = await isar.photoEntitys
-          .filter()
-          .timestampBetween(start, end)
-          .findAll();
+      final _tq = photoBox.query(
+        PhotoEntity_.timestamp.between(start, end)).build();
+      final photos = _tq.find();
+      _tq.close();
       if (photos.isNotEmpty) {
         historyPhotos.addAll(photos);
         if (historyYear == now.year) historyYear = now.year - i;
@@ -261,12 +262,12 @@ class _HomePageState extends State<HomePage> {
     return null;
   }
 
-  Future<List<Map<String, dynamic>>> _buildContentRuleCards(Isar isar) async {
-    final recentPhotos = await isar.photoEntitys
-        .where()
-        .sortByTimestampDesc()
-        .limit(500)
-        .findAll();
+  Future<List<Map<String, dynamic>>> _buildContentRuleCards() async {
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final _cq = photoBox.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
+    _cq.limit = 500;
+    final recentPhotos = _cq.find();
+    _cq.close();
     List<PhotoEntity> pets = [], scenery = [], foods = [], happy = [];
 
     for (var p in recentPhotos) {
@@ -366,12 +367,12 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<List<Map<String, dynamic>>> _buildLocationRuleCards(Isar isar) async {
-    final recentPhotos = await isar.photoEntitys
-        .where()
-        .sortByTimestampDesc()
-        .limit(1000)
-        .findAll();
+  Future<List<Map<String, dynamic>>> _buildLocationRuleCards() async {
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final _lq = photoBox.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
+    _lq.limit = 1000;
+    final recentPhotos = _lq.find();
+    _lq.close();
     Map<String, List<PhotoEntity>> locationGroups = {};
     for (var p in recentPhotos) {
       final loc = p.city ?? p.province;
@@ -561,7 +562,7 @@ class _HomePageState extends State<HomePage> {
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.85),
+            color: Colors.white.withValues(alpha: 0.85),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: Colors.purple.shade100),
           ),
@@ -594,7 +595,7 @@ class _HomePageState extends State<HomePage> {
         color: Colors.grey.shade300,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -605,15 +606,19 @@ class _HomePageState extends State<HomePage> {
           Positioned.fill(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 1200),
-              child: hasPhotos
-                  ? Image.file(
-                      File(currentPhoto!.path),
+              child: hasPhotos && currentPhoto != null
+                  ? Stack(
                       key: ValueKey(currentPhoto.id),
-                      width: double.infinity,
-                      height: double.infinity,
-                      fit: BoxFit.cover,
-                      color: Colors.black.withOpacity(0.35),
-                      colorBlendMode: BlendMode.darken,
+                      fit: StackFit.expand,
+                      children: [
+                        PathImage(
+                          path: currentPhoto.path,
+                          width: double.infinity,
+                          height: double.infinity,
+                          fit: BoxFit.cover,
+                        ),
+                        Container(color: Colors.black.withValues(alpha: 0.35)),
+                      ],
                     )
                   : const Center(
                       child: Icon(
@@ -655,12 +660,12 @@ class _HomePageState extends State<HomePage> {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => const CreatePage(),
+                        builder: (context) => const CreateHubPage(),
                       ),
                     );
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white.withOpacity(0.95),
+                    backgroundColor: Colors.white.withValues(alpha: 0.95),
                     foregroundColor: Colors.purple.shade900,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(20),
@@ -730,11 +735,25 @@ class _HomePageState extends State<HomePage> {
     final firstPhoto = photos.isNotEmpty ? photos.first : null;
 
     return GestureDetector(
-      onTap: () {
+      onTap: () async {
         if (photos.isEmpty) return;
+        final reconciledPhotos = await PhotoService().reconcileAccessiblePhotos(
+          photos,
+        );
+        if (!context.mounted || reconciledPhotos.isEmpty) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                behavior: SnackBarBehavior.floating,
+                content: Text('这些照片已经在系统相册中删除，已从应用中移除。'),
+              ),
+            );
+          }
+          return;
+        }
 
         // 1. 组装合法的 UI 模型 Photo 列表
-        final mappedPhotos = photos
+        final mappedPhotos = reconciledPhotos
             .map(
               (p) => Photo(
                 id: p.assetId,
@@ -790,7 +809,7 @@ class _HomePageState extends State<HomePage> {
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.03),
+              color: Colors.black.withValues(alpha: 0.03),
               blurRadius: 8,
               offset: const Offset(0, 4),
             ),
@@ -806,7 +825,7 @@ class _HomePageState extends State<HomePage> {
                 height: 80,
                 color: Colors.white54,
                 child: firstPhoto != null
-                    ? Image.file(File(firstPhoto.path), fit: BoxFit.cover)
+                    ? PathImage(path: firstPhoto.path, fit: BoxFit.cover)
                     : Icon(
                         cardData['icon'] as IconData,
                         color: Colors.grey.shade600,

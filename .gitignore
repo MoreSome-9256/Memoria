@@ -32,6 +32,7 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+/android/.kotlin/
 
 # Symbolication related
 app.*.symbols
@@ -44,53 +45,52 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# cluade code
+# Claude Code
 CLAUDE.md
 
 # Ignore generated files
-*.g.dart
-*.freezed.dart
-*.config.dart
+**.g.dart
+**.freezed.dart
+**.config.dart
+!lib/objectbox-model.json
 
-# open code
+# OpenCode
 /doc/
 AGENTS.md
 opencode.json
-CLAUDE.md
 
-# test
+# Test and local run outputs
 /imgs/
+run_output.txt
+*_run_output.txt
 
-# --- AI Model & Checkpoint Files ---
-# 忽略 PyTorch 权重文件
+# AI model and checkpoint files
 *.pt
 *.pth
 /checkpoints/
 
-# 忽略 ONNX 模型及其外部数据文件
-
-# 忽略将来可能生成的 TFLite 文件
+# ONNX model artifacts and external data files
 *.tflite
 
-# 忽略导出的模型记录
+# Exported model directories
 /ai_tools/exported_models/
 
-# 忽略可再生成的标签词库与中间产物
+# Regenerated tag dictionaries and checkpoints
 /ai_tools/expanded_tags_vectors.json
 /ai_tools/expanded_tags_taxonomy.json
 /ai_tools/expanded_tags_taxonomy_checkpoint.json
 
-# 忽略 TensorFlow 的中间导出目录
+# Intermediate TensorFlow export directories
 /saved_model/
 /saved_model_quickgelu/
 /saved_model_silu/
 /saved_model_pseudo_gelu/
 /saved_model_pseudo_erf/
 
-
-# --- NCNN large runtime assets ---
-# 团队协作约定：超过几十 MB 的大文件不进 Git，统一通过群文件/网盘同步。
+# NCNN large runtime assets
+# Large runtime assets are synced outside Git by team convention.
 /assets/ncnn/mobileclip_s2/
+/assets/face/arcface.onnx
 /third_party/mobileclip_s2_export/
 /third_party/ncnn-android/
 /third_party/ncnn-windows/
@@ -99,7 +99,15 @@ CLAUDE.md
 /third_party/*.exe
 /third_party/mobileclip2-onnx/open_clip/
 
-# --- Runtime profile files (local secrets) ---
+# Local model artifacts synced outside Git
+*.onnx
+*.onnx.data
+/assets/expanded_tags_vectors.json
+/third_party/mobileclip2-onnx/onnx/
+/third_party/mobileclip2-onnx/my_custom_onnx/
+/third_party/ncnn-android-vulkan/
+
+# Runtime profile files (local secrets)
 /config/profiles/*.json
 !/config/profiles/*.example.json
 assets/local_vlm/*.gguf

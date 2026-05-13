@@ -1,3 +1,5 @@
+/// 照片描述服务，负责生成单张照片的标题和说明文字。
+
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -11,6 +13,8 @@ class PhotoCaptionService {
     : _llmService = llmService ?? LLMService();
 
   final LLMService _llmService;
+
+  bool get prefersAsyncGeneration => _llmService.isVisionApiConfigured;
 
   static const Set<String> _blockedRoleTags = <String>{
     '学生',
@@ -72,7 +76,11 @@ class PhotoCaptionService {
           takenAt: takenAt,
           isTextHeavy:
               isProbablyScreenshot ||
-              _looksTextHeavy(sanitizedVisualTags, sanitizedOcrTags, trimmedOcrText),
+              _looksTextHeavy(
+                sanitizedVisualTags,
+                sanitizedOcrTags,
+                trimmedOcrText,
+              ),
           faceCount: faceCount,
         );
         final cleaned = _cleanCaption(caption);
@@ -187,10 +195,7 @@ class PhotoCaptionService {
     final firstLine = ocrText
         .split(RegExp(r'[\r\n]+'))
         .map((line) => line.trim())
-        .firstWhere(
-          (line) => line.isNotEmpty,
-          orElse: () => '',
-        );
+        .firstWhere((line) => line.isNotEmpty, orElse: () => '');
     if (firstLine.isNotEmpty) {
       final trimmed = firstLine.length > 14
           ? firstLine.substring(0, 14)

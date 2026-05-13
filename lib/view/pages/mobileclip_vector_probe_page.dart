@@ -1,3 +1,5 @@
+/// MobileCLIP 向量探测页面，用于查看嵌入结果和调试输入输出。
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -10,6 +12,7 @@ import '../../data/tag_taxonomy_v2.dart';
 import '../../service/mobileclip_vision_service.dart';
 import '../../service/ncnn_mobileclip_native_service.dart';
 import '../../service/semantic_matching_service.dart';
+import '../../service/vector_index_benchmark_service.dart';
 
 class MobileClipVectorProbePage extends StatefulWidget {
   const MobileClipVectorProbePage({super.key});
@@ -21,13 +24,17 @@ class MobileClipVectorProbePage extends StatefulWidget {
 
 class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
   final MobileClipVisionService _visionService = MobileClipVisionService();
-  final NcnnMobileClipNativeService _ncnnService = NcnnMobileClipNativeService();
+  final NcnnMobileClipNativeService _ncnnService =
+      NcnnMobileClipNativeService();
   final SemanticMatchingService _semanticService = SemanticMatchingService();
+  final VectorIndexStorageBenchmarkService _storageBenchmarkService =
+      VectorIndexStorageBenchmarkService();
 
   bool _isRunning = false;
   String? _errorMessage;
   String? _zeroShotWarning;
   String? _reportFilePath;
+  VectorIndexStorageBenchmarkReport? _storageBenchmarkReport;
   List<_VectorProbeResult> _results = const <_VectorProbeResult>[];
   List<_ZeroShotResult> _zeroShotResults = const <_ZeroShotResult>[];
 
@@ -42,6 +49,7 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
       _isRunning = true;
       _errorMessage = null;
       _zeroShotWarning = null;
+      _storageBenchmarkReport = null;
     });
 
     try {
@@ -50,7 +58,9 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
       var zeroShotEnabled = true;
       try {
         await _semanticService.warmUp();
-        await _semanticService.preCacheTagMap(memoriaMasterTaxonomyPromptToLabel);
+        await _semanticService.preCacheTagMap(
+          memoriaMasterTaxonomyPromptToLabel,
+        );
       } catch (error) {
         zeroShotEnabled = false;
         final message = error.toString();
@@ -59,15 +69,18 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
               '当前设备内置 onnxruntime 不支持 ArgMax 算子，已自动跳过零样本打标，只保留视觉向量探针。\n\n'
               '建议：升级 onnxruntime Android 运行库后再开启语义打标。';
         } else {
-          _zeroShotWarning =
-              '零样本打标初始化失败，已自动跳过：$message';
+          _zeroShotWarning = '零样本打标初始化失败，已自动跳过：$message';
         }
       }
       final output = <_VectorProbeResult>[];
 
       for (final sample in _probeSamples) {
-        final bytes = (await rootBundle.load(sample.assetPath)).buffer.asUint8List();
-        final input = await _visionService.preprocessImageBytesForBenchmark(bytes);
+        final bytes = (await rootBundle.load(
+          sample.assetPath,
+        )).buffer.asUint8List();
+        final input = await _visionService.preprocessImageBytesForBenchmark(
+          bytes,
+        );
         final onnxVector = await _visionService.embedPreprocessedInput(input);
         final ncnnVector = await _ncnnService.encodeImageBytes(bytes);
 
@@ -101,8 +114,12 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
         }
       }
 
+      final storageBenchmarkReport = await _storageBenchmarkService
+          .runPhotoEmbeddingReadBenchmark();
+
       final report = <String, Object?>{
         'results': output.map((item) => item.toJson()).toList(growable: false),
+        'storageBenchmark': storageBenchmarkReport.toJson(),
       };
       final reportFilePath = await _writeReportToFile(report);
       debugPrint('MOBILECLIP_VECTOR_PROBE_JSON=${jsonEncode(report)}');
@@ -115,6 +132,7 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
         _results = output;
         _zeroShotResults = zsOutput;
         _reportFilePath = reportFilePath;
+        _storageBenchmarkReport = storageBenchmarkReport;
       });
     } catch (error) {
       if (!mounted) {
@@ -173,6 +191,8 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
                 ),
               ),
             ),
+          if (_storageBenchmarkReport != null)
+            _StorageBenchmarkCard(report: _storageBenchmarkReport!),
           if (_isRunning)
             const Card(
               child: Padding(
@@ -265,25 +285,31 @@ class _VectorProbeCard extends StatelessWidget {
                       const SizedBox(height: 6),
                       SelectableText(result.sample.assetPath),
                       const SizedBox(height: 6),
-                      Text('cosine(onnx, ncnn): ${result.cosine.toStringAsFixed(6)}'),
-                      Text('l2(onnx, ncnn): ${result.l2Distance.toStringAsFixed(6)}'),
+                      Text(
+                        'cosine(onnx, ncnn): ${result.cosine.toStringAsFixed(6)}',
+                      ),
+                      Text(
+                        'l2(onnx, ncnn): ${result.l2Distance.toStringAsFixed(6)}',
+                      ),
                     ],
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 12),
-            SelectableText('onnx first16: ${_formatVectorSlice(result.onnxVector, 16)}'),
+            SelectableText(
+              'onnx first16: ${_formatVectorSlice(result.onnxVector, 16)}',
+            ),
             const SizedBox(height: 8),
-            SelectableText('ncnn first16: ${_formatVectorSlice(result.ncnnVector, 16)}'),
+            SelectableText(
+              'ncnn first16: ${_formatVectorSlice(result.ncnnVector, 16)}',
+            ),
             const SizedBox(height: 8),
             ExpansionTile(
               tilePadding: EdgeInsets.zero,
               childrenPadding: EdgeInsets.zero,
               title: const Text('完整向量 JSON'),
-              children: [
-                SelectableText(jsonEncode(result.toJson())),
-              ],
+              children: [SelectableText(jsonEncode(result.toJson()))],
             ),
           ],
         ),
@@ -382,10 +408,7 @@ class _ZeroShotCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              result.label,
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
+            Text(result.label, style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 10),
             ...result.scored.map((entry) {
               final pct = entry.score.clamp(0.0, 1.0);
@@ -404,12 +427,13 @@ class _ZeroShotCard extends StatelessWidget {
                         ),
                         Text(
                           entry.score.toStringAsFixed(4),
-                          style: Theme.of(
-                            context,
-                          ).textTheme.bodySmall?.copyWith(
-                            fontFeatures: const [FontFeature.tabularFigures()],
-                            color: colorScheme.primary,
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                                color: colorScheme.primary,
+                              ),
                         ),
                       ],
                     ),
@@ -419,14 +443,79 @@ class _ZeroShotCard extends StatelessWidget {
                       child: LinearProgressIndicator(
                         value: pct,
                         minHeight: 7,
-                        backgroundColor:
-                            colorScheme.surfaceContainerHighest,
+                        backgroundColor: colorScheme.surfaceContainerHighest,
                       ),
                     ),
                   ],
                 ),
               );
             }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StorageBenchmarkCard extends StatelessWidget {
+  const _StorageBenchmarkCard({required this.report});
+
+  final VectorIndexStorageBenchmarkReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final speedup = report.speedupRatio;
+
+    return Card(
+      margin: const EdgeInsets.only(top: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Isar vs ObjectBox Read Benchmark',
+              style: textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            SelectableText('modelVersion: ${report.modelVersion}'),
+            SelectableText(
+              'samples: ${report.actualSampleCount}/${report.requestedSampleCount}, rounds: ${report.rounds}',
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Isar mean/p90: ${report.isarMeanReadMs.toStringAsFixed(3)} ms / ${report.isarP90ReadMs.toStringAsFixed(3)} ms',
+            ),
+            Text(
+              'ObjectBox mean/p90: ${report.objectBoxMeanReadMs.toStringAsFixed(3)} ms / ${report.objectBoxP90ReadMs.toStringAsFixed(3)} ms',
+            ),
+            if (speedup != null)
+              Text(
+                'speedup: ${speedup.toStringAsFixed(2)}x',
+                style: textTheme.bodyMedium?.copyWith(
+                  fontFeatures: const <FontFeature>[
+                    FontFeature.tabularFigures(),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 8),
+            SelectableText(
+              'Isar rounds: ${report.isarReadRoundsMs.map((e) => e.toStringAsFixed(3)).join(', ')}',
+            ),
+            const SizedBox(height: 4),
+            SelectableText(
+              'ObjectBox rounds: ${report.objectBoxReadRoundsMs.map((e) => e.toStringAsFixed(3)).join(', ')}',
+            ),
+            if (report.warnings.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              ...report.warnings.map(
+                (warning) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(warning),
+                ),
+              ),
+            ],
           ],
         ),
       ),

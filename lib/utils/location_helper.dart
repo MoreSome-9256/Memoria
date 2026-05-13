@@ -1,3 +1,5 @@
+/// 地理位置辅助工具，负责把地址组件归一化为可比较的位置字符串。
+
 class LocationInfo {
   final String? province;
   final String? city;

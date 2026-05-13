@@ -1,3 +1,5 @@
+/// 找回密码页面，提供账号密码重置入口。
+
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';

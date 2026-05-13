@@ -1,3 +1,5 @@
+/// 注册页面，负责新账号创建和基础信息提交。
+
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';

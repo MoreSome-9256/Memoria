@@ -1,3 +1,5 @@
+/// 人脸裁剪辅助工具，提供裁剪框换算和图片裁切的通用逻辑。
+
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -10,9 +12,23 @@ class FaceCropUtil {
 
   static const int debugThumbnailSize = 192;
 
+  static Uint8List encodeFaceImageToJpegBytes(
+    img.Image faceImage, {
+    int quality = 92,
+  }) {
+    return Uint8List.fromList(img.encodeJpg(faceImage, quality: quality));
+  }
+
   static Future<img.Image?> decodeSourceImage(File sourceFile) async {
     final bytes = await sourceFile.readAsBytes();
-    return img.decodeImage(bytes);
+    return decodeSourceImageBytes(bytes);
+  }
+
+  static img.Image? decodeSourceImageBytes(Uint8List sourceBytes) {
+    if (sourceBytes.isEmpty) {
+      return null;
+    }
+    return img.decodeImage(sourceBytes);
   }
 
   static img.Image? cropFaceImage({
@@ -55,7 +71,7 @@ class FaceCropUtil {
       return null;
     }
 
-    final encoded = Uint8List.fromList(img.encodeJpg(cropped, quality: 92));
+    final encoded = encodeFaceImageToJpegBytes(cropped);
     final tempDir = await getTemporaryDirectory();
     final file = File('${tempDir.path}/face_${photoId}_$faceIndex.jpg');
     await file.writeAsBytes(encoded, flush: true);
@@ -67,7 +83,7 @@ class FaceCropUtil {
     required int photoId,
     required int faceIndex,
   }) async {
-    final encoded = Uint8List.fromList(img.encodeJpg(faceImage, quality: 92));
+    final encoded = encodeFaceImageToJpegBytes(faceImage);
     final tempDir = await getTemporaryDirectory();
     final file = File('${tempDir.path}/face_${photoId}_$faceIndex.jpg');
     await file.writeAsBytes(encoded, flush: true);
@@ -85,7 +101,7 @@ class FaceCropUtil {
       size: debugThumbnailSize,
       interpolation: img.Interpolation.cubic,
     );
-    final encoded = Uint8List.fromList(img.encodeJpg(resized, quality: 88));
+    final encoded = encodeFaceImageToJpegBytes(resized, quality: 88);
     final tempDir = await getTemporaryDirectory();
     final file = File(
       '${tempDir.path}/face_debug_${photoId}_${faceIndex}_$uniqueSuffix.jpg',

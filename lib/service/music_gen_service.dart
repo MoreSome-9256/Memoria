@@ -1,3 +1,5 @@
+/// 音乐生成服务，负责把故事上下文转换为可播放的音乐资源。
+
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;

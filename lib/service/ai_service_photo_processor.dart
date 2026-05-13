@@ -18,6 +18,9 @@ class _AiPhotoProcessor {
       final prepared = await _prepareAnalysisInputConfigured(request.photo);
       if (prepared == null) {
         profile.outcome = 'prepare_failed';
+        await PhotoService().removeUnavailablePhotosByIds(<int>[
+          request.photo.id,
+        ]);
         return _PhotoProcessResult.failed(profile: profile);
       }
 

@@ -11,6 +11,7 @@ import 'package:photo_album/service/travel_memory_detector.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 
 import 'face_cluster_debug_page.dart';
+import 'junk_photo_trash_page.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
 
@@ -384,6 +385,19 @@ class _ProfilePageState extends State<ProfilePage> {
             '相册 AI 模型设定',
             '切换模型及其运作形式',
             onTap: _showModelTypeSettings,
+          ),
+          _buildSettingsTile(
+            context,
+            Icons.recycling,
+            '低价值照片回收站',
+            '查看已标记的低质量图片，并恢复为普通照片',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const JunkPhotoTrashPage(),
+                ),
+              );
+            },
           ),
           _buildSettingsTile(
             context,

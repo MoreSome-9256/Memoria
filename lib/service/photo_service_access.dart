@@ -3,6 +3,60 @@
 part of 'photo_service.dart';
 
 extension PhotoServiceAccess on PhotoService {
+  Future<int> removeUnavailablePhotosByIds(Iterable<int> photoIds) async {
+    final ids = photoIds.where((id) => id > 0).toSet().toList(growable: false);
+    if (ids.isEmpty) {
+      return 0;
+    }
+
+    final removedIds = <int>[];
+    final repairedPhotos = <PhotoEntity>[];
+
+    for (final id in ids) {
+      final photo = _photoBox.get(id);
+      if (photo == null) {
+        continue;
+      }
+
+      final currentFile = photo.path.trim().isEmpty ? null : File(photo.path);
+      if (currentFile != null && await currentFile.exists()) {
+        continue;
+      }
+
+      final asset = await AssetEntity.fromId(photo.assetId);
+      if (asset == null) {
+        removedIds.add(photo.id);
+        continue;
+      }
+
+      final refreshedFile = await _resolveReadableFile(asset);
+      if (refreshedFile != null && await refreshedFile.exists()) {
+        photo.path = refreshedFile.path;
+        final refreshedTimestamp = _resolveBestTimestampMs(
+          asset,
+          refreshedFile,
+        );
+        if (PhotoFilterHelper.hasValidTimestamp(refreshedTimestamp)) {
+          photo.timestamp = refreshedTimestamp;
+        }
+        repairedPhotos.add(photo);
+      } else {
+        removedIds.add(photo.id);
+      }
+    }
+
+    if (repairedPhotos.isNotEmpty) {
+      _photoBox.putMany(repairedPhotos);
+      for (final photo in repairedPhotos) {
+        _photoAccessCache.remove('id:${photo.id}');
+        _photoAccessCache.remove('asset:${photo.assetId}');
+      }
+    }
+
+    await _removePhotoRecordsByIds(removedIds);
+    return removedIds.length;
+  }
+
   Future<int> _removeUnavailablePhotos() async {
     final localPhotos = _photoBox.getAll();
     if (localPhotos.isEmpty) {
@@ -59,16 +113,14 @@ extension PhotoServiceAccess on PhotoService {
       return 0;
     }
 
-    _store.runInTransaction(TxMode.write, () {
-      if (removedIds.isNotEmpty) {
-        _photoBox.removeMany(removedIds);
+    if (repairedPhotos.isNotEmpty) {
+      _photoBox.putMany(repairedPhotos);
+      for (final photo in repairedPhotos) {
+        _photoAccessCache.remove('id:${photo.id}');
+        _photoAccessCache.remove('asset:${photo.assetId}');
       }
-      if (repairedPhotos.isNotEmpty) {
-        _photoBox.putMany(repairedPhotos);
-      }
-    });
-    _photoEmbeddingIndexRepository.deleteByPhotoIds(removedIds);
-    _faceEmbeddingIndexRepository.deleteByPhotoIds(removedIds);
+    }
+    await _removePhotoRecordsByIds(removedIds);
 
     if (repairedPhotos.isNotEmpty) {
       debugPrint("🩹 已修复 ${repairedPhotos.length} 条失效照片路径");
@@ -182,38 +234,13 @@ extension PhotoServiceAccess on PhotoService {
               .toList(growable: false);
     final removedPhotoIds = removedIds.toList(growable: false);
 
-    final staleFaces = removedPhotoIds.isEmpty
-        ? const <FaceEntity>[]
-        : () {
-            final q = _faceBox
-                .query(FaceEntity_.photoId.oneOf(removedPhotoIds))
-                .build();
-            try {
-              return q.find();
-            } finally {
-              q.close();
-            }
-          }();
-
-    if (removedPhotoIds.isNotEmpty || repairedPhotos.isNotEmpty) {
-      _store.runInTransaction(TxMode.write, () {
-        if (staleFaces.isNotEmpty) {
-          _faceBox.removeMany(
-            staleFaces.map((item) => item.id).toList(growable: false),
-          );
-        }
-        if (removedPhotoIds.isNotEmpty) {
-          _photoBox.removeMany(removedPhotoIds);
-        }
-        if (repairedPhotos.isNotEmpty) {
-          _photoBox.putMany(repairedPhotos);
-        }
-      });
+    if (repairedPhotos.isNotEmpty) {
+      _photoBox.putMany(repairedPhotos);
     }
-
-    if (removedPhotoIds.isNotEmpty) {
-      _photoEmbeddingIndexRepository.deleteByPhotoIds(removedPhotoIds);
-      _faceEmbeddingIndexRepository.deleteByPhotoIds(removedPhotoIds);
+    await _removePhotoRecordsByIds(removedPhotoIds);
+    for (final photo in repairedPhotos) {
+      _photoAccessCache.remove('id:${photo.id}');
+      _photoAccessCache.remove('asset:${photo.assetId}');
     }
 
     final result = candidates
@@ -233,6 +260,78 @@ extension PhotoServiceAccess on PhotoService {
       );
     }
     return result;
+  }
+
+  Future<void> _removePhotoRecordsByIds(Iterable<int> photoIds) async {
+    final ids = photoIds.where((id) => id > 0).toSet().toList(growable: false);
+    if (ids.isEmpty) {
+      return;
+    }
+
+    final removedPhotos = _photoBox.getMany(ids).whereType<PhotoEntity>().toList(
+      growable: false,
+    );
+    final removedPhotoIdSet = ids.toSet();
+
+    final staleFaceIds = <int>[];
+    final faceQ = _faceBox.query(FaceEntity_.photoId.oneOf(ids)).build();
+    try {
+      staleFaceIds.addAll(faceQ.findIds());
+    } finally {
+      faceQ.close();
+    }
+
+    final eventsToRemove = <int>[];
+    final eventsToUpdate = <EventEntity>[];
+    final allEvents = _eventBox.getAll();
+    for (final event in allEvents) {
+      final originalCount = event.photoIds.length;
+      if (originalCount == 0) {
+        continue;
+      }
+      event.photoIds = event.photoIds
+          .where((photoId) => !removedPhotoIdSet.contains(photoId))
+          .toList(growable: false);
+      if (event.photoIds.length == originalCount) {
+        continue;
+      }
+      if (event.photoIds.isEmpty) {
+        eventsToRemove.add(event.id);
+        continue;
+      }
+      event.photoCount = event.photoIds.length;
+      if (event.coverPhotoId == null ||
+          removedPhotoIdSet.contains(event.coverPhotoId)) {
+        event.coverPhotoId = event.photoIds.first;
+      }
+      eventsToUpdate.add(event);
+    }
+
+    _store.runInTransaction(TxMode.write, () {
+      if (staleFaceIds.isNotEmpty) {
+        _faceBox.removeMany(staleFaceIds);
+      }
+      if (eventsToRemove.isNotEmpty) {
+        _eventBox.removeMany(eventsToRemove);
+      }
+      if (eventsToUpdate.isNotEmpty) {
+        _eventBox.putMany(eventsToUpdate);
+      }
+      _photoBox.removeMany(ids);
+    });
+
+    _photoEmbeddingIndexRepository.deleteByPhotoIds(ids);
+    _faceEmbeddingIndexRepository.deleteByPhotoIds(ids);
+    for (final photo in removedPhotos) {
+      _photoAccessCache.remove('id:${photo.id}');
+      _photoAccessCache.remove('asset:${photo.assetId}');
+    }
+
+    debugPrint(
+      '🧹 已移除不可访问照片记录: photos=${ids.length} '
+      'faces=${staleFaceIds.length} eventsUpdated=${eventsToUpdate.length} '
+      'eventsRemoved=${eventsToRemove.length}',
+    );
   }
 
   String _photoAccessCacheKey(PhotoEntity photo) {

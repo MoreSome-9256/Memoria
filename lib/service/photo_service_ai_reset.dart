@@ -3,6 +3,23 @@
 part of 'photo_service.dart';
 
 extension PhotoServiceAiReset on PhotoService {
+  Future<List<PhotoEntity>> loadJunkCandidatePhotos() async {
+    final query = _photoBox
+        .query(PhotoEntity_.isAiAnalyzed.equals(true))
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    final photos = query.find();
+    query.close();
+    final junkPhotos = photos
+        .where(
+          (photo) =>
+              photo.aiTags?.contains(JunkPhotoFilterService.junkCandidateTag) ??
+              false,
+        )
+        .toList(growable: false);
+    return reconcileAccessiblePhotos(junkPhotos);
+  }
+
   Future<int> requeueLatestPhotosForAi({int? maxPhotos}) async {
     final query = _photoBox
         .query()
@@ -131,6 +148,7 @@ extension PhotoServiceAiReset on PhotoService {
 
     _store.runInTransaction(TxMode.write, () => _photoBox.putMany(photos));
     _photoEmbeddingIndexRepository.deleteByPhotoIds(normalizedIds);
+    _faceEmbeddingIndexRepository.deleteByPhotoIds(normalizedIds);
 
     debugPrint('🔁 已将 $updatedCount 张低质量候选重新加入正常 AI 打标队列');
     return updatedCount;

@@ -12,11 +12,19 @@ extension AIServicePipeline on AIService {
   }
 
   void _enqueueAsyncCaption(_AsyncCaptionTask task) {
+    if (_stopRequested) {
+      _disposeSkippedCaptionTask(task);
+      return;
+    }
     _pendingCaptionTasks.addLast(task);
     _pumpAsyncCaptionQueue();
   }
 
   void _pumpAsyncCaptionQueue() {
+    if (_stopRequested) {
+      _clearPendingCaptionTasks();
+      return;
+    }
     while (_activeCaptionTasks < AIService._maxConcurrentCaptionWorkers &&
         _pendingCaptionTasks.isNotEmpty) {
       final task = _pendingCaptionTasks.removeFirst();
@@ -63,6 +71,32 @@ extension AIServicePipeline on AIService {
       _activeCaptionTasks = math.max(0, _activeCaptionTasks - 1);
       _pumpAsyncCaptionQueue();
     }
+  }
+
+  void _clearPendingCaptionTasks() {
+    if (_pendingCaptionTasks.isEmpty) {
+      return;
+    }
+    final skipped = _pendingCaptionTasks.length;
+    while (_pendingCaptionTasks.isNotEmpty) {
+      _disposeSkippedCaptionTask(_pendingCaptionTasks.removeFirst());
+    }
+    debugPrint('🛑 已清空待生成 caption 队列: $skipped 个任务');
+  }
+
+  void _disposeSkippedCaptionTask(_AsyncCaptionTask task) {
+    if (!task.deleteImageFileAfterUse) {
+      return;
+    }
+    unawaited(
+      Future<void>(() async {
+        try {
+          if (await task.imageFile.exists()) {
+            await task.imageFile.delete();
+          }
+        } catch (_) {}
+      }),
+    );
   }
 
   Future<void> _updatePhotoCaption(int photoId, String caption) async {

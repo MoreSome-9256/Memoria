@@ -28,6 +28,7 @@ import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_embedding_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'ocr_service.dart';
+import 'photo_service.dart';
 import 'photo_caption_service.dart';
 
 part 'ai_service_progress.dart';

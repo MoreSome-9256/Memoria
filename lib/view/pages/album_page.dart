@@ -781,7 +781,9 @@ class _AlbumPageState extends State<AlbumPage> {
                 label: Text(progress.isPaused ? '继续' : '暂停'),
               ),
               TextButton.icon(
-                onPressed: progress.isStopping ? null : aiService.stopAnalysis,
+                onPressed: progress.isStopping
+                    ? null
+                    : () => unawaited(_endCurrentAnalysisRound()),
                 icon: const Icon(Icons.stop_circle_outlined),
                 label: const Text('结束本轮'),
               ),
@@ -790,6 +792,31 @@ class _AlbumPageState extends State<AlbumPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _endCurrentAnalysisRound() async {
+    try {
+      await AIService().endCurrentRoundSafely();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('已安全结束当前 AI 任务队列。'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('结束当前任务失败: $error'),
+        ),
+      );
+    }
   }
 
   String _formatDurationCompact(Duration duration) {

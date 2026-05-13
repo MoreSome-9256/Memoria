@@ -160,6 +160,17 @@ class _AiPipelineRunner {
     var inflightCount = 0;
     var activeWorkerCount = 1;
     var engineBootstrapped = false;
+    var junkReportPublished = false;
+    void publishJunkReportIfNeeded() {
+      if (junkReportPublished || junkCandidates.isEmpty) {
+        return;
+      }
+      junkReportPublished = true;
+      replacePendingJunkCleanupReport(
+        JunkPhotoCleanupReport.fromCandidates(junkCandidates),
+      );
+    }
+
     final baselineWorkItems = math.max(1, math.min(batchSize, targetTotal));
     final maxWorkerCount = _resolveWorkerCount(
       math.max(baselineWorkItems, targetTotal),
@@ -518,11 +529,7 @@ class _AiPipelineRunner {
         ...workers,
       ]);
 
-      if (junkCandidates.isNotEmpty) {
-        replacePendingJunkCleanupReport(
-          JunkPhotoCleanupReport.fromCandidates(junkCandidates),
-        );
-      }
+      publishJunkReportIfNeeded();
 
       if (affectedEventIds.isNotEmpty) {
         await EventService().refreshEventSmartInfo(affectedEventIds.toList());
@@ -532,6 +539,7 @@ class _AiPipelineRunner {
       pipelineProfiler.logFinalSummary();
       await mobileClipTagService.endWorkflowSession();
       await mobileClipEmbeddingService.endWorkflowSession();
+      publishJunkReportIfNeeded();
 
       final remainingQ = photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
       final remainingPending = remainingQ.count();

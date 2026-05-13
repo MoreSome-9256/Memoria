@@ -752,7 +752,7 @@ class _RecommendationPreviewCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _RecommendationCover(photo: card.cover),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               Row(
                 children: [
                   Container(

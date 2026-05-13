@@ -45,13 +45,13 @@ dependencies:
   # ➕ 新增：底层原生图片压缩库
   flutter_image_compress: ^2.4.0
   # ➕ 动态权限申请库（定位必备）
-  permission_handler: 11.3.1
+  permission_handler: ^12.0.1
   flutter_markdown_plus: ^1.0.7
   onnxruntime: ^1.4.1
   image: ^4.2.0
   ffi: ^2.1.3
   shared_preferences: ^2.5.3
-  flutter_local_notifications: ^19.4.2
+  flutter_local_notifications: ^21.0.0
   audioplayers: ^6.6.0
   flutter_animate: ^4.5.2
   ffmpeg_kit_flutter_new: ^4.1.0
@@ -177,6 +177,3 @@ flutter_icons:
   android: true
   ios: true
   image_path: "assets/images/app_icon.png"
-
-dependency_overrides:
-  sqflite_android: 2.4.0

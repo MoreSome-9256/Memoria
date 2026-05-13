@@ -81,10 +81,10 @@ class _AlbumPageState extends State<AlbumPage> {
   late Stream<_AlbumTagBrowserData> _albumTagBrowserStream;
 
   static const int _fullRefreshOption = -1;
+  static const int _scanRemainingOption = 0x7fffffff;
   static const List<int> _refreshPhotoOptions = <int>[
     100,
-    300,
-    500,
+    _scanRemainingOption,
     _fullRefreshOption,
   ];
 
@@ -95,6 +95,8 @@ class _AlbumPageState extends State<AlbumPage> {
 
     final scopeLabel = recentPhotoLimit == null
         ? '全部照片'
+        : recentPhotoLimit == _scanRemainingOption
+        ? '剩余所有照片'
         : '下一批 $recentPhotoLimit 张';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -266,13 +268,24 @@ class _AlbumPageState extends State<AlbumPage> {
                 ),
                 ..._refreshPhotoOptions.map((option) {
                   final isFull = option == _fullRefreshOption;
-                  final label = isFull ? '全量安全重建' : '跑下一批 $option 张';
+                  final isRemaining = option == _scanRemainingOption;
+                  final label = isFull
+                      ? '全量安全重建'
+                      : isRemaining
+                      ? '跑剩余所有'
+                      : '跑下一批 $option 张';
                   final subtitle = isFull
                       ? '清空本地缓存后重新扫描全部照片，并在后台补齐待处理标签'
+                      : isRemaining
+                      ? '从最新照片开始持续扫描，直到遍历完整个系统相册'
                       : '从最新照片开始收集 $option 张新照片，并把它们加入 AI 打标队列';
                   return ListTile(
                     leading: Icon(
-                      isFull ? Icons.all_inclusive : Icons.flash_on,
+                      isFull
+                          ? Icons.all_inclusive
+                          : isRemaining
+                          ? Icons.done_all
+                          : Icons.flash_on,
                     ),
                     title: Text(label),
                     subtitle: Text(subtitle),

@@ -70,7 +70,7 @@ class _PhotoScanCoordinator {
       return _emptyPlan(totalBefore);
     }
 
-    final targetNew = math.max(1, math.min(500, maxAssets ?? 50));
+    final targetNew = math.max(1, maxAssets ?? 50);
     const pageSize = 50;
 
     var cursor = 0;

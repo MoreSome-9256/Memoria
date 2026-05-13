@@ -111,7 +111,7 @@ class AlbumRefreshService {
 
   // ── 增量扫描（"下一批 N 张" 路径）───────────────────────────────
   Future<AlbumRefreshResult> _runIncrementalScan(int? recentPhotoLimit) async {
-    final batchSize = math.max(10, math.min(1000, recentPhotoLimit ?? 100));
+    final batchSize = math.max(10, recentPhotoLimit ?? 100);
 
     _setProgress(
       AlbumRefreshStage.scanning,

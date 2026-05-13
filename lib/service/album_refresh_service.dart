@@ -1,5 +1,3 @@
-/// 相册刷新服务，负责同步照片库变更并刷新相关缓存。
-
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -22,17 +20,15 @@ class AlbumRefreshProgress {
     required this.message,
   });
 
-  factory AlbumRefreshProgress.idle() {  // 默认状态，隐藏进度提示
-    return const AlbumRefreshProgress(
-      stage: AlbumRefreshStage.idle,
-      isRunning: false,
-      progress: 0,
-      title: '',
-      message: '',
-    );
-  }
+  factory AlbumRefreshProgress.idle() => const AlbumRefreshProgress(
+    stage: AlbumRefreshStage.idle,
+    isRunning: false,
+    progress: 0,
+    title: '',
+    message: '',
+  );
 
-  factory AlbumRefreshProgress.running({  
+  factory AlbumRefreshProgress.running({
     required AlbumRefreshStage stage,
     required double progress,
     required String title,
@@ -76,183 +72,170 @@ class AlbumRefreshService {
   AlbumRefreshService._internal();
 
   static final AlbumRefreshService _instance = AlbumRefreshService._internal();
-
   factory AlbumRefreshService() => _instance;
 
   final ValueNotifier<AlbumRefreshProgress> _progressNotifier =
       ValueNotifier<AlbumRefreshProgress>(AlbumRefreshProgress.idle());
-
   bool _isRunning = false;
-  final Map<int, int> _scanOffsetByChunk = <int, int>{};
 
   ValueListenable<AlbumRefreshProgress> get progressListenable =>
       _progressNotifier;
-
   bool get isRunning => _isRunning;
 
-  void resetScanOffsets() {
-    _scanOffsetByChunk.clear();
-  }
-
+  // ── ★ 唯一入口 ──────────────────────────────────────────────────
   Future<AlbumRefreshResult?> startRefresh({
     bool clearCacheFirst = false,
     int? recentPhotoLimit,
   }) async {
-    if (_isRunning) {
-      debugPrint('⏭️ 相册刷新任务已在运行，跳过重复启动');
-      return null;
-    }
-
+    if (_isRunning) return null;
     _isRunning = true;
 
     try {
-      final normalizedChunk = recentPhotoLimit == null
-          ? null
-          : math.max(1, recentPhotoLimit);
-      final currentOffset = normalizedChunk == null
-          ? 0
-          : (_scanOffsetByChunk[normalizedChunk] ?? 0);
-      _setProgress(
-        stage: AlbumRefreshStage.scanning,
-        progress: 0.08,
-        title: '正在扫描下一批图片',
-        message: _buildScopeMessage(
-          recentPhotoLimit,
-          fallback: '准备读取系统相册资源',
-        ),
-      );
-
-      late final PhotoScanSummary scanSummary;
       if (clearCacheFirst) {
-        await AIService().stopAnalysisAndWait();
-        _scanOffsetByChunk.clear();
-        scanSummary = await PhotoService().rebuildAllCachedData(
-          maxAssets: recentPhotoLimit,
-        );
-      } else {
-        final mediaSummary = await MediaAssetSyncService().reconcile(
-          pageSize: normalizedChunk == null ? 200 : normalizedChunk.clamp(100, 300),
-        );
-        unawaited(
-          MediaEmbeddingIndexService().encodePending(
-            maxConcurrency: 2,
-            batchSize: normalizedChunk ?? 300,
-            inputSize: 336,
-          ),
-        );
-        debugPrint(
-          '🧭 ObjectBox media reconcile: discovered=${mediaSummary.discovered} '
-          'upsert=${mediaSummary.insertedOrUpdated} removed=${mediaSummary.removed} '
-          'limited=${mediaSummary.limitedAccess}',
-        );
-
-        scanSummary = await PhotoService().scanAndSyncPhotosWithOffset(
-          maxAssets: normalizedChunk,
-          offsetFromNewest: currentOffset,
-        );
-        if (normalizedChunk != null) {
-          final consumed = scanSummary.scannedCount;
-          if (consumed > 0) {
-            _scanOffsetByChunk[normalizedChunk] = currentOffset + consumed;
-          }
-          if (consumed < normalizedChunk) {
-            // 到达末尾后，下次从头开始，形成滚动窗口。
-            _scanOffsetByChunk[normalizedChunk] = 0;
-          }
-        }
+        return _runFullRebuild(recentPhotoLimit);
       }
-
-      final hasDataMutation =
-          clearCacheFirst ||
-          scanSummary.insertedCount > 0 ||
-          scanSummary.removedCount > 0;
-
-      if (!hasDataMutation) {
-        _setProgress(
-          stage: AlbumRefreshStage.handoff,
-          progress: 0.95,
-          title: '扫描完成，无需重建',
-          message: '本次未发现新增或删除照片，已跳过聚类与 AI 入队',
-        );
-
-        return AlbumRefreshResult(
-          scanSummary: scanSummary,
-          requeuedCount: 0,
-          recentPhotoLimit: normalizedChunk,
-          clearCacheFirst: clearCacheFirst,
-          aiAlreadyRunning: AIService().isAnalyzing,
-        );
-      }
-
-      _setProgress(
-        stage: AlbumRefreshStage.clustering,
-        progress: 0.42,
-        title: '正在整理相册分类',
-        message: '已同步基础照片数据，正在重建事件与分类索引',
-      );
-      await EventService().runClustering();
-
-      _setProgress(
-        stage: AlbumRefreshStage.queueing,
-        progress: 0.62,
-        title: '正在准备后台打标',
-        message: '扫描完成，正在把本次照片加入 MobileCLIP 队列',
-      );
-
-      var requeuedCount = 0;
-      if (!clearCacheFirst) {
-        if (scanSummary.insertedPhotoIds.isNotEmpty) {
-          requeuedCount = await PhotoService().requeuePhotosForAiByIds(
-            scanSummary.insertedPhotoIds,
-          );
-        }
-      }
-
-      final aiAlreadyRunning = AIService().isAnalyzing;
-      _setProgress(
-        stage: AlbumRefreshStage.handoff,
-        progress: 0.84,
-        title: '已转入后台继续处理',
-        message: aiAlreadyRunning
-            ? '后台 AI 已在运行，本次新照片已并入现有任务'
-            : '后台 AI 即将继续补齐标签与 caption',
-      );
-
-      if (!aiAlreadyRunning) {
-        final handoffLimit = clearCacheFirst
-            ? recentPhotoLimit
-            : (requeuedCount > 0 ? requeuedCount : recentPhotoLimit);
-        unawaited(_runAiPipeline(maxPhotos: handoffLimit));
-      }
-
-      return AlbumRefreshResult(
-        scanSummary: scanSummary,
-        requeuedCount: requeuedCount,
-        recentPhotoLimit: normalizedChunk,
-        clearCacheFirst: clearCacheFirst,
-        aiAlreadyRunning: aiAlreadyRunning,
-      );
+      return _runIncrementalScan(recentPhotoLimit);
     } catch (error) {
       _progressNotifier.value = AlbumRefreshProgress.running(
         stage: AlbumRefreshStage.failed,
         progress: 1,
-        title: '相册刷新失败',
+        title: '刷新失败',
         message: error.toString(),
       );
       rethrow;
     } finally {
-      await Future<void>.delayed(const Duration(milliseconds: 500));
       _progressNotifier.value = AlbumRefreshProgress.idle();
       _isRunning = false;
     }
   }
 
-  void _setProgress({
-    required AlbumRefreshStage stage,
-    required double progress,
-    required String title,
-    required String message,
-  }) {
+  // ── 增量扫描（"下一批 N 张" 路径）───────────────────────────────
+  Future<AlbumRefreshResult> _runIncrementalScan(int? recentPhotoLimit) async {
+    final batchSize = math.max(10, math.min(1000, recentPhotoLimit ?? 100));
+
+    _setProgress(
+      AlbumRefreshStage.scanning,
+      0.15,
+      '正在扫描下一批照片',
+      '从最新照片开始，收集最多 $batchSize 张新照片',
+    );
+
+    // step 1: stop-early 扫描，只找新照片
+    final scanResult = await PhotoService().scanBatchPhotos(
+      batchSize: batchSize,
+    );
+
+    _setProgress(
+      AlbumRefreshStage.queueing,
+      0.30,
+      '已扫描 ${scanResult.scannedCount} 张',
+      '新增 ${scanResult.insertedCount} 张照片',
+    );
+
+    // 构建兼容的 PhotoScanSummary
+    final summary = PhotoScanSummary(
+      totalBefore: math.max(0, scanResult.totalAfter - scanResult.insertedCount),
+      totalAfter: scanResult.totalAfter,
+      removedCount: 0,
+      insertedCount: scanResult.insertedCount,
+      insertedPhotoIds: scanResult.insertedPhotoIds,
+      scannedCount: scanResult.scannedCount,
+      skippedInvalidTime: scanResult.skippedInvalidTime,
+      insertedNoGps: scanResult.insertedNoGps,
+      skippedNonCamera: scanResult.skippedNonCamera,
+      skippedScreenshot: scanResult.skippedScreenshot,
+    );
+
+    if (!scanResult.hasNewPhotos) {
+      // 没有新照片 → 直接触发 AI 处理未分析的照片
+      final aiRunning = AIService().isAnalyzing;
+      if (!aiRunning) {
+        unawaited(_runAiPipeline(maxPhotos: batchSize));
+      }
+      return AlbumRefreshResult(
+        scanSummary: summary,
+        requeuedCount: 0,
+        recentPhotoLimit: batchSize,
+        clearCacheFirst: false,
+        aiAlreadyRunning: aiRunning,
+      );
+    }
+
+    // step 2: 有新照片 → requeue（标记为未分析）
+    await PhotoService().requeuePhotosForAiByIds(scanResult.insertedPhotoIds);
+    _scheduleMediaIndexRefresh(batchSize: batchSize);
+
+    _setProgress(
+      AlbumRefreshStage.clustering,
+      0.50,
+      '正在整理相册分类',
+      '已 requeue ${scanResult.insertedCount} 张，正在重建事件索引',
+    );
+
+    // step 3: 事件聚类
+    await EventService().runClustering();
+
+    // step 4: 触发 AI 打标
+    final aiRunning = AIService().isAnalyzing;
+    if (!aiRunning) {
+      unawaited(_runAiPipeline(maxPhotos: batchSize));
+    }
+
+    return AlbumRefreshResult(
+      scanSummary: summary,
+      requeuedCount: scanResult.insertedCount,
+      recentPhotoLimit: batchSize,
+      clearCacheFirst: false,
+      aiAlreadyRunning: aiRunning,
+    );
+  }
+
+  // ── 全量重建（"安全重建" 路径）───────────────────────────────────
+  Future<AlbumRefreshResult> _runFullRebuild(int? recentPhotoLimit) async {
+    await AIService().stopAnalysisAndWait();
+
+    _setProgress(
+      AlbumRefreshStage.scanning,
+      0.10,
+      '正在安全重建',
+      recentPhotoLimit == null ? '全部照片' : '最近 $recentPhotoLimit 张',
+    );
+
+    final scanSummary = await PhotoService().rebuildAllCachedData(
+      maxAssets: recentPhotoLimit,
+    );
+
+    _setProgress(
+      AlbumRefreshStage.clustering,
+      0.45,
+      '正在重建事件分类',
+      '照片 ${scanSummary.totalAfter} 张',
+    );
+
+    await EventService().runClustering();
+    _scheduleMediaIndexRefresh(batchSize: recentPhotoLimit ?? 300);
+
+    final aiRunning = AIService().isAnalyzing;
+    if (!aiRunning) {
+      unawaited(_runAiPipeline(maxPhotos: recentPhotoLimit));
+    }
+
+    return AlbumRefreshResult(
+      scanSummary: scanSummary,
+      requeuedCount: 0,
+      recentPhotoLimit: recentPhotoLimit,
+      clearCacheFirst: true,
+      aiAlreadyRunning: aiRunning,
+    );
+  }
+
+  // ── 辅助方法 ─────────────────────────────────────────────────────
+  void _setProgress(
+    AlbumRefreshStage stage,
+    double progress,
+    String title,
+    String message,
+  ) {
     _progressNotifier.value = AlbumRefreshProgress.running(
       stage: stage,
       progress: progress,
@@ -263,17 +246,34 @@ class AlbumRefreshService {
 
   Future<void> _runAiPipeline({int? maxPhotos}) async {
     try {
-      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await Future.delayed(const Duration(milliseconds: 300));
       await AIService().analyzePhotosInBackground(maxPhotos: maxPhotos);
     } catch (error) {
-      debugPrint('❌ 后台相册 AI 管线执行失败: $error');
+      debugPrint('❌ 后台 AI 管线执行失败: $error');
     }
   }
 
-  String _buildScopeMessage(int? recentPhotoLimit, {required String fallback}) {
-    if (recentPhotoLimit == null) {
-      return '$fallback（全量）';
-    }
-    return '$fallback（下一批 $recentPhotoLimit 张）';
+  void _scheduleMediaIndexRefresh({required int batchSize}) {
+    unawaited(
+      Future<void>(() async {
+        try {
+          final mediaSummary = await MediaAssetSyncService().reconcile(
+            pageSize: math.max(100, math.min(300, batchSize)),
+          );
+          debugPrint(
+            '🧭 ObjectBox media reconcile: discovered=${mediaSummary.discovered} '
+            'upsert=${mediaSummary.insertedOrUpdated} removed=${mediaSummary.removed} '
+            'limited=${mediaSummary.limitedAccess}',
+          );
+          await MediaEmbeddingIndexService().encodePending(
+            maxConcurrency: 2,
+            batchSize: batchSize,
+            inputSize: 336,
+          );
+        } catch (error) {
+          debugPrint('Media asset index refresh skipped: $error');
+        }
+      }),
+    );
   }
 }

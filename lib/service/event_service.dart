@@ -568,13 +568,15 @@ class EventService {
 
   Stream<List<EventEntity>> watchEvents() {
     final eventBox = ObjectBoxService().store.box<EventEntity>();
-    return eventBox.query().watch(triggerImmediately: true).map((query) {
-      final events = query.find()
-        ..sort((a, b) => b.startTime.compareTo(a.startTime));
-      return events
-          .where((event) => event.photoCount >= minPhotosForTimelineDisplay)
-          .toList();
-    });
+    return eventBox
+        .query(
+          EventEntity_.photoCount.greaterThan(
+            minPhotosForTimelineDisplay - 1,
+          ),
+        )
+        .order(EventEntity_.startTime, flags: Order.descending)
+        .watch(triggerImmediately: true)
+        .map((query) => query.find());
   }
 
   // 🧠 核心方法：增量刷新事件的智能信息（混合标题生成）

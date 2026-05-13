@@ -1,10 +1,8 @@
-/// 照片主服务，集中管理相册访问、缓存、实体转换和同步流程。
-
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:objectbox/objectbox.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:permission_handler/permission_handler.dart';

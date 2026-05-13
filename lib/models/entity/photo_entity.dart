@@ -11,6 +11,7 @@ class PhotoEntity {
   late String assetId;
 
   late String path;
+  @Index()
   late int timestamp;
 
   // 📐 图片尺寸信息 (用于过滤截图和UI占位)
@@ -39,6 +40,7 @@ class PhotoEntity {
 
   // 🤖 AI 分析相关
   List<String>? aiTags; // AI 识别的标签（美食、海滩等）
+  @Index()
   bool isAiAnalyzed = false; // AI 分析状态标记
   String? aiCaption; // 单张照片的一句话描述
   List<double>? imageEmbedding; // MobileCLIP 图像向量，用于后续聚类

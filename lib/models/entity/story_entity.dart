@@ -19,6 +19,7 @@ class StoryEntity {
   String? targetPlatform;
 
   // 🔗 关联信息
+  @Index()
   late int eventId; // 来源事件 ID
   List<int> photoIds = []; // 选中的照片 ID 列表（按时间顺序）
 

@@ -19,7 +19,9 @@ class EventEntity {
 
   // 事件基本信息
   late String title; // 事件标题，默认为日期（如 "8月15日-8月18日"）
+  @Index()
   late int startTime; // 开始时间戳 (毫秒)
+  @Index()
   late int endTime; // 结束时间戳 (毫秒)
 
   // 聚类中心点坐标 (可能为空，如果所有照片都没有 GPS)
@@ -43,6 +45,7 @@ class EventEntity {
   List<String> tags = []; // 聚合的标签（从照片 AI 标签统计得出）
 
   // 统计信息
+  @Index()
   int photoCount = 0; // 照片数量（冗余字段，方便查询）
 
   // AI 智能增强字段
@@ -167,7 +170,7 @@ class EventEntity {
   }
 
   Future<String> _resolvePhotoPath(PhotoEntity entity) async {
-    if (entity.path.trim().isNotEmpty && File(entity.path).existsSync()) {
+    if (entity.path.trim().isNotEmpty && await File(entity.path).exists()) {
       return entity.path;
     }
     final asset = await AssetEntity.fromId(entity.assetId);

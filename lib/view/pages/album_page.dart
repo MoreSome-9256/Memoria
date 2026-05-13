@@ -80,12 +80,12 @@ class _AlbumPageState extends State<AlbumPage> {
   late Stream<Map<String, List<Event>>> _uiEventsStream;
   late Stream<_AlbumTagBrowserData> _albumTagBrowserStream;
 
-  // Keep this in sync with _fullRefreshOption.
+  static const int _fullRefreshOption = -1;
   static const List<int> _refreshPhotoOptions = <int>[
     100,
     300,
     500,
-    // Keep this in sync with _fullRefreshOption.
+    _fullRefreshOption,
   ];
 
   void _startRefresh({bool clearCacheFirst = false, int? recentPhotoLimit}) {
@@ -113,28 +113,22 @@ class _AlbumPageState extends State<AlbumPage> {
             if (result == null || !mounted) {
               return;
             }
-            final scanSummary = result.scanSummary;
-            final scannedCount = scanSummary.scannedCount;
-            final insertedCount = scanSummary.insertedCount;
-            final nonInsertedCount = scannedCount > insertedCount
-                ? (scannedCount - insertedCount)
-                : 0;
+            final scan = result.scanSummary;
             final handoffText = result.aiAlreadyRunning
                 ? '后台 AI 已在运行，新照片已并入当前队列。'
                 : 'AI 已转入后台继续打标。';
-            final message = result.clearCacheFirst
-                ? result.recentPhotoLimit == null
-                      ? '已安全重建缓存，恢复 ${scanSummary.totalAfter} 张照片。$handoffText'
-                      : '已安全重建最近 ${result.recentPhotoLimit} 张照片缓存，恢复 ${scanSummary.totalAfter} 张照片。$handoffText'
-                : result.requeuedCount > 0
-                ? result.recentPhotoLimit == null
-                      ? '相册已更新，并将 ${result.requeuedCount} 张旧照片重新加入中文打标队列。'
-                      : nonInsertedCount > 0
-                      ? '已扫描下一批 ${result.recentPhotoLimit} 张照片，实际新增入库 $insertedCount 张，并将其中 ${result.requeuedCount} 张加入中文打标队列；其余 $nonInsertedCount 张未入库。'
-                      : '已扫描下一批 ${result.recentPhotoLimit} 张照片，并将新增入库的 ${result.requeuedCount} 张加入中文打标队列。'
-                : result.recentPhotoLimit == null
-                ? '相册已更新。$handoffText'
-                : '下一批 ${result.recentPhotoLimit} 张照片已刷新。$handoffText';
+
+            final String message;
+            if (result.clearCacheFirst) {
+              message = result.recentPhotoLimit == null
+                  ? '已安全重建缓存，恢复 ${scan.totalAfter} 张照片。$handoffText'
+                  : '已安全重建最近 ${result.recentPhotoLimit} 张照片缓存。$handoffText';
+            } else if (result.requeuedCount > 0) {
+              message = '发现 ${result.requeuedCount} 张新照片，已加入打标队列。$handoffText';
+            } else {
+              message = '已扫描 ${scan.scannedCount} 张，没有发现新照片。$handoffText';
+            }
+
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 behavior: SnackBarBehavior.floating,
@@ -222,7 +216,6 @@ class _AlbumPageState extends State<AlbumPage> {
     setState(() => _isClearingCache = true);
     try {
       await AIService().stopAnalysisAndWait();
-      AlbumRefreshService().resetScanOffsets();
       await PhotoService().clearAllCachedData();
       AIService().clearPendingJunkCleanupReport();
       _lastPromptedJunkCleanupReportId = null;
@@ -272,12 +265,11 @@ class _AlbumPageState extends State<AlbumPage> {
                   subtitle: Text('先只跑最近一部分照片，或者全量运行'),
                 ),
                 ..._refreshPhotoOptions.map((option) {
-                  // Keep this in sync with _fullRefreshOption.
-                  final isFull = option == -1;
-                  final label = isFull ? '全部运行' : '跑下一批 $option 张';
+                  final isFull = option == _fullRefreshOption;
+                  final label = isFull ? '全量安全重建' : '跑下一批 $option 张';
                   final subtitle = isFull
-                      ? '扫描全部照片并对全部待处理照片后台打标'
-                      : '按窗口滚动扫描下一批，并仅重排本批新增照片的 AI 打标';
+                      ? '清空本地缓存后重新扫描全部照片，并在后台补齐待处理标签'
+                      : '从最新照片开始收集 $option 张新照片，并把它们加入 AI 打标队列';
                   return ListTile(
                     leading: Icon(
                       isFull ? Icons.all_inclusive : Icons.flash_on,
@@ -301,7 +293,8 @@ class _AlbumPageState extends State<AlbumPage> {
     }
 
     _startRefresh(
-      // Keep this in sync with _fullRefreshOption.
+      clearCacheFirst: selected == _fullRefreshOption,
+      recentPhotoLimit: selected == _fullRefreshOption ? null : selected,
     );
   }
 
@@ -1227,10 +1220,24 @@ class _AlbumPageState extends State<AlbumPage> {
   ) async {
     final grouped = <String, List<Event>>{};
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final coverIds = eventEntities
+        .expand((event) => event.photoIds.take(3))
+        .toSet()
+        .toList(growable: false);
+    final coverEntities = photoBox
+        .getMany(coverIds)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
+    final coverById = {
+      for (final photo in coverEntities) photo.id: photo,
+    };
     Future<List<PhotoEntity>> loadPhotos(List<int> ids) async =>
-        photoBox.getMany(ids).whereType<PhotoEntity>().toList(growable: false);
+        ids
+            .map((id) => coverById[id])
+            .whereType<PhotoEntity>()
+            .toList(growable: false);
 
-    // 閫愭潯寮傛杞崲锛岄伩鍏嶅ぇ鎵归噺骞跺彂瀵艰嚧涓荤嚎绋嬬灛鏃跺帇鍔涜繃楂樸€?
+    // 封面照片已批量加载，这里只做轻量模型转换并定期让出 UI 线程。
     final allEvents = <Event>[];
     for (var i = 0; i < eventEntities.length; i++) {
       final event = await eventEntities[i].toPreviewModel(loadPhotoEntities: loadPhotos);

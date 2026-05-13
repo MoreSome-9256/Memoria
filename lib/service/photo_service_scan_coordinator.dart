@@ -59,6 +59,7 @@ class _PhotoScanCoordinator {
   Future<_PhotoSyncPlan> prepareIncremental({
     int? maxAssets,
     int offsetFromNewest = 0,
+    ValueChanged<BatchScanProgress>? onProgress,
   }) async {
     final totalBefore = _service._photoBox.count();
 
@@ -67,6 +68,15 @@ class _PhotoScanCoordinator {
       runCleanupOnce: totalBefore <= 0,
     );
     if (album == null || _cachedTotalCount <= 0) {
+      onProgress?.call(
+        const BatchScanProgress(
+          scannedCount: 0,
+          candidateCount: 0,
+          acceptedCount: 0,
+          totalCount: 0,
+          targetNew: 0,
+        ),
+      );
       return _emptyPlan(totalBefore);
     }
 
@@ -76,7 +86,18 @@ class _PhotoScanCoordinator {
     var cursor = 0;
     final collectedPhotos = <PhotoEntity>[];
     var totalScanned = 0;
+    var candidateCount = 0;
     var stats = _ScanStats();
+
+    onProgress?.call(
+      BatchScanProgress(
+        scannedCount: 0,
+        candidateCount: 0,
+        acceptedCount: 0,
+        totalCount: _cachedTotalCount,
+        targetNew: targetNew,
+      ),
+    );
 
     while (collectedPhotos.length < targetNew && cursor < _cachedTotalCount) {
       final end = math.max(0, math.min(_cachedTotalCount, cursor + pageSize));
@@ -91,11 +112,37 @@ class _PhotoScanCoordinator {
       for (final asset in assets) {
         if (!skipIds.contains(asset.id)) newAssets.add(asset);
       }
-      if (newAssets.isEmpty) continue;
+      if (newAssets.isEmpty) {
+        onProgress?.call(
+          BatchScanProgress(
+            scannedCount: totalScanned,
+            candidateCount: candidateCount,
+            acceptedCount: collectedPhotos.length,
+            totalCount: _cachedTotalCount,
+            targetNew: targetNew,
+          ),
+        );
+        continue;
+      }
+
+      final remainingSlots = targetNew - collectedPhotos.length;
+      final buildAssets = newAssets.length > remainingSlots
+          ? newAssets.take(remainingSlots).toList(growable: false)
+          : newAssets;
+      candidateCount += buildAssets.length;
+      onProgress?.call(
+        BatchScanProgress(
+          scannedCount: totalScanned,
+          candidateCount: candidateCount,
+          acceptedCount: collectedPhotos.length,
+          totalCount: _cachedTotalCount,
+          targetNew: targetNew,
+        ),
+      );
 
       // 并行构建
       final results = await Future.wait(
-        newAssets.map((a) => _service._buildSingleAssetPhoto(a)),
+        buildAssets.map((a) => _service._buildSingleAssetPhoto(a)),
       );
       for (final r in results) {
         if (r.photo != null) {
@@ -103,6 +150,15 @@ class _PhotoScanCoordinator {
         }
         stats = stats.merge(r);
       }
+      onProgress?.call(
+        BatchScanProgress(
+          scannedCount: totalScanned,
+          candidateCount: candidateCount,
+          acceptedCount: collectedPhotos.length,
+          totalCount: _cachedTotalCount,
+          targetNew: targetNew,
+        ),
+      );
     }
 
     final built = _ScanBuildResult(

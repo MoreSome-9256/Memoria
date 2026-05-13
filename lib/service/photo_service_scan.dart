@@ -94,9 +94,13 @@ extension PhotoServiceScan on PhotoService {
   // ── ★ 推荐入口：增量收集新照片，收够即停 ────────────────────────
   /// 从系统相册最新照片开始扫描，收集到 [batchSize] 张新照片后停止。
   /// 返回 [BatchScanResult]，包含新照片列表和统计信息。
-  Future<BatchScanResult> scanBatchPhotos({required int batchSize}) async {
+  Future<BatchScanResult> scanBatchPhotos({
+    required int batchSize,
+    ValueChanged<BatchScanProgress>? onProgress,
+  }) async {
     final plan = await _PhotoScanCoordinator(this).prepareIncremental(
       maxAssets: batchSize,
+      onProgress: onProgress,
     );
 
     var insertedPhotoIds = const <int>[];
@@ -119,6 +123,33 @@ extension PhotoServiceScan on PhotoService {
       skippedNonCamera: plan.built.skippedNonCamera,
       skippedScreenshot: plan.built.skippedScreenshot,
     );
+  }
+}
+
+/// 批量扫描过程中的轻量进度，用于全局预处理状态。
+class BatchScanProgress {
+  const BatchScanProgress({
+    required this.scannedCount,
+    required this.candidateCount,
+    required this.acceptedCount,
+    required this.totalCount,
+    required this.targetNew,
+  });
+
+  final int scannedCount;
+  final int candidateCount;
+  final int acceptedCount;
+  final int totalCount;
+  final int targetNew;
+
+  double get scannedFraction {
+    if (totalCount <= 0) return 0;
+    return (scannedCount / totalCount).clamp(0, 1).toDouble();
+  }
+
+  double get acceptedFraction {
+    if (targetNew <= 0) return 0;
+    return (acceptedCount / targetNew).clamp(0, 1).toDouble();
   }
 }
 

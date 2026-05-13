@@ -126,9 +126,9 @@ class _AlbumPageState extends State<AlbumPage> {
                   ? '已安全重建缓存，恢复 ${scan.totalAfter} 张照片。$handoffText'
                   : '已安全重建最近 ${result.recentPhotoLimit} 张照片缓存。$handoffText';
             } else if (result.requeuedCount > 0) {
-              message = '发现 ${result.requeuedCount} 张新照片，已加入打标队列。$handoffText';
+              message = '新增 ${result.requeuedCount} 张可入库照片，已加入打标队列。$handoffText';
             } else {
-              message = '已扫描 ${scan.scannedCount} 张，没有发现新照片。$handoffText';
+              message = '从最新往前检查了 ${scan.scannedCount} 张，本轮没有可入库新照片。$handoffText';
             }
 
             ScaffoldMessenger.of(context).showSnackBar(

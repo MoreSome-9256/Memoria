@@ -18,6 +18,7 @@ class AlbumRefreshProgress {
     required this.progress,
     required this.title,
     required this.message,
+    required this.runId,
   });
 
   factory AlbumRefreshProgress.idle() => const AlbumRefreshProgress(
@@ -26,6 +27,7 @@ class AlbumRefreshProgress {
     progress: 0,
     title: '',
     message: '',
+    runId: 0,
   );
 
   factory AlbumRefreshProgress.running({
@@ -33,6 +35,7 @@ class AlbumRefreshProgress {
     required double progress,
     required String title,
     required String message,
+    required int runId,
   }) {
     return AlbumRefreshProgress(
       stage: stage,
@@ -40,6 +43,7 @@ class AlbumRefreshProgress {
       progress: progress.clamp(0, 1).toDouble(),
       title: title,
       message: message,
+      runId: runId,
     );
   }
 
@@ -48,6 +52,7 @@ class AlbumRefreshProgress {
   final double progress;
   final String title;
   final String message;
+  final int runId;
 
   bool get isVisible => isRunning;
 }
@@ -77,6 +82,7 @@ class AlbumRefreshService {
   final ValueNotifier<AlbumRefreshProgress> _progressNotifier =
       ValueNotifier<AlbumRefreshProgress>(AlbumRefreshProgress.idle());
   bool _isRunning = false;
+  int _progressRunId = 0;
 
   ValueListenable<AlbumRefreshProgress> get progressListenable =>
       _progressNotifier;
@@ -89,6 +95,7 @@ class AlbumRefreshService {
   }) async {
     if (_isRunning) return null;
     _isRunning = true;
+    _progressRunId++;
 
     try {
       if (clearCacheFirst) {
@@ -101,6 +108,7 @@ class AlbumRefreshService {
         progress: 1,
         title: '刷新失败',
         message: error.toString(),
+        runId: _progressRunId,
       );
       rethrow;
     } finally {
@@ -112,24 +120,48 @@ class AlbumRefreshService {
   // ── 增量扫描（"下一批 N 张" 路径）───────────────────────────────
   Future<AlbumRefreshResult> _runIncrementalScan(int? recentPhotoLimit) async {
     final batchSize = math.max(10, recentPhotoLimit ?? 100);
+    final isRemainingScan = batchSize >= 0x7fffffff;
+    final scopeLabel = isRemainingScan ? '剩余所有照片' : '$batchSize 张新照片';
 
     _setProgress(
       AlbumRefreshStage.scanning,
-      0.15,
-      '正在扫描下一批照片',
-      '从最新照片开始，收集最多 $batchSize 张新照片',
+      0.04,
+      '正在准备相册预处理',
+      '正在读取系统相册索引，目标：$scopeLabel',
     );
 
     // step 1: stop-early 扫描，只找新照片
+    var lastProgressUpdate = DateTime.fromMillisecondsSinceEpoch(0);
     final scanResult = await PhotoService().scanBatchPhotos(
       batchSize: batchSize,
+      onProgress: (scanProgress) {
+        final now = DateTime.now();
+        if (now.difference(lastProgressUpdate).inMilliseconds < 220 &&
+            scanProgress.scannedCount < scanProgress.totalCount) {
+          return;
+        }
+        lastProgressUpdate = now;
+        final baseFraction = isRemainingScan
+            ? scanProgress.scannedFraction
+            : math.max(
+                scanProgress.scannedFraction * 0.35,
+                scanProgress.acceptedFraction,
+              );
+        final progress = 0.08 + 0.52 * baseFraction.clamp(0, 1).toDouble();
+        _setProgress(
+          AlbumRefreshStage.scanning,
+          progress,
+          '从最新照片往前检查',
+          '已检查 ${scanProgress.scannedCount}/${scanProgress.totalCount} 张，新增候选 ${scanProgress.candidateCount} 张，可入库 ${scanProgress.acceptedCount} 张',
+        );
+      },
     );
 
     _setProgress(
       AlbumRefreshStage.queueing,
-      0.30,
-      '已扫描 ${scanResult.scannedCount} 张',
-      '新增 ${scanResult.insertedCount} 张照片',
+      0.64,
+      '正在写入预处理结果',
+      '从最新往前检查了 ${scanResult.scannedCount} 张，可入库 ${scanResult.insertedCount} 张',
     );
 
     // 构建兼容的 PhotoScanSummary
@@ -152,6 +184,12 @@ class AlbumRefreshService {
       if (!aiRunning) {
         unawaited(_runAiPipeline(maxPhotos: batchSize));
       }
+      _setProgress(
+        AlbumRefreshStage.handoff,
+        0.95,
+        '本轮没有可入库新照片',
+        aiRunning ? 'AI 队列正在运行' : '已转去检查未完成的后台 AI 队列',
+      );
       return AlbumRefreshResult(
         scanSummary: summary,
         requeuedCount: 0,
@@ -165,12 +203,12 @@ class AlbumRefreshService {
     await PhotoService().requeuePhotosForAiByIds(scanResult.insertedPhotoIds);
     _scheduleMediaIndexRefresh(batchSize: batchSize);
 
-    // _setProgress(
-    //   AlbumRefreshStage.clustering,
-    //   0.50,
-    //   '正在整理相册分类',
-    //   '已 requeue ${scanResult.insertedCount} 张，正在重建事件索引',
-    // );
+    _setProgress(
+      AlbumRefreshStage.clustering,
+      0.72,
+      '正在更新相册索引',
+      '已加入 ${scanResult.insertedCount} 张照片，正在重建事件分类',
+    );
 
     // step 3: 事件聚类
     await EventService().runClustering();
@@ -180,6 +218,12 @@ class AlbumRefreshService {
     if (!aiRunning) {
       unawaited(_runAiPipeline(maxPhotos: batchSize));
     }
+    _setProgress(
+      AlbumRefreshStage.handoff,
+      0.95,
+      '预处理完成',
+      aiRunning ? 'AI 队列正在继续处理' : '已交给后台 AI 队列',
+    );
 
     return AlbumRefreshResult(
       scanSummary: summary,
@@ -192,13 +236,20 @@ class AlbumRefreshService {
 
   // ── 全量重建（"安全重建" 路径）───────────────────────────────────
   Future<AlbumRefreshResult> _runFullRebuild(int? recentPhotoLimit) async {
+    _setProgress(
+      AlbumRefreshStage.scanning,
+      0.04,
+      '正在准备安全重建',
+      '正在安全结束当前 AI 任务',
+    );
+
     await AIService().stopAnalysisAndWait();
 
     _setProgress(
       AlbumRefreshStage.scanning,
-      0.10,
-      '正在安全重建',
-      recentPhotoLimit == null ? '全部照片' : '最近 $recentPhotoLimit 张',
+      0.12,
+      '正在读取系统相册',
+      recentPhotoLimit == null ? '范围：全部照片' : '范围：最近 $recentPhotoLimit 张',
     );
 
     final scanSummary = await PhotoService().rebuildAllCachedData(
@@ -207,7 +258,7 @@ class AlbumRefreshService {
 
     _setProgress(
       AlbumRefreshStage.clustering,
-      0.45,
+      0.68,
       '正在重建事件分类',
       '照片 ${scanSummary.totalAfter} 张',
     );
@@ -219,6 +270,12 @@ class AlbumRefreshService {
     if (!aiRunning) {
       unawaited(_runAiPipeline(maxPhotos: recentPhotoLimit));
     }
+    _setProgress(
+      AlbumRefreshStage.handoff,
+      0.95,
+      '安全重建完成',
+      aiRunning ? 'AI 队列正在继续处理' : '已交给后台 AI 队列',
+    );
 
     return AlbumRefreshResult(
       scanSummary: scanSummary,
@@ -241,6 +298,7 @@ class AlbumRefreshService {
       progress: progress,
       title: title,
       message: message,
+      runId: _progressRunId,
     );
   }
 

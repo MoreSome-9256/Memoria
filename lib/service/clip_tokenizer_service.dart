@@ -1,3 +1,5 @@
+/// CLIP 分词服务，把文本提示转换为模型可接受的 token 序列。
+
 import 'dart:convert';
 import 'dart:math' as math;
 

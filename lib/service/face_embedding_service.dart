@@ -1,3 +1,5 @@
+/// 人脸向量计算服务，负责从图片中提取脸部嵌入向量。
+
 import 'dart:io';
 import 'dart:typed_data';
 

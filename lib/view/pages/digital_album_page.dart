@@ -1,3 +1,5 @@
+/// 数字相册页面，用于编辑和预览相册版式。
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 

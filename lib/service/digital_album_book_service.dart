@@ -1,3 +1,5 @@
+/// 数字相册书服务，负责书页生成、编辑和持久化协调。
+
 import 'dart:convert';
 
 import '../models/entity/digital_album_book_entity.dart';

@@ -1,3 +1,5 @@
+/// 故事视频准备服务，负责生成视频前的素材整理与时间线构建。
+
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';

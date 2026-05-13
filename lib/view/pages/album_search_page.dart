@@ -1,3 +1,5 @@
+/// 相册搜索页面，支持语义检索和关键词检索照片。
+
 import 'package:flutter/material.dart';
 
 import '../../models/entity/photo_entity.dart';

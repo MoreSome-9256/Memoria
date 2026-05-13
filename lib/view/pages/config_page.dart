@@ -1,3 +1,5 @@
+/// 配置页面，提供应用运行参数、调试开关和环境选项。
+
 import 'package:flutter/material.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';

@@ -1,3 +1,5 @@
+/// 相册刷新服务，负责同步照片库变更并刷新相关缓存。
+
 import 'dart:async';
 import 'dart:math' as math;
 

@@ -1,3 +1,5 @@
+/// 主题聚类服务，按语义特征把照片组织成可浏览的主题组。
+
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;

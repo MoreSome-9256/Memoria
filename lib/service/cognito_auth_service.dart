@@ -1,3 +1,5 @@
+/// Cognito 认证服务包装器，封装登录态查询和账号相关操作。
+
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_album/service/auth_token_service.dart';

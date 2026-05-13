@@ -1,3 +1,5 @@
+/// 创作流程页面，承载故事生成的具体操作步骤。
+
 import 'dart:io';
 import 'dart:ui';
 

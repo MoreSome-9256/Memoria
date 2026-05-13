@@ -1,3 +1,5 @@
+/// 主题聚类页面，展示按语义主题组织的照片分组。
+
 import 'dart:async';
 import 'dart:collection';
 

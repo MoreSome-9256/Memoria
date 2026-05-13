@@ -1,3 +1,5 @@
+/// MobileCLIP 向量探测页面，用于查看嵌入结果和调试输入输出。
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;

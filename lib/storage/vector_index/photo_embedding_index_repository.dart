@@ -1,3 +1,5 @@
+/// 照片向量索引仓库，负责存取和查询照片嵌入数据。
+
 import '../../models/entity/photo_entity.dart';
 import '../../objectbox.g.dart';
 import '../objectbox/entities/photo_embedding_index_entity.dart';

@@ -1,3 +1,13 @@
+/// 应用入口文件。
+///
+/// 这里负责启动 Flutter 应用，并在首屏展示前完成基础运行时准备：
+/// 初始化绑定、配置 Amplify Cognito、启动 ObjectBox、恢复待处理的 AI
+/// 分析任务，以及根据登录状态在欢迎页和主应用树之间分流。
+///
+/// 文件里还定义了两个可通过 `--dart-define` 控制的开关：
+/// `MOBILECLIP_VECTOR_PROBE` 会直接进入向量探测页，
+/// `ENABLE_STARTUP_MOBILECLIP_WARMUP` 会在应用启动后延迟预热 MobileCLIP。
+
 import 'dart:async';
 
 import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';

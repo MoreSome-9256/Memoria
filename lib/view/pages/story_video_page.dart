@@ -1,3 +1,5 @@
+/// 故事视频页面，负责视频预览和播放相关体验。
+
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';

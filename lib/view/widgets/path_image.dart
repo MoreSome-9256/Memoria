@@ -1,3 +1,5 @@
+/// 本地路径图片组件，负责从文件路径渲染图像。
+
 import 'dart:io';
 import 'dart:math' as math;
 

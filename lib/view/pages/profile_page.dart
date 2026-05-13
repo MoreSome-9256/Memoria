@@ -1,8 +1,13 @@
+/// 个人资料页面，提供设置、调试入口和账户信息展示。
+
+import 'dart:async';
+
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/ai_service.dart';
+import 'package:photo_album/service/travel_memory_detector.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 
 import 'face_cluster_debug_page.dart';
@@ -197,6 +202,59 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
       ),
     );
+  }
+
+  Future<void> _showTravelMemoryDebug() async {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text('正在检测最近 180 天的旅行记忆...'),
+      ),
+    );
+
+    try {
+      final summary = await TravelMemoryService().buildDebugSummary(
+        lookbackDays: 180,
+      );
+      if (!mounted) {
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('旅行记忆检测'),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  '$summary\n\n公开截图、博客或 issue 前，请替换城市、区县、adcode 与地点名称。',
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('关闭'),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('旅行记忆检测失败: $error'),
+        ),
+      );
+    }
   }
 
   void _showAccountDetails() async {
@@ -401,6 +459,16 @@ class _ProfilePageState extends State<ProfilePage> {
                                         const FaceClusterDebugPage(),
                                   ),
                                 );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.travel_explore),
+                              title: const Text('旅行记忆检测'),
+                              subtitle: const Text('按城市停留轨迹检测最近 180 天的旅行候选'),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).pop();
+                                unawaited(_showTravelMemoryDebug());
                               },
                             ),
                           ],

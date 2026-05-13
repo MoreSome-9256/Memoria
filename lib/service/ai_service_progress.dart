@@ -1,3 +1,5 @@
+/// AI 分析进度模型，描述运行状态、已处理数量和错误信息。
+
 part of 'ai_service.dart';
 
 class AIAnalysisProgress {

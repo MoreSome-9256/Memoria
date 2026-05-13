@@ -1,3 +1,5 @@
+/// 数字相册书的 ObjectBox 实体，保存版式、内容和设计相关配置。
+
 import 'package:objectbox/objectbox.dart';
 
 @Entity()

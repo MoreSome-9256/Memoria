@@ -1,3 +1,5 @@
+/// 本地 VLM 测试页面，用于调试端侧视觉语言模型推理。
+
 import 'dart:async';
 import 'dart:convert';
 

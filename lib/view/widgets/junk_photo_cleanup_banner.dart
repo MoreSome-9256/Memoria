@@ -1,3 +1,5 @@
+/// 垃圾照片清理提示横幅，用于引导用户处理低价值照片。
+
 import 'package:flutter/material.dart';
 
 import '../../service/junk_photo_filter_service.dart';

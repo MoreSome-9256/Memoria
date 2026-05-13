@@ -1,3 +1,4 @@
+/// 故事服务，负责故事内容的保存、读取和更新。
 
 import 'package:photo_manager/photo_manager.dart';
 

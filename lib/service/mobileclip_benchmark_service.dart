@@ -1,3 +1,5 @@
+/// MobileCLIP 基准测试服务，负责收集模型运行时性能数据。
+
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';

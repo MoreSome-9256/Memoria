@@ -1,3 +1,5 @@
+/// MobileCLIP 基准测试结果模型，记录推理耗时、内存和吞吐等指标。
+
 class MobileClipBenchmarkSample {
   const MobileClipBenchmarkSample({
     required this.photoId,

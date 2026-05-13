@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+/// 数字相册书页面设计的值对象集合，描述布局、字体和颜色等样式。
+
 enum AlbumPageSide { left, right }
 
 enum AlbumElementType { image, text, subtitle, shape, sticker }

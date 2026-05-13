@@ -1,3 +1,5 @@
+/// 故事列表页面，用于浏览和管理已生成的故事。
+
 import 'package:flutter/material.dart';
 
 import '../../models/entity/story_entity.dart';

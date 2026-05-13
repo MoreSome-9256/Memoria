@@ -1,3 +1,5 @@
+/// ObjectBox 数据库入口服务，负责初始化存储并提供全局 store 访问。
+
 import 'dart:io';
 
 import 'package:path/path.dart' as p;

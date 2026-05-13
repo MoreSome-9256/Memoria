@@ -1,3 +1,5 @@
+/// MobileCLIP 视觉推理服务，负责图片输入和模型输出的封装。
+
 import 'dart:io';
 import 'dart:math' as math;
 

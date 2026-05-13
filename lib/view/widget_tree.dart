@@ -1,3 +1,5 @@
+/// 应用的主底部导航树，负责在首页、相册、创作、个人页和主题页之间切换。
+
 import 'package:flutter/material.dart';
 import '../service/ai_progress_notification_service.dart';
 import '../service/ai_service.dart';

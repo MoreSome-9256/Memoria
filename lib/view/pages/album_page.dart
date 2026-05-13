@@ -1,6 +1,9 @@
-﻿import 'dart:async';
+/// 相册页面，负责照片浏览、事件查看和标签筛选。
+
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:collection';
+import 'package:objectbox/objectbox.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/event_entity.dart';
@@ -24,6 +27,9 @@ import '../widgets/path_image.dart';
 import 'album_search_page.dart';
 import 'story_queue_page.dart';
 
+part 'album_page_tag_browser.dart';
+part 'album_page_deferred_image.dart';
+
 const int _albumTagBrowserPhotoSoftLimit = 1200;
 
 // Keep the tag overview and detail sheet on the same snapshot window so a
@@ -33,8 +39,10 @@ Future<List<PhotoEntity>> _loadAlbumTagBrowserSourcePhotos() async {
   final q = photoBox.query()
       .order(PhotoEntity_.timestamp, flags: Order.descending)
       .build();
-  q.limit = _albumTagBrowserPhotoSoftLimit;
-  final photos = q.find();
+  final photos = q
+      .find()
+      .take(_albumTagBrowserPhotoSoftLimit)
+      .toList(growable: false);
   q.close();
   return PhotoService().reconcileAccessiblePhotos(photos);
 }
@@ -68,65 +76,18 @@ class _AlbumPageState extends State<AlbumPage> {
   bool _draggingMomentsFastScroller = false;
   String? _momentsFastScrollerLabel;
 
-  // 馃専 1. 鏀逛负鐩存帴鐩戝惉鏈€缁?UI 鏁版嵁缁撴瀯鐨?Stream
+  // UI streams for moments and tag browser data.
   late Stream<Map<String, List<Event>>> _uiEventsStream;
   late Stream<_AlbumTagBrowserData> _albumTagBrowserStream;
 
-  static const int _fullRefreshOption = -1;
+  // Keep this in sync with _fullRefreshOption.
   static const List<int> _refreshPhotoOptions = <int>[
     100,
     300,
     500,
-    _fullRefreshOption,
+    // Keep this in sync with _fullRefreshOption.
   ];
 
-  // 馃攧 鍒锋柊鏁版嵁锛氭壂鎻忕浉鍐?+ 杩愯鑱氱被
-  /*Future<void> _refreshData({bool clearCacheFirst = false}) async {
-    if (_isRefreshing) return; // 闃叉閲嶅鐐瑰嚮
-
-    setState(() => _isRefreshing = true);
-
-    try {
-      if (clearCacheFirst) {
-        await PhotoService().clearAllCachedData();
-      }
-
-      // 1. 鎵弿鐩稿唽锛堜粎鍏ュ簱鍘熷鍙敤鏁版嵁锛?
-      final scanSummary = await PhotoService().scanAndSyncPhotos();
-
-      // 2. 杩愯鑱氱被绠楁硶锛堜細鑷姩瑙﹀彂鍦板潃瑙ｆ瀽锛?
-      await EventService().runClustering();
-
-      // 3. 鑱氱被瀹屾垚鍚庡啀鍋?AI 鍒嗘瀽锛岀‘淇?eventId 宸插缓绔?
-      await AIService().analyzePhotosInBackground();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              clearCacheFirst
-                  ? '鉁?宸叉竻绌虹紦瀛樺苟瀹屾垚閲嶆壂锛氭柊澧?{scanSummary.insertedCount}寮狅紝鍙敤鎬绘暟${scanSummary.totalAfter}寮?
-                  : '鉁?鏁版嵁宸叉洿鏂帮細鏂板${scanSummary.insertedCount}寮狅紝鍙敤鎬绘暟${scanSummary.totalAfter}寮?,
-            ),
-          ),
-        );
-      }
-    } on PhotoScanException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('鈿狅笍 ${e.message}')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('鉂?鏇存柊澶辫触: $e')));
-      }
-    } finally {
-      setState(() => _isRefreshing = false);
-    }
-  }*/
   void _startRefresh({bool clearCacheFirst = false, int? recentPhotoLimit}) {
     if (_isClearingCache || AlbumRefreshService().isRunning) {
       return;
@@ -237,7 +198,7 @@ class _AlbumPageState extends State<AlbumPage> {
         return AlertDialog(
           title: const Text('清空本地缓存'),
           content: const Text(
-            '将清空本 app 的本地数据库缓存（Isar + ObjectBox，包括照片、事件、故事、已扫描结果与向量索引），'
+            '将清空本 app 的本地数据库缓存（ObjectBox，包括照片、事件、故事、已扫描结果与向量索引），'
             '不会删除或修改手机系统相册中的任何图片。是否继续？',
           ),
           actions: [
@@ -311,7 +272,7 @@ class _AlbumPageState extends State<AlbumPage> {
                   subtitle: Text('先只跑最近一部分照片，或者全量运行'),
                 ),
                 ..._refreshPhotoOptions.map((option) {
-                  // 杩欓噷鍋囪浣犵殑浠ｇ爜閲屽畾涔変簡 _fullRefreshOption锛屽鏋滄病鏈夎鏇挎崲涓轰綘瀹為檯鐨勫€?
+                  // Keep this in sync with _fullRefreshOption.
                   final isFull = option == -1;
                   final label = isFull ? '全部运行' : '跑下一批 $option 张';
                   final subtitle = isFull
@@ -340,7 +301,7 @@ class _AlbumPageState extends State<AlbumPage> {
     }
 
     _startRefresh(
-      recentPhotoLimit: selected == _fullRefreshOption ? null : selected,
+      // Keep this in sync with _fullRefreshOption.
     );
   }
 
@@ -518,7 +479,7 @@ class _AlbumPageState extends State<AlbumPage> {
   }
 
   Future<List<PhotoEntity>> _loadAllPhotosForTagBrowser() async {
-    // 浠呭姞杞芥渶杩戜竴娈垫暟鎹紝閬垮厤澶у浘搴撴瘡娆″彉鏇撮兘瑙﹀彂鍏ㄩ噺鎺掑簭銆?
+    // Load a bounded recent window to avoid full-library resorting on every change.
     return _loadAlbumTagBrowserSourcePhotos();
   }
 
@@ -711,7 +672,8 @@ class _AlbumPageState extends State<AlbumPage> {
                             : const SizedBox.shrink(),
                       ),
                       ValueListenableBuilder<JunkPhotoCleanupReport?>(
-                        valueListenable: AIService().junkCleanupReportListenable,
+                        valueListenable:
+                            AIService().junkCleanupReportListenable,
                         builder: (context, report, _) {
                           return AnimatedSwitcher(
                             duration: const Duration(milliseconds: 250),
@@ -734,10 +696,7 @@ class _AlbumPageState extends State<AlbumPage> {
               Expanded(
                 child: IndexedStack(
                   index: _viewMode == _AlbumViewMode.tags ? 0 : 1,
-                  children: [
-                    _buildAlbumTagBrowserView(),
-                    _buildMomentsView(),
-                  ],
+                  children: [_buildAlbumTagBrowserView(), _buildMomentsView()],
                 ),
               ),
             ],
@@ -853,7 +812,7 @@ class _AlbumPageState extends State<AlbumPage> {
     return '${duration.inSeconds}秒';
   }
 
-  // 馃帹 1. 鏋勫缓绌虹姸鎬佺晫闈?
+  // Empty state.
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -1008,7 +967,9 @@ class _AlbumPageState extends State<AlbumPage> {
                 },
               ),
             ),
-            _buildMomentsFastScroller(groupedEvents.keys.toList(growable: false)),
+            _buildMomentsFastScroller(
+              groupedEvents.keys.toList(growable: false),
+            ),
           ],
         );
       },
@@ -1023,15 +984,18 @@ class _AlbumPageState extends State<AlbumPage> {
       });
     }
     _momentsFastScrollerHideTimer?.cancel();
-    _momentsFastScrollerHideTimer = Timer(const Duration(milliseconds: 900), () {
-      if (!mounted || _draggingMomentsFastScroller) {
-        return;
-      }
-      setState(() {
-        _showMomentsFastScroller = false;
-        _momentsFastScrollerLabel = null;
-      });
-    });
+    _momentsFastScrollerHideTimer = Timer(
+      const Duration(milliseconds: 900),
+      () {
+        if (!mounted || _draggingMomentsFastScroller) {
+          return;
+        }
+        setState(() {
+          _showMomentsFastScroller = false;
+          _momentsFastScrollerLabel = null;
+        });
+      },
+    );
   }
 
   void _updateMomentsFastScrollerLabel() {
@@ -1055,7 +1019,9 @@ class _AlbumPageState extends State<AlbumPage> {
         break;
       }
     }
-    if (currentLabel != null && currentLabel != _momentsFastScrollerLabel && mounted) {
+    if (currentLabel != null &&
+        currentLabel != _momentsFastScrollerLabel &&
+        mounted) {
       setState(() {
         _momentsFastScrollerLabel = currentLabel;
       });
@@ -1118,8 +1084,10 @@ class _AlbumPageState extends State<AlbumPage> {
                   });
                 },
                 onVerticalDragUpdate: (details) {
-                  final box = _momentsFastScrollerTrackKey.currentContext
-                      ?.findRenderObject() as RenderBox?;
+                  final box =
+                      _momentsFastScrollerTrackKey.currentContext
+                              ?.findRenderObject()
+                          as RenderBox?;
                   if (box == null || labels.isEmpty) {
                     return;
                   }
@@ -1221,7 +1189,7 @@ class _AlbumPageState extends State<AlbumPage> {
     );
   }
 
-  // 馃帹 2. 鏋勫缓閿欒鎻愮ず鐣岄潰
+  // Error state.
   Widget _buildErrorState(String errorMessage) {
     return Center(
       child: Column(
@@ -1295,22 +1263,7 @@ class _AlbumPageState extends State<AlbumPage> {
   }
 }
 
-class _AlbumTagBrowserData {
-  const _AlbumTagBrowserData({
-    required this.totalPhotoCount,
-    required this.analyzedPhotoCount,
-    required this.taggedPhotoCount,
-    required this.photos,
-    required this.clusters,
-  });
-
-  final int totalPhotoCount;
-  final int analyzedPhotoCount;
-  final int taggedPhotoCount;
-  final List<PhotoEntity> photos;
-  final List<AlbumCoarseTagCluster> clusters;
-}
-
+/*
 class _AlbumTagClusterTile extends StatelessWidget {
   const _AlbumTagClusterTile({required this.cluster, required this.onTap});
 
@@ -2150,5 +2103,4 @@ class _DeferredPathImageState extends State<_DeferredPathImage> {
     );
   }
 }
-
-
+*/

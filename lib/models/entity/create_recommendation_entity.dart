@@ -1,5 +1,7 @@
 import 'package:objectbox/objectbox.dart';
 
+/// 推荐生成记录的 ObjectBox 实体，保存预设类型和生成元数据。
+
 @Entity()
 class CreateRecommendationEntity {
   @Id()

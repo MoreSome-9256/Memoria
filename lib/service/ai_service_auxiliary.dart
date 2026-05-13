@@ -1,3 +1,5 @@
+/// AI 服务的辅助逻辑分组，放置共享的工具方法和小型流程封装。
+
 part of 'ai_service.dart';
 
 enum _AnalysisAuxiliaryStrategy {

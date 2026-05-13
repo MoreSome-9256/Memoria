@@ -1,3 +1,5 @@
+/// AI 进度通知服务，向前台 UI 广播分析状态和操作入口。
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 

@@ -1,3 +1,5 @@
+/// 事件卡片组件，用于展示事件摘要和封面照片。
+
 import 'package:flutter/material.dart';
 
 import '../../models/event.dart';

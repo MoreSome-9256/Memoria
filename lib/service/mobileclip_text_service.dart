@@ -1,3 +1,5 @@
+/// MobileCLIP 文本嵌入服务，把提示词编码成向量表示。
+
 import 'dart:io';
 import 'dart:math' as math;
 

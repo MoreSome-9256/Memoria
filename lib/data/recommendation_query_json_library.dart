@@ -1,4 +1,6 @@
-﻿class StructuredRecommendationQueryPreset {
+﻿/// 预定义的推荐查询模板库，提供按时间、地点和主题组织照片集合的查询配置。
+
+class StructuredRecommendationQueryPreset {
   const StructuredRecommendationQueryPreset({required this.id, required this.queries, required this.templateJson});
   final String id;
   final List<String> queries;

@@ -1,3 +1,5 @@
+/// 离屏渲染工作页，负责在后台渲染复杂组件或图片。
+
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';

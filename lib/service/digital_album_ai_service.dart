@@ -1,4 +1,6 @@
-﻿import 'dart:convert';
+﻿/// 数字相册 AI 服务，负责封面、标题和版式相关的智能生成。
+
+import 'dart:convert';
 import 'dart:async';
 import 'dart:math' as math;
 

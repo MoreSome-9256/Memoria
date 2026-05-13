@@ -1,3 +1,5 @@
+/// 故事提示词辅助工具，根据照片元数据拼装更丰富的叙事描述。
+
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
 

@@ -1,3 +1,5 @@
+/// 向量索引基准测试服务，收集嵌入检索和写入性能数据。
+
 import 'dart:math' as math;
 
 import '../models/entity/photo_entity.dart';

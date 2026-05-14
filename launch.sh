@@ -26,6 +26,7 @@ fi
 echo "Using profile: ${PROFILE}"
 echo "Using device : ${DEVICE}"
 export FLUTTER_STORAGE_BASE_URL="https://mirrors.nju.edu.cn/flutter"
+export PUB_HOSTED_URL="https://pub.flutter-io.cn"
 flutter pub get
 flutter pub run build_runner build --delete-conflicting-outputs
 flutter run \

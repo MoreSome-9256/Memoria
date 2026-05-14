@@ -29,6 +29,9 @@ if (-not $DeviceId) {
 
 Write-Host "Using profile: $Profile"
 Write-Host "Using device : $DeviceId"
-
+# set env:FLUTTER_STORAGE_BASE_URL="https://mirrors.cernet.edu.cn/flutter"
+$env:FLUTTER_STORAGE_BASE_URL = "https://mirrors.nju.edu.cn/flutter"
+flutter pub get
+flutter pub run build_runner build --delete-conflicting-outputs
 # launch the app on the device
 flutter run -d $DeviceId --dart-define-from-file=$profileFile

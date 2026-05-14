@@ -93,9 +93,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
-  isar_generator: ^3.1.0+1
   objectbox_generator: ^4.1.0
-  build_runner: ^2.4.13
+  # build_runner: ^2.15.0
   flutter_launcher_icons: ^0.14.4
   riverpod_generator: ^2.3.3
   riverpod_lint: ^2.1.1
@@ -188,5 +187,3 @@ flutter_icons:
   ios: true
   image_path: "assets/images/app_icon.png"
 
-dependency_overrides:
-  sqflite_android: 2.4.0

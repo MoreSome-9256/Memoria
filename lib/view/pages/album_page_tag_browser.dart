@@ -270,6 +270,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                             ),
                           )
                         : CustomScrollView(
+                            cacheExtent: 700,
                             slivers: [
                               for (final group in monthGroups) ...[
                                 SliverToBoxAdapter(

@@ -903,6 +903,7 @@ class _AlbumPageState extends State<AlbumPage> {
         }
 
         return CustomScrollView(
+          cacheExtent: 700,
           slivers: [
             SliverPadding(
               padding: EdgeInsets.fromLTRB(
@@ -1557,6 +1558,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                         ),
                       )
                     : CustomScrollView(
+                        cacheExtent: 700,
                         slivers: [
                           for (final group in monthGroups) ...[
                             SliverToBoxAdapter(

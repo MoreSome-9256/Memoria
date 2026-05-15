@@ -568,6 +568,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: CustomScrollView(
+        cacheExtent: 700,
         slivers: [
           // App bar
           SliverAppBar(title: Text(widget.event.title), pinned: true),

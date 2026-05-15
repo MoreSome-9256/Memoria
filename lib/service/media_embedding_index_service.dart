@@ -180,7 +180,7 @@ class MediaEmbeddingIndexService {
         quality: 92,
       );
       if (bytes == null || bytes.isEmpty) {
-        entity.statusEnum = MediaAssetStatus.failed;
+        entity.setStatus(MediaAssetStatus.failed);
         entity.errorMessage = 'thumbnail-empty';
         _repository.putMany(<MediaAssetEntity>[entity]);
         return;
@@ -199,11 +199,11 @@ class MediaEmbeddingIndexService {
       entity.embedding = _l2Normalize(embedding);
       entity.modelVersion = _modelVersion;
       entity.embeddingUpdatedAtMs = DateTime.now().millisecondsSinceEpoch;
-      entity.statusEnum = MediaAssetStatus.ready;
+      entity.setStatus(MediaAssetStatus.ready);
       entity.errorMessage = null;
       _repository.putMany(<MediaAssetEntity>[entity]);
     } catch (error) {
-      entity.statusEnum = MediaAssetStatus.failed;
+      entity.setStatus(MediaAssetStatus.failed);
       entity.errorMessage = error.toString();
       _repository.putMany(<MediaAssetEntity>[entity]);
     }

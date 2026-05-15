@@ -26,6 +26,7 @@ class CreateRecommendationService {
   static const int _maxCards = 16;
   static const int _normalRefreshBudget = 4;
   static const int _forceRefreshBudget = 8;
+  static const int _recommendationRefreshConcurrency = 3;
 
   final RecommendationQueryTemplateService _templateService =
       RecommendationQueryTemplateService();
@@ -62,7 +63,9 @@ class CreateRecommendationService {
         .map((preset) => preset.recommendationKey)
         .toList(growable: false);
 
-    for (final preset in duePresets) {
+    Future<CreateRecommendationEntity> buildUpdate(
+      _ResolvedRecommendationPreset preset,
+    ) async {
       final current = existingByKey[preset.recommendationKey];
       final result = await _searchPreset(
         preset,
@@ -115,7 +118,16 @@ class CreateRecommendationService {
           ..lastRecommendedAt = current?.lastRecommendedAt;
       }
 
-      updates.add(entity);
+      return entity;
+    }
+
+    for (var start = 0;
+        start < duePresets.length;
+        start += _recommendationRefreshConcurrency) {
+      final end = start + _recommendationRefreshConcurrency > duePresets.length
+          ? duePresets.length
+          : start + _recommendationRefreshConcurrency;
+      updates.addAll(await Future.wait(duePresets.sublist(start, end).map(buildUpdate)));
     }
 
     for (final entity in existing) {

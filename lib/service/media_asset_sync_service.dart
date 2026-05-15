@@ -126,9 +126,9 @@ class MediaAssetSyncService {
           entity.embedding = null;
           entity.modelVersion = null;
           entity.embeddingUpdatedAtMs = null;
-          entity.statusEnum = existing == null
+          entity.setStatus(existing == null
               ? MediaAssetStatus.pending
-              : MediaAssetStatus.dirty;
+              : MediaAssetStatus.dirty);
           batch.add(entity);
         }
 

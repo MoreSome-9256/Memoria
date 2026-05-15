@@ -8,8 +8,8 @@ import '../../service/album_tag_browser_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/semantic_photo_search_service.dart';
 import '../../service/story_queue_service.dart';
+import '../widgets/deferred_path_image.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
-import '../widgets/path_image.dart';
 import 'story_queue_page.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 
@@ -787,6 +787,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         ),
         child: SafeArea(
           child: CustomScrollView(
+            cacheExtent: 700,
             slivers: [
               if (_isLockedResultMode)
                 SliverToBoxAdapter(
@@ -942,7 +943,7 @@ class _SearchPhotoTile extends StatelessWidget {
           children: [
             Hero(
               tag: 'search-photo-${photo.id}',
-              child: PathImage(path: photo.path, fit: BoxFit.cover),
+              child: DeferredPathImage(path: photo.path, fit: BoxFit.cover),
             ),
             if (selectionMode)
               if (!selected)

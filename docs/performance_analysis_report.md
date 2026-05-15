@@ -517,3 +517,21 @@ P3 = 渐进式优化
 
 - 不建议把 SHA-256 全量计算放进扫描主路径，因为它需要读取每张原图完整字节，容易抵消增量扫描带来的 I/O 优势。
 - 推荐后续单独实现懒计算方案: 给 `PhotoEntity` 增加可索引的 `contentHash` 字段，扫描仍用 `assetId` 快速入库；在 AI 入队前或后台空闲时才计算 SHA-256，并在命中相同 hash 的已分析照片时复用标签、caption、embedding 等结果，从而跳过重复处理。
+
+---
+
+## 12. 2026-05-15 实施记录
+
+本轮继续落地的性能与流畅度优化:
+
+- 搜索结果页 `album_search_page.dart` 的图片网格从直接 `PathImage` 改为共享的 `DeferredPathImage`，避免搜索结果一次性触发大量图片解码。
+- 为相册标签页、标签详情 sheet、搜索结果页、事件详情页、主题详情页、创作选图页、低价值照片回收站等滚动容器补充 `cacheExtent`，让滚动前方内容提前构建，降低快速滑动时的白屏和解码尖峰。
+- 在 `WidgetTree.didHaveMemoryPressure()` 中清理 Flutter `ImageCache` 和 live images，避免照片密集页面在系统内存压力下继续持有过多解码图。
+- 将 `StoryService.loadPhotos()` 中逐张 `AssetEntity.fromId()` / `asset.file` 的串行刷新改为每批 8 张并发，减少故事打开或编辑时的等待时间，同时避免无限并发冲击相册 I/O。
+- 将 `CreateRecommendationService.refreshRecommendationsIfNeeded()` 中推荐预设刷新从完全串行改为最多 3 个并发，缩短首页/创作推荐刷新耗时，并保留并发上限避免语义搜索和向量查询互相抢占过度。
+
+仍建议后续处理:
+
+- `story_video_page.dart` 和离屏渲染路径仍有若干 `existsSync()`/`deleteSync()`，但这些位置夹在同步 build 分支或渲染流程里，需要更完整的异步状态改造，建议单独处理。
+- 延迟加载调度器目前仍有相册页、主题页、通用 widget 多份实现；本轮先减少新热点，没有做跨文件统一，后续可以抽成一个带 pending 统计的共享调度器。
+- 真正使用系统缩略图 `AssetEntity.thumbnailDataWithSize()` 替代路径原图解码仍未全面落地；这会牵涉 `PhotoEntity` 到 `assetId` 的 UI 图片组件改造，收益大但改动面也更大。

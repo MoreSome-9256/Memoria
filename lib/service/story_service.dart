@@ -20,6 +20,8 @@ class StoryService {
   factory StoryService() => _instance;
   StoryService._internal();
 
+  static const int _photoPathRefreshBatchSize = 8;
+
   static const Set<String> _textSceneTags = <String>{
     '文字',
     '文本',
@@ -461,17 +463,24 @@ class StoryService {
     final photos = photoBox.getMany(photoIds).whereType<PhotoEntity>().toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-    for (final photo in photos) {
-      final asset = await AssetEntity.fromId(photo.assetId);
-      final file = await asset?.file;
-      final latestPath = file?.path;
-      if (latestPath != null && latestPath.isNotEmpty && latestPath != photo.path) {
-        photo.path = latestPath;
-      }
+    for (var start = 0; start < photos.length; start += _photoPathRefreshBatchSize) {
+      final batchEnd = start + _photoPathRefreshBatchSize;
+      final end = batchEnd > photos.length ? photos.length : batchEnd;
+      final batch = photos.sublist(start, end);
+      await Future.wait(batch.map(_refreshPhotoPath));
     }
 
     final store = ObjectBoxService().store;
     store.runInTransaction(TxMode.write, () => store.box<PhotoEntity>().putMany(photos));
     return photos;
+  }
+
+  Future<void> _refreshPhotoPath(PhotoEntity photo) async {
+    final asset = await AssetEntity.fromId(photo.assetId);
+    final file = await asset?.file;
+    final latestPath = file?.path;
+    if (latestPath != null && latestPath.isNotEmpty && latestPath != photo.path) {
+      photo.path = latestPath;
+    }
   }
 }

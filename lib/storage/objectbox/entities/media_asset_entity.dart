@@ -62,14 +62,14 @@ class MediaAssetEntity {
   @Property(type: PropertyType.floatVector)
   List<double>? embedding;
 
-  MediaAssetStatus get statusEnum {
+  MediaAssetStatus getStatus() {
     if (status < 0 || status >= MediaAssetStatus.values.length) {
       return MediaAssetStatus.pending;
     }
     return MediaAssetStatus.values[status];
   }
 
-  set statusEnum(MediaAssetStatus value) {
+  void setStatus(MediaAssetStatus value) {
     status = value.index;
   }
 }

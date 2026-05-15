@@ -25,10 +25,12 @@ fi
 
 echo "Using profile: ${PROFILE}"
 echo "Using device : ${DEVICE}"
-export FLUTTER_STORAGE_BASE_URL="https://mirrors.nju.edu.cn/flutter"
+# Use the Flutter China mirror for engine Maven artifacts. Some university
+# mirrors can lag new engine hashes and fail resolving flutter_embedding_debug.
+export FLUTTER_STORAGE_BASE_URL="https://storage.flutter-io.cn"
 export PUB_HOSTED_URL="https://pub.flutter-io.cn"
 flutter pub get
-flutter pub run build_runner build --delete-conflicting-outputs
+dart run build_runner build
 flutter run \
 	-d "${DEVICE}" \
 	--dart-define-from-file="${PROFILE_FILE}"

@@ -1,6 +1,7 @@
 /// 应用的主底部导航树，负责在首页、相册、创作、个人页和主题页之间切换。
 
 import 'package:flutter/material.dart';
+import 'package:flutter/painting.dart';
 import '../service/ai_progress_notification_service.dart';
 import '../service/ai_service.dart';
 import '../service/album_refresh_service.dart';
@@ -66,6 +67,13 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
         _progressBannerHidden = false;
       });
     }
+  }
+
+  @override
+  void didHaveMemoryPressure() {
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+    super.didHaveMemoryPressure();
   }
 
   @override

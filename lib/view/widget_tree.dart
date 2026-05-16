@@ -9,6 +9,7 @@ import 'pages/album_page.dart';
 import 'pages/create_hub_page.dart';
 import 'pages/profile_page.dart';
 import 'pages/theme_clusters_page.dart';
+import 'chat/memory_assistant_overlay.dart';
 
 class WidgetTree extends StatefulWidget {
   const WidgetTree({super.key});
@@ -74,6 +75,7 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
         children: [
           _pages[_currentIndex],
           _buildTopProgressOverlay(),
+          const MemoryAssistantOverlay(),
         ],
       ),
       extendBody: false,

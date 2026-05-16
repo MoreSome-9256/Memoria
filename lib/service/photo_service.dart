@@ -20,6 +20,7 @@ import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../data/tag_taxonomy_v2.dart';
 import '../service/junk_photo_filter_service.dart';
 import '../utils/photo_filter_helper.dart';
+import '../models/chat_message.dart'; 
 
 part 'photo_service_models.dart';
 part 'photo_service_scan.dart';
@@ -60,6 +61,7 @@ class PhotoService {
         FaceEntitySchema,
         EventEntitySchema,
         StoryEntitySchema,
+        ChatMessageSchema,
         CreateRecommendationEntitySchema,
         DigitalAlbumBookEntitySchema,
       ], // 注册所有实体

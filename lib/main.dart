@@ -22,6 +22,7 @@ import 'package:photo_album/service/media_asset_sync_service.dart';
 import 'package:photo_album/service/media_embedding_index_service.dart';
 import 'package:photo_album/service/photo_service.dart';
 import 'package:photo_album/service/ai_progress_notification_service.dart';
+import 'package:photo_album/service/app_initializer.dart';
 import 'package:photo_album/storage/objectbox/objectbox_service.dart';
 import 'package:photo_album/utils/ocr_policy.dart';
 import 'package:photo_album/view/pages/mobileclip_vector_probe_page.dart';
@@ -138,6 +139,18 @@ class _AppStartupCoordinator {
         );
       }
       await PhotoService().init();
+      
+      // 🌟 应用初始化：清理临时文件和缓存
+      unawaited(
+        Future<void>(() async {
+          try {
+            await AppInitializer.instance.initialize();
+          } catch (error) {
+            debugPrint('应用初始化失败: $error');
+          }
+        }),
+      );
+      
       unawaited(
         Future<void>(() async {
           try {

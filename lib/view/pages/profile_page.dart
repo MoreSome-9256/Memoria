@@ -17,6 +17,7 @@ import 'face_cluster_debug_page.dart';
 import 'junk_photo_trash_page.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
+import '../../service/video_cache_service.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});

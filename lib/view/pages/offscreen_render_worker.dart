@@ -21,6 +21,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:gal/gal.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
+import '../../service/video_cache_service.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
 
 class OffscreenRenderWorker extends StatefulWidget {
@@ -569,6 +570,52 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       captions: currentCaptions,
     );
 
+    // 🌟 第一步：检查是否有缓存视频
+    final sectionsData = widget.sections.map((section) {
+      return {
+        'photo': {'path': section.photo.path},
+        'text': section.text,
+      };
+    }).toList();
+
+    final cachedVideoPath = await VideoCacheService.instance.getCachedVideoPath(
+      title: widget.title,
+      subtitle: widget.subtitle,
+      sections: sectionsData,
+      customMusicPath: widget.customMusicPath,
+      dynamicBeatData: widget.dynamicBeatData,
+      targetPlatform: widget.targetPlatform,
+      isHorizontal: widget.isHorizontal,
+      currentTextStyle: widget.currentTextStyle,
+      textYPosition: widget.textYPosition,
+      textSize: widget.textSize,
+      textBlurIntensity: widget.textBlurIntensity,
+      shakeIntensity: widget.shakeIntensity,
+      shakeFrequency: widget.shakeFrequency,
+      glitchIntensity: widget.glitchIntensity,
+      enableFlash: widget.enableFlash,
+      useVignette: widget.useVignette,
+      useGrain: widget.useGrain,
+      useCameraFrame: widget.useCameraFrame,
+      useGlowRing: widget.useGlowRing,
+      useCloudBorder: widget.useCloudBorder,
+    );
+
+    if (cachedVideoPath != null) {
+      debugPrint('✅ 使用缓存视频: $cachedVideoPath');
+      widget.onProgress?.call(1.0);
+      // 将缓存视频移动到导出目录
+      final finalPath = await VideoCacheService.instance.moveToExportsDirectory(
+        cachedVideoPath,
+        customName: 'Story_${DateTime.now().millisecondsSinceEpoch}.mp4',
+      );
+      _handleExportSuccess(finalPath);
+      return;
+    }
+
+    // 🌟 第二步：没有缓存，开始生成新视频
+    debugPrint('🔄 未找到缓存，开始生成新视频...');
+
     // 计算最终毫秒数
     int totalBeatsNeeded = widget.sections.length * 8;
     int finalExportDurationMs = totalBeatsNeeded * _beatIntervalMs;
@@ -596,14 +643,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     int videoWidth = firstFrame.$2;
     int videoHeight = firstFrame.$3;
 
-    final docDir = await getApplicationDocumentsDirectory();
     final tempDir = await getTemporaryDirectory();
-    // 🌟 创建专用的故事视频输出目录（排除于扫描外）
-    final outputDir = Directory('${docDir.path}/StoryExports');
-    if (!await outputDir.exists()) {
-      await outputDir.create(recursive: true);
-      debugPrint('📁 创建视频输出目录: ${outputDir.path}');
-    }
     final String silentVideoPath =
         "${tempDir.path}/silent_temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
 
@@ -678,13 +718,12 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     await FlutterQuickVideoEncoder.finish();
 
     // 🎬 5. 移交接力棒，进行音视频合并
-    await _fastMuxAudio(silentVideoPath, exactExportSeconds, outputDir);
+    await _fastMuxAudio(silentVideoPath, exactExportSeconds);
   }
 
   Future<void> _fastMuxAudio(
     String silentVideoPath,
     double exactSeconds,
-    Directory outputDir,
   ) async {
     widget.onProgress?.call(0.95);
     final tempDir = await getTemporaryDirectory();
@@ -712,8 +751,9 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       audioPath = tempAudioFile.path;
     }
 
-    final String outputPath =
-        "${outputDir.path}/FINAL_STORY_${DateTime.now().millisecondsSinceEpoch}.mp4";
+    // 生成缓存视频路径（在缓存目录）
+    final cacheDir = await VideoCacheService.instance.getCacheDirectory();
+    final cacheVideoPath = "${cacheDir.path}/temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
 
     try {
       // 首选：尝试使用 flutter_quick_video_encoder 的运行时合并能力（如果插件提供）
@@ -725,13 +765,13 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
             await encoder.mergeAudioWithVideo(
               silentVideoPath,
               audioPath,
-              outputPath,
+              cacheVideoPath,
               loop: true,
             );
             try {
               await File(silentVideoPath).delete();
             } catch (_) {}
-            _handleExportSuccess(outputPath);
+            _handleExportSuccess(cacheVideoPath);
             return;
           } catch (e) {
             debugPrint('⚠️ encoder.mergeAudioWithVideo 不可用或失败: $e');
@@ -741,13 +781,13 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
       // 回退：如果插件不支持在原生层合并音频，则把静音视频作为最终产物（保留视频），并记录警告。
       try {
-        // 复制静音视频到 final 路径（保持文件可访问）
-        await File(silentVideoPath).copy(outputPath);
+        // 复制静音视频到缓存路径
+        await File(silentVideoPath).copy(cacheVideoPath);
         try {
           await File(silentVideoPath).delete();
         } catch (_) {}
         debugPrint('⚠️ 使用回退路径：生成无声视频作为最终产物（音频未合并）');
-        _handleExportSuccess(outputPath);
+        _handleExportSuccess(cacheVideoPath);
       } catch (e) {
         debugPrint('❌ 回退合并失败: $e');
       }
@@ -768,15 +808,58 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   // 🌟 新增一个变量，用来装这个“未来的文案”
   Future<String>? _aiCopyFuture;
 
-  void _handleExportSuccess(String outputPath) async {
+  void _handleExportSuccess(String cacheVideoPath) async {
     try {
-      // 🌟 改为：保存到应用私有目录，不直接扔相册
-      // （用户可稍后选择手动保存到相册或分享）
-      debugPrint('✅ 视频导出完成，已保存到: $outputPath');
+      debugPrint('✅ 视频生成完成，缓存路径: $cacheVideoPath');
+      
+      // 🌟 第一步：缓存视频
+      final sectionsData = widget.sections.map((section) {
+        return {
+          'photo': {'path': section.photo.path},
+          'text': section.text,
+        };
+      }).toList();
+
+      final cachedPath = await VideoCacheService.instance.cacheVideo(
+        title: widget.title,
+        subtitle: widget.subtitle,
+        sections: sectionsData,
+        customMusicPath: widget.customMusicPath,
+        dynamicBeatData: widget.dynamicBeatData,
+        targetPlatform: widget.targetPlatform,
+        isHorizontal: widget.isHorizontal,
+        currentTextStyle: widget.currentTextStyle,
+        textYPosition: widget.textYPosition,
+        textSize: widget.textSize,
+        textBlurIntensity: widget.textBlurIntensity,
+        shakeIntensity: widget.shakeIntensity,
+        shakeFrequency: widget.shakeFrequency,
+        glitchIntensity: widget.glitchIntensity,
+        enableFlash: widget.enableFlash,
+        useVignette: widget.useVignette,
+        useGrain: widget.useGrain,
+        useCameraFrame: widget.useCameraFrame,
+        useGlowRing: widget.useGlowRing,
+        useCloudBorder: widget.useCloudBorder,
+        videoPath: cacheVideoPath,
+      );
+
+      debugPrint('✅ 视频已缓存: $cachedPath');
+      
+      // 🌟 第二步：将视频移动到导出目录（用户可见）
+      final finalPath = await VideoCacheService.instance.moveToExportsDirectory(
+        cachedPath,
+        customName: 'Story_${DateTime.now().millisecondsSinceEpoch}.mp4',
+      );
+      
+      debugPrint('✅ 视频已移动到导出目录: $finalPath');
       debugPrint('📱 用户可在发布页面选择分享或手动保存到相册');
 
+      // 🌟 第三步：清理本次导出产生的临时文件
+      await VideoCacheService.instance.cleanupExportTempFiles();
+
       // 🌟 核心：触发回调，通知 ExportManager 任务完成！
-      widget.onComplete(outputPath, _aiCopyFuture);
+      widget.onComplete(finalPath, _aiCopyFuture);
     } catch (e) {
       debugPrint("❌ 导出处理失败: $e");
     }

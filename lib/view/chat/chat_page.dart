@@ -45,7 +45,7 @@ class _ChatPageState extends State<ChatPage> {
 
     if (history.isEmpty) {
       await _addAndSaveMessage(
-        ChatMessage(
+        ChatMessage.create(
           text: "你好！我是 Memoria 助手。我可以帮你找照片，或者聊聊你的美好回忆。你想看哪方面的瞬间？",
           sender: MessageSender.ai,
           timestamp: DateTime.now(),
@@ -139,7 +139,7 @@ class _ChatPageState extends State<ChatPage> {
     final text = _controller.text.trim();
     if (text.isEmpty || _isLoading) return;
 
-    final userMsg = ChatMessage(
+    final userMsg = ChatMessage.create(
       text: text,
       sender: MessageSender.user,
       timestamp: DateTime.now(),
@@ -157,7 +157,7 @@ class _ChatPageState extends State<ChatPage> {
         .trim();
 
     if (mounted) {
-      final aiMsg = ChatMessage(
+      final aiMsg = ChatMessage.create(
         text: cleanText,
         sender: MessageSender.ai,
         timestamp: DateTime.now(),

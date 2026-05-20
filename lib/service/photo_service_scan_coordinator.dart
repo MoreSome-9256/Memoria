@@ -22,8 +22,9 @@ class _PhotoScanCoordinator {
   final PhotoService _service;
 
   // ── session 级缓存 ────────────────────────────────────────────────
-  static AssetPathEntity? _cachedAlbum;
+  static List<AssetPathEntity> _cachedAlbums = <AssetPathEntity>[];
   static int _cachedTotalCount = -1;
+  static String _cachedSelectionSignature = '';
   static bool _permissionsReady = false;
   static bool _lastPermissionWasLimited = false;
 
@@ -31,10 +32,12 @@ class _PhotoScanCoordinator {
   Future<_PhotoRebuildPlan> prepareRebuild({int? maxAssets}) async {
     final totalBefore = _service._photoBox.count();
     final prepared = await _prepareScan(maxAssets: maxAssets);
+    final filterProfile = await _resolveFilterProfile();
 
     final built = await _service._buildPhotoEntities(
       prepared.assets,
       skipExisting: false,
+      filterProfile: filterProfile,
     );
     if (built.photos.isEmpty) {
       throw const PhotoScanException(
@@ -64,10 +67,10 @@ class _PhotoScanCoordinator {
     final totalBefore = _service._photoBox.count();
 
     // 仅首次运行时请求权限+获取（并在首次执行一次旧照片清理）
-    final album = await _resolveAlbum(
+    final albumBundle = await _resolveAlbums(
       runCleanupOnce: totalBefore <= 0,
     );
-    if (album == null || _cachedTotalCount <= 0) {
+    if (albumBundle.albums.isEmpty || _cachedTotalCount <= 0) {
       onProgress?.call(
         const BatchScanProgress(
           scannedCount: 0,
@@ -80,10 +83,13 @@ class _PhotoScanCoordinator {
       return _emptyPlan(totalBefore);
     }
 
+    final filterProfile = albumBundle.isUserSelection
+        ? PhotoScanFilterProfile.userSelectedAlbums
+        : PhotoScanFilterProfile.strict;
+
     final targetNew = math.max(1, maxAssets ?? 50);
     const pageSize = 50;
 
-    var cursor = 0;
     final collectedPhotos = <PhotoEntity>[];
     var totalScanned = 0;
     var candidateCount = 0;
@@ -99,20 +105,42 @@ class _PhotoScanCoordinator {
       ),
     );
 
-    while (collectedPhotos.length < targetNew && cursor < _cachedTotalCount) {
-      final end = math.max(0, math.min(_cachedTotalCount, cursor + pageSize));
-      final assets = await album.getAssetListRange(start: cursor, end: end);
-      if (assets.isEmpty) break;
-      totalScanned += assets.length;
-      cursor = end;
+    for (final album in albumBundle.albums) {
+      if (collectedPhotos.length >= targetNew) break;
+      final albumTotal = await album.assetCountAsync;
+      var cursor = 0;
 
-      // 批量过滤已存在
-      final skipIds = _existingAssetIdSet(assets);
-      final newAssets = <AssetEntity>[];
-      for (final asset in assets) {
-        if (!skipIds.contains(asset.id)) newAssets.add(asset);
-      }
-      if (newAssets.isEmpty) {
+      while (collectedPhotos.length < targetNew && cursor < albumTotal) {
+        final end = math.max(0, math.min(albumTotal, cursor + pageSize));
+        final assets = await album.getAssetListRange(start: cursor, end: end);
+        if (assets.isEmpty) break;
+        totalScanned += assets.length;
+        cursor = end;
+
+        // 批量过滤已存在
+        final skipIds = _existingAssetIdSet(assets);
+        final newAssets = <AssetEntity>[];
+        for (final asset in assets) {
+          if (!skipIds.contains(asset.id)) newAssets.add(asset);
+        }
+        if (newAssets.isEmpty) {
+          onProgress?.call(
+            BatchScanProgress(
+              scannedCount: totalScanned,
+              candidateCount: candidateCount,
+              acceptedCount: collectedPhotos.length,
+              totalCount: _cachedTotalCount,
+              targetNew: targetNew,
+            ),
+          );
+          continue;
+        }
+
+        final remainingSlots = targetNew - collectedPhotos.length;
+        final buildAssets = newAssets.length > remainingSlots
+            ? newAssets.take(remainingSlots).toList(growable: false)
+            : newAssets;
+        candidateCount += buildAssets.length;
         onProgress?.call(
           BatchScanProgress(
             scannedCount: totalScanned,
@@ -122,43 +150,32 @@ class _PhotoScanCoordinator {
             targetNew: targetNew,
           ),
         );
-        continue;
-      }
 
-      final remainingSlots = targetNew - collectedPhotos.length;
-      final buildAssets = newAssets.length > remainingSlots
-          ? newAssets.take(remainingSlots).toList(growable: false)
-          : newAssets;
-      candidateCount += buildAssets.length;
-      onProgress?.call(
-        BatchScanProgress(
-          scannedCount: totalScanned,
-          candidateCount: candidateCount,
-          acceptedCount: collectedPhotos.length,
-          totalCount: _cachedTotalCount,
-          targetNew: targetNew,
-        ),
-      );
-
-      // 并行构建
-      final results = await Future.wait(
-        buildAssets.map((a) => _service._buildSingleAssetPhoto(a)),
-      );
-      for (final r in results) {
-        if (r.photo != null) {
-          collectedPhotos.add(r.photo!);
+        // 并行构建
+        final results = await Future.wait(
+          buildAssets.map(
+            (a) => _service._buildSingleAssetPhoto(
+              a,
+              filterProfile: filterProfile,
+            ),
+          ),
+        );
+        for (final r in results) {
+          if (r.photo != null) {
+            collectedPhotos.add(r.photo!);
+          }
+          stats = stats.merge(r);
         }
-        stats = stats.merge(r);
+        onProgress?.call(
+          BatchScanProgress(
+            scannedCount: totalScanned,
+            candidateCount: candidateCount,
+            acceptedCount: collectedPhotos.length,
+            totalCount: _cachedTotalCount,
+            targetNew: targetNew,
+          ),
+        );
       }
-      onProgress?.call(
-        BatchScanProgress(
-          scannedCount: totalScanned,
-          candidateCount: candidateCount,
-          acceptedCount: collectedPhotos.length,
-          totalCount: _cachedTotalCount,
-          targetNew: targetNew,
-        ),
-      );
     }
 
     final built = _ScanBuildResult(
@@ -190,13 +207,24 @@ class _PhotoScanCoordinator {
   }
 
   // ── 获取并缓存系统相册引用 ───────────────────────────────────────
-  Future<AssetPathEntity?> _resolveAlbum({
+  Future<_AlbumBundle> _resolveAlbums({
     bool runCleanupOnce = false,
     bool forceRefresh = false,
   }) async {
-    if (!forceRefresh && _cachedAlbum != null && _cachedTotalCount >= 0) {
-      _cachedTotalCount = await _cachedAlbum!.assetCountAsync;
-      return _cachedAlbum;
+    final selection = await AlbumSelectionPreferenceService().loadSelection();
+    final selectionSignature = _signatureForSelection(selection);
+    if (!forceRefresh &&
+        _cachedAlbums.isNotEmpty &&
+        _cachedTotalCount >= 0 &&
+        _cachedSelectionSignature == selectionSignature) {
+      _cachedTotalCount = 0;
+      for (final album in _cachedAlbums) {
+        _cachedTotalCount += await album.assetCountAsync;
+      }
+      return _AlbumBundle(
+        albums: _cachedAlbums,
+        isUserSelection: !selection.useAllAlbums,
+      );
     }
 
     await _ensurePermissions();
@@ -207,7 +235,7 @@ class _PhotoScanCoordinator {
     );
     final albums = await PhotoManager.getAssetPathList(
       type: RequestType.image,
-      onlyAll: true,
+      onlyAll: selection.useAllAlbums,
       filterOption: filter,
     );
     if (albums.isEmpty) {
@@ -217,29 +245,38 @@ class _PhotoScanCoordinator {
           '照片访问权限为受限模式，且当前授权列表为空。',
         );
       }
-      return null;
+      return const _AlbumBundle(albums: <AssetPathEntity>[], isUserSelection: false);
     }
 
-    // 找照片最多的相册
-    var best = albums.first;
-    var bestCount = await best.assetCountAsync;
-    for (final album in albums.skip(1)) {
-      final c = await album.assetCountAsync;
-      if (c > bestCount) {
-        best = album;
-        bestCount = c;
-      }
+    List<AssetPathEntity> selectedAlbums = albums;
+    if (!selection.useAllAlbums) {
+      final selectedIdSet = selection.selectedAlbumIds.toSet();
+      selectedAlbums = albums
+          .where((album) => selectedIdSet.contains(album.id))
+          .toList(growable: false);
+    }
+    if (selectedAlbums.isEmpty) {
+      return const _AlbumBundle(albums: <AssetPathEntity>[], isUserSelection: false);
     }
 
-    _cachedAlbum = best;
-    _cachedTotalCount = bestCount;
+    var totalCount = 0;
+    for (final album in selectedAlbums) {
+      totalCount += await album.assetCountAsync;
+    }
+
+    _cachedAlbums = selectedAlbums;
+    _cachedTotalCount = totalCount;
+    _cachedSelectionSignature = selectionSignature;
 
     if (runCleanupOnce) {
       // session 首次运行：清理一次已删除照片
       _service._removeUnavailablePhotos().ignore();
     }
 
-    return best;
+    return _AlbumBundle(
+      albums: selectedAlbums,
+      isUserSelection: !selection.useAllAlbums,
+    );
   }
 
   Future<void> _ensurePermissions() async {
@@ -282,8 +319,8 @@ class _PhotoScanCoordinator {
   // ── 全量重建用：兼容原 _prepareScan（简化版）─────────────────────
   Future<_PreparedScanData> _prepareScan({int? maxAssets}) async {
     // 全量重建每次强制刷新缓存（因为可能要扫全部照片）
-    final album = await _resolveAlbum(runCleanupOnce: true, forceRefresh: true);
-    if (album == null || _cachedTotalCount <= 0) {
+    final albumBundle = await _resolveAlbums(runCleanupOnce: true, forceRefresh: true);
+    if (albumBundle.albums.isEmpty || _cachedTotalCount <= 0) {
       return _PreparedScanData(
         assets: const [],
         totalCount: 0,
@@ -296,13 +333,72 @@ class _PhotoScanCoordinator {
     final fetchCount = maxAssets == null
         ? count
         : math.max(1, math.min(count, maxAssets));
-    final assets = await album.getAssetListRange(start: 0, end: fetchCount);
+    final assets = await _collectAssetsFromAlbums(
+      albumBundle.albums,
+      maxAssets: fetchCount,
+    );
     return _PreparedScanData(
       assets: assets,
       totalCount: count,
       fetchCount: assets.length,
       startOffset: 0,
     );
+  }
+
+  Future<List<AssetEntity>> _collectAssetsFromAlbums(
+    List<AssetPathEntity> albums, {
+    required int maxAssets,
+  }) async {
+    final collected = <AssetEntity>[];
+    if (maxAssets <= 0 || albums.isEmpty) {
+      return collected;
+    }
+
+    for (final album in albums) {
+      if (collected.length >= maxAssets) break;
+      final total = await album.assetCountAsync;
+      var cursor = 0;
+      while (cursor < total && collected.length < maxAssets) {
+        final end = math.min(total, cursor + 200);
+        final assets = await album.getAssetListRange(start: cursor, end: end);
+        if (assets.isEmpty) break;
+        collected.addAll(assets);
+        cursor = end;
+      }
+    }
+    if (collected.length > maxAssets) {
+      return collected.sublist(0, maxAssets);
+    }
+    return collected;
+  }
+
+  Future<PhotoScanFilterProfile> _resolveFilterProfile() async {
+    final selection = await AlbumSelectionPreferenceService().loadSelection();
+    final prefs = await AlbumSelectionPreferenceService().loadScanPreferences();
+    int? minTs;
+    if (prefs['minYear'] != null) {
+      final y = prefs['minYear']!;
+      minTs = DateTime(y, 1, 1).millisecondsSinceEpoch;
+    }
+    final minW = prefs['minWidth'];
+    final minH = prefs['minHeight'];
+    final base = selection.useAllAlbums
+        ? PhotoScanFilterProfile.strict
+        : PhotoScanFilterProfile.userSelectedAlbums;
+    return PhotoScanFilterProfile(
+      requireValidDimensions: base.requireValidDimensions,
+      minTimestampMs: minTs,
+      minWidth: minW,
+      minHeight: minH,
+    );
+  }
+
+  String _signatureForSelection(AlbumSelectionSnapshot selection) {
+    if (selection.useAllAlbums) {
+      return 'all';
+    }
+    final sortedIds = selection.selectedAlbumIds.toList()..sort();
+    return 'custom:${sortedIds.join(',')}';
   }
 
   _PhotoSyncPlan _emptyPlan(int totalBefore) {
@@ -347,4 +443,14 @@ class _ScanStats {
     skippedNonCamera: skippedNonCamera + r.skippedNonCamera,
     skippedScreenshot: skippedScreenshot + r.skippedScreenshot,
   );
+}
+
+class _AlbumBundle {
+  const _AlbumBundle({
+    required this.albums,
+    required this.isUserSelection,
+  });
+
+  final List<AssetPathEntity> albums;
+  final bool isUserSelection;
 }

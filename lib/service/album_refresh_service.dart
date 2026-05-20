@@ -186,7 +186,7 @@ class AlbumRefreshService {
       }
       _setProgress(
         AlbumRefreshStage.handoff,
-        0.95,
+        aiRunning ? 0.95 : 1.0,
         '本轮没有可入库新照片',
         aiRunning ? 'AI 队列正在运行' : '已转去检查未完成的后台 AI 队列',
       );

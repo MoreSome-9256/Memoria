@@ -6,6 +6,36 @@
 
 part of 'photo_service.dart';
 
+class PhotoScanFilterProfile {
+  const PhotoScanFilterProfile({
+    required this.requireValidDimensions,
+    this.minTimestampMs,
+    this.minWidth,
+    this.minHeight,
+  });
+
+  /// 现有筛选策略汇总：
+  /// - requireValidDimensions: 宽高必须有效
+  /// - requireCameraLikePath: 仅接收“相机路径/命名”照片
+  /// - requireValidTimestamp: 仅接收有效时间戳
+  /// - skipScreenshotByRatio: 跳过疑似截图比例
+  // 默认策略：不进行预先的截图/路径/时间戳筛选，仅可选的尺寸与时间阈值由用户偏好控制。
+  static const PhotoScanFilterProfile strict = PhotoScanFilterProfile(
+    requireValidDimensions: true,
+  );
+
+  /// 用户自选相册：同样不做自动筛选（以用户偏好为准）。
+  static const PhotoScanFilterProfile userSelectedAlbums = PhotoScanFilterProfile(
+    requireValidDimensions: true,
+  );
+
+  final bool requireValidDimensions;
+  // 可选的用户阈值（若为 null 则表示不限制）
+  final int? minTimestampMs;
+  final int? minWidth;
+  final int? minHeight;
+}
+
 class _PhotoAssetBuilder {
   const _PhotoAssetBuilder(this._service);
 
@@ -15,6 +45,7 @@ class _PhotoAssetBuilder {
   Future<_ScanBuildResult> buildPhotoEntities(
     List<AssetEntity> assets, {
     required bool skipExisting,
+    PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
   }) async {
     final existingByAssetId = <String, PhotoEntity>{};
     final refreshedExisting = <PhotoEntity>[];
@@ -64,7 +95,12 @@ class _PhotoAssetBuilder {
           continue;
         }
 
-        buildResults.add(await buildSingleAssetPhoto(asset));
+        buildResults.add(
+          await buildSingleAssetPhoto(
+            asset,
+            filterProfile: filterProfile,
+          ),
+        );
       }
     });
     await Future.wait(workers);
@@ -91,42 +127,60 @@ class _PhotoAssetBuilder {
   }
 
   // ── 单张构建：关键优化 — file 与 latlng 并发 ────────────────────
-  Future<_SingleAssetBuildResult> buildSingleAssetPhoto(AssetEntity asset) async {
+  Future<_SingleAssetBuildResult> buildSingleAssetPhoto(
+    AssetEntity asset, {
+    PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
+  }) async {
     final width = asset.width;
     final height = asset.height;
-    if (width <= 0 || height <= 0) {
+    if (filterProfile.requireValidDimensions && (width <= 0 || height <= 0)) {
       return const _SingleAssetBuildResult(skippedNonCamera: 1);
     }
 
-    final isScreenshotByRatio = PhotoFilterHelper.isLikelyScreenshotByRatio(width, height);
-
-    // 并行发起 file 解析 与 (条件性的) GPS 查询
+    // 并行发起 file 解析 与 GPS 查询
     final fileFuture = resolveReadableFile(asset);
-    final latlngFuture = (!isScreenshotByRatio)
-        ? asset.latlngAsync()
-        : Future<LatLng?>.value(null);
+    final latlngFuture = asset.latlngAsync();
 
     final results = await (fileFuture, latlngFuture).wait;
     final file = results.$1;
     final latLong = results.$2;
 
     if (file == null) {
-      return const _SingleAssetBuildResult(skippedNonCamera: 1);
-    }
+      // 无法直接解析到文件（例如 iCloud/受限或 thumbnail-only），
+      // 对于用户选定相册或默认策略，仍尽量建立最小可用实体，
+      // 后续 reconcileAccessiblePhotos 会尝试修复 path 或移除不可访问的条目。
+      final fallbackTimestamp = asset.createDateTime.millisecondsSinceEpoch;
 
-    final isCamera = PhotoFilterHelper.isLikelyCameraPhoto(file.path);
-    if (!isCamera) {
-      return _SingleAssetBuildResult(skippedNonCamera: 1, skippedScreenshot: isScreenshotByRatio ? 1 : 0);
-    }
+      final photo = PhotoEntity()
+        ..assetId = asset.id
+        ..timestamp = fallbackTimestamp
+        ..path = ''
+        ..width = width
+        ..height = height
+        ..isLocationProcessed = false
+        ..faceCount = 0
+        ..smileProb = 0.0;
+      // 应用用户指定的时间与分辨率阈值（若存在）
+      if (filterProfile.minTimestampMs != null &&
+          photo.timestamp < filterProfile.minTimestampMs!) {
+        return const _SingleAssetBuildResult(skippedInvalidTime: 1);
+      }
+      if (filterProfile.minWidth != null && filterProfile.minHeight != null) {
+        final selMax = math.max(filterProfile.minWidth!, filterProfile.minHeight!);
+        final selMin = math.min(filterProfile.minWidth!, filterProfile.minHeight!);
+        final pMax = math.max(photo.width, photo.height);
+        final pMin = math.min(photo.width, photo.height);
+        if (pMax < selMax || pMin < selMin) {
+          return const _SingleAssetBuildResult(skippedInvalidTime: 1);
+        }
+      }
 
-    final timestamp = resolveBestTimestampMs(asset, file);
-    if (!PhotoFilterHelper.hasValidTimestamp(timestamp)) {
       return _SingleAssetBuildResult(
-        skippedInvalidTime: 1,
-        skippedNonCamera: 0,
-        skippedScreenshot: isScreenshotByRatio ? 1 : 0,
+        photo: photo,
+        insertedNoGps: 1,
       );
     }
+    final timestamp = resolveBestTimestampMs(asset, file);
 
     final hasGps = PhotoFilterHelper.hasValidGps(latLong?.latitude, latLong?.longitude);
     final photo = PhotoEntity()
@@ -139,10 +193,23 @@ class _PhotoAssetBuilder {
       ..longitude = hasGps ? latLong!.longitude : null
       ..isLocationProcessed = false;
 
+    // 应用用户指定的时间与分辨率阈值（若存在）
+    if (filterProfile.minTimestampMs != null && photo.timestamp < filterProfile.minTimestampMs!) {
+      return const _SingleAssetBuildResult(skippedInvalidTime: 1);
+    }
+    if (filterProfile.minWidth != null && filterProfile.minHeight != null) {
+      final selMax = math.max(filterProfile.minWidth!, filterProfile.minHeight!);
+      final selMin = math.min(filterProfile.minWidth!, filterProfile.minHeight!);
+      final pMax = math.max(photo.width, photo.height);
+      final pMin = math.min(photo.width, photo.height);
+      if (pMax < selMax || pMin < selMin) {
+        return const _SingleAssetBuildResult(skippedInvalidTime: 1);
+      }
+    }
+
     return _SingleAssetBuildResult(
       photo: photo,
       insertedNoGps: hasGps ? 0 : 1,
-      skippedScreenshot: isScreenshotByRatio ? 1 : 0,
     );
   }
 

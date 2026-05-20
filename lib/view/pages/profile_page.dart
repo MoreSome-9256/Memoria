@@ -9,6 +9,9 @@ import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/travel_memory_detector.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
+import 'package:photo_manager/photo_manager.dart';
+
+import 'package:photo_album/service/album_selection_preference_service.dart';
 
 import 'face_cluster_debug_page.dart';
 import 'junk_photo_trash_page.dart';
@@ -25,8 +28,10 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   final _auth = const CognitoAuthService();
   final _backendPreferenceService = MobileClipBackendPreferenceService();
+  final _albumSelectionPreferenceService = AlbumSelectionPreferenceService();
 
   late bool _autoResumeEnabled;
+  String _albumSelectionSummary = '使用全部相册';
 
   Future<AuthUser?> _loadUser() async {
     try {
@@ -57,6 +62,253 @@ class _ProfilePageState extends State<ProfilePage> {
       MaterialPageRoute<void>(builder: (_) => const WelcomePage()),
       (_) => false,
     );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshAlbumSelectionSummary();
+  }
+
+  Future<void> _showScanPreferences() async {
+    final prefs = await _albumSelectionPreferenceService.loadScanPreferences();
+    int? selectedYear = prefs['minYear'];
+    List<int>? selectedPair = prefs['minWidth'] != null && prefs['minHeight'] != null
+      ? [prefs['minWidth']!, prefs['minHeight']!]
+      : null;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(builder: (context, setSheetState) {
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('扫描筛选', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  const Text('可选：按时间范围和最小分辨率过滤。默认不开启。'),
+                  const SizedBox(height: 12),
+                  Text('最早年份（含）', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  DropdownButton<int?>(
+                    value: selectedYear,
+                    items: <int?>[null, 2000, 2010, 2015, 2020, 2022]
+                        .map((y) => DropdownMenuItem<int?>(value: y, child: Text(y == null ? '不限制' : y.toString())))
+                        .toList(growable: false),
+                    onChanged: (v) => setSheetState(() => selectedYear = v),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('最小分辨率（宽 x 高）', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  DropdownButton<List<int>?>(
+                    value: selectedPair,
+                    items: <List<int>?>[null, [640, 480], [1280, 720], [1920, 1080]]
+                        .map((pair) {
+                      final label = pair == null ? '不限制' : '${pair[0]} x ${pair[1]}';
+                      return DropdownMenuItem<List<int>?>(value: pair, child: Text(label));
+                    }).toList(growable: false),
+                    onChanged: (pair) => setSheetState(() {
+                      selectedPair = pair;
+                    }),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(children: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+                    const Spacer(),
+                    FilledButton(onPressed: () async {
+                      await _albumSelectionPreferenceService.saveScanPreferences(
+                          minYear: selectedYear,
+                          minWidth: selectedPair?.first,
+                          minHeight: selectedPair?.last,
+                        );
+                      if (!mounted) return;
+                      Navigator.pop(context);
+                    }, child: const Text('保存')),
+                  ])
+                ],
+              ),
+            ),
+          );
+        });
+      },
+    );
+  }
+
+  Future<void> _refreshAlbumSelectionSummary() async {
+    final snapshot = await _albumSelectionPreferenceService.loadSelection();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (snapshot.useAllAlbums) {
+        _albumSelectionSummary = '使用全部相册';
+      } else {
+        _albumSelectionSummary = '已选择 ${snapshot.selectedAlbumIds.length} 个相册';
+      }
+    });
+  }
+
+  Future<void> _showAlbumSelectionSettings() async {
+    final permission = await PhotoManager.requestPermissionExtend();
+    if (!permission.isAuth && !permission.hasAccess) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('没有相册权限，无法选择相册范围。'),
+        ),
+      );
+      return;
+    }
+
+    final filter = FilterOptionGroup(
+      orders: [OrderOption(type: OrderOptionType.createDate, asc: false)],
+    );
+    final albums = await PhotoManager.getAssetPathList(
+      type: RequestType.image,
+      onlyAll: false,
+      filterOption: filter,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (albums.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('未检测到可用相册。'),
+        ),
+      );
+      return;
+    }
+
+    final albumSummaries = <_AlbumSelectionItem>[];
+    for (final album in albums) {
+      albumSummaries.add(
+        _AlbumSelectionItem(
+          id: album.id,
+          name: album.name,
+          album: album,
+          assetCount: await album.assetCountAsync,
+        ),
+      );
+    }
+
+    final snapshot = await _albumSelectionPreferenceService.loadSelection();
+    var useAllAlbums = snapshot.useAllAlbums;
+    final selectedIds = snapshot.selectedAlbumIds.toSet();
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '扫描相册范围',
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      '只扫描你选定的相册。开启“全部相册”将恢复默认扫描策略。',
+                    ),
+                    const SizedBox(height: 16),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('使用全部相册'),
+                      subtitle: const Text('关闭后仅扫描勾选的相册'),
+                      value: useAllAlbums,
+                      onChanged: (value) {
+                        setSheetState(() {
+                          useAllAlbums = value;
+                        });
+                      },
+                    ),
+                    const Divider(height: 24),
+                    Flexible(
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: albumSummaries.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          final album = albumSummaries[index];
+                          final isSelected = selectedIds.contains(album.id);
+                          return CheckboxListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(album.name),
+                            subtitle: Text('${album.assetCount} 张'),
+                            value: useAllAlbums ? true : isSelected,
+                            onChanged: useAllAlbums
+                                ? null
+                                : (checked) {
+                                    setSheetState(() {
+                                      if (checked == true) {
+                                        selectedIds.add(album.id);
+                                      } else {
+                                        selectedIds.remove(album.id);
+                                      }
+                                    });
+                                  },
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('取消'),
+                        ),
+                        const Spacer(),
+                        FilledButton(
+                          onPressed: () async {
+                            await _albumSelectionPreferenceService.saveSelection(
+                              useAllAlbums: useAllAlbums,
+                              selectedAlbumIds:
+                                  selectedIds.toList(growable: false),
+                            );
+                            if (!context.mounted) {
+                              return;
+                            }
+                            Navigator.pop(context);
+                          },
+                          child: const Text('保存'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    await _refreshAlbumSelectionSummary();
   }
 
   Future<void> _showModelTypeSettings() async {
@@ -388,6 +640,20 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           _buildSettingsTile(
             context,
+            Icons.folder_copy_outlined,
+            '扫描相册范围',
+            _albumSelectionSummary,
+            onTap: _showAlbumSelectionSettings,
+          ),
+          _buildSettingsTile(
+            context,
+            Icons.filter_alt_outlined,
+            '扫描时间与分辨率',
+            '按时间范围和最小分辨率过滤扫描（可选）',
+            onTap: _showScanPreferences,
+          ),
+          _buildSettingsTile(
+            context,
             Icons.recycling,
             '低价值照片回收站',
             '查看已标记的低质量图片，并恢复为普通照片',
@@ -570,4 +836,18 @@ class _ProfilePageState extends State<ProfilePage> {
       onTap: onTap,
     );
   }
+}
+
+class _AlbumSelectionItem {
+  const _AlbumSelectionItem({
+    required this.id,
+    required this.name,
+    required this.album,
+    required this.assetCount,
+  });
+
+  final String id;
+  final String name;
+  final AssetPathEntity album;
+  final int assetCount;
 }

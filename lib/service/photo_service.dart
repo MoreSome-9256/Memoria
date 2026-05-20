@@ -19,7 +19,7 @@ import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/face_embedding_index_repository.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../utils/photo_filter_helper.dart';
-import '../models/chat_message.dart'; 
+import 'album_selection_preference_service.dart';
 import 'junk_photo_filter_service.dart';
 
 part 'photo_service_models.dart';
@@ -32,7 +32,6 @@ part 'photo_service_ai_reset.dart';
 
 class PhotoService {
   bool _isInitialized = false;
-  static const bool _verboseAssetLogging = false;
   static const int _assetExistenceWorkerCount = 12;
   static const int _assetBuildWorkerCount = 8;
   static const Duration _photoAccessCacheTtl = Duration(seconds: 20);
@@ -86,15 +85,23 @@ class PhotoService {
   Future<_ScanBuildResult> _buildPhotoEntities(
     List<AssetEntity> assets, {
     required bool skipExisting,
+    PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
   }) {
     return _PhotoAssetBuilder(this).buildPhotoEntities(
       assets,
       skipExisting: skipExisting,
+      filterProfile: filterProfile,
     );
   }
 
-  Future<_SingleAssetBuildResult> _buildSingleAssetPhoto(AssetEntity asset) {
-    return _PhotoAssetBuilder(this).buildSingleAssetPhoto(asset);
+  Future<_SingleAssetBuildResult> _buildSingleAssetPhoto(
+    AssetEntity asset, {
+    PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
+  }) {
+    return _PhotoAssetBuilder(this).buildSingleAssetPhoto(
+      asset,
+      filterProfile: filterProfile,
+    );
   }
 
   Future<File?> _resolveReadableFile(AssetEntity asset) {

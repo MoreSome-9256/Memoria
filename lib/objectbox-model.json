@@ -835,17 +835,60 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "10:9054987076692487709",
+      "lastPropertyId": "7:3945062749267567143",
+      "name": "ChatMessage",
+      "properties": [
+        {
+          "id": "1:6461841165082826797",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:6087689516851517019",
+          "name": "timestampMs",
+          "indexId": "32:7101798331720811262",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "3:2794290508777591102",
+          "name": "text",
+          "type": 9
+        },
+        {
+          "id": "4:2276251983343763556",
+          "name": "senderIndex",
+          "type": 6
+        },
+        {
+          "id": "5:8793110835939192142",
+          "name": "relatedPhotoPaths",
+          "type": 30
+        },
+        {
+          "id": "6:5829845236319301101",
+          "name": "searchTopic",
+          "type": 9
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "9:1998729358182538669",
-  "lastIndexId": "31:5483441673720632673",
+  "lastEntityId": "10:9054987076692487709",
+  "lastIndexId": "32:7101798331720811262",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,
   "modelVersionParserMinimum": 5,
   "retiredEntityUids": [],
   "retiredIndexUids": [],
-  "retiredPropertyUids": [],
+  "retiredPropertyUids": [
+    3945062749267567143
+  ],
   "retiredRelationUids": [],
   "version": 1
 }

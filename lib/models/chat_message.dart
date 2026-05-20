@@ -5,16 +5,32 @@ enum MessageSender { user, ai }
 @Entity()
 class ChatMessage {
   ChatMessage({
+    this.id = 0,
     required this.text,
-    required MessageSender sender,
-    required DateTime timestamp,
+    required this.senderIndex,
+    required this.timestampMs,
     this.relatedPhotoPaths,
     this.searchTopic,
-  })  : senderIndex = sender.index,
-        timestampMs = timestamp.millisecondsSinceEpoch;
+  });
+
+  factory ChatMessage.create({
+    required String text,
+    required MessageSender sender,
+    required DateTime timestamp,
+    List<String>? relatedPhotoPaths,
+    String? searchTopic,
+  }) {
+    return ChatMessage(
+      text: text,
+      senderIndex: sender.index,
+      timestampMs: timestamp.millisecondsSinceEpoch,
+      relatedPhotoPaths: relatedPhotoPaths,
+      searchTopic: searchTopic,
+    );
+  }
 
   @Id()
-  int id = 0;
+  int id;
 
   @Index()
   int timestampMs;
@@ -29,9 +45,13 @@ class ChatMessage {
   // 记录这批照片是由哪个搜索词触发的
   String? searchTopic;
 
+  @Transient()
   MessageSender get sender => MessageSender.values[senderIndex];
 
   set sender(MessageSender value) => senderIndex = value.index;
 
+  @Transient()
   DateTime get timestamp => DateTime.fromMillisecondsSinceEpoch(timestampMs);
+
+  set timestamp(DateTime value) => timestampMs = value.millisecondsSinceEpoch;
 }

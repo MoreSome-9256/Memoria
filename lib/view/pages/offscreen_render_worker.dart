@@ -570,7 +570,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       captions: currentCaptions,
     );
 
-    // 🌟 第一步：检查是否有缓存视频
+    // 🌟 第一步：检查是否有缓存视频（只检查图片和文本）
     final sectionsData = widget.sections.map((section) {
       return {
         'photo': {'path': section.photo.path},
@@ -579,26 +579,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     }).toList();
 
     final cachedVideoPath = await VideoCacheService.instance.getCachedVideoPath(
-      title: widget.title,
-      subtitle: widget.subtitle,
       sections: sectionsData,
-      customMusicPath: widget.customMusicPath,
-      dynamicBeatData: widget.dynamicBeatData,
-      targetPlatform: widget.targetPlatform,
-      isHorizontal: widget.isHorizontal,
-      currentTextStyle: widget.currentTextStyle,
-      textYPosition: widget.textYPosition,
-      textSize: widget.textSize,
-      textBlurIntensity: widget.textBlurIntensity,
-      shakeIntensity: widget.shakeIntensity,
-      shakeFrequency: widget.shakeFrequency,
-      glitchIntensity: widget.glitchIntensity,
-      enableFlash: widget.enableFlash,
-      useVignette: widget.useVignette,
-      useGrain: widget.useGrain,
-      useCameraFrame: widget.useCameraFrame,
-      useGlowRing: widget.useGlowRing,
-      useCloudBorder: widget.useCloudBorder,
     );
 
     if (cachedVideoPath != null) {
@@ -812,7 +793,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     try {
       debugPrint('✅ 视频生成完成，缓存路径: $cacheVideoPath');
       
-      // 🌟 第一步：缓存视频
+      // 🌟 第一步：缓存视频（只基于图片和文本）
       final sectionsData = widget.sections.map((section) {
         return {
           'photo': {'path': section.photo.path},
@@ -821,26 +802,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       }).toList();
 
       final cachedPath = await VideoCacheService.instance.cacheVideo(
-        title: widget.title,
-        subtitle: widget.subtitle,
         sections: sectionsData,
-        customMusicPath: widget.customMusicPath,
-        dynamicBeatData: widget.dynamicBeatData,
-        targetPlatform: widget.targetPlatform,
-        isHorizontal: widget.isHorizontal,
-        currentTextStyle: widget.currentTextStyle,
-        textYPosition: widget.textYPosition,
-        textSize: widget.textSize,
-        textBlurIntensity: widget.textBlurIntensity,
-        shakeIntensity: widget.shakeIntensity,
-        shakeFrequency: widget.shakeFrequency,
-        glitchIntensity: widget.glitchIntensity,
-        enableFlash: widget.enableFlash,
-        useVignette: widget.useVignette,
-        useGrain: widget.useGrain,
-        useCameraFrame: widget.useCameraFrame,
-        useGlowRing: widget.useGlowRing,
-        useCloudBorder: widget.useCloudBorder,
         videoPath: cacheVideoPath,
       );
 

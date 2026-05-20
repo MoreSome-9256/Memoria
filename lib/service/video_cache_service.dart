@@ -20,7 +20,8 @@ class VideoCacheService {
   // 内存缓存：sessionId -> 视频路径
   final Map<String, String> _sessionCache = {};
 
-  /// 生成session ID（基于导出参数的哈希）
+  /// 生成session ID（基于图片和文本的哈希）
+  /// 只检查图片路径和文本是否一致，不检查其他参数
   String _generateSessionId({
     required String title,
     required String subtitle,
@@ -43,31 +44,15 @@ class VideoCacheService {
     required bool useGlowRing,
     required bool useCloudBorder,
   }) {
-    final data = {
-      'title': title,
-      'subtitle': subtitle,
-      'sections': sections.map((s) => s['photo']['path']).toList(),
-      'customMusicPath': customMusicPath,
-      'dynamicBeatData': dynamicBeatData?.toString(),
-      'targetPlatform': targetPlatform,
-      'isHorizontal': isHorizontal,
-      'currentTextStyle': currentTextStyle,
-      'textYPosition': textYPosition,
-      'textSize': textSize,
-      'textBlurIntensity': textBlurIntensity,
-      'shakeIntensity': shakeIntensity,
-      'shakeFrequency': shakeFrequency,
-      'glitchIntensity': glitchIntensity,
-      'enableFlash': enableFlash,
-      'useVignette': useVignette,
-      'useGrain': useGrain,
-      'useCameraFrame': useCameraFrame,
-      'useGlowRing': useGlowRing,
-      'useCloudBorder': useCloudBorder,
-      'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000, // 秒级精度
+    // 只提取图片路径和文本
+    final imageTextData = {
+      // 提取所有图片路径，按路径排序确保一致性
+      'images': sections.map((s) => s['photo']['path'] as String).toList()..sort(),
+      // 提取所有文本
+      'texts': sections.map((s) => s['text'] as String).toList(),
     };
     
-    final jsonString = jsonEncode(data);
+    final jsonString = jsonEncode(imageTextData);
     final bytes = utf8.encode(jsonString);
     final digest = md5.convert(bytes);
     return digest.toString();
@@ -94,49 +79,32 @@ class VideoCacheService {
   }
 
   /// 检查是否已有缓存的视频
+  /// 只检查图片和文本是否一致
   Future<String?> getCachedVideoPath({
-    required String title,
-    required String subtitle,
     required List<Map<String, dynamic>> sections,
-    required String? customMusicPath,
-    required Map<String, dynamic>? dynamicBeatData,
-    required String targetPlatform,
-    required bool isHorizontal,
-    required String currentTextStyle,
-    required double textYPosition,
-    required double textSize,
-    required double textBlurIntensity,
-    required double shakeIntensity,
-    required double shakeFrequency,
-    required double glitchIntensity,
-    required bool enableFlash,
-    required bool useVignette,
-    required bool useGrain,
-    required bool useCameraFrame,
-    required bool useGlowRing,
-    required bool useCloudBorder,
   }) async {
+    // 简化参数，只传递sections
     final sessionId = _generateSessionId(
-      title: title,
-      subtitle: subtitle,
+      title: '', // 不使用
+      subtitle: '', // 不使用
       sections: sections,
-      customMusicPath: customMusicPath,
-      dynamicBeatData: dynamicBeatData,
-      targetPlatform: targetPlatform,
-      isHorizontal: isHorizontal,
-      currentTextStyle: currentTextStyle,
-      textYPosition: textYPosition,
-      textSize: textSize,
-      textBlurIntensity: textBlurIntensity,
-      shakeIntensity: shakeIntensity,
-      shakeFrequency: shakeFrequency,
-      glitchIntensity: glitchIntensity,
-      enableFlash: enableFlash,
-      useVignette: useVignette,
-      useGrain: useGrain,
-      useCameraFrame: useCameraFrame,
-      useGlowRing: useGlowRing,
-      useCloudBorder: useCloudBorder,
+      customMusicPath: null, // 不使用
+      dynamicBeatData: null, // 不使用
+      targetPlatform: '', // 不使用
+      isHorizontal: false, // 不使用
+      currentTextStyle: '', // 不使用
+      textYPosition: 0, // 不使用
+      textSize: 0, // 不使用
+      textBlurIntensity: 0, // 不使用
+      shakeIntensity: 0, // 不使用
+      shakeFrequency: 0, // 不使用
+      glitchIntensity: 0, // 不使用
+      enableFlash: false, // 不使用
+      useVignette: false, // 不使用
+      useGrain: false, // 不使用
+      useCameraFrame: false, // 不使用
+      useGlowRing: false, // 不使用
+      useCloudBorder: false, // 不使用
     );
 
     // 检查内存缓存
@@ -154,66 +122,41 @@ class VideoCacheService {
     final cachedFile = File(path.join(cacheDir.path, '$sessionId.mp4'));
     
     if (await cachedFile.exists()) {
-      // 检查缓存是否过期
-      final stat = await cachedFile.stat();
-      final age = DateTime.now().difference(stat.modified);
-      if (age <= _cacheDuration) {
-        _sessionCache[sessionId] = cachedFile.path;
-        return cachedFile.path;
-      } else {
-        // 删除过期缓存
-        await cachedFile.delete();
-      }
+      _sessionCache[sessionId] = cachedFile.path;
+      return cachedFile.path;
     }
 
     return null;
   }
 
   /// 缓存视频文件
+  /// 只基于图片和文本进行缓存
   Future<String> cacheVideo({
-    required String title,
-    required String subtitle,
     required List<Map<String, dynamic>> sections,
-    required String? customMusicPath,
-    required Map<String, dynamic>? dynamicBeatData,
-    required String targetPlatform,
-    required bool isHorizontal,
-    required String currentTextStyle,
-    required double textYPosition,
-    required double textSize,
-    required double textBlurIntensity,
-    required double shakeIntensity,
-    required double shakeFrequency,
-    required double glitchIntensity,
-    required bool enableFlash,
-    required bool useVignette,
-    required bool useGrain,
-    required bool useCameraFrame,
-    required bool useGlowRing,
-    required bool useCloudBorder,
     required String videoPath,
   }) async {
+    // 简化参数，只传递sections
     final sessionId = _generateSessionId(
-      title: title,
-      subtitle: subtitle,
+      title: '', // 不使用
+      subtitle: '', // 不使用
       sections: sections,
-      customMusicPath: customMusicPath,
-      dynamicBeatData: dynamicBeatData,
-      targetPlatform: targetPlatform,
-      isHorizontal: isHorizontal,
-      currentTextStyle: currentTextStyle,
-      textYPosition: textYPosition,
-      textSize: textSize,
-      textBlurIntensity: textBlurIntensity,
-      shakeIntensity: shakeIntensity,
-      shakeFrequency: shakeFrequency,
-      glitchIntensity: glitchIntensity,
-      enableFlash: enableFlash,
-      useVignette: useVignette,
-      useGrain: useGrain,
-      useCameraFrame: useCameraFrame,
-      useGlowRing: useGlowRing,
-      useCloudBorder: useCloudBorder,
+      customMusicPath: null, // 不使用
+      dynamicBeatData: null, // 不使用
+      targetPlatform: '', // 不使用
+      isHorizontal: false, // 不使用
+      currentTextStyle: '', // 不使用
+      textYPosition: 0, // 不使用
+      textSize: 0, // 不使用
+      textBlurIntensity: 0, // 不使用
+      shakeIntensity: 0, // 不使用
+      shakeFrequency: 0, // 不使用
+      glitchIntensity: 0, // 不使用
+      enableFlash: false, // 不使用
+      useVignette: false, // 不使用
+      useGrain: false, // 不使用
+      useCameraFrame: false, // 不使用
+      useGlowRing: false, // 不使用
+      useCloudBorder: false, // 不使用
     );
 
     final cacheDir = await getCacheDirectory();

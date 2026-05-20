@@ -177,65 +177,159 @@ class _PublishPageState extends State<PublishPage> {
         return;
       }
 
-      // 📱 获取文件名和目录信息
+      // 📱 获取文件信息
       final fileName = path.basename(widget.exportedVideoPath);
+      final fileDir = path.dirname(widget.exportedVideoPath);
       
-      // 尝试使用 open_file 包打开文件
-      final result = await OpenFile.open(widget.exportedVideoPath);
+      // 显示文件位置信息，让用户知道文件在哪里
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.info_outline, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '📁 视频文件位置',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        '文件: $fileName',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      Text(
+                        '目录: $fileDir',
+                        style: const TextStyle(fontSize: 12),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.blue.shade400,
+            duration: const Duration(seconds: 5),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+      
+      // 延迟一下，让用户看到提示
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      // 显示选项：打开文件管理器或直接播放
+      await _showFileOptions(fileName, fileDir);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('操作失败: $e'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    }
+  }
+
+  /// 显示文件操作选项
+  Future<void> _showFileOptions(String fileName, String fileDir) async {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('📁 文件操作'),
+          content: Text('选择对文件 "$fileName" 的操作'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _openInFileManager(fileDir);
+              },
+              child: const Text('打开文件管理器'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _playVideoDirectly();
+              },
+              child: const Text('直接播放视频'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// 在文件管理器中打开文件所在目录
+  Future<void> _openInFileManager(String directoryPath) async {
+    try {
+      // 在iOS上，我们可以尝试打开Files App
+      // 在Android上，打开文件管理器
+      final result = await OpenFile.open(directoryPath);
       
       if (mounted) {
-        // 根据 open_file 包的文档，OpenResult.type 是字符串
         if (result.type == "done") {
-          // 成功打开
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.check_circle_outline, color: Colors.white),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '✅ 正在打开视频文件：$fileName',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
-              ),
+              content: const Text('✅ 正在打开文件管理器'),
               backgroundColor: Colors.green.shade400,
               duration: const Duration(seconds: 3),
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
           );
-        } else if (result.type == "noAppToOpen") {
-          // 没有应用可以打开此文件类型
-          // 显示导出文件列表，让用户选择
+        } else {
+          // 如果无法打开目录，显示导出文件列表
           await _showExportFilesList();
-        } else if (result.type == "fileNotFound") {
-          // 文件未找到（虽然我们已经检查过）
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('❌ 无法打开文件管理器'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    }
+  }
+
+  /// 直接播放视频
+  Future<void> _playVideoDirectly() async {
+    try {
+      final result = await OpenFile.open(widget.exportedVideoPath);
+      
+      if (mounted) {
+        if (result.type == "done") {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('❌ 文件未找到或无法访问'),
-              backgroundColor: Colors.redAccent,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          );
-        } else if (result.type == "permissionDenied") {
-          // 权限被拒绝
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('🔒 需要文件访问权限'),
-              backgroundColor: Colors.redAccent,
+              content: const Text('✅ 正在播放视频'),
+              backgroundColor: Colors.green.shade400,
+              duration: const Duration(seconds: 3),
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
           );
         } else {
-          // 其他错误
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('❌ 打开文件失败: ${result.message}'),
+              content: Text('❌ 无法播放视频: ${result.message}'),
               backgroundColor: Colors.redAccent,
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -247,7 +341,7 @@ class _PublishPageState extends State<PublishPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('操作失败: $e'),
+            content: Text('播放失败: $e'),
             backgroundColor: Colors.redAccent,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

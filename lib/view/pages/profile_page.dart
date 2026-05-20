@@ -465,6 +465,185 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
+  /// 显示缓存管理界面
+  Future<void> _showCacheManagement() async {
+    // 获取缓存统计信息
+    final cacheStats = await VideoCacheService.instance.getCacheStats();
+    
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('📁 视频缓存管理'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('缓存统计信息:'),
+                const SizedBox(height: 12),
+                _buildStatItem('缓存文件数量', '${cacheStats['cacheFileCount']} 个'),
+                _buildStatItem('缓存总大小', cacheStats['cacheSizeFormatted']),
+                _buildStatItem('导出文件数量', '${cacheStats['exportFileCount']} 个'),
+                _buildStatItem('导出总大小', cacheStats['exportSizeFormatted']),
+                _buildStatItem('内存缓存数量', '${cacheStats['memoryCacheCount']} 个'),
+                const SizedBox(height: 16),
+                const Text(
+                  '注意:',
+                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange),
+                ),
+                const Text(
+                  '• 清理缓存会删除所有缓存的视频文件\n'
+                  '• 清理导出文件会删除所有导出的视频\n'
+                  '• 这些操作不可恢复，请谨慎操作',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            OutlinedButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _clearCacheOnly();
+              },
+              child: const Text('仅清理缓存'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _clearAllCacheAndExports();
+              },
+              child: const Text('清理全部'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildStatItem(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 14)),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  /// 仅清理缓存文件
+  Future<void> _clearCacheOnly() async {
+    final confirmed = await _showConfirmationDialog(
+      '清理缓存',
+      '确定要清理所有缓存文件吗？\n\n'
+      '这将删除所有缓存的视频文件，但不会影响已导出的视频。\n'
+      '下次导出相同内容时需要重新生成视频。',
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+      await VideoCacheService.instance.clearAllCache();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ 缓存已清理'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ 清理失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// 清理所有缓存和导出文件
+  Future<void> _clearAllCacheAndExports() async {
+    final confirmed = await _showConfirmationDialog(
+      '清理全部',
+      '确定要清理所有缓存和导出文件吗？\n\n'
+      '这将删除：\n'
+      '• 所有缓存的视频文件\n'
+      '• 所有已导出的视频文件\n\n'
+      '这个操作不可恢复！',
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+      // 清理缓存
+      await VideoCacheService.instance.clearAllCache();
+      
+      // 清理导出目录
+      final exportsDir = await VideoCacheService.instance.getExportsDirectory();
+      if (await exportsDir.exists()) {
+        await exportsDir.delete(recursive: true);
+        // 重新创建空目录
+        await exportsDir.create(recursive: true);
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ 所有文件已清理'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ 清理失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// 显示确认对话框
+  Future<bool> _showConfirmationDialog(String title, String message) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('确定清理'),
+            ),
+          ],
+        );
+      },
+    );
+    
+    return result ?? false;
+  }
+
   Future<void> _showTravelMemoryDebug() async {
     if (!mounted) {
       return;
@@ -812,6 +991,13 @@ class _ProfilePageState extends State<ProfilePage> {
           //     );
           //   },
           // ),
+          _buildSettingsTile(
+            context,
+            Icons.storage,
+            '视频缓存管理',
+            '清理导出的视频和缓存文件',
+            onTap: _showCacheManagement,
+          ),
           _buildSettingsTile(context, Icons.info_outline, '关于', '版本 1.0.0'),
           const Divider(height: 32),
           ListTile(

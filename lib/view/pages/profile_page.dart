@@ -194,6 +194,13 @@ class _ProfilePageState extends State<ProfilePage> {
 
     final albumSummaries = <_AlbumSelectionItem>[];
     for (final album in albums) {
+      // 🌟 排除本应用的内部输出目录，不让用户扫描它们
+      if (album.name.contains('StoryExports') ||
+          album.name.contains('故事导出') ||
+          album.id.contains('StoryExports')) {
+        debugPrint('📁 已过滤输出目录: ${album.name}');
+        continue;
+      }
       albumSummaries.add(
         _AlbumSelectionItem(
           id: album.id,

@@ -18,8 +18,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/return_code.dart';
+// FFmpeg 已迁移到离线导出层（使用 flutter_quick_video_encoder）
 import 'package:gal/gal.dart';
 import 'publish_page.dart';
 import 'export_manager.dart';

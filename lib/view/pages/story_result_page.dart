@@ -13,6 +13,7 @@ import '../../service/story_service.dart';
 import '../../utils/ocr_policy.dart';
 import '../widgets/path_image.dart';
 import 'digital_album_book_page.dart';
+import 'export_manager.dart';
 import 'story_video_page.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 
@@ -353,9 +354,41 @@ class _StoryResultPageState extends State<StoryResultPage> {
   }
 
   void _shareStory() {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('分享功能开发中')));
+    final finalVideoSections = _buildVideoSections();
+    if (finalVideoSections.isEmpty) {
+      return;
+    }
+
+    ExportManager.instance.startBackgroundExport(
+      context: context,
+      title: widget.title,
+      subtitle: widget.subtitle,
+      sections: finalVideoSections,
+      customMusicPath: widget.customMusicPath,
+      dynamicBeatData: widget.dynamicBeatData,
+      targetPlatform: widget.targetPlatform,
+      isHorizontal: widget.isHorizontal,
+      currentTextStyle: 'hero',
+      textYPosition: 0.8,
+      textSize: 24.0,
+      textBlurIntensity: 4.0,
+      shakeIntensity: 0.0,
+      shakeFrequency: 1.0,
+      glitchIntensity: 0.0,
+      enableFlash: true,
+      useVignette: false,
+      useGrain: false,
+      useCameraFrame: false,
+      useGlowRing: false,
+      useCloudBorder: false,
+    );
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('🚀 正在后台导出视频，完成后可一键分享'),
+        backgroundColor: Colors.pinkAccent,
+      ),
+    );
   }
 
   Future<void> _openDigitalAlbum() async {
@@ -380,9 +413,9 @@ class _StoryResultPageState extends State<StoryResultPage> {
     });
   }
 
-  void _openVideoPreview() {
+  List<StorySection> _buildVideoSections() {
     if (_sections.isEmpty) {
-      return;
+      return const <StorySection>[];
     }
 
     final playbackSections = <StorySection>[];
@@ -400,14 +433,22 @@ class _StoryResultPageState extends State<StoryResultPage> {
       playbackSections.add(section.copyWith(text: preferredCaption));
     }
 
+    if (playbackSections.isEmpty) {
+      return const <StorySection>[];
+    }
+
     final random = math.Random();
     final introPhoto =
         playbackSections[random.nextInt(playbackSections.length)].photo;
     final introSection = StorySection(text: '__INTRO__', photo: introPhoto);
-    final finalVideoSections = <StorySection>[
-      introSection,
-      ...playbackSections,
-    ];
+    return <StorySection>[introSection, ...playbackSections];
+  }
+
+  void _openVideoPreview() {
+    final finalVideoSections = _buildVideoSections();
+    if (finalVideoSections.isEmpty) {
+      return;
+    }
 
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -583,7 +624,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
               TextButton.icon(
                 onPressed: _shareStory,
                 icon: const Icon(Icons.share),
-                label: const Text('分享'),
+                label: const Text('导出分享'),
               ),
             ],
           ),

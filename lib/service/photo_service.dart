@@ -19,6 +19,7 @@ import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/face_embedding_index_repository.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../utils/photo_filter_helper.dart';
+import '../models/chat_message.dart'; 
 import 'junk_photo_filter_service.dart';
 
 part 'photo_service_models.dart';

@@ -500,7 +500,7 @@ class _CreateHubPageState extends State<CreateHubPage>
             )
           else
             SizedBox(
-              height: 350,
+              height: 380,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: _recommendations.length,
@@ -794,7 +794,7 @@ class _RecommendationPreviewCard extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 card.subtitle,
-                maxLines: 3,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Colors.grey.shade700,

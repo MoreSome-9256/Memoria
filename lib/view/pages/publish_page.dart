@@ -1,14 +1,14 @@
 /// 发布页面，提供故事分享和发布相关功能。
 
-import 'dart:ui'; // 🌟 新增：用于实现毛玻璃高斯模糊效果
+import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:open_file/open_file.dart';
-import 'dart:io';
 import 'package:path/path.dart' as path;
+import 'package:video_player/video_player.dart';
+import 'package:open_file_manager/open_file_manager.dart';
 import '../../service/llm_service.dart';
-import '../../service/video_cache_service.dart';
 
 class PublishPage extends StatefulWidget {
   final String title;
@@ -50,14 +50,10 @@ class _PublishPageState extends State<PublishPage> {
 
   Future<void> _generateCopy() async {
     String result = '';
-
     try {
-      // 🌟 2. 核心逻辑：如果上个页面已经开始跑了，我们直接等它现成的结果！
-      // 由于导出视频通常比 AI 慢得多，所以这里的 await 几乎会瞬间完成 (0延迟)！
       if (widget.generatedCopyFuture != null) {
         result = await widget.generatedCopyFuture!;
       } else {
-        // 兜底逻辑：万一是从别的地方跳转来的没有 Future，就当场现生
         result = await LLMService().generateSocialMediaCopy(
           platform: widget.targetPlatform,
           title: widget.title,
@@ -72,7 +68,7 @@ class _PublishPageState extends State<PublishPage> {
     if (mounted) {
       setState(() {
         _copyController.text = result;
-        _isLoading = false; // 瞬间变为 false，关闭圈圈！
+        _isLoading = false;
       });
     }
   }
@@ -85,10 +81,8 @@ class _PublishPageState extends State<PublishPage> {
           children: [
             Icon(Icons.content_copy, color: Colors.white),
             SizedBox(width: 8),
-            Text(
-              '📋 文案已复制到剪贴板',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
+            Text('📋 文案已复制到剪贴板',
+                style: TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
         backgroundColor: Colors.blue.shade400,
@@ -99,53 +93,32 @@ class _PublishPageState extends State<PublishPage> {
   }
 
   Future<void> _shareVideo() async {
-    try {
-      final videoFile = File(widget.exportedVideoPath);
-      if (!videoFile.existsSync()) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('❌ 视频文件未找到'),
-              backgroundColor: Colors.redAccent,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          );
-        }
-        return;
+    final videoFile = File(widget.exportedVideoPath);
+    if (!videoFile.existsSync()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('❌ 视频文件未找到'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
       }
+      return;
+    }
 
-      // 构建更丰富的分享内容
+    try {
       String shareText = '📱 ${_copyController.text}\n\n';
       shareText += '🎬 使用「智能影记」制作的回忆视频\n';
       shareText += '#${widget.targetPlatform} #回忆 #故事';
-      
+
       await Share.shareXFiles(
         [XFile(widget.exportedVideoPath)],
         text: shareText,
         subject: '${widget.title} - ${widget.subtitle}',
       );
-      
-      // 分享成功后的反馈
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Row(
-              children: [
-                Icon(Icons.check_circle_outline, color: Colors.white),
-                SizedBox(width: 8),
-                Text(
-                  '✨ 分享成功！视频和文案已发送',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            backgroundColor: Colors.green.shade400,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -153,311 +126,117 @@ class _PublishPageState extends State<PublishPage> {
             content: Text('分享失败: $e'),
             backgroundColor: Colors.redAccent,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         );
       }
     }
   }
 
-  Future<void> _openVideoFile() async {
-    try {
-      final videoFile = File(widget.exportedVideoPath);
-      if (!videoFile.existsSync()) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('❌ 视频文件未找到'),
-              backgroundColor: Colors.redAccent,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          );
-        }
-        return;
-      }
-
-      // 📱 获取文件信息
-      final fileName = path.basename(widget.exportedVideoPath);
-      final fileDir = path.dirname(widget.exportedVideoPath);
-      
-      // 显示文件位置信息，让用户知道文件在哪里
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.info_outline, color: Colors.white),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '📁 视频文件位置',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        '文件: $fileName',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      Text(
-                        '目录: $fileDir',
-                        style: const TextStyle(fontSize: 12),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            backgroundColor: Colors.blue.shade400,
-            duration: const Duration(seconds: 5),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
-      }
-      
-      // 延迟一下，让用户看到提示
-      await Future.delayed(const Duration(milliseconds: 500));
-      
-      // 显示选项：打开文件管理器或直接播放
-      await _showFileOptions(fileName, fileDir);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('操作失败: $e'),
-            backgroundColor: Colors.redAccent,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
-      }
+  /// 用 Flutter 内置播放器播放视频，有完整的退出控制
+  void _playVideo() {
+    final videoFile = File(widget.exportedVideoPath);
+    if (!videoFile.existsSync()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('❌ 视频文件未找到'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+      return;
     }
-  }
 
-  /// 显示文件操作选项
-  Future<void> _showFileOptions(String fileName, String fileDir) async {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('📁 文件操作'),
-          content: Text('选择对文件 "$fileName" 的操作'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _openInFileManager(fileDir);
-              },
-              child: const Text('打开文件管理器'),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _playVideoDirectly();
-              },
-              child: const Text('直接播放视频'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
-            ),
-          ],
-        );
-      },
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _VideoPlayerPage(videoPath: widget.exportedVideoPath),
+      ),
     );
   }
 
-  /// 在文件管理器中打开文件所在目录
-  Future<void> _openInFileManager(String directoryPath) async {
-    try {
-      // 在iOS上，我们可以尝试打开Files App
-      // 在Android上，打开文件管理器
-      final result = await OpenFile.open(directoryPath);
-      
-      if (mounted) {
-        if (result.type == "done") {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('✅ 正在打开文件管理器'),
-              backgroundColor: Colors.green.shade400,
-              duration: const Duration(seconds: 3),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          );
-        } else {
-          // 如果无法打开目录，显示导出文件列表
-          await _showExportFilesList();
-        }
-      }
-    } catch (e) {
+  /// 打开文件所在文件夹，用 open_file_manager 包按平台分别实现
+  Future<void> _openFolder() async {
+    final videoFile = File(widget.exportedVideoPath);
+    if (!videoFile.existsSync()) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('❌ 无法打开文件管理器'),
+            content: const Text('❌ 视频文件未找到'),
             backgroundColor: Colors.redAccent,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
-      }
-    }
-  }
-
-  /// 直接播放视频
-  Future<void> _playVideoDirectly() async {
-    try {
-      final result = await OpenFile.open(widget.exportedVideoPath);
-      
-      if (mounted) {
-        if (result.type == "done") {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('✅ 正在播放视频'),
-              backgroundColor: Colors.green.shade400,
-              duration: const Duration(seconds: 3),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('❌ 无法播放视频: ${result.message}'),
-              backgroundColor: Colors.redAccent,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('播放失败: $e'),
-            backgroundColor: Colors.redAccent,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
-      }
-    }
-  }
-
-  /// 显示导出文件列表
-  Future<void> _showExportFilesList() async {
-    final files = await VideoCacheService.instance.getExportFiles();
-    
-    if (files.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('📁 导出目录为空'),
-            backgroundColor: Colors.orange.shade400,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12)),
           ),
         );
       }
       return;
     }
 
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('📁 导出视频文件'),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: files.length,
-              itemBuilder: (context, index) {
-                final file = files[index];
-                return ListTile(
-                  leading: const Icon(Icons.video_library),
-                  title: Text(file['name']),
-                  subtitle: Text('${file['sizeFormatted']} • ${file['dateFormatted']}'),
-                  onTap: () async {
-                    Navigator.pop(context);
-                    await OpenFile.open(file['path']);
-                  },
-                );
-              },
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('关闭'),
-            ),
-          ],
-        );
-      },
+    // 视频保存在 Documents/StoryExports/ 下
+    // iOS：iosConfig 的 folderPath 是相对于 app Documents 目录的子路径
+    // Android：用完整绝对路径
+    final dirPath = path.dirname(widget.exportedVideoPath);
+
+    await openFileManager(
+      androidConfig: AndroidConfig(
+        folderType: AndroidFolderType.other,
+        folderPath: dirPath, // 完整绝对路径
+      ),
+      iosConfig: IosConfig(
+        // 相对于 app Documents 目录的子路径，即 "StoryExports"
+        folderPath: 'StoryExports',
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // 🌟 1. 移除纯色背景，使用 Stack 来铺满渐变
       body: Stack(
         children: [
-          // 🌌 极光渐变背景层 (你可以把这里的颜色换成你首页的同款 Hex 值)
+          // 极光渐变背景
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  Color(0xFFE8DEFF), // 浅紫极光
-                  Color(0xFFE1F5FE), // 清透浅蓝
-                  Color(0xFFFCE4EC), // 猛男落樱粉
+                  Color(0xFFE8DEFF),
+                  Color(0xFFE1F5FE),
+                  Color(0xFFFCE4EC),
                 ],
                 stops: [0.1, 0.5, 0.9],
               ),
             ),
           ),
 
-          // 📄 主体内容层
           SafeArea(
             child: Column(
               children: [
-                // 自定义透明 AppBar
                 AppBar(
                   title: const Text(
                     '🎉 分享你的故事',
                     style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
+                        fontWeight: FontWeight.bold, color: Colors.black87),
                   ),
                   centerTitle: true,
                   backgroundColor: Colors.transparent,
                   elevation: 0,
-                  iconTheme: const IconThemeData(
-                    color: Colors.black87,
-                  ), // 保证返回键可见
+                  iconTheme: const IconThemeData(color: Colors.black87),
                 ),
 
                 Expanded(
                   child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(), // 苹果质感的回弹滑动
+                    physics: const BouncingScrollPhysics(),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 24.0,
-                      vertical: 16.0,
-                    ),
+                        horizontal: 24.0, vertical: 16.0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        // 🌟 顶部成功图标 (加一点梦幻发光阴影)
+                        // 顶部图标
                         Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
@@ -465,54 +244,46 @@ class _PublishPageState extends State<PublishPage> {
                             color: Colors.pinkAccent.withValues(alpha: 0.1),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.pinkAccent.withValues(alpha: 0.2),
+                                color:
+                                    Colors.pinkAccent.withValues(alpha: 0.2),
                                 blurRadius: 20,
                                 spreadRadius: 5,
                               ),
                             ],
                           ),
-                          child: const Icon(
-                            Icons.share,
-                            color: Colors.pinkAccent,
-                            size: 72,
-                          ),
+                          child: const Icon(Icons.share,
+                              color: Colors.pinkAccent, size: 72),
                         ),
                         const SizedBox(height: 16),
 
                         const Text(
                           '视频已准备好分享！',
                           style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.black87,
-                          ),
+                              fontSize: 24,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.black87),
                         ),
                         const SizedBox(height: 8),
                         Text(
                           'AI 已为您生成【${widget.targetPlatform}】专属文案，一键分享到社交平台',
-                          style: TextStyle(color: Colors.black54, fontSize: 15),
+                          style: const TextStyle(
+                              color: Colors.black54, fontSize: 15),
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 32),
 
-                        // 🌟 核心升级：毛玻璃 (Glassmorphism) 文案编辑区
+                        // 毛玻璃文案编辑区
                         ClipRRect(
                           borderRadius: BorderRadius.circular(24),
                           child: BackdropFilter(
-                            filter: ImageFilter.blur(
-                              sigmaX: 12,
-                              sigmaY: 12,
-                            ), // 调整模糊度
+                            filter:
+                                ImageFilter.blur(sigmaX: 12, sigmaY: 12),
                             child: Container(
                               decoration: BoxDecoration(
-                                color: Colors.white.withValues(
-                                  alpha: 0.5,
-                                ), // 半透明白底
+                                color: Colors.white.withValues(alpha: 0.5),
                                 borderRadius: BorderRadius.circular(24),
                                 border: Border.all(
-                                  color: Colors.white.withValues(
-                                    alpha: 0.8,
-                                  ), // 高光描边
+                                  color: Colors.white.withValues(alpha: 0.8),
                                   width: 1.5,
                                 ),
                               ),
@@ -526,15 +297,14 @@ class _PublishPageState extends State<PublishPage> {
                                               MainAxisAlignment.center,
                                           children: [
                                             CircularProgressIndicator(
-                                              color: Colors.pinkAccent,
-                                            ),
+                                                color: Colors.pinkAccent),
                                             SizedBox(height: 20),
                                             Text(
                                               '🤖 AI 正在疯狂查阅小红书爆款指南...',
                                               style: TextStyle(
-                                                color: Colors.black54,
-                                                fontWeight: FontWeight.w500,
-                                              ),
+                                                  color: Colors.black54,
+                                                  fontWeight:
+                                                      FontWeight.w500),
                                             ),
                                           ],
                                         ),
@@ -543,7 +313,7 @@ class _PublishPageState extends State<PublishPage> {
                                   : TextField(
                                       controller: _copyController,
                                       maxLines: 12,
-                                      cursorColor: Colors.pinkAccent, // 猛男粉光标
+                                      cursorColor: Colors.pinkAccent,
                                       decoration: const InputDecoration(
                                         border: InputBorder.none,
                                         hintText: '这里是发帖文案...',
@@ -560,124 +330,111 @@ class _PublishPageState extends State<PublishPage> {
                         ),
                         const SizedBox(height: 32),
 
-                        // 🌟 底部操作按钮群 - 重新设计：分享为主，复制为辅
-                        // 📱 主要操作：一键分享视频+文案
+                        // ── 按钮区 ──────────────────────────────────
+
+                        // 1. 一键分享（主操作）
                         SizedBox(
                           width: double.infinity,
                           child: FilledButton.icon(
                             onPressed: _isLoading ? null : _shareVideo,
                             icon: const Icon(Icons.share_rounded),
-                            label: const Text(
-                              '一键分享到社交平台',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            label: const Text('一键分享到社交平台',
+                                style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold)),
                             style: FilledButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 18),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 18),
                               backgroundColor: Colors.pinkAccent,
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
+                                  borderRadius: BorderRadius.circular(16)),
                               elevation: 4,
                             ),
                           ),
                         ),
                         const SizedBox(height: 12),
 
-                        // 📋 次要操作：仅复制文案（用于手动编辑）
+                        // 2. 播放视频（Flutter 内置播放器）
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _playVideo,
+                            icon: const Icon(Icons.play_circle_outline_rounded),
+                            label: const Text('预览视频',
+                                style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold)),
+                            style: FilledButton.styleFrom(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 16),
+                              backgroundColor: Colors.deepOrange.shade400,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16)),
+                              elevation: 4,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // 3. 打开文件夹（系统文件管理器）
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _openFolder,
+                            icon: const Icon(Icons.folder_open_rounded),
+                            label: const Text('在文件管理器中查看',
+                                style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold)),
+                            style: FilledButton.styleFrom(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 16),
+                              backgroundColor: Colors.deepPurple.shade300,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16)),
+                              elevation: 4,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // 4. 仅复制文案（次要操作）
                         SizedBox(
                           width: double.infinity,
                           child: OutlinedButton.icon(
                             onPressed: _isLoading ? null : _copyToClipboard,
                             icon: const Icon(Icons.copy_rounded),
-                            label: const Text(
-                              '仅复制文案',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            label: const Text('仅复制文案',
+                                style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold)),
                             style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              side: BorderSide(color: Colors.pinkAccent.shade200, width: 2),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 16),
+                              side: BorderSide(
+                                  color: Colors.pinkAccent.shade200,
+                                  width: 2),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
+                                  borderRadius: BorderRadius.circular(16)),
                               foregroundColor: Colors.pinkAccent,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-
-                        // 📁 在文件管理器中打开视频
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: _isLoading ? null : _openVideoFile,
-                            icon: const Icon(Icons.folder_open_rounded),
-                            label: const Text(
-                              '在文件管理器中打开',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            style: FilledButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              backgroundColor: Colors.deepPurple.shade300,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              elevation: 4,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-
-                        // 📋 管理导出文件
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton.icon(
-                            onPressed: _isLoading ? null : _showExportFilesList,
-                            icon: const Icon(Icons.list_alt_rounded),
-                            label: const Text(
-                              '查看所有导出文件',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              side: BorderSide(color: Colors.deepPurple.shade200, width: 1.5),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              foregroundColor: Colors.deepPurple,
                             ),
                           ),
                         ),
                         const SizedBox(height: 16),
 
+                        // 5. 返回首页
                         TextButton(
-                          onPressed: () {
-                            Navigator.popUntil(
-                              context,
-                              (route) => route.isFirst,
-                            );
-                          },
+                          onPressed: () => Navigator.popUntil(
+                              context, (route) => route.isFirst),
                           style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                          ),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 16)),
                           child: const Text(
                             '返回首页',
                             style: TextStyle(
-                              color: Colors.black54,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
+                                color: Colors.black54,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold),
                           ),
                         ),
                         const SizedBox(height: 24),
@@ -689,6 +446,171 @@ class _PublishPageState extends State<PublishPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Flutter 内置视频播放页，有完整的退出按钮
+// ─────────────────────────────────────────────────────────────────────────────
+class _VideoPlayerPage extends StatefulWidget {
+  final String videoPath;
+  const _VideoPlayerPage({required this.videoPath});
+
+  @override
+  State<_VideoPlayerPage> createState() => _VideoPlayerPageState();
+}
+
+class _VideoPlayerPageState extends State<_VideoPlayerPage> {
+  late VideoPlayerController _controller;
+  bool _initialized = false;
+  bool _showControls = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.file(File(widget.videoPath))
+      ..initialize().then((_) {
+        if (mounted) {
+          setState(() => _initialized = true);
+          _controller.play();
+        }
+      });
+    _controller.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _toggleControls() {
+    setState(() => _showControls = !_showControls);
+  }
+
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        onTap: _toggleControls,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // 视频画面
+            Center(
+              child: _initialized
+                  ? AspectRatio(
+                      aspectRatio: _controller.value.aspectRatio,
+                      child: VideoPlayer(_controller),
+                    )
+                  : const CircularProgressIndicator(color: Colors.white),
+            ),
+
+            // 控制层（点击切换显示/隐藏）
+            if (_showControls)
+              AnimatedOpacity(
+                opacity: _showControls ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 200),
+                child: Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Color(0xAA000000),
+                        Colors.transparent,
+                        Colors.transparent,
+                        Color(0xAA000000),
+                      ],
+                      stops: [0.0, 0.2, 0.75, 1.0],
+                    ),
+                  ),
+                  child: SafeArea(
+                    child: Column(
+                      children: [
+                        // 顶部：退出按钮
+                        Align(
+                          alignment: Alignment.topLeft,
+                          child: IconButton(
+                            icon: const Icon(Icons.close,
+                                color: Colors.white, size: 28),
+                            onPressed: () => Navigator.of(context).pop(),
+                          ),
+                        ),
+
+                        const Spacer(),
+
+                        // 底部：进度条 + 播放控制
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 8),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // 进度条
+                              if (_initialized)
+                                VideoProgressIndicator(
+                                  _controller,
+                                  allowScrubbing: true,
+                                  colors: const VideoProgressColors(
+                                    playedColor: Colors.pinkAccent,
+                                    bufferedColor: Colors.white38,
+                                    backgroundColor: Colors.white12,
+                                  ),
+                                ),
+                              const SizedBox(height: 8),
+
+                              // 时间 + 播放/暂停
+                              Row(
+                                children: [
+                                  if (_initialized)
+                                    Text(
+                                      '${_formatDuration(_controller.value.position)} / ${_formatDuration(_controller.value.duration)}',
+                                      style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 12),
+                                    ),
+                                  const Spacer(),
+                                  IconButton(
+                                    icon: Icon(
+                                      _controller.value.isPlaying
+                                          ? Icons.pause_rounded
+                                          : Icons.play_arrow_rounded,
+                                      color: Colors.white,
+                                      size: 36,
+                                    ),
+                                    onPressed: () {
+                                      setState(() {
+                                        _controller.value.isPlaying
+                                            ? _controller.pause()
+                                            : _controller.play();
+                                      });
+                                    },
+                                  ),
+                                  const Spacer(),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -71,6 +71,8 @@ dependencies:
   flutter_quick_video_encoder: ^1.7.2
   share_plus: ^10.0.0
   open_file: ^3.5.11
+  video_player: ^2.9.2
+  open_file_manager: ^2.0.1
 #  runanywhere: ^0.16.0
 #  runanywhere_onnx: ^0.16.0      # STT, TTS, VAD
 #  runanywhere_llamacpp: ^0.16.0  # LLM text generation

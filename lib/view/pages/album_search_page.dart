@@ -15,7 +15,7 @@ import '../../storage/objectbox/objectbox_service.dart';
 
 enum _SearchSortMode { score, time }
 
-enum _SelectionMenuAction { selectAll, clear, cancel }
+// enum _SelectionMenuAction { selectAll, clear, cancel }
 
 class AlbumSearchPage extends StatefulWidget {
   const AlbumSearchPage({
@@ -349,7 +349,9 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
       onPressed: () {
         setState(() {
           _selectionMode = true;
-          _selectedPhotoIds.clear();
+          _selectedPhotoIds
+            ..clear()
+            ..addAll(photos.map((photo) => photo.id));
         });
       },
       icon: const Icon(Icons.auto_stories_rounded),
@@ -359,32 +361,42 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
 
   Widget? _buildFloatingStoryActions(List<PhotoEntity> currentPhotos) {
     final visiblePhotos = _visiblePhotos(currentPhotos, _result);
+    final hasVisibleSelection = visiblePhotos
+        .any((photo) => _selectedPhotoIds.contains(photo.id));
+    final allVisibleSelected = visiblePhotos.isNotEmpty &&
+        visiblePhotos.every((photo) => _selectedPhotoIds.contains(photo.id));
     final storyFab = _selectionMode
-        ? Row(
+        ? Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              _buildSelectionMenuButton(
-                onSelected: (action) {
-                  switch (action) {
-                    case _SelectionMenuAction.selectAll:
-                      _selectAllVisible(visiblePhotos);
-                      break;
-                    case _SelectionMenuAction.clear:
-                      setState(() {
-                        _selectedPhotoIds.clear();
-                      });
-                      break;
-                    case _SelectionMenuAction.cancel:
-                      setState(() {
-                        _selectionMode = false;
-                        _selectedPhotoIds.clear();
-                      });
-                      break;
-                  }
-                },
-                enableSelectAll: visiblePhotos.isNotEmpty,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FilledButton.tonalIcon(
+                    onPressed: visiblePhotos.isEmpty
+                        ? null
+                        : () {
+                            if (allVisibleSelected || hasVisibleSelection) {
+                              setState(() {
+                                _selectedPhotoIds.clear();
+                              });
+                            } else {
+                              _selectAllVisible(visiblePhotos);
+                            }
+                          },
+                    icon: Icon(
+                      allVisibleSelected || hasVisibleSelection
+                          ? Icons.deselect_rounded
+                          : Icons.select_all_rounded,
+                    ),
+                    label: Text(
+                      allVisibleSelected || hasVisibleSelection ? '取消全选' : '全选',
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 10),
+              const SizedBox(height: 10),
               FloatingActionButton.extended(
                 heroTag: 'semantic-search-add-queue',
                 onPressed: _addSelectionToQueue,
@@ -894,41 +906,41 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     );
   }
 
-  Widget _buildSelectionMenuButton({
-    required ValueChanged<_SelectionMenuAction> onSelected,
-    required bool enableSelectAll,
-  }) {
-    return Material(
-      color: Theme.of(context).colorScheme.surface,
-      elevation: 4,
-      shadowColor: Colors.black.withValues(alpha: 0.15),
-      shape: const CircleBorder(),
-      child: PopupMenuButton<_SelectionMenuAction>(
-        tooltip: '选图操作',
-        onSelected: onSelected,
-        itemBuilder: (context) => <PopupMenuEntry<_SelectionMenuAction>>[
-          PopupMenuItem<_SelectionMenuAction>(
-            value: _SelectionMenuAction.selectAll,
-            enabled: enableSelectAll,
-            child: const Text('全选'),
-          ),
-          const PopupMenuItem<_SelectionMenuAction>(
-            value: _SelectionMenuAction.clear,
-            child: Text('清空'),
-          ),
-          const PopupMenuItem<_SelectionMenuAction>(
-            value: _SelectionMenuAction.cancel,
-            child: Text('取消'),
-          ),
-        ],
-        child: const SizedBox(
-          width: 48,
-          height: 48,
-          child: Icon(Icons.more_horiz_rounded),
-        ),
-      ),
-    );
-  }
+// Widget _buildSelectionMenuButton({
+//   required ValueChanged<_SelectionMenuAction> onSelected,
+//   required bool enableSelectAll,
+// }) {
+//   return Material(
+//     color: Theme.of(context).colorScheme.surface,
+//     elevation: 4,
+//     shadowColor: Colors.black.withValues(alpha: 0.15),
+//     shape: const CircleBorder(),
+//     child: PopupMenuButton<_SelectionMenuAction>(
+//       tooltip: '选图操作',
+//       onSelected: onSelected,
+//       itemBuilder: (context) => <PopupMenuEntry<_SelectionMenuAction>>[
+//         PopupMenuItem<_SelectionMenuAction>(
+//           value: _SelectionMenuAction.selectAll,
+//           enabled: enableSelectAll,
+//           child: const Text('全选'),
+//         ),
+//         const PopupMenuItem<_SelectionMenuAction>(
+//           value: _SelectionMenuAction.clear,
+//           child: Text('清空'),
+//         ),
+//         const PopupMenuItem<_SelectionMenuAction>(
+//           value: _SelectionMenuAction.cancel,
+//           child: Text('取消'),
+//         ),
+//       ],
+//       child: const SizedBox(
+//         width: 48,
+//         height: 48,
+//         child: Icon(Icons.more_horiz_rounded),
+//       ),
+//     ),
+//   );
+// }
 }
 
 class _SearchPhotoTile extends StatelessWidget {

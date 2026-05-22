@@ -629,7 +629,14 @@ Sandal Leap
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // appBar: AppBar(title: const Text('配置故事')),
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          onPressed: () => Navigator.of(context).maybePop(),
+          tooltip: '返回',
+        ),
+        title: const Text('配置故事'),
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

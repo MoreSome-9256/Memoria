@@ -2,9 +2,9 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -23,6 +23,8 @@ import 'package:gal/gal.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
 import '../../service/video_cache_service.dart';
+import '../../storage/objectbox/objectbox_service.dart';
+import '../../models/entity/story_entity.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
 
 class OffscreenRenderWorker extends StatefulWidget {
@@ -52,6 +54,7 @@ class OffscreenRenderWorker extends StatefulWidget {
 
   // 🌟 新增：工作进度汇报专线
   final Function(double progress)? onProgress;
+  final int? storyEntityId;
 
   const OffscreenRenderWorker({
     super.key,
@@ -78,6 +81,7 @@ class OffscreenRenderWorker extends StatefulWidget {
     required this.useGlowRing,
     required this.useCloudBorder,
     this.onProgress,
+    this.storyEntityId,
   });
 
   @override
@@ -602,22 +606,44 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       useCloudBorder: widget.useCloudBorder,
     );
 
-    // 🌟 第一步：检查是否有缓存视频（只检查图片和文本）
-    final cachedVideoPath = await VideoCacheService.instance.getCachedVideoPath(
-      sections: sectionsData,
-      cacheKey: _exportCacheKey,
-    );
+    // 🌟 第一步：优先检查故事实体中固化的视频路径
+    String? cachedVideoPath;
+    if (widget.storyEntityId != null) {
+      try {
+        final store = ObjectBoxService().store;
+        final storyBox = store.box<StoryEntity>();
+        final story = storyBox.get(widget.storyEntityId!);
+        if (story?.cachedVideoPath != null &&
+            await File(story!.cachedVideoPath!).exists()) {
+          cachedVideoPath = story.cachedVideoPath;
+          debugPrint('✅ 使用故事实体固化视频路径: $cachedVideoPath');
+        }
+      } catch (_) {}
+    }
+
+    // 第二步：回退到缓存服务检查
+    if (cachedVideoPath == null) {
+      cachedVideoPath = await VideoCacheService.instance.getCachedVideoPath(
+        sections: sectionsData,
+        cacheKey: _exportCacheKey,
+      );
+    }
 
     if (cachedVideoPath != null) {
       debugPrint('✅ 使用缓存视频: $cachedVideoPath');
       widget.onProgress?.call(1.0);
-      // 将缓存视频移动到导出目录
-      final finalPath = await VideoCacheService.instance.moveToExportsDirectory(
-        cachedVideoPath,
-        customName:
-            'Story_${_exportCacheKey ?? DateTime.now().millisecondsSinceEpoch.toString()}.mp4',
-      );
-      _handleExportSuccess(finalPath);
+      // 将缓存视频移动到导出目录（如果已经在这个目录则跳过）
+      final destDir = await VideoCacheService.instance.getExportsDirectory();
+      if (File(cachedVideoPath).parent.path == destDir.path) {
+        _handleExportSuccess(cachedVideoPath);
+      } else {
+        final finalPath = await VideoCacheService.instance.moveToExportsDirectory(
+          cachedVideoPath,
+          customName:
+              'Story_${_exportCacheKey ?? DateTime.now().millisecondsSinceEpoch.toString()}.mp4',
+        );
+        _handleExportSuccess(finalPath);
+      }
       return;
     }
 
@@ -983,7 +1009,45 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       debugPrint('✅ 视频已移动到导出目录: $finalPath');
       debugPrint('📱 用户可在发布页面选择分享或手动保存到相册');
 
-      // 🌟 第三步：清理本次导出产生的临时文件
+      // 🌟 第三步：保存视频路径、音乐和渲染参数到故事实体
+      if (widget.storyEntityId != null) {
+        try {
+          final store = ObjectBoxService().store;
+          final storyBox = store.box<StoryEntity>();
+          final story = storyBox.get(widget.storyEntityId!);
+          if (story != null) {
+            story.cachedVideoPath = finalPath;
+            story.cachedVideoKey = _exportCacheKey;
+            story.customMusicPath = widget.customMusicPath;
+            story.dynamicBeatDataJson = widget.dynamicBeatData != null
+                ? jsonEncode(widget.dynamicBeatData)
+                : null;
+            story.videoParamsJson = jsonEncode({
+              'currentTextStyle': widget.currentTextStyle,
+              'textYPosition': widget.textYPosition,
+              'textSize': widget.textSize,
+              'textBlurIntensity': widget.textBlurIntensity,
+              'shakeIntensity': widget.shakeIntensity,
+              'shakeFrequency': widget.shakeFrequency,
+              'glitchIntensity': widget.glitchIntensity,
+              'enableFlash': widget.enableFlash,
+              'useVignette': widget.useVignette,
+              'useGrain': widget.useGrain,
+              'useCameraFrame': widget.useCameraFrame,
+              'useGlowRing': widget.useGlowRing,
+              'useCloudBorder': widget.useCloudBorder,
+              'targetPlatform': widget.targetPlatform,
+              'isHorizontal': widget.isHorizontal,
+            });
+            storyBox.put(story);
+            debugPrint('✅ 视频参数已固化保存到故事实体 ID=${widget.storyEntityId}');
+          }
+        } catch (e) {
+          debugPrint('❌ 保存视频参数到故事实体失败: $e');
+        }
+      }
+
+      // 🌟 第四步：清理本次导出产生的临时文件
       await VideoCacheService.instance.cleanupExportTempFiles();
 
       // 🌟 核心：触发回调，通知 ExportManager 任务完成！

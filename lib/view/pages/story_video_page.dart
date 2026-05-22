@@ -34,6 +34,7 @@ class StoryVideoPage extends StatefulWidget {
     required this.subtitle,
     required this.targetPlatform,
     required this.onComplete,
+    this.storyEntityId,
     required this.currentTextStyle,
     required this.textYPosition,
     required this.textSize,
@@ -58,6 +59,8 @@ class StoryVideoPage extends StatefulWidget {
   final String subtitle;
   final String targetPlatform;
   final Function(String videoPath, Future<String>? aiCopy) onComplete;
+
+  final int? storyEntityId;
 
   // 🌟 新增：接收老板（预览页）传来的所有特效和字幕状态！
   final String currentTextStyle;
@@ -1024,6 +1027,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                           : null,
                       targetPlatform: widget.targetPlatform,
                       isHorizontal: widget.isHorizontal, // 解决画幅不对的问题
+                      storyEntityId: widget.storyEntityId,
                       currentTextStyle: _currentTextStyle,
                       textYPosition: _textYPosition,
                       textSize: _textSize,

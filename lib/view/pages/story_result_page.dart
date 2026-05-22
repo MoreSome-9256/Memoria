@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../objectbox.g.dart';
 import '../../models/entity/photo_entity.dart';
@@ -395,6 +396,29 @@ class _StoryResultPageState extends State<StoryResultPage> {
       return;
     }
 
+    // 如果有缓存的视频，直接分享视频
+    if (widget.storyEntityId != null) {
+      try {
+        final store = ObjectBoxService().store;
+        final storyBox = store.box<StoryEntity>();
+        final story = storyBox.get(widget.storyEntityId!);
+        if (story?.cachedVideoPath != null &&
+            await File(story!.cachedVideoPath!).exists()) {
+          final caption = [
+            widget.title,
+            if (widget.subtitle.trim().isNotEmpty) widget.subtitle.trim(),
+          ].join(' · ');
+          await Share.shareXFiles(
+            [XFile(story.cachedVideoPath!, mimeType: 'video/mp4')],
+            text: caption,
+          );
+          return;
+        }
+      } catch (_) {
+        // 视频分享失败，回退到海报分享
+      }
+    }
+
     int styleIndex = 0;
 
     while (mounted) {
@@ -603,9 +627,29 @@ class _StoryResultPageState extends State<StoryResultPage> {
     return <StorySection>[introSection, ...playbackSections];
   }
 
-  void _openVideoPreview() {
+  void _openVideoPreview() async {
+    // 检查是否已有缓存的视频文件
+    if (widget.storyEntityId != null) {
+      try {
+        final store = ObjectBoxService().store;
+        final storyBox = store.box<StoryEntity>();
+        final story = storyBox.get(widget.storyEntityId!);
+        if (story?.cachedVideoPath != null &&
+            await File(story!.cachedVideoPath!).exists()) {
+          _openCachedVideo(story.cachedVideoPath!);
+          return;
+        }
+      } catch (_) {
+        // 缓存检查失败，回退到正常流程
+      }
+    }
+
     final finalVideoSections = _buildVideoSections();
     if (finalVideoSections.isEmpty) {
+      return;
+    }
+
+    if (!mounted) {
       return;
     }
 
@@ -619,6 +663,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
           isHorizontal: widget.isHorizontal,
           dynamicBeatData: widget.dynamicBeatData,
           targetPlatform: widget.targetPlatform,
+          storyEntityId: widget.storyEntityId,
           onComplete: (_, _) {},
           currentTextStyle: 'hero',
           textYPosition: 0.8,
@@ -635,6 +680,19 @@ class _StoryResultPageState extends State<StoryResultPage> {
           useCloudBorder: false,
         ),
       ),
+    );
+  }
+
+  void _openCachedVideo(String videoPath) async {
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: '视频预览',
+      barrierColor: Colors.black.withValues(alpha: 0.9),
+      transitionDuration: const Duration(milliseconds: 300),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return _CachedVideoPlayerSheet(videoPath: videoPath);
+      },
     );
   }
 
@@ -1577,6 +1635,74 @@ class _SharePosterPreviewSheetState extends State<_SharePosterPreviewSheet>
                   ),
                 ],
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CachedVideoPlayerSheet extends StatefulWidget {
+  const _CachedVideoPlayerSheet({required this.videoPath});
+
+  final String videoPath;
+
+  @override
+  State<_CachedVideoPlayerSheet> createState() => _CachedVideoPlayerSheetState();
+}
+
+class _CachedVideoPlayerSheetState extends State<_CachedVideoPlayerSheet> {
+  VideoPlayerController? _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.file(File(widget.videoPath))
+      ..initialize().then((_) {
+        if (mounted) {
+          _controller!.play();
+          setState(() {});
+        }
+      });
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          Center(
+            child: _controller?.value.isInitialized == true
+                ? GestureDetector(
+                    onTap: () {
+                      if (_controller!.value.isPlaying) {
+                        _controller!.pause();
+                      } else {
+                        _controller!.play();
+                      }
+                      setState(() {});
+                    },
+                    child: AspectRatio(
+                      aspectRatio: _controller!.value.aspectRatio,
+                      child: VideoPlayer(_controller!),
+                    ),
+                  )
+                : const CircularProgressIndicator(color: Colors.white),
+          ),
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 12,
+            right: 16,
+            child: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white, size: 28),
+              onPressed: () => Navigator.of(context).pop(),
             ),
           ),
         ],

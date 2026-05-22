@@ -34,6 +34,7 @@ class ExportManager {
     required bool useCameraFrame,
     required bool useGlowRing,
     required bool useCloudBorder,
+    int? storyEntityId,
   }) {
     if (isExporting) return;
     isExporting = true;
@@ -82,7 +83,8 @@ class ExportManager {
                       useCameraFrame: useCameraFrame,
                       useGlowRing: useGlowRing,
                       useCloudBorder: useCloudBorder,
-                      onProgress: (p) => progressNotifier.value = p,
+                       storyEntityId: storyEntityId,
+                       onProgress: (p) => progressNotifier.value = p,
                       onComplete: (String finalPath, Future<String>? aiCopy) {
                         // 1. 任务完成，销毁幽灵画布
                         overlayEntry.remove();

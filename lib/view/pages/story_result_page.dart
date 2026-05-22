@@ -395,45 +395,55 @@ class _StoryResultPageState extends State<StoryResultPage> {
       return;
     }
 
-    final posterFile = await _generateSharePosterFile();
-    final storyCaption = [
-      widget.title,
-      if (widget.subtitle.trim().isNotEmpty) widget.subtitle.trim(),
-    ].join(' · ');
+    int styleIndex = 0;
 
-    if (!mounted) {
-      return;
+    while (mounted) {
+      final posterFile = await _generateSharePosterFile(styleIndex: styleIndex);
+      final storyCaption = [
+        widget.title,
+        if (widget.subtitle.trim().isNotEmpty) widget.subtitle.trim(),
+      ].join(' · ');
+
+      if (!mounted) {
+        return;
+      }
+
+      final changeStyle = await showGeneralDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        barrierLabel: '分享预览',
+        barrierColor: Colors.black.withValues(alpha: 0.78),
+        transitionDuration: const Duration(milliseconds: 420),
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return _SharePosterPreviewSheet(
+            posterFile: posterFile,
+            caption: storyCaption,
+          );
+        },
+        transitionBuilder: (context, animation, secondaryAnimation, child) {
+          final curved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+          );
+          return FadeTransition(
+            opacity: curved,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.94, end: 1).animate(curved),
+              child: child,
+            ),
+          );
+        },
+      );
+
+      if (changeStyle != true) {
+        break;
+      }
+
+      styleIndex = (styleIndex + 1) % 4;
     }
-
-    await showGeneralDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      barrierLabel: '分享预览',
-      barrierColor: Colors.black.withValues(alpha: 0.78),
-      transitionDuration: const Duration(milliseconds: 420),
-      pageBuilder: (context, animation, secondaryAnimation) {
-        return _SharePosterPreviewSheet(
-          posterFile: posterFile,
-          caption: storyCaption,
-        );
-      },
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-        );
-        return FadeTransition(
-          opacity: curved,
-          child: ScaleTransition(
-            scale: Tween<double>(begin: 0.94, end: 1).animate(curved),
-            child: child,
-          ),
-        );
-      },
-    );
   }
 
-  Future<File> _generateSharePosterFile() async {
+  Future<File> _generateSharePosterFile({int styleIndex = 0}) async {
     await _precachePosterImages();
     if (!mounted || !context.mounted) {
       throw StateError('Share poster generation was cancelled');
@@ -474,6 +484,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
                       heroImage: widget.heroImage,
                       sections: _sections,
                       targetPlatform: widget.targetPlatform,
+                      styleIndex: styleIndex,
                     ),
                   ),
                 ),
@@ -876,6 +887,7 @@ class _StorySharePoster extends StatelessWidget {
     required this.heroImage,
     required this.sections,
     required this.targetPlatform,
+    this.styleIndex = 0,
   });
 
   final String title;
@@ -883,10 +895,24 @@ class _StorySharePoster extends StatelessWidget {
   final Photo heroImage;
   final List<StorySection> sections;
   final String targetPlatform;
+  final int styleIndex;
 
   @override
   Widget build(BuildContext context) {
     final visibleSections = sections;
+    switch (styleIndex % 4) {
+      case 1:
+        return _buildStyleMoody(context, visibleSections);
+      case 2:
+        return _buildStyleMinimal(context, visibleSections);
+      case 3:
+        return _buildStyleVintage(context, visibleSections);
+      default:
+        return _buildStyleClassic(context, visibleSections);
+    }
+  }
+
+  Widget _buildStyleClassic(BuildContext context, List<StorySection> visibleSections) {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -899,119 +925,187 @@ class _StorySharePoster extends StatelessWidget {
       child: Stack(
         children: [
           Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
+            top: 0, left: 0, right: 0,
             child: Container(height: 18, color: const Color(0xFF172326)),
           ),
           Positioned(
-            top: 18,
-            left: 0,
-            bottom: 0,
+            top: 18, left: 0, bottom: 0,
             child: Container(width: 18, color: const Color(0xFF172326)),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(58, 62, 58, 64),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 9,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF172326),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        'Memoria Story',
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1,
-                          color: const Color(0xFFF8F3E7),
-                        ),
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      '${sections.length} 张照片',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: const Color(0xFF5D5148),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 34),
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                    fontSize: _fitTitleSize(title),
-                    height: 1.02,
-                    fontWeight: FontWeight.w900,
-                    color: const Color(0xFF191D1D),
-                  ),
-                ),
-                if (subtitle.trim().isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Container(
-                    constraints: const BoxConstraints(maxWidth: 760),
-                    padding: const EdgeInsets.only(left: 18),
-                    decoration: const BoxDecoration(
-                      border: Border(
-                        left: BorderSide(color: Color(0xFFCC775A), width: 6),
-                      ),
-                    ),
-                    child: Text(
-                      subtitle.trim(),
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: const Color(0xFF5D5148),
-                        height: 1.34,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 34),
-                _PosterHeroCard(photo: heroImage),
-                const SizedBox(height: 32),
-                for (var index = 0; index < visibleSections.length; index++)
-                  _PosterSectionCard(
-                    section: visibleSections[index],
-                    index: index,
-                  ),
-                const SizedBox(height: 26),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 22,
-                    vertical: 12,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF172326),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    '由 Memoria 生成',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: const Color(0xFFF1C45B),
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            child: _buildPosterBody(context, visibleSections, accentColor: const Color(0xFFCC775A)),
           ),
         ],
       ),
     );
   }
 
+  Widget _buildStyleMoody(BuildContext context, List<StorySection> visibleSections) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFF0F3460)],
+          stops: [0.0, 0.5, 1.0],
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(48, 48, 48, 56),
+        child: _buildPosterBody(context, visibleSections,
+          accentColor: const Color(0xFFE94560),
+          isDark: true,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStyleMinimal(BuildContext context, List<StorySection> visibleSections) {
+    return Container(
+      color: const Color(0xFFFFFFFF),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(56, 52, 56, 56),
+        child: _buildPosterBody(context, visibleSections,
+          accentColor: const Color(0xFF2D2D2D),
+          showBadge: false,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStyleVintage(BuildContext context, List<StorySection> visibleSections) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFDF6E3), Color(0xFFF5E6C8), Color(0xFFE8D5B0)],
+        ),
+      ),
+      child: Container(
+        margin: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          border: Border.all(color: const Color(0xFF8B7355), width: 3),
+          color: Colors.transparent,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(48, 48, 48, 48),
+          child: _buildPosterBody(context, visibleSections,
+            accentColor: const Color(0xFF8B6914),
+            showPhotoCount: false,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPosterBody(
+    BuildContext context,
+    List<StorySection> visibleSections, {
+    required Color accentColor,
+    bool isDark = false,
+    bool showBadge = true,
+    bool showPhotoCount = true,
+  }) {
+    final textColor = isDark ? const Color(0xFFF0F0F0) : const Color(0xFF191D1D);
+    final mutedColor = isDark ? const Color(0xFFA0A0A0) : const Color(0xFF5D5148);
+    final badgeBg = isDark ? const Color(0xFFE94560) : const Color(0xFF172326);
+    final badgeText = isDark ? const Color(0xFFFFFFFF) : const Color(0xFFF8F3E7);
+    final heroCardBg = isDark ? const Color(0xFF1E2A3A) : const Color(0xFFFFFCF4);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (showBadge || showPhotoCount)
+          Row(
+            children: [
+              if (showBadge)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: badgeBg,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'Memoria Story',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1,
+                      color: badgeText,
+                    ),
+                  ),
+                ),
+              if (showBadge && showPhotoCount) const Spacer(),
+              if (showPhotoCount)
+                Text(
+                  '${sections.length} 张照片',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: mutedColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+            ],
+          ),
+        if (showBadge || showPhotoCount) const SizedBox(height: 34),
+        Text(
+          title,
+          style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+            fontSize: _fitTitleSize(title),
+            height: 1.02,
+            fontWeight: FontWeight.w900,
+            color: textColor,
+          ),
+        ),
+        if (subtitle.trim().isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Container(
+            constraints: const BoxConstraints(maxWidth: 760),
+            padding: const EdgeInsets.only(left: 18),
+            decoration: BoxDecoration(
+              border: Border(
+                left: BorderSide(color: accentColor, width: 6),
+              ),
+            ),
+            child: Text(
+              subtitle.trim(),
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: mutedColor,
+                height: 1.34,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+        const SizedBox(height: 34),
+        _PosterHeroCard(photo: heroImage),
+        const SizedBox(height: 32),
+        for (var index = 0; index < visibleSections.length; index++)
+          _PosterSectionCard(
+            section: visibleSections[index],
+            index: index,
+          ),
+        const SizedBox(height: 26),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+          decoration: BoxDecoration(
+            color: badgeBg,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            '由 Memoria 生成',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: const Color(0xFFF1C45B),
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
   double _fitTitleSize(String value) {
     final length = value.characters.length;
     if (length >= 22) {
@@ -1472,7 +1566,9 @@ class _SharePosterPreviewSheetState extends State<_SharePosterPreviewSheet>
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
-                          onPressed: _isSharing ? null : () {},
+                          onPressed: _isSharing
+                              ? null
+                              : () => Navigator.of(context).pop(true),
                           icon: const Icon(Icons.style),
                           label: const Text('换个样式'),
                         ),

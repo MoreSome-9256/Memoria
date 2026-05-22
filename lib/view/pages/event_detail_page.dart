@@ -17,8 +17,6 @@ import '../widgets/path_image.dart';
 import 'story_queue_page.dart';
 import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
-
-enum _EventSelectionMenuAction { selectAll, clear, cancel }
 enum _EventActionMode { none, story, delete }
 
 class EventDetailPage extends StatefulWidget {
@@ -451,29 +449,47 @@ class _EventDetailPageState extends State<EventDetailPage> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildSelectionMenuButton(
-                    onSelected: (action) {
-                      switch (action) {
-                        case _EventSelectionMenuAction.selectAll:
-                          setState(() {
-                            _selectedPhotoIds.addAll(
-                              _photos.map((photo) => photo.id),
-                            );
-                          });
-                          break;
-                        case _EventSelectionMenuAction.clear:
-                          setState(() {
-                            _selectedPhotoIds.clear();
-                          });
-                          break;
-                        case _EventSelectionMenuAction.cancel:
-                          setState(() {
-                            _actionMode = _EventActionMode.none;
-                            _selectedPhotoIds.clear();
-                          });
-                          break;
+                  FloatingActionButton.small(
+                    heroTag: 'event-detail-back',
+                    onPressed: () {
+                      setState(() {
+                        _actionMode = _EventActionMode.none;
+                        _selectedPhotoIds.clear();
+                      });
+                    },
+                    child: const Icon(Icons.arrow_back_rounded),
+                  ),
+                  const SizedBox(width: 10),
+                  FilledButton.tonalIcon(
+                    onPressed: () {
+                      final allSelected = _photos
+                          .every((p) => _selectedPhotoIds.contains(p.id));
+                      if (allSelected) {
+                        setState(() {
+                          _selectedPhotoIds.clear();
+                        });
+                      } else {
+                        setState(() {
+                          _selectedPhotoIds.addAll(
+                            _photos.map((photo) => photo.id),
+                          );
+                        });
                       }
                     },
+                    icon: Icon(
+                      _photos.isNotEmpty &&
+                              _photos
+                                  .every((p) => _selectedPhotoIds.contains(p.id))
+                          ? Icons.deselect_rounded
+                          : Icons.select_all_rounded,
+                    ),
+                    label: Text(
+                      _photos.isNotEmpty &&
+                              _photos
+                                  .every((p) => _selectedPhotoIds.contains(p.id))
+                          ? '取消全选'
+                          : '全选',
+                    ),
                   ),
                   const SizedBox(width: 10),
                   FloatingActionButton.extended(
@@ -527,40 +543,6 @@ class _EventDetailPageState extends State<EventDetailPage> {
           ],
         );
       },
-    );
-  }
-
-  Widget _buildSelectionMenuButton({
-    required ValueChanged<_EventSelectionMenuAction> onSelected,
-  }) {
-    return Material(
-      color: Theme.of(context).colorScheme.surface,
-      elevation: 4,
-      shadowColor: Colors.black.withValues(alpha: 0.15),
-      shape: const CircleBorder(),
-      child: PopupMenuButton<_EventSelectionMenuAction>(
-        tooltip: '选图操作',
-        onSelected: onSelected,
-        itemBuilder: (context) => const <PopupMenuEntry<_EventSelectionMenuAction>>[
-          PopupMenuItem<_EventSelectionMenuAction>(
-            value: _EventSelectionMenuAction.selectAll,
-            child: Text('全选'),
-          ),
-          PopupMenuItem<_EventSelectionMenuAction>(
-            value: _EventSelectionMenuAction.clear,
-            child: Text('清空'),
-          ),
-          PopupMenuItem<_EventSelectionMenuAction>(
-            value: _EventSelectionMenuAction.cancel,
-            child: Text('取消'),
-          ),
-        ],
-        child: const SizedBox(
-          width: 48,
-          height: 48,
-          child: Icon(Icons.more_horiz_rounded),
-        ),
-      ),
     );
   }
 

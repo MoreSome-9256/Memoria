@@ -15,6 +15,7 @@ import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 import 'internvl_experiment_service.dart';
 import 'llm_service.dart';
+import 'music_service.dart';
 import 'on_device_internvl_service.dart';
 
 part 'story_generation_orchestrator_generation.dart';
@@ -299,12 +300,35 @@ class StoryGenerationOrchestrator {
             .map((photo) => photo.path)
             .toList(growable: false),
       );
-      final highlights = _buildHighlights(
-        request: request,
-        materials: materials,
-        localCaptionMap: localCaptionMap,
-        localDirectStory: localDirectStory,
-      );
+      Map<String, dynamic>? musicWorkflowAnalysis;
+      final highlights = <String>[
+        ..._buildHighlights(
+          request: request,
+          materials: materials,
+          localCaptionMap: localCaptionMap,
+          localDirectStory: localDirectStory,
+        ),
+      ];
+      final musicPath = request.customMusicPath?.trim();
+      if (musicPath != null && musicPath.isNotEmpty) {
+        activateStep(
+          'highlights',
+          detail: '正在本地分析音乐节拍与情绪变化',
+          bullets: highlights,
+          previewImagePaths: sortedPhotos
+              .take(3)
+              .map((photo) => photo.path)
+              .toList(growable: false),
+        );
+        musicWorkflowAnalysis = await MusicService.analyzeAudio(musicPath);
+        final workflow = musicWorkflowAnalysis?['llm_workflow'];
+        final promptSummary = workflow is Map
+            ? workflow['prompt_summary']?.toString().trim()
+            : null;
+        if (promptSummary != null && promptSummary.isNotEmpty) {
+          highlights.add(promptSummary);
+        }
+      }
       completeStep(
         'highlights',
         detail: '已提炼出故事亮点',
@@ -363,6 +387,7 @@ class StoryGenerationOrchestrator {
               photos: sortedPhotos,
               materials: materials,
               localCaptionMap: localCaptionMap,
+              musicWorkflowAnalysis: musicWorkflowAnalysis,
             );
       completeStep(
         'write',

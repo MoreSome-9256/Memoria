@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../../service/story_queue_service.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/path_image.dart';
-import 'config_page.dart';
+import 'story_config_page.dart';
 
 class StoryQueuePage extends StatelessWidget {
   const StoryQueuePage({super.key});

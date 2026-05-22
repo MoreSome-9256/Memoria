@@ -1,115 +1,199 @@
-/// 音乐服务，管理播放、选择和音乐资源的协调。
+// 音乐服务，统一提供端侧音乐节拍和情绪分析入口。
 
-import 'package:dio/dio.dart';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
+import 'package:music_feature_analyzer/music_feature_analyzer.dart';
 import 'package:path/path.dart' as p;
-import 'package:photo_album/service/auth_token_service.dart';
+
+import 'local_music_analysis_service.dart';
 
 class MusicService {
-  static const String _tokenHeaderName = 'X-Memoria-Token';
-  static const Duration _connectTimeout = Duration(seconds: 300);
-  static const Duration _sendTimeout = Duration(minutes: 60);
-  static const Duration _receiveTimeout = Duration(minutes: 1500);
-
-  static const String _apiBaseUrl = String.fromEnvironment(
-    'AUDIO_API_BASE_URL',
-    defaultValue: 'http://127.0.0.1:8000',
-  );
-  static const String _apiEndpoint = String.fromEnvironment(
-    'AUDIO_API_ENDPOINT',
-    defaultValue: '/api/analyze_beats',
-  );
+  static final LocalMusicAnalysisService _localAnalyzer =
+      LocalMusicAnalysisService();
+  static bool _isFeatureAnalyzerReady = false;
 
   static Future<Map<String, dynamic>?> analyzeAudio(String filePath) async {
-    final endpointPath = _apiEndpoint.startsWith('/')
-        ? _apiEndpoint.substring(1)
-        : _apiEndpoint;
-    final requestUri = Uri.parse(_apiBaseUrl).resolve(endpointPath);
-
     try {
-      // 🔐 先获取 Cognito token
-      final accessToken = await AuthTokenService.getAccessToken();
-      if (accessToken == null) {
-        debugPrint("❌ 鉴权失败：无法获取 Cognito Token，请先登录");
+      debugPrint('🎵 本地分析音频: $filePath');
+      final result =
+          await _analyzeWithMusicFeatureAnalyzer(filePath) ??
+          await _localAnalyzer.analyze(filePath);
+      if (result == null) {
+        debugPrint('❌ 本地音乐分析失败');
         return null;
-      }
-
-      final dio = Dio(
-        BaseOptions(
-          connectTimeout: _connectTimeout,
-          sendTimeout: _sendTimeout,
-          receiveTimeout: _receiveTimeout
-        )
-      );
-
-      debugPrint(dio.options.listFormat.toString());
-
-      // 🌟 获取真实的带后缀的文件名 (比如 song.m4a)
-      final realFileName = p.basename(filePath);
-
-      // 1. 把本地文件打包成 multipart/form-data
-      FormData formData = FormData.fromMap({
-        "audio": await MultipartFile.fromFile(
-          filePath,
-          filename: realFileName, // 👈 核心修复：保留真实后缀名！
-        ),
-      });
-
-      debugPrint("🚀 上传音频分析: POST $requestUri");
-
-      // 2. 发送 POST 请求，并在 header 中添加自定义 token 头
-      Response response = await dio.post(
-        requestUri.toString(),
-        data: formData,
-        
-        options: Options(
-          headers: {
-            _tokenHeaderName: accessToken,
-          },
-        ),
-
-        onSendProgress: (int sent, int total) {
-          if (total > 0) {
-            debugPrint("上传进度: ${(sent / total * 100).toStringAsFixed(0)}%");
-          } else {
-            debugPrint("上传进度: $sent bytes");
-          }
-        },
-      );
-
-      if (response.statusCode == 200) {
-        debugPrint("✅ Librosa 分析成功! BPM: ${response.data['bpm']}");
-        return response.data; // 返回包含 bpm 和 data 的 Map
-      } else if (response.statusCode == 401) {
-        debugPrint("❌ 鉴权失败 (401)：Token 无效或已过期，请重新登录");
-        AuthTokenService.clearCachedToken();
-        debugPrint("401 响应体: ${response.data}");
-        return null;
-      } else {
-        debugPrint(
-          "❌ 分析失败，状态码: ${response.statusCode}, URL: $requestUri, 响应体: ${response.data}",
-        );
-        return null;
-      }
-    } on DioException catch (e) {
-      if (e.type == DioExceptionType.connectionTimeout) {
-        debugPrint(
-          "❌ 连接超时：在 ${_connectTimeout.inSeconds}s 内无法连上服务。"
-          "请检查 API 地址、网络连通性、DNS 和服务端可用性。",
-        );
-      } else if (e.type == DioExceptionType.sendTimeout) {
-        debugPrint("❌ 上传超时：在 ${_sendTimeout.inSeconds}s 内未完成请求发送");
-      } else if (e.type == DioExceptionType.receiveTimeout) {
-        debugPrint("❌ 响应超时：在 ${_receiveTimeout.inMinutes} 分钟内未收到完整响应");
       }
       debugPrint(
-        "❌ DioException: method=${e.requestOptions.method}, url=${e.requestOptions.uri}, "
-        "status=${e.response?.statusCode}, data=${e.response?.data}, msg=${e.message}",
+        '✅ 本地音乐分析完成: BPM=${result['bpm']}, beats=${(result['data'] as List?)?.length ?? 0}',
       );
-      return null;
-    } catch (e) {
-      debugPrint("❌ 网络或解析错误: $e");
+      return result;
+    } catch (error) {
+      debugPrint('❌ 本地音乐分析异常: $error');
       return null;
     }
+  }
+
+  static Future<Map<String, dynamic>?> _analyzeWithMusicFeatureAnalyzer(
+    String filePath,
+  ) async {
+    if (kIsWeb || (!Platform.isAndroid && !Platform.isIOS)) {
+      return null;
+    }
+
+    try {
+      if (!_isFeatureAnalyzerReady) {
+        _isFeatureAnalyzerReady = await MusicFeatureAnalyzer.initialize();
+      }
+      if (!_isFeatureAnalyzerReady) {
+        return null;
+      }
+
+      final metadata = await MusicFeatureAnalyzer.metadata(filePath);
+      final fileName = p.basename(filePath);
+      final song =
+          metadata ??
+          SongModel(
+            id: filePath,
+            title: p.basenameWithoutExtension(fileName),
+            artist: '',
+            album: '',
+            duration: 0,
+            filePath: filePath,
+          );
+
+      final features = await MusicFeatureAnalyzer.analyzeSong(song);
+      if (features == null || features.tempoBpm <= 0) {
+        return null;
+      }
+
+      final durationMs = song.duration > 0 ? song.duration : 0;
+      final beats = _buildBeatTimelineFromBpm(
+        bpm: features.tempoBpm,
+        durationMs: durationMs,
+        beatStrength: features.beatStrength,
+      );
+      final emotion = _buildFeatureEmotion(features, durationMs);
+
+      return <String, dynamic>{
+        'source': 'music_feature_analyzer',
+        'analyzer_version': '1.0.3',
+        'file_name': fileName,
+        'duration_ms': durationMs,
+        'bpm': double.parse(features.tempoBpm.toStringAsFixed(1)),
+        'data': beats,
+        'emotion': emotion,
+        'features': <String, dynamic>{
+          'tempo': features.tempo,
+          'beat': features.beat,
+          'beat_strength': features.beatStrength,
+          'energy': features.energy,
+          'overall_energy': features.overallEnergy,
+          'danceability': features.danceability,
+          'mood': features.mood,
+          'mood_tags': features.moodTags,
+          'valence': features.valence,
+          'arousal': features.arousal,
+          'genre': features.estimatedGenre,
+          'instruments': features.instruments,
+          'yamnet_instruments': features.yamnetInstruments,
+          'has_vocals': features.hasVocals,
+          'vocals': features.vocals,
+          'confidence': features.confidence,
+        },
+        'llm_workflow': _buildWorkflowSummary(
+          bpm: features.tempoBpm,
+          beats: beats,
+          emotion: emotion,
+          features: features,
+        ),
+      };
+    } catch (error) {
+      debugPrint('music_feature_analyzer 分析失败，回退到内置本地分析: $error');
+      return null;
+    }
+  }
+
+  static List<Map<String, dynamic>> _buildBeatTimelineFromBpm({
+    required double bpm,
+    required int durationMs,
+    required double beatStrength,
+  }) {
+    final intervalMs = bpm > 0 ? 60000 / bpm : 500.0;
+    final effectiveDuration = durationMs > 0 ? durationMs : intervalMs.round();
+    final beats = <Map<String, dynamic>>[];
+    var ms = 0.0;
+    while (ms < effectiveDuration) {
+      beats.add(<String, dynamic>{
+        'ms': ms.round(),
+        'energy': double.parse(
+          beatStrength.clamp(0.05, 1.0).toStringAsFixed(3),
+        ),
+      });
+      ms += intervalMs;
+    }
+    return beats.isEmpty
+        ? <Map<String, dynamic>>[
+            <String, dynamic>{'ms': 0, 'energy': beatStrength.clamp(0.05, 1.0)},
+          ]
+        : beats;
+  }
+
+  static Map<String, dynamic> _buildFeatureEmotion(
+    ExtractedSongFeatures features,
+    int durationMs,
+  ) {
+    final label = _emotionLabel(features.arousal, features.valence);
+    return <String, dynamic>{
+      'summary':
+          '整体$label，mood=${features.mood}，valence=${features.valence.toStringAsFixed(2)}，arousal=${features.arousal.toStringAsFixed(2)}',
+      'segments': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'start_ms': 0,
+          'end_ms': durationMs > 0 ? durationMs : 0,
+          'arousal': double.parse(features.arousal.toStringAsFixed(3)),
+          'valence': double.parse(features.valence.toStringAsFixed(3)),
+          'danceability': double.parse(
+            features.danceability.toStringAsFixed(3),
+          ),
+          'energy': double.parse(features.overallEnergy.toStringAsFixed(3)),
+          'label': label,
+        },
+      ],
+    };
+  }
+
+  static String _emotionLabel(double arousal, double valence) {
+    if (arousal >= 0.62 && valence >= 0.55) {
+      return '明亮有动感';
+    }
+    if (arousal >= 0.62 && valence < 0.55) {
+      return '紧张有冲击';
+    }
+    if (arousal < 0.38 && valence >= 0.55) {
+      return '温柔舒缓';
+    }
+    if (arousal < 0.38 && valence < 0.55) {
+      return '安静低回';
+    }
+    return valence >= 0.55 ? '平稳温暖' : '克制沉静';
+  }
+
+  static Map<String, dynamic> _buildWorkflowSummary({
+    required double bpm,
+    required List<Map<String, dynamic>> beats,
+    required Map<String, dynamic> emotion,
+    required ExtractedSongFeatures features,
+  }) {
+    return <String, dynamic>{
+      'stage': 'on_device_music_feature_analysis',
+      'next_stage': 'cloud_llm_story_generation',
+      'prompt_summary':
+          '端侧 music_feature_analyzer 分析：BPM ${bpm.toStringAsFixed(1)}，共 ${beats.length} 个节拍点；${emotion['summary']}；danceability=${features.danceability.toStringAsFixed(2)}，genre=${features.estimatedGenre}。请让剧本分镜、转场密度和旁白情绪贴合音乐节奏。',
+      'editing_hints': <String>[
+        bpm >= 125 ? '适合快节奏卡点和短句旁白' : '适合舒展转场和较长旁白',
+        features.danceability >= 0.65 ? '可以提高镜头切换密度' : '保持镜头停留和情绪留白',
+        '音乐情绪：${features.mood} / ${features.moodTags.take(3).join('、')}',
+      ],
+    };
   }
 }

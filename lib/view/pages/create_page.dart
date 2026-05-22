@@ -16,7 +16,7 @@ import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import '../widgets/path_image.dart';
-import 'config_page.dart';
+import 'story_config_page.dart';
 import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 

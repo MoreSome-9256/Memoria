@@ -177,14 +177,14 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
     _autoConfigVFXAndSubtitles();
 
-    // 先给一个最小可播放节拍，随后异步替换为后端分析结果。
+    // 先给一个最小可播放节拍，随后异步替换为本地分析结果。
     _beatData = [
       {"ms": 0, "energy": 0.1},
       {"ms": 500, "energy": 0.6},
       {"ms": 1000, "energy": 0.2},
     ];
     _beatIntervalMs = 500;
-    unawaited(_loadBeatDataFromBackend());
+    unawaited(_loadBeatDataFromLocalAnalyzer());
 
     if (widget.sections.isNotEmpty) {
       _currentLyricText = widget.sections[0].text;
@@ -217,7 +217,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
   String? _resolvePlayableAudioPath() {
     final customPath = widget.customMusicPath?.trim();
-    if (customPath != null && customPath.isNotEmpty && File(customPath).existsSync()) {
+    if (customPath != null &&
+        customPath.isNotEmpty &&
+        File(customPath).existsSync()) {
       return customPath;
     }
     return null;
@@ -229,6 +231,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     }
     return index.clamp(0, widget.sections.length - 1).toInt();
   }
+
   // ==========================================
   // 🎯 人脸数据后台加载与热更新
   // ==========================================
@@ -241,7 +244,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         final photo = _localSections[i].photo;
 
         // 🚀 极速查询：根据 assetId 去 FaceEntity 表里捞出这张照片对应的所有人脸
-        final _fq = _faceBox.query(FaceEntity_.assetId.equals(photo.id)).build();
+        final _fq = _faceBox
+            .query(FaceEntity_.assetId.equals(photo.id))
+            .build();
         final faces = _fq.find();
         _fq.close();
 
@@ -262,15 +267,16 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     }
   }
 
-  Future<void> _loadBeatDataFromBackend() async {
+  Future<void> _loadBeatDataFromLocalAnalyzer() async {
     // 优先使用上一个页面已经分析好的数据。
-    if (widget.dynamicBeatData != null && widget.dynamicBeatData!['data'] != null) {
+    if (widget.dynamicBeatData != null &&
+        widget.dynamicBeatData!['data'] != null) {
       _applyBeatData(widget.dynamicBeatData!);
       return;
     }
 
     try {
-      // fallback 也走云端分析：上传当前实际要播放的音频文件。
+      // fallback 也走本地分析：使用当前实际要播放的音频文件。
       String audioPath;
       final playableAudioPath = _resolvePlayableAudioPath();
       if (playableAudioPath != null) {
@@ -288,9 +294,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         return;
       }
 
-      debugPrint("⚠️ fallback 云端节拍分析失败，保留最小兜底节拍");
+      debugPrint("⚠️ fallback 本地节拍分析失败，保留最小兜底节拍");
     } catch (e) {
-      debugPrint("❌ fallback 云端节拍分析异常: $e");
+      debugPrint("❌ fallback 本地节拍分析异常: $e");
     }
   }
 
@@ -414,7 +420,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
         // 🖼️ 决定切图 (每 8 拍切一张)
         int beatsPerImage = 8;
-        int targetImageIndex = _clampSectionIndex(targetBeatIndex ~/ beatsPerImage);
+        int targetImageIndex = _clampSectionIndex(
+          targetBeatIndex ~/ beatsPerImage,
+        );
 
         if (mounted) {
           setState(() {
@@ -472,6 +480,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       });
     }
   }
+
   // ==========================================
   // 🤖 智能导演：自动分配字幕样式与画面特效
   // ==========================================
@@ -661,6 +670,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     }
 
     final currentSection = widget.sections[_clampSectionIndex(_currentIndex)];
+    final mediaQuery = MediaQuery.of(context);
 
     // 🌟 核心判断：当前是不是第 0 帧（片头帧）
     final bool isIntro = _currentIndex == 0;
@@ -787,7 +797,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                         subtitle: widget.subtitle, // 使用上一个页面传来的副标题
                       ),
                     ),
-                    // ==========================================
+                  // ==========================================
                   // 🎭 核心新增：预览专属的转场替身！
                   // ⚠️ 注意条件：只在规定的时间显示，并且导出时绝对不显示！
                   // ==========================================
@@ -844,15 +854,14 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         );
       }
     } else {
-      // 用 SizedBox 或 AspectRatio 给它一个绝对偶数的逻辑容器
-screenBody = Center(
-  child: SizedBox(
-    // 取决于你手机的逻辑分辨率，这里给一个标准的 9:16 偶数容器
-    width: 360,  // 360 * pixelRatio(2.0) = 720 (偶数)
-    height: 640, // 640 * pixelRatio(2.0) = 1280 (偶数)
-    child: RepaintBoundary(key: _renderKey, child: videoContent),
-  ),
-);
+      // 直接使用设备真实可用尺寸，避免导出时把画面压到 720x1280。
+      screenBody = Center(
+        child: SizedBox(
+          width: mediaQuery.size.width,
+          height: mediaQuery.size.height,
+          child: RepaintBoundary(key: _renderKey, child: videoContent),
+        ),
+      );
     }
 
     return Scaffold(
@@ -1030,14 +1039,6 @@ screenBody = Center(
                       useCloudBorder: _useCloudBorder,
                     );
 
-                    // 弹个 Toast 安抚用户
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('🚀 正在后台静默加速渲染中，您可以去干点别的，完成后将通知您~'),
-                        backgroundColor: Colors.pinkAccent,
-                      ),
-                    );
-
                     // 潇洒离场，回首页！
                     Navigator.pop(context);
                   },
@@ -1073,7 +1074,6 @@ screenBody = Center(
       ),
     );
   }
-
 
   // 🎛️ 导演控制台面板
   void _showVfxPanel() {
@@ -1484,6 +1484,7 @@ screenBody = Center(
       ),
     );
   }
+
   // ==========================================
   // 🎯 智能裁切：基于面积加权的人脸重心计算
   // ==========================================
@@ -1592,6 +1593,7 @@ screenBody = Center(
       _currentLyricText = widget.sections[_currentIndex].text;
     });
   }
+
   // 📸 全新：直接抓取 RGBA 原始像素，并强制裁剪为偶数分辨率
   Future<(Uint8List?, int, int)> _captureFrameRgba() async {
     try {
@@ -1599,8 +1601,9 @@ screenBody = Center(
           _renderKey.currentContext!.findRenderObject()
               as RenderRepaintBoundary;
 
-      // 这里的 pixelRatio 控制清晰度，2.0 大约等于 1080p。如果想要更快，可以改成 1.5。
-      ui.Image rawImage = await boundary.toImage(pixelRatio: 2.0);
+      // 这里直接用设备真实像素比，保证导出帧不被人为降采样。
+      final pixelRatio = MediaQuery.of(context).devicePixelRatio;
+      ui.Image rawImage = await boundary.toImage(pixelRatio: pixelRatio);
 
       int width = rawImage.width;
       int height = rawImage.height;
@@ -1634,7 +1637,6 @@ screenBody = Center(
       return (null, 0, 0);
     }
   }
-
 
   // 🎬 专门给取景器提供纯净画面的层（无黑边）
   // 🌟 修改点 1：把参数里的 String imagePath 改成 var photo (或者 PhotoEntity photo)
@@ -1671,6 +1673,7 @@ screenBody = Center(
       ],
     );
   }
+
   // 🌟 核心工具：把 asset 里的文件释放到手机真实的临时目录中
   Future<String> _extractAssetForFFmpeg(
     String assetPath,

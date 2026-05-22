@@ -86,7 +86,6 @@ class OffscreenRenderWorker extends StatefulWidget {
 
 class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     with TickerProviderStateMixin {
-
   int _currentIndex = 0;
 
   int _currentLyricIndex = 0;
@@ -144,7 +143,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     // 我们强制让它处于导出模式
     _isExporting = true;
 
-    unawaited(_loadBeatDataFromBackend());
+    unawaited(_loadBeatDataFromLocalAnalyzer());
 
     if (widget.sections.isNotEmpty) {
       _currentLyricText = widget.sections[0].text;
@@ -157,6 +156,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       _startExport();
     });
   }
+
   void _applyBeatData(Map<String, dynamic> beatResponse) {
     final data = beatResponse['data'];
     final bpmRaw = beatResponse['bpm'];
@@ -175,7 +175,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     );
   }
 
-  Future<void> _loadBeatDataFromBackend() async {
+  Future<void> _loadBeatDataFromLocalAnalyzer() async {
     // 优先使用上一个页面已经分析好的数据。
     if (widget.dynamicBeatData != null &&
         widget.dynamicBeatData!['data'] != null) {
@@ -184,7 +184,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     }
 
     try {
-      // fallback 也走云端分析：上传当前实际要播放的音频文件。
+      // fallback 也走本地分析：使用当前实际要播放的音频文件。
       String audioPath;
       if (widget.customMusicPath != null &&
           widget.customMusicPath!.isNotEmpty) {
@@ -202,14 +202,13 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         return;
       }
 
-      debugPrint("⚠️ fallback 云端节拍分析失败，保留最小兜底节拍");
+      debugPrint("⚠️ fallback 本地节拍分析失败，保留最小兜底节拍");
     } catch (e) {
-      debugPrint("❌ fallback 云端节拍分析异常: $e");
+      debugPrint("❌ fallback 本地节拍分析异常: $e");
     }
   }
 
   int _currentBeatIndexForPreview = -1; // 记录当前演到第几拍了
-
 
   @override
   void dispose() {
@@ -357,8 +356,8 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
               ),
             ),
           ),
-        )
-      )
+        ),
+      ),
     );
 
     // 🌟 2. 核心化简：只返回取景器本身，去掉所有的 Scaffold 和进度条
@@ -571,12 +570,14 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       captions: currentCaptions,
     );
 
-    final sectionsData = widget.sections.map((section) {
-      return {
-        'photo': {'path': section.photo.path},
-        'text': section.text,
-      };
-    }).toList(growable: false);
+    final sectionsData = widget.sections
+        .map((section) {
+          return {
+            'photo': {'path': section.photo.path},
+            'text': section.text,
+          };
+        })
+        .toList(growable: false);
 
     _exportCacheKey = VideoCacheService.instance.buildVideoCacheKey(
       title: widget.title,
@@ -649,6 +650,9 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
     int videoWidth = firstFrame.$2;
     int videoHeight = firstFrame.$3;
+    final int videoBitrate = (videoWidth * videoHeight * 12)
+        .clamp(16000000, 80000000)
+        .toInt();
 
     final tempDir = await getTemporaryDirectory();
     final String silentVideoPath =
@@ -662,8 +666,9 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         width: videoWidth,
         height: videoHeight,
         fps: 24,
-        videoBitrate: 4000000, // 4Mbps 码率，保障画质不糊（高码率 = 高清）
-        profileLevel: ProfileLevel.any, // ✅ 插件自动选择最优硬件编码配置（iOS: H.264/HEVC, Android: H.264）
+        videoBitrate: videoBitrate, // 按实际分辨率动态提高码率，尽量保留细节
+        profileLevel: ProfileLevel
+            .any, // ✅ 插件自动选择最优硬件编码配置（iOS: H.264/HEVC, Android: H.264）
         filepath: silentVideoPath,
         // 👇 新增这三个必填的音频占位参数
         audioBitrate: 128000, // 提升到 128kbps 以获得更好音质
@@ -760,12 +765,13 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
     // 生成缓存视频路径（在缓存目录）
     final cacheDir = await VideoCacheService.instance.getCacheDirectory();
-    final cacheVideoPath = "${cacheDir.path}/temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
+    final cacheVideoPath =
+        "${cacheDir.path}/temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
 
     try {
       // 使用 FFmpeg 合并音频和视频
       debugPrint('🎵 开始使用 FFmpeg 合并音频和视频...');
-      
+
       // 优先使用 stream copy（不重新编码，最快）
       // 如果失败，则使用硬件加速重新编码
       bool success = await _tryMergeWithStreamCopy(
@@ -774,7 +780,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         cacheVideoPath,
         exactSeconds,
       );
-      
+
       if (success) {
         try {
           await File(silentVideoPath).delete();
@@ -789,7 +795,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
           cacheVideoPath,
           exactSeconds,
         );
-        
+
         if (success) {
           try {
             await File(silentVideoPath).delete();
@@ -843,15 +849,16 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     try {
       // -c:v copy: 直接复制视频流，不重新编码
       // -c:a aac: 使用 AAC 编码音频
-        final command = '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+      final command =
+          '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
           '-map 0:v:0 -map 1:a:0 '
           '-t $duration -c:v copy -c:a aac -b:a 128k -shortest "$outputPath"';
-      
+
       debugPrint('🎬 FFmpeg (stream copy): $command');
-      
+
       final session = await FFmpegKit.execute(command);
       final returnCode = await session.getReturnCode();
-      
+
       if (ReturnCode.isSuccess(returnCode)) {
         debugPrint('✅ FFmpeg stream copy 成功');
         return true;
@@ -875,7 +882,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   ) async {
     try {
       String videoCodec;
-      
+
       // 根据平台选择硬件编码器
       if (Platform.isIOS || Platform.isMacOS) {
         // iOS/macOS: 使用 VideoToolbox 硬件加速
@@ -887,41 +894,43 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         // 其他平台：使用软件编码
         videoCodec = 'libx264';
       }
-      
+
       // 使用硬件加速编码
       // -c:v: 视频编码器
       // -b:v: 视频比特率
       // -preset: 编码速度预设（仅软件编码）
-        final command = '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+      final command =
+          '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
           '-map 0:v:0 -map 1:a:0 '
           '-t $duration -c:v $videoCodec -b:v 2500k -c:a aac -b:a 128k '
           '-shortest "$outputPath"';
-      
+
       debugPrint('🎬 FFmpeg (hardware accel): $command');
-      
+
       final session = await FFmpegKit.execute(command);
       final returnCode = await session.getReturnCode();
-      
+
       if (ReturnCode.isSuccess(returnCode)) {
         debugPrint('✅ FFmpeg 硬件加速编码成功');
         return true;
       } else {
         final output = await session.getOutput();
         debugPrint('❌ FFmpeg 硬件加速失败: $output');
-        
+
         // 如果硬件加速失败，尝试软件编码
         if (videoCodec != 'libx264') {
           debugPrint('⚠️ 硬件加速失败，尝试软件编码...');
-            final softwareCommand = '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+          final softwareCommand =
+              '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
               '-map 0:v:0 -map 1:a:0 '
               '-t $duration -c:v libx264 -preset ultrafast -b:v 2500k '
               '-c:a aac -b:a 128k -shortest "$outputPath"';
-          
+
           debugPrint('🎬 FFmpeg (software): $softwareCommand');
-          
+
           final softwareSession = await FFmpegKit.execute(softwareCommand);
           final softwareReturnCode = await softwareSession.getReturnCode();
-          
+
           if (ReturnCode.isSuccess(softwareReturnCode)) {
             debugPrint('✅ FFmpeg 软件编码成功');
             return true;
@@ -931,7 +940,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
             return false;
           }
         }
-        
+
         return false;
       }
     } catch (e) {
@@ -947,7 +956,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   void _handleExportSuccess(String cacheVideoPath) async {
     try {
       debugPrint('✅ 视频生成完成，缓存路径: $cacheVideoPath');
-      
+
       // 🌟 第一步：缓存视频（只基于图片和文本）
       final sectionsData = widget.sections.map((section) {
         return {
@@ -963,14 +972,14 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       );
 
       debugPrint('✅ 视频已缓存: $cachedPath');
-      
+
       // 🌟 第二步：将视频移动到导出目录（用户可见）
       final finalPath = await VideoCacheService.instance.moveToExportsDirectory(
         cachedPath,
         customName:
             'Story_${_exportCacheKey ?? DateTime.now().millisecondsSinceEpoch.toString()}.mp4',
       );
-      
+
       debugPrint('✅ 视频已移动到导出目录: $finalPath');
       debugPrint('📱 用户可在发布页面选择分享或手动保存到相册');
 
@@ -983,6 +992,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       debugPrint("❌ 导出处理失败: $e");
     }
   }
+
   // 🎬 专门给取景器提供纯净画面的层（无黑边）
   Widget _buildPureImageLayer(String imagePath, Widget subtitle) {
     final file = File(imagePath);

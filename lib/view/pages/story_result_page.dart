@@ -392,7 +392,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
       context: context,
       barrierDismissible: false,
       barrierLabel: '分享预览',
-      barrierColor: Colors.black.withValues(alpha: 0.55),
+      barrierColor: Colors.black.withValues(alpha: 0.78),
       transitionDuration: const Duration(milliseconds: 420),
       pageBuilder: (context, animation, secondaryAnimation) {
         return _SharePosterPreviewSheet(
@@ -871,7 +871,14 @@ class _StorySharePoster extends StatelessWidget {
   Widget build(BuildContext context) {
     final visibleSections = sections;
     return Container(
-      color: const Color(0xFFF5F1E8),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFFBF7F0), Color(0xFFF5F1E8), Color(0xFF3D3630)],
+          stops: [0.0, 0.45, 1.0],
+        ),
+      ),
       child: Stack(
         children: [
           Positioned(
@@ -965,27 +972,19 @@ class _StorySharePoster extends StatelessWidget {
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 22,
-                    vertical: 18,
+                    vertical: 12,
                   ),
                   decoration: BoxDecoration(
                     color: const Color(0xFF172326),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.auto_awesome, color: Color(0xFFF1C45B)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          '适合直接分享到社交平台的故事长图 · $targetPlatform',
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(
-                                color: const Color(0xFFF8F3E7),
-                                fontWeight: FontWeight.w600,
-                              ),
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    '由 Memoria 生成',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: const Color(0xFFF1C45B),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8,
+                    ),
                   ),
                 ),
               ],
@@ -1365,86 +1364,109 @@ class _SharePosterPreviewSheetState extends State<_SharePosterPreviewSheet>
     final previewHeight = media.size.height * 0.56;
 
     return SafeArea(
-      child: Material(
-        color: Colors.transparent,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-          child: Column(
-            children: [
-              Expanded(
-                child: Center(
-                  child: AnimatedBuilder(
-                    animation: _scale,
-                    builder: (context, child) {
-                      final topOffset = Tween<double>(
-                        begin: media.size.height * 0.12,
-                        end: 0,
-                      ).evaluate(_scale);
-                      final scale = Tween<double>(
-                        begin: 1.16,
-                        end: 1,
-                      ).evaluate(_scale);
-                      return Transform.translate(
-                        offset: Offset(0, topOffset),
-                        child: Transform.scale(scale: scale, child: child),
-                      );
-                    },
-                    child: Container(
-                      width: previewWidth,
-                      height: previewHeight,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF111718),
-                        borderRadius: BorderRadius.circular(18),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.32),
-                            blurRadius: 34,
-                            offset: const Offset(0, 18),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+              child: Container(color: Colors.transparent),
+            ),
+          ),
+          Material(
+            color: Colors.transparent,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: Center(
+                      child: AnimatedBuilder(
+                        animation: _scale,
+                        builder: (context, child) {
+                          final topOffset = Tween<double>(
+                            begin: media.size.height * 0.12,
+                            end: 0,
+                          ).evaluate(_scale);
+                          final scale = Tween<double>(
+                            begin: 1.16,
+                            end: 1,
+                          ).evaluate(_scale);
+                          return Transform.translate(
+                            offset: Offset(0, topOffset),
+                            child: Transform.scale(scale: scale, child: child),
+                          );
+                        },
+                        child: Container(
+                          width: previewWidth,
+                          height: previewHeight,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF111718),
+                            borderRadius: BorderRadius.circular(18),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.32),
+                                blurRadius: 34,
+                                offset: const Offset(0, 18),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
-                      padding: const EdgeInsets.all(10),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: InteractiveViewer(
-                          minScale: 0.65,
-                          maxScale: 4,
-                          child: SingleChildScrollView(
-                            child: Image.file(
-                              widget.posterFile,
-                              width: previewWidth - 20,
-                              fit: BoxFit.fitWidth,
+                          padding: const EdgeInsets.all(10),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: InteractiveViewer(
+                              minScale: 0.65,
+                              maxScale: 4,
+                              child: SingleChildScrollView(
+                                child: Image.file(
+                                  widget.posterFile,
+                                  width: previewWidth - 20,
+                                  fit: BoxFit.fitWidth,
+                                ),
+                              ),
                             ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: _isSharing ? null : _share,
-                      icon: const Icon(Icons.ios_share),
-                      label: Text(_isSharing ? '分享中...' : '分享'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close),
-                      label: const Text('退出'),
-                    ),
+                  const SizedBox(height: 16),
+                  Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: _isSharing ? null : _share,
+                              icon: const Icon(Icons.ios_share),
+                              label: Text(_isSharing ? '分享中...' : '分享'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () => Navigator.of(context).pop(),
+                              icon: const Icon(Icons.close),
+                              label: const Text('退出'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _isSharing ? null : () {},
+                          icon: const Icon(Icons.style),
+                          label: const Text('换个样式'),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }

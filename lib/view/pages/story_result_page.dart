@@ -1,8 +1,14 @@
 /// 故事结果页面，展示生成后的故事内容和分享入口。
 
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../models/entity/photo_entity.dart';
 import '../../models/entity/story_entity.dart';
@@ -13,7 +19,6 @@ import '../../service/story_service.dart';
 import '../../utils/ocr_policy.dart';
 import '../widgets/path_image.dart';
 import 'digital_album_book_page.dart';
-import 'export_manager.dart';
 import 'story_video_page.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 
@@ -353,42 +358,80 @@ class _StoryResultPageState extends State<StoryResultPage> {
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
-  void _shareStory() {
-    final finalVideoSections = _buildVideoSections();
-    if (finalVideoSections.isEmpty) {
+  Future<void> _shareStory() async {
+    if (_sections.isEmpty) {
       return;
     }
 
-    ExportManager.instance.startBackgroundExport(
-      context: context,
-      title: widget.title,
-      subtitle: widget.subtitle,
-      sections: finalVideoSections,
-      customMusicPath: widget.customMusicPath,
-      dynamicBeatData: widget.dynamicBeatData,
-      targetPlatform: widget.targetPlatform,
-      isHorizontal: widget.isHorizontal,
-      currentTextStyle: 'hero',
-      textYPosition: 0.8,
-      textSize: 24.0,
-      textBlurIntensity: 4.0,
-      shakeIntensity: 0.0,
-      shakeFrequency: 1.0,
-      glitchIntensity: 0.0,
-      enableFlash: true,
-      useVignette: false,
-      useGrain: false,
-      useCameraFrame: false,
-      useGlowRing: false,
-      useCloudBorder: false,
+    final posterFile = await _generateSharePosterFile();
+    final storyCaption = [
+      widget.title,
+      if (widget.subtitle.trim().isNotEmpty) widget.subtitle.trim(),
+    ].join(' · ');
+
+    await Share.shareXFiles(
+      [XFile(posterFile.path)],
+      text: storyCaption,
+    );
+  }
+
+  Future<File> _generateSharePosterFile() async {
+    final tempDir = await getTemporaryDirectory();
+    final posterFile = File(
+      path.join(tempDir.path, 'story_share_${DateTime.now().millisecondsSinceEpoch}.png'),
     );
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('🚀 正在后台导出视频，完成后可一键分享'),
-        backgroundColor: Colors.pinkAccent,
-      ),
+    final boundaryKey = GlobalKey();
+    final overlay = Overlay.of(context, rootOverlay: true);
+
+    late OverlayEntry overlayEntry;
+    overlayEntry = OverlayEntry(
+      builder: (overlayContext) {
+        return Positioned.fill(
+          child: Material(
+            color: Colors.transparent,
+            child: Center(
+              child: SizedBox(
+                width: 1080,
+                child: RepaintBoundary(
+                  key: boundaryKey,
+                  child: _StorySharePoster(
+                    title: widget.title,
+                    subtitle: widget.subtitle,
+                    heroImage: widget.heroImage,
+                    sections: _sections,
+                    targetPlatform: widget.targetPlatform,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
+
+    overlay.insert(overlayEntry);
+
+    try {
+      await WidgetsBinding.instance.endOfFrame;
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      final renderObject = boundaryKey.currentContext?.findRenderObject();
+      if (renderObject is! RenderRepaintBoundary) {
+        throw StateError('Share poster is not ready');
+      }
+
+      final image = await renderObject.toImage(pixelRatio: 2.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        throw StateError('Failed to encode share poster');
+      }
+
+      await posterFile.writeAsBytes(byteData.buffer.asUint8List());
+      return posterFile;
+    } finally {
+      overlayEntry.remove();
+    }
   }
 
   Future<void> _openDigitalAlbum() async {
@@ -460,6 +503,20 @@ class _StoryResultPageState extends State<StoryResultPage> {
           isHorizontal: widget.isHorizontal,
           dynamicBeatData: widget.dynamicBeatData,
           targetPlatform: widget.targetPlatform,
+          onComplete: (_, __) {},
+          currentTextStyle: 'hero',
+          textYPosition: 0.8,
+          textSize: 24.0,
+          textBlurIntensity: 4.0,
+          shakeIntensity: 0.0,
+          shakeFrequency: 1.0,
+          glitchIntensity: 0.0,
+          enableFlash: true,
+          useVignette: false,
+          useGrain: false,
+          useCameraFrame: false,
+          useGlowRing: false,
+          useCloudBorder: false,
         ),
       ),
     );
@@ -624,7 +681,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
               TextButton.icon(
                 onPressed: _shareStory,
                 icon: const Icon(Icons.share),
-                label: const Text('导出分享'),
+                label: const Text('分享长图'),
               ),
             ],
           ),
@@ -706,6 +763,275 @@ class _PhotoContextRow extends StatelessWidget {
               ),
         ),
       ],
+    );
+  }
+}
+
+class _StorySharePoster extends StatelessWidget {
+  const _StorySharePoster({
+    required this.title,
+    required this.subtitle,
+    required this.heroImage,
+    required this.sections,
+    required this.targetPlatform,
+  });
+
+  final String title;
+  final String subtitle;
+  final Photo heroImage;
+  final List<StorySection> sections;
+  final String targetPlatform;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFFF6F2), Color(0xFFF7EDF9), Color(0xFFF8FBFF)],
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            top: -120,
+            left: -100,
+            child: _PosterGlow(color: Color(0x66F1B7D1), size: 360),
+          ),
+          Positioned(
+            top: 220,
+            right: -140,
+            child: _PosterGlow(color: Color(0x55F8C987), size: 420),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(56, 56, 56, 64),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.78),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: Colors.white.withValues(alpha: 0.7)),
+                      ),
+                      child: Text(
+                        'Memoria Story',
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.1,
+                              color: const Color(0xFF7D4F6D),
+                            ),
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${sections.length} 张照片',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            color: const Color(0xFF8A6D7D),
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 28),
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                        fontSize: 60,
+                        height: 1.05,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFF24181F),
+                      ),
+                ),
+                if (subtitle.trim().isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Text(
+                    subtitle.trim(),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: const Color(0xFF6F5A66),
+                          height: 1.35,
+                        ),
+                  ),
+                ],
+                const SizedBox(height: 28),
+                _PosterHeroCard(photo: heroImage),
+                const SizedBox(height: 28),
+                ...sections
+                    .map((section) => _PosterSectionCard(section: section))
+                    .expand((widget) => [widget, const SizedBox(height: 22)]),
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.72),
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.84)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.auto_awesome, color: Color(0xFFD17EAD)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          '适合直接分享到社交平台的故事长图 · $targetPlatform',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: const Color(0xFF6B5761),
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PosterHeroCard extends StatelessWidget {
+  const _PosterHeroCard({required this.photo});
+
+  final Photo photo;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(34),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFB68CA5).withValues(alpha: 0.12),
+            blurRadius: 28,
+            offset: const Offset(0, 14),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(26),
+        child: Stack(
+          children: [
+            AspectRatio(
+              aspectRatio: 4 / 3,
+              child: PathImage(
+                path: photo.path,
+                fit: BoxFit.cover,
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(22, 30, 22, 18),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withValues(alpha: 0.72),
+                    ],
+                  ),
+                ),
+                child: Text(
+                  photo.caption?.trim().isNotEmpty ?? false
+                      ? photo.caption!.trim()
+                      : (photo.location?.trim().isNotEmpty ?? false)
+                          ? photo.location!.trim()
+                          : '把这一刻留在记忆里',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        height: 1.3,
+                      ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PosterSectionCard extends StatelessWidget {
+  const _PosterSectionCard({required this.section});
+
+  final StorySection section;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.80),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.85)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: AspectRatio(
+              aspectRatio: 16 / 10,
+              child: PathImage(
+                path: section.photo.path,
+                fit: BoxFit.cover,
+              ),
+            ),
+          ),
+          if (section.text.trim().isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(
+              section.text.trim(),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: const Color(0xFF2C2027),
+                    height: 1.55,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PosterGlow extends StatelessWidget {
+  const _PosterGlow({required this.color, required this.size});
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color,
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.18),
+            blurRadius: 80,
+            spreadRadius: 24,
+          ),
+        ],
+      ),
     );
   }
 }

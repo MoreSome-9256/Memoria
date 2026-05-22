@@ -15,14 +15,13 @@ class VideoCacheService {
   // 缓存配置
   static const String _cacheSubdir = 'VideoCache';
   static const String _exportsSubdir = 'StoryExports';
-  static const Duration _cacheDuration = Duration(days: 7); // 缓存保留7天
   
   // 内存缓存：sessionId -> 视频路径
   final Map<String, String> _sessionCache = {};
 
-  /// 生成session ID（基于图片和文本的哈希）
-  /// 只检查图片路径和文本是否一致，不检查其他参数
-  String _generateSessionId({
+  /// 生成视频缓存指纹（基于完整导出参数的 sha256）
+  /// 保证相同图片、文本、音频和特效参数会命中同一个视频文件。
+  String buildVideoCacheKey({
     required String title,
     required String subtitle,
     required List<Map<String, dynamic>> sections,
@@ -44,17 +43,41 @@ class VideoCacheService {
     required bool useGlowRing,
     required bool useCloudBorder,
   }) {
-    // 只提取图片路径和文本
-    final imageTextData = {
-      // 提取所有图片路径，按路径排序确保一致性
-      'images': sections.map((s) => s['photo']['path'] as String).toList()..sort(),
-      // 提取所有文本
-      'texts': sections.map((s) => s['text'] as String).toList(),
+    final normalizedSections = sections
+        .map(
+          (section) => <String, dynamic>{
+            'photoPath': section['photo']?['path'] as String? ?? '',
+            'text': section['text'] as String? ?? '',
+          },
+        )
+        .toList(growable: false);
+
+    final fingerprintData = <String, dynamic>{
+      'title': title,
+      'subtitle': subtitle,
+      'sections': normalizedSections,
+      'customMusicPath': customMusicPath ?? '__default__',
+      'dynamicBeatData': dynamicBeatData ?? const <String, dynamic>{},
+      'targetPlatform': targetPlatform,
+      'isHorizontal': isHorizontal,
+      'currentTextStyle': currentTextStyle,
+      'textYPosition': textYPosition,
+      'textSize': textSize,
+      'textBlurIntensity': textBlurIntensity,
+      'shakeIntensity': shakeIntensity,
+      'shakeFrequency': shakeFrequency,
+      'glitchIntensity': glitchIntensity,
+      'enableFlash': enableFlash,
+      'useVignette': useVignette,
+      'useGrain': useGrain,
+      'useCameraFrame': useCameraFrame,
+      'useGlowRing': useGlowRing,
+      'useCloudBorder': useCloudBorder,
     };
     
-    final jsonString = jsonEncode(imageTextData);
+    final jsonString = jsonEncode(fingerprintData);
     final bytes = utf8.encode(jsonString);
-    final digest = md5.convert(bytes);
+    final digest = sha256.convert(bytes);
     return digest.toString();
   }
 
@@ -82,30 +105,9 @@ class VideoCacheService {
   /// 只检查图片和文本是否一致
   Future<String?> getCachedVideoPath({
     required List<Map<String, dynamic>> sections,
+    String? cacheKey,
   }) async {
-    // 简化参数，只传递sections
-    final sessionId = _generateSessionId(
-      title: '', // 不使用
-      subtitle: '', // 不使用
-      sections: sections,
-      customMusicPath: null, // 不使用
-      dynamicBeatData: null, // 不使用
-      targetPlatform: '', // 不使用
-      isHorizontal: false, // 不使用
-      currentTextStyle: '', // 不使用
-      textYPosition: 0, // 不使用
-      textSize: 0, // 不使用
-      textBlurIntensity: 0, // 不使用
-      shakeIntensity: 0, // 不使用
-      shakeFrequency: 0, // 不使用
-      glitchIntensity: 0, // 不使用
-      enableFlash: false, // 不使用
-      useVignette: false, // 不使用
-      useGrain: false, // 不使用
-      useCameraFrame: false, // 不使用
-      useGlowRing: false, // 不使用
-      useCloudBorder: false, // 不使用
-    );
+    final sessionId = cacheKey ?? _legacySessionId(sections);
 
     // 检查内存缓存
     if (_sessionCache.containsKey(sessionId)) {
@@ -126,6 +128,13 @@ class VideoCacheService {
       return cachedFile.path;
     }
 
+    final exportsDir = await getExportsDirectory();
+    final exportedFile = File(path.join(exportsDir.path, 'Story_$sessionId.mp4'));
+    if (await exportedFile.exists()) {
+      _sessionCache[sessionId] = exportedFile.path;
+      return exportedFile.path;
+    }
+
     return null;
   }
 
@@ -134,33 +143,18 @@ class VideoCacheService {
   Future<String> cacheVideo({
     required List<Map<String, dynamic>> sections,
     required String videoPath,
+    String? cacheKey,
   }) async {
-    // 简化参数，只传递sections
-    final sessionId = _generateSessionId(
-      title: '', // 不使用
-      subtitle: '', // 不使用
-      sections: sections,
-      customMusicPath: null, // 不使用
-      dynamicBeatData: null, // 不使用
-      targetPlatform: '', // 不使用
-      isHorizontal: false, // 不使用
-      currentTextStyle: '', // 不使用
-      textYPosition: 0, // 不使用
-      textSize: 0, // 不使用
-      textBlurIntensity: 0, // 不使用
-      shakeIntensity: 0, // 不使用
-      shakeFrequency: 0, // 不使用
-      glitchIntensity: 0, // 不使用
-      enableFlash: false, // 不使用
-      useVignette: false, // 不使用
-      useGrain: false, // 不使用
-      useCameraFrame: false, // 不使用
-      useGlowRing: false, // 不使用
-      useCloudBorder: false, // 不使用
-    );
+    final sessionId = cacheKey ?? _legacySessionId(sections);
 
     final cacheDir = await getCacheDirectory();
     final cachedPath = path.join(cacheDir.path, '$sessionId.mp4');
+    final cachedFile = File(cachedPath);
+
+    if (await cachedFile.exists()) {
+      _sessionCache[sessionId] = cachedPath;
+      return cachedPath;
+    }
     
     // 复制到缓存目录
     await File(videoPath).copy(cachedPath);
@@ -176,6 +170,11 @@ class VideoCacheService {
     final exportsDir = await getExportsDirectory();
     final fileName = customName ?? 'Story_${DateTime.now().millisecondsSinceEpoch}.mp4';
     final destPath = path.join(exportsDir.path, fileName);
+
+    final destFile = File(destPath);
+    if (await destFile.exists()) {
+      return destPath;
+    }
     
     await File(sourcePath).copy(destPath);
     
@@ -183,6 +182,16 @@ class VideoCacheService {
     await _cleanOldExports(exportsDir, keepCount: 10);
     
     return destPath;
+  }
+
+  String _legacySessionId(List<Map<String, dynamic>> sections) {
+    final legacyData = {
+      'images': sections.map((s) => s['photo']['path'] as String).toList(),
+      'texts': sections.map((s) => s['text'] as String).toList(),
+    };
+    final jsonString = jsonEncode(legacyData);
+    final bytes = utf8.encode(jsonString);
+    return sha256.convert(bytes).toString();
   }
 
   /// 清理旧的导出文件

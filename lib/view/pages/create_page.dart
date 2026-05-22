@@ -377,6 +377,9 @@ class _CreatePageState extends State<CreatePage> {
     if (mounted) {
       setState(() {
         _searchResults = matchedPhotos;
+        _selectedPhotoIds
+          ..clear()
+          ..addAll(matchedPhotos.map((photo) => photo.id));
         _isSearching = false;
       });
     }
@@ -525,6 +528,23 @@ class _CreatePageState extends State<CreatePage> {
     setState(() {
       _selectedPhotoIds.clear();
     });
+  }
+
+  void _toggleSelectAll() {
+    if (_searchResults.isEmpty) {
+      return;
+    }
+
+    final allSelected = _searchResults.every((photo) => _selectedPhotoIds.contains(photo.id));
+    if (allSelected) {
+      _deselectAll();
+    } else {
+      _selectAll();
+    }
+  }
+
+  void _cancelSelection() {
+    _deselectAll();
   }
 
   // 🚀 生成故事（跳转到配置页）
@@ -775,39 +795,42 @@ class _CreatePageState extends State<CreatePage> {
 
   // ✨ 全选/全不选操作条
   Widget _buildSelectionBar() {
+    final allSelected = _searchResults.isNotEmpty &&
+        _searchResults.every((photo) => _selectedPhotoIds.contains(photo.id));
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
       child: Row(
         children: [
-          // 全选按钮 (实心粉)
-          ElevatedButton(
-            onPressed: _selectAll,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFD17EAD),
-              foregroundColor: Colors.white,
-              elevation: 0,
-              minimumSize: const Size(60, 32),
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _toggleSelectAll,
+              icon: Icon(allSelected ? Icons.deselect : Icons.select_all),
+              label: Text(allSelected ? '全不选' : '全选'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFD17EAD),
+                side: const BorderSide(color: Color(0xFFD17EAD), width: 1.5),
+                minimumSize: const Size.fromHeight(42),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
               ),
             ),
-            child: const Text('全选', style: TextStyle(fontSize: 12)),
           ),
           const SizedBox(width: 12),
-          // 全不选按钮 (空心边框)
-          OutlinedButton(
-            onPressed: _deselectAll,
-            style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFFD17EAD),
-              side: const BorderSide(color: Color(0xFFD17EAD), width: 1.5),
-              minimumSize: const Size(60, 32),
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+          Expanded(
+            child: OutlinedButton(
+              onPressed: _cancelSelection,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.grey[700],
+                side: BorderSide(color: Colors.grey.shade400, width: 1.2),
+                minimumSize: const Size.fromHeight(42),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
               ),
+              child: const Text('取消'),
             ),
-            child: const Text('全不选', style: TextStyle(fontSize: 12)),
           ),
         ],
       ),

@@ -571,16 +571,40 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       captions: currentCaptions,
     );
 
-    // 🌟 第一步：检查是否有缓存视频（只检查图片和文本）
     final sectionsData = widget.sections.map((section) {
       return {
         'photo': {'path': section.photo.path},
         'text': section.text,
       };
-    }).toList();
+    }).toList(growable: false);
 
+    _exportCacheKey = VideoCacheService.instance.buildVideoCacheKey(
+      title: widget.title,
+      subtitle: widget.subtitle,
+      sections: sectionsData,
+      customMusicPath: widget.customMusicPath,
+      dynamicBeatData: widget.dynamicBeatData,
+      targetPlatform: widget.targetPlatform,
+      isHorizontal: widget.isHorizontal,
+      currentTextStyle: _currentTextStyle,
+      textYPosition: _textYPosition,
+      textSize: _textSize,
+      textBlurIntensity: _textBlurIntensity,
+      shakeIntensity: _shakeIntensity,
+      shakeFrequency: _shakeFrequency,
+      glitchIntensity: _glitchIntensity,
+      enableFlash: _enableFlash,
+      useVignette: widget.useVignette,
+      useGrain: widget.useGrain,
+      useCameraFrame: widget.useCameraFrame,
+      useGlowRing: widget.useGlowRing,
+      useCloudBorder: widget.useCloudBorder,
+    );
+
+    // 🌟 第一步：检查是否有缓存视频（只检查图片和文本）
     final cachedVideoPath = await VideoCacheService.instance.getCachedVideoPath(
       sections: sectionsData,
+      cacheKey: _exportCacheKey,
     );
 
     if (cachedVideoPath != null) {
@@ -589,7 +613,8 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       // 将缓存视频移动到导出目录
       final finalPath = await VideoCacheService.instance.moveToExportsDirectory(
         cachedVideoPath,
-        customName: 'Story_${DateTime.now().millisecondsSinceEpoch}.mp4',
+        customName:
+            'Story_${_exportCacheKey ?? DateTime.now().millisecondsSinceEpoch.toString()}.mp4',
       );
       _handleExportSuccess(finalPath);
       return;
@@ -818,7 +843,8 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     try {
       // -c:v copy: 直接复制视频流，不重新编码
       // -c:a aac: 使用 AAC 编码音频
-      final command = '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+        final command = '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+          '-map 0:v:0 -map 1:a:0 '
           '-t $duration -c:v copy -c:a aac -b:a 128k -shortest "$outputPath"';
       
       debugPrint('🎬 FFmpeg (stream copy): $command');
@@ -866,7 +892,8 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       // -c:v: 视频编码器
       // -b:v: 视频比特率
       // -preset: 编码速度预设（仅软件编码）
-      final command = '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+        final command = '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+          '-map 0:v:0 -map 1:a:0 '
           '-t $duration -c:v $videoCodec -b:v 2500k -c:a aac -b:a 128k '
           '-shortest "$outputPath"';
       
@@ -885,7 +912,8 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         // 如果硬件加速失败，尝试软件编码
         if (videoCodec != 'libx264') {
           debugPrint('⚠️ 硬件加速失败，尝试软件编码...');
-          final softwareCommand = '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+            final softwareCommand = '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+              '-map 0:v:0 -map 1:a:0 '
               '-t $duration -c:v libx264 -preset ultrafast -b:v 2500k '
               '-c:a aac -b:a 128k -shortest "$outputPath"';
           
@@ -914,6 +942,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
   // 🌟 新增一个变量，用来装这个“未来的文案”
   Future<String>? _aiCopyFuture;
+  String? _exportCacheKey;
 
   void _handleExportSuccess(String cacheVideoPath) async {
     try {
@@ -930,6 +959,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       final cachedPath = await VideoCacheService.instance.cacheVideo(
         sections: sectionsData,
         videoPath: cacheVideoPath,
+        cacheKey: _exportCacheKey,
       );
 
       debugPrint('✅ 视频已缓存: $cachedPath');
@@ -937,7 +967,8 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       // 🌟 第二步：将视频移动到导出目录（用户可见）
       final finalPath = await VideoCacheService.instance.moveToExportsDirectory(
         cachedPath,
-        customName: 'Story_${DateTime.now().millisecondsSinceEpoch}.mp4',
+        customName:
+            'Story_${_exportCacheKey ?? DateTime.now().millisecondsSinceEpoch.toString()}.mp4',
       );
       
       debugPrint('✅ 视频已移动到导出目录: $finalPath');

@@ -26,6 +26,7 @@ class StoryEntity {
   // 🎨 元数据
   int photoCount = 0; // 照片数量（冗余字段）
   bool isLlmGenerated = true; // 是否由 LLM 生成
+  bool isManuallySaved = false; // 是否用户手动保存（false表示自动保存/草稿）
 
   // 📅 格式化创建时间
   String get createdAtText {
@@ -40,6 +41,7 @@ class StoryEntity {
     required String content,
     required int eventId,
     required List<int> photoIds,
+    bool isManuallySaved = false,
   }) {
     final now = DateTime.now().millisecondsSinceEpoch;
     return StoryEntity()
@@ -51,7 +53,8 @@ class StoryEntity {
       ..eventId = eventId
       ..photoIds = photoIds
       ..photoCount = photoIds.length
-      ..isLlmGenerated = true;
+      ..isLlmGenerated = true
+      ..isManuallySaved = isManuallySaved;
   }
 
   // 🔄 解析 Markdown 为 StorySection 列表（用于 UI 展示）

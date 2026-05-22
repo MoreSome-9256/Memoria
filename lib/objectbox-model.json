@@ -767,7 +767,7 @@
     },
     {
       "id": "9:1998729358182538669",
-      "lastPropertyId": "12:1514215392286596427",
+      "lastPropertyId": "13:4584622389087554935",
       "name": "StoryEntity",
       "properties": [
         {
@@ -831,6 +831,11 @@
         {
           "id": "12:1514215392286596427",
           "name": "isLlmGenerated",
+          "type": 1
+        },
+        {
+          "id": "13:4584622389087554935",
+          "name": "isManuallySaved",
           "type": 1
         }
       ],

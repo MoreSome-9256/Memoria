@@ -10,6 +10,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../objectbox.g.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/entity/story_entity.dart';
 import '../../models/story.dart';
@@ -319,9 +320,9 @@ class _StoryResultPageState extends State<StoryResultPage> {
     });
 
     try {
-      final story = ObjectBoxService().store.box<StoryEntity>().get(
-        widget.storyEntityId!,
-      );
+      final store = ObjectBoxService().store;
+      final storyBox = store.box<StoryEntity>();
+      final story = storyBox.get(widget.storyEntityId!);
       if (story == null) {
         throw StateError('Story not found');
       }
@@ -337,7 +338,23 @@ class _StoryResultPageState extends State<StoryResultPage> {
 
       story.content = StoryEntity.sectionsToMarkdown(sectionMaps);
       story.updatedAt = DateTime.now().millisecondsSinceEpoch;
-      await StoryService().updateStory(story);
+      story.isManuallySaved = true; // 标记为手动保存
+      
+      store.runInTransaction(TxMode.write, () {
+        // 删除所有自动保存的记录（因为用户已经手动保存了）
+        final autoSavedQuery = storyBox.query(
+          StoryEntity_.isManuallySaved.equals(false),
+        ).build();
+        final autoSavedStories = autoSavedQuery.find();
+        autoSavedQuery.close();
+        
+        if (autoSavedStories.isNotEmpty) {
+          storyBox.removeMany(autoSavedStories.map((s) => s.id).toList());
+        }
+        
+        // 保存当前故事
+        storyBox.put(story);
+      });
 
       if (!mounted) {
         return;

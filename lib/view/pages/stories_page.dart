@@ -28,8 +28,10 @@ class _StoriesPageState extends State<StoriesPage> {
     _storiesFuture = _loadStories();
   }
 
-  Future<List<StoryEntity>> _loadStories() {
-    return _storyService.getAllStories();
+  Future<List<StoryEntity>> _loadStories() async {
+    // 只加载手动保存的故事，不显示自动保存的草稿
+    final allStories = await _storyService.getAllStories();
+    return allStories.where((story) => story.isManuallySaved).toList();
   }
 
   Future<void> _reload() async {

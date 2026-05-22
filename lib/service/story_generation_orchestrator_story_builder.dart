@@ -129,13 +129,29 @@ extension _StoryGenerationOrchestratorStoryBuilder
             content: markdown,
             eventId: int.tryParse(request.event.id) ?? -1,
             photoIds: photos.map((photo) => photo.id).toList(growable: false),
+            isManuallySaved: false, // 自动保存标记为未手动保存
           )
           ..isHorizontal = request.isHorizontal
           ..targetPlatform = request.targetPlatform;
 
     final store = ObjectBoxService().store;
     store.runInTransaction(TxMode.write, () {
-      store.box<StoryEntity>().put(story);
+      // 删除旧的自动保存记录（只保留最新一个）
+      final storyBox = store.box<StoryEntity>();
+      final autoSavedQuery = storyBox.query(
+        StoryEntity_.isManuallySaved.equals(false),
+      ).build();
+      final autoSavedStories = autoSavedQuery.find()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      autoSavedQuery.close();
+      
+      // 删除除了即将保存的这个之外的所有自动保存记录
+      if (autoSavedStories.isNotEmpty) {
+        storyBox.removeMany(autoSavedStories.map((s) => s.id).toList());
+      }
+      
+      // 保存新的自动保存记录
+      storyBox.put(story);
     });
     return story;
   }

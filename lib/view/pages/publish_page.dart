@@ -463,28 +463,55 @@ class _VideoPlayerPage extends StatefulWidget {
 }
 
 class _VideoPlayerPageState extends State<_VideoPlayerPage> {
-  late VideoPlayerController _controller;
+  VideoPlayerController? _controller;
   bool _initialized = false;
   bool _showControls = true;
+  String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.file(File(widget.videoPath))
-      ..initialize().then((_) {
+    _initializePlayer();
+  }
+
+  Future<void> _initializePlayer() async {
+    try {
+      final file = File(widget.videoPath);
+      if (!await file.exists()) {
         if (mounted) {
-          setState(() => _initialized = true);
-          _controller.play();
+          setState(() {
+            _errorMessage = '视频文件不存在';
+          });
         }
+        return;
+      }
+
+      _controller = VideoPlayerController.file(file);
+      
+      await _controller!.initialize();
+      
+      if (mounted) {
+        setState(() => _initialized = true);
+        _controller!.setLooping(true);
+        _controller!.play();
+      }
+      
+      _controller!.addListener(() {
+        if (mounted) setState(() {});
       });
-    _controller.addListener(() {
-      if (mounted) setState(() {});
-    });
+    } catch (e) {
+      debugPrint('❌ 视频播放器初始化失败: $e');
+      if (mounted) {
+        setState(() {
+          _errorMessage = '视频加载失败: $e';
+        });
+      }
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller?.dispose();
     super.dispose();
   }
 
@@ -500,6 +527,43 @@ class _VideoPlayerPageState extends State<_VideoPlayerPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_errorMessage != null) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 64),
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  _errorMessage!,
+                  style: const TextStyle(color: Colors.white),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('返回'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_controller == null) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
@@ -511,8 +575,8 @@ class _VideoPlayerPageState extends State<_VideoPlayerPage> {
             Center(
               child: _initialized
                   ? AspectRatio(
-                      aspectRatio: _controller.value.aspectRatio,
-                      child: VideoPlayer(_controller),
+                      aspectRatio: _controller!.value.aspectRatio,
+                      child: VideoPlayer(_controller!),
                     )
                   : const CircularProgressIndicator(color: Colors.white),
             ),
@@ -559,9 +623,9 @@ class _VideoPlayerPageState extends State<_VideoPlayerPage> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               // 进度条
-                              if (_initialized)
+                              if (_initialized && _controller != null)
                                 VideoProgressIndicator(
-                                  _controller,
+                                  _controller!,
                                   allowScrubbing: true,
                                   colors: const VideoProgressColors(
                                     playedColor: Colors.pinkAccent,
@@ -574,30 +638,31 @@ class _VideoPlayerPageState extends State<_VideoPlayerPage> {
                               // 时间 + 播放/暂停
                               Row(
                                 children: [
-                                  if (_initialized)
+                                  if (_initialized && _controller != null)
                                     Text(
-                                      '${_formatDuration(_controller.value.position)} / ${_formatDuration(_controller.value.duration)}',
+                                      '${_formatDuration(_controller!.value.position)} / ${_formatDuration(_controller!.value.duration)}',
                                       style: const TextStyle(
                                           color: Colors.white70,
                                           fontSize: 12),
                                     ),
                                   const Spacer(),
-                                  IconButton(
-                                    icon: Icon(
-                                      _controller.value.isPlaying
-                                          ? Icons.pause_rounded
-                                          : Icons.play_arrow_rounded,
-                                      color: Colors.white,
-                                      size: 36,
+                                  if (_controller != null)
+                                    IconButton(
+                                      icon: Icon(
+                                        _controller!.value.isPlaying
+                                            ? Icons.pause_rounded
+                                            : Icons.play_arrow_rounded,
+                                        color: Colors.white,
+                                        size: 36,
+                                      ),
+                                      onPressed: () {
+                                        setState(() {
+                                          _controller!.value.isPlaying
+                                              ? _controller!.pause()
+                                              : _controller!.play();
+                                        });
+                                      },
                                     ),
-                                    onPressed: () {
-                                      setState(() {
-                                        _controller.value.isPlaying
-                                            ? _controller.pause()
-                                            : _controller.play();
-                                      });
-                                    },
-                                  ),
                                   const Spacer(),
                                 ],
                               ),

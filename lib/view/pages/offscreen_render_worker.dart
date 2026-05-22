@@ -17,7 +17,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
-// FFmpeg 已迁移：使用 `flutter_quick_video_encoder` 的本地编码能力并尽量避免依赖 FFmpeg
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:gal/gal.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
@@ -712,7 +713,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     File? tempAudioFile;
     File? safeAudioFile;
 
-    // 准备音频 (与之前逻辑相同)
+    // 准备音频
     if (widget.customMusicPath != null) {
       File originalAudio = File(widget.customMusicPath!);
       safeAudioFile = File(
@@ -737,40 +738,61 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     final cacheVideoPath = "${cacheDir.path}/temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
 
     try {
-      // 首选：尝试使用 flutter_quick_video_encoder 的运行时合并能力（如果插件提供）
-      try {
-        final dynamic encoder = FlutterQuickVideoEncoder;
-        if (encoder != null) {
-          // 调用运行时方法（若插件导出此功能则生效）
+      // 使用 FFmpeg 合并音频和视频
+      debugPrint('🎵 开始使用 FFmpeg 合并音频和视频...');
+      
+      // 优先使用 stream copy（不重新编码，最快）
+      // 如果失败，则使用硬件加速重新编码
+      bool success = await _tryMergeWithStreamCopy(
+        silentVideoPath,
+        audioPath,
+        cacheVideoPath,
+        exactSeconds,
+      );
+      
+      if (success) {
+        try {
+          await File(silentVideoPath).delete();
+        } catch (_) {}
+        _handleExportSuccess(cacheVideoPath);
+      } else {
+        // 如果 stream copy 失败，尝试使用硬件加速重新编码
+        debugPrint('⚠️ Stream copy 失败，尝试使用硬件加速重新编码...');
+        success = await _tryMergeWithHardwareAccel(
+          silentVideoPath,
+          audioPath,
+          cacheVideoPath,
+          exactSeconds,
+        );
+        
+        if (success) {
           try {
-            await encoder.mergeAudioWithVideo(
-              silentVideoPath,
-              audioPath,
-              cacheVideoPath,
-              loop: true,
-            );
-            try {
-              await File(silentVideoPath).delete();
-            } catch (_) {}
-            _handleExportSuccess(cacheVideoPath);
-            return;
-          } catch (e) {
-            debugPrint('⚠️ encoder.mergeAudioWithVideo 不可用或失败: $e');
-          }
+            await File(silentVideoPath).delete();
+          } catch (_) {}
+          _handleExportSuccess(cacheVideoPath);
+        } else {
+          // 最后回退：使用无声视频
+          debugPrint('⚠️ 所有合并方法失败，使用无声视频作为最终产物');
+          await File(silentVideoPath).copy(cacheVideoPath);
+          try {
+            await File(silentVideoPath).delete();
+          } catch (_) {}
+          _handleExportSuccess(cacheVideoPath);
         }
-      } catch (_) {}
-
-      // 回退：如果插件不支持在原生层合并音频，则把静音视频作为最终产物（保留视频），并记录警告。
+      }
+    } catch (e, stackTrace) {
+      debugPrint('❌ 音频合并异常: $e');
+      debugPrint('Stack trace: $stackTrace');
+      // 回退：使用无声视频
       try {
-        // 复制静音视频到缓存路径
         await File(silentVideoPath).copy(cacheVideoPath);
         try {
           await File(silentVideoPath).delete();
         } catch (_) {}
-        debugPrint('⚠️ 使用回退路径：生成无声视频作为最终产物（音频未合并）');
+        debugPrint('⚠️ 使用回退路径：生成无声视频作为最终产物');
         _handleExportSuccess(cacheVideoPath);
-      } catch (e) {
-        debugPrint('❌ 回退合并失败: $e');
+      } catch (e2) {
+        debugPrint('❌ 回退合并失败: $e2');
       }
     } finally {
       try {
@@ -783,6 +805,110 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
           safeAudioFile.deleteSync();
         }
       } catch (_) {}
+    }
+  }
+
+  /// 尝试使用 stream copy 合并（不重新编码，最快）
+  Future<bool> _tryMergeWithStreamCopy(
+    String videoPath,
+    String audioPath,
+    String outputPath,
+    double duration,
+  ) async {
+    try {
+      // -c:v copy: 直接复制视频流，不重新编码
+      // -c:a aac: 使用 AAC 编码音频
+      final command = '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+          '-t $duration -c:v copy -c:a aac -b:a 128k -shortest "$outputPath"';
+      
+      debugPrint('🎬 FFmpeg (stream copy): $command');
+      
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+      
+      if (ReturnCode.isSuccess(returnCode)) {
+        debugPrint('✅ FFmpeg stream copy 成功');
+        return true;
+      } else {
+        final output = await session.getOutput();
+        debugPrint('❌ FFmpeg stream copy 失败: $output');
+        return false;
+      }
+    } catch (e) {
+      debugPrint('❌ Stream copy 异常: $e');
+      return false;
+    }
+  }
+
+  /// 尝试使用硬件加速重新编码合并
+  Future<bool> _tryMergeWithHardwareAccel(
+    String videoPath,
+    String audioPath,
+    String outputPath,
+    double duration,
+  ) async {
+    try {
+      String videoCodec;
+      
+      // 根据平台选择硬件编码器
+      if (Platform.isIOS || Platform.isMacOS) {
+        // iOS/macOS: 使用 VideoToolbox 硬件加速
+        videoCodec = 'h264_videotoolbox';
+      } else if (Platform.isAndroid) {
+        // Android: 使用 MediaCodec 硬件加速
+        videoCodec = 'h264_mediacodec';
+      } else {
+        // 其他平台：使用软件编码
+        videoCodec = 'libx264';
+      }
+      
+      // 使用硬件加速编码
+      // -c:v: 视频编码器
+      // -b:v: 视频比特率
+      // -preset: 编码速度预设（仅软件编码）
+      final command = '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+          '-t $duration -c:v $videoCodec -b:v 2500k -c:a aac -b:a 128k '
+          '-shortest "$outputPath"';
+      
+      debugPrint('🎬 FFmpeg (hardware accel): $command');
+      
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+      
+      if (ReturnCode.isSuccess(returnCode)) {
+        debugPrint('✅ FFmpeg 硬件加速编码成功');
+        return true;
+      } else {
+        final output = await session.getOutput();
+        debugPrint('❌ FFmpeg 硬件加速失败: $output');
+        
+        // 如果硬件加速失败，尝试软件编码
+        if (videoCodec != 'libx264') {
+          debugPrint('⚠️ 硬件加速失败，尝试软件编码...');
+          final softwareCommand = '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+              '-t $duration -c:v libx264 -preset ultrafast -b:v 2500k '
+              '-c:a aac -b:a 128k -shortest "$outputPath"';
+          
+          debugPrint('🎬 FFmpeg (software): $softwareCommand');
+          
+          final softwareSession = await FFmpegKit.execute(softwareCommand);
+          final softwareReturnCode = await softwareSession.getReturnCode();
+          
+          if (ReturnCode.isSuccess(softwareReturnCode)) {
+            debugPrint('✅ FFmpeg 软件编码成功');
+            return true;
+          } else {
+            final softwareOutput = await softwareSession.getOutput();
+            debugPrint('❌ FFmpeg 软件编码失败: $softwareOutput');
+            return false;
+          }
+        }
+        
+        return false;
+      }
+    } catch (e) {
+      debugPrint('❌ 硬件加速编码异常: $e');
+      return false;
     }
   }
 

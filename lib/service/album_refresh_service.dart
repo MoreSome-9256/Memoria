@@ -277,6 +277,11 @@ class AlbumRefreshService {
       aiRunning ? 'AI 队列正在继续处理' : '已交给后台 AI 队列',
     );
 
+    // 延迟一小段时间后重置进度状态，让用户看到完成消息
+    Future.delayed(const Duration(milliseconds: 1500), () {
+      _progressNotifier.value = AlbumRefreshProgress.idle();
+    });
+
     return AlbumRefreshResult(
       scanSummary: scanSummary,
       requeuedCount: 0,

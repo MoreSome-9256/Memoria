@@ -15,6 +15,11 @@ class StoryQueuePage extends StatelessWidget {
     final queue = StoryQueueService();
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          onPressed: () => Navigator.of(context).maybePop(),
+          tooltip: '返回',
+        ),
         title: const Text('故事队列'),
         actions: [
           ValueListenableBuilder<List<StoryQueueItem>>(

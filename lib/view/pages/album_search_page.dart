@@ -789,6 +789,19 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
           child: CustomScrollView(
             cacheExtent: 700,
             slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: IconButton(
+                      onPressed: () => Navigator.of(context).maybePop(),
+                      icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                      tooltip: '返回',
+                    ),
+                  ),
+                ),
+              ),
               if (_isLockedResultMode)
                 SliverToBoxAdapter(
                   child: Padding(

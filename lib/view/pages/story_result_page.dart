@@ -112,7 +112,9 @@ class StoryResultPage extends StatefulWidget {
       final photoEntity = photos.first;
       sections.add(
         StorySection(
-          text: storyEntity.content.trim().isEmpty ? '我的专属回忆' : storyEntity.content,
+          text: storyEntity.content.trim().isEmpty
+              ? '我的专属回忆'
+              : storyEntity.content,
           photo: _mergePhotoOverride(
             _buildPhotoFromEntity(photoEntity),
             photoOverrideMap[photoEntity.assetId],
@@ -182,7 +184,10 @@ class StoryResultPage extends StatefulWidget {
     );
   }
 
-  static Photo _mergePhotoEntityData(Photo basePhoto, PhotoEntity? photoEntity) {
+  static Photo _mergePhotoEntityData(
+    Photo basePhoto,
+    PhotoEntity? photoEntity,
+  ) {
     if (photoEntity == null) {
       return basePhoto;
     }
@@ -202,7 +207,9 @@ class StoryResultPage extends StatefulWidget {
       ocrSummary: (basePhoto.ocrSummary?.trim().isNotEmpty ?? false)
           ? basePhoto.ocrSummary
           : entityPhoto.ocrSummary,
-      ocrTags: basePhoto.ocrTags.isNotEmpty ? basePhoto.ocrTags : entityPhoto.ocrTags,
+      ocrTags: basePhoto.ocrTags.isNotEmpty
+          ? basePhoto.ocrTags
+          : entityPhoto.ocrTags,
       width: basePhoto.width > 0 ? basePhoto.width : entityPhoto.width,
       height: basePhoto.height > 0 ? basePhoto.height : entityPhoto.height,
       faces: basePhoto.faces ?? entityPhoto.faces,
@@ -219,7 +226,9 @@ class StoryResultPage extends StatefulWidget {
     final overrideVlmCaption = overridePhoto.vlmCaption?.trim();
 
     return basePhoto.copyWith(
-      path: overridePhoto.path.trim().isNotEmpty ? overridePhoto.path : basePhoto.path,
+      path: overridePhoto.path.trim().isNotEmpty
+          ? overridePhoto.path
+          : basePhoto.path,
       location: (overrideLocation?.isNotEmpty ?? false)
           ? overridePhoto.location
           : basePhoto.location,
@@ -233,9 +242,13 @@ class StoryResultPage extends StatefulWidget {
       ocrSummary: (overridePhoto.ocrSummary?.trim().isNotEmpty ?? false)
           ? overridePhoto.ocrSummary
           : basePhoto.ocrSummary,
-      ocrTags: overridePhoto.ocrTags.isNotEmpty ? overridePhoto.ocrTags : basePhoto.ocrTags,
+      ocrTags: overridePhoto.ocrTags.isNotEmpty
+          ? overridePhoto.ocrTags
+          : basePhoto.ocrTags,
       width: overridePhoto.width > 0 ? overridePhoto.width : basePhoto.width,
-      height: overridePhoto.height > 0 ? overridePhoto.height : basePhoto.height,
+      height: overridePhoto.height > 0
+          ? overridePhoto.height
+          : basePhoto.height,
       faces: overridePhoto.faces ?? basePhoto.faces,
     );
   }
@@ -266,9 +279,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
           content: TextField(
             controller: controller,
             maxLines: 8,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-            ),
+            decoration: const InputDecoration(border: OutlineInputBorder()),
           ),
           actions: [
             TextButton(
@@ -308,16 +319,20 @@ class _StoryResultPageState extends State<StoryResultPage> {
     });
 
     try {
-      final story = ObjectBoxService().store.box<StoryEntity>().get(widget.storyEntityId!);
+      final story = ObjectBoxService().store.box<StoryEntity>().get(
+        widget.storyEntityId!,
+      );
       if (story == null) {
         throw StateError('Story not found');
       }
 
       final sectionMaps = _sections
-          .map((section) => <String, dynamic>{
-                'text': section.text,
-                'photo': section.photo,
-              })
+          .map(
+            (section) => <String, dynamic>{
+              'text': section.text,
+              'photo': section.photo,
+            },
+          )
           .toList(growable: false);
 
       story.content = StoryEntity.sectionsToMarkdown(sectionMaps);
@@ -369,20 +384,54 @@ class _StoryResultPageState extends State<StoryResultPage> {
       if (widget.subtitle.trim().isNotEmpty) widget.subtitle.trim(),
     ].join(' · ');
 
-    await Share.shareXFiles(
-      [XFile(posterFile.path)],
-      text: storyCaption,
+    if (!mounted) {
+      return;
+    }
+
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierLabel: '分享预览',
+      barrierColor: Colors.black.withValues(alpha: 0.55),
+      transitionDuration: const Duration(milliseconds: 420),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return _SharePosterPreviewSheet(
+          posterFile: posterFile,
+          caption: storyCaption,
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.94, end: 1).animate(curved),
+            child: child,
+          ),
+        );
+      },
     );
   }
 
   Future<File> _generateSharePosterFile() async {
+    await _precachePosterImages();
+    if (!mounted || !context.mounted) {
+      throw StateError('Share poster generation was cancelled');
+    }
+    final overlay = Overlay.of(context, rootOverlay: true);
+
     final tempDir = await getTemporaryDirectory();
     final posterFile = File(
-      path.join(tempDir.path, 'story_share_${DateTime.now().millisecondsSinceEpoch}.png'),
+      path.join(
+        tempDir.path,
+        'story_share_${DateTime.now().millisecondsSinceEpoch}.png',
+      ),
     );
 
     final boundaryKey = GlobalKey();
-    final overlay = Overlay.of(context, rootOverlay: true);
 
     late OverlayEntry overlayEntry;
     overlayEntry = OverlayEntry(
@@ -390,17 +439,25 @@ class _StoryResultPageState extends State<StoryResultPage> {
         return Positioned.fill(
           child: Material(
             color: Colors.transparent,
-            child: Center(
-              child: SizedBox(
-                width: 1080,
-                child: RepaintBoundary(
-                  key: boundaryKey,
-                  child: _StorySharePoster(
-                    title: widget.title,
-                    subtitle: widget.subtitle,
-                    heroImage: widget.heroImage,
-                    sections: _sections,
-                    targetPlatform: widget.targetPlatform,
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: OverflowBox(
+                alignment: Alignment.topCenter,
+                minWidth: 1080,
+                maxWidth: 1080,
+                minHeight: 0,
+                maxHeight: double.infinity,
+                child: SizedBox(
+                  width: 1080,
+                  child: RepaintBoundary(
+                    key: boundaryKey,
+                    child: _StorySharePoster(
+                      title: widget.title,
+                      subtitle: widget.subtitle,
+                      heroImage: widget.heroImage,
+                      sections: _sections,
+                      targetPlatform: widget.targetPlatform,
+                    ),
                   ),
                 ),
               ),
@@ -434,6 +491,37 @@ class _StoryResultPageState extends State<StoryResultPage> {
     }
   }
 
+  Future<void> _precachePosterImages() async {
+    final paths = <String>{
+      widget.heroImage.path,
+      for (final section in _sections) section.photo.path,
+    }.where((item) => item.trim().isNotEmpty).take(16).toList(growable: false);
+
+    for (final imagePath in paths) {
+      final uri = Uri.tryParse(imagePath);
+      final scheme = uri?.scheme.toLowerCase();
+      final provider = scheme == 'http' || scheme == 'https'
+          ? NetworkImage(imagePath) as ImageProvider
+          : FileImage(_localImageFile(imagePath, uri));
+      try {
+        await precacheImage(
+          provider,
+          context,
+        ).timeout(const Duration(milliseconds: 900));
+      } catch (_) {
+        // Missing or slow images should not block sharing; poster widgets show
+        // their own placeholder if an image cannot be decoded in time.
+      }
+    }
+  }
+
+  File _localImageFile(String imagePath, Uri? uri) {
+    if (uri != null && uri.scheme.toLowerCase() == 'file') {
+      return File(uri.toFilePath());
+    }
+    return File(imagePath);
+  }
+
   Future<void> _openDigitalAlbum() async {
     final result = await Navigator.of(context).push<DigitalAlbumBookResult>(
       MaterialPageRoute<DigitalAlbumBookResult>(
@@ -464,8 +552,8 @@ class _StoryResultPageState extends State<StoryResultPage> {
     final playbackSections = <StorySection>[];
     for (var index = 0; index < _sections.length; index++) {
       final section = _sections[index];
-      final indexedCaption = widget.videoCaptions != null &&
-              index < widget.videoCaptions!.length
+      final indexedCaption =
+          widget.videoCaptions != null && index < widget.videoCaptions!.length
           ? widget.videoCaptions![index].trim()
           : '';
       final mappedCaption =
@@ -503,7 +591,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
           isHorizontal: widget.isHorizontal,
           dynamicBeatData: widget.dynamicBeatData,
           targetPlatform: widget.targetPlatform,
-          onComplete: (_, __) {},
+          onComplete: (_, _) {},
           currentTextStyle: 'hero',
           textYPosition: 0.8,
           textSize: 24.0,
@@ -571,71 +659,71 @@ class _StoryResultPageState extends State<StoryResultPage> {
               child: Text(
                 widget.subtitle,
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: Colors.grey[600],
-                      fontStyle: FontStyle.italic,
-                    ),
+                  color: Colors.grey[600],
+                  fontStyle: FontStyle.italic,
+                ),
                 textAlign: TextAlign.center,
               ),
             ),
           ),
           SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final section = _sections[index];
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      GestureDetector(
-                        onTap: () => _editText(index),
-                        child: Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.grey[50],
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  section.text,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodyLarge
-                                      ?.copyWith(height: 1.6),
-                                ),
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final section = _sections[index];
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    GestureDetector(
+                      onTap: () => _editText(index),
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[50],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                section.text,
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.bodyLarge?.copyWith(height: 1.6),
                               ),
-                              Icon(
-                                Icons.edit,
-                                size: 16,
-                                color: Colors.grey[400],
-                              ),
-                            ],
-                          ),
+                            ),
+                            Icon(Icons.edit, size: 16, color: Colors.grey[400]),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
+                    ),
+                    const SizedBox(height: 12),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: AspectRatio(
+                        aspectRatio: 4 / 3,
                         child: PathImage(
                           path: section.photo.path,
                           width: double.infinity,
+                          height: double.infinity,
                           fit: BoxFit.cover,
                         ),
                       ),
-                      if ((section.photo.caption?.trim().isNotEmpty ?? false) ||
-                          (section.photo.ocrSummary?.trim().isNotEmpty ?? false)) ...[
-                        const SizedBox(height: 10),
-                        _PhotoContextCard(photo: section.photo),
-                      ],
+                    ),
+                    if ((section.photo.caption?.trim().isNotEmpty ?? false) ||
+                        (section.photo.ocrSummary?.trim().isNotEmpty ??
+                            false)) ...[
+                      const SizedBox(height: 10),
+                      _PhotoContextCard(photo: section.photo),
                     ],
-                  ),
-                );
-              },
-              childCount: _sections.length,
-            ),
+                  ],
+                ),
+              );
+            }, childCount: _sections.length),
           ),
           const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
@@ -715,9 +803,9 @@ class _PhotoContextCard extends StatelessWidget {
           Text(
             '照片线索',
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: Colors.grey[700],
-                ),
+              fontWeight: FontWeight.w700,
+              color: Colors.grey[700],
+            ),
           ),
           if (caption != null && caption.isNotEmpty) ...[
             const SizedBox(height: 8),
@@ -734,10 +822,7 @@ class _PhotoContextCard extends StatelessWidget {
 }
 
 class _PhotoContextRow extends StatelessWidget {
-  const _PhotoContextRow({
-    required this.label,
-    required this.value,
-  });
+  const _PhotoContextRow({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -750,17 +835,17 @@ class _PhotoContextRow extends StatelessWidget {
         Text(
           label,
           style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: Colors.grey[600],
-              ),
+            fontWeight: FontWeight.w700,
+            color: Colors.grey[600],
+          ),
         ),
         const SizedBox(height: 2),
         Text(
           value,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                height: 1.45,
-                color: Colors.grey[800],
-              ),
+            height: 1.45,
+            color: Colors.grey[800],
+          ),
         ),
       ],
     );
@@ -784,28 +869,25 @@ class _StorySharePoster extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final visibleSections = sections;
     return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFFFFF6F2), Color(0xFFF7EDF9), Color(0xFFF8FBFF)],
-        ),
-      ),
+      color: const Color(0xFFF5F1E8),
       child: Stack(
         children: [
           Positioned(
-            top: -120,
-            left: -100,
-            child: _PosterGlow(color: Color(0x66F1B7D1), size: 360),
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Container(height: 18, color: const Color(0xFF172326)),
           ),
           Positioned(
-            top: 220,
-            right: -140,
-            child: _PosterGlow(color: Color(0x55F8C987), size: 420),
+            top: 18,
+            left: 0,
+            bottom: 0,
+            child: Container(width: 18, color: const Color(0xFF172326)),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(56, 56, 56, 64),
+            padding: const EdgeInsets.fromLTRB(58, 62, 58, 64),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -813,75 +895,92 @@ class _StorySharePoster extends StatelessWidget {
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 9,
+                      ),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.78),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: Colors.white.withValues(alpha: 0.7)),
+                        color: const Color(0xFF172326),
+                        borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
                         'Memoria Story',
                         style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.1,
-                              color: const Color(0xFF7D4F6D),
-                            ),
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1,
+                          color: const Color(0xFFF8F3E7),
+                        ),
                       ),
                     ),
                     const Spacer(),
                     Text(
                       '${sections.length} 张照片',
                       style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            color: const Color(0xFF8A6D7D),
-                            fontWeight: FontWeight.w700,
-                          ),
+                        color: const Color(0xFF5D5148),
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 34),
                 Text(
                   title,
                   style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                        fontSize: 60,
-                        height: 1.05,
-                        fontWeight: FontWeight.w900,
-                        color: const Color(0xFF24181F),
-                      ),
+                    fontSize: _fitTitleSize(title),
+                    height: 1.02,
+                    fontWeight: FontWeight.w900,
+                    color: const Color(0xFF191D1D),
+                  ),
                 ),
                 if (subtitle.trim().isNotEmpty) ...[
-                  const SizedBox(height: 14),
-                  Text(
-                    subtitle.trim(),
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: const Color(0xFF6F5A66),
-                          height: 1.35,
-                        ),
+                  const SizedBox(height: 16),
+                  Container(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    padding: const EdgeInsets.only(left: 18),
+                    decoration: const BoxDecoration(
+                      border: Border(
+                        left: BorderSide(color: Color(0xFFCC775A), width: 6),
+                      ),
+                    ),
+                    child: Text(
+                      subtitle.trim(),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: const Color(0xFF5D5148),
+                        height: 1.34,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ],
-                const SizedBox(height: 28),
+                const SizedBox(height: 34),
                 _PosterHeroCard(photo: heroImage),
-                const SizedBox(height: 28),
-                ...sections
-                    .map((section) => _PosterSectionCard(section: section))
-                    .expand((widget) => [widget, const SizedBox(height: 22)]),
-                const SizedBox(height: 6),
+                const SizedBox(height: 32),
+                for (var index = 0; index < visibleSections.length; index++)
+                  _PosterSectionCard(
+                    section: visibleSections[index],
+                    index: index,
+                  ),
+                const SizedBox(height: 26),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 22,
+                    vertical: 18,
+                  ),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.72),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.84)),
+                    color: const Color(0xFF172326),
+                    borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.auto_awesome, color: Color(0xFFD17EAD)),
+                      const Icon(Icons.auto_awesome, color: Color(0xFFF1C45B)),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           '适合直接分享到社交平台的故事长图 · $targetPlatform',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: const Color(0xFF6B5761),
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: const Color(0xFFF8F3E7),
                                 fontWeight: FontWeight.w600,
                               ),
                         ),
@@ -896,6 +995,17 @@ class _StorySharePoster extends StatelessWidget {
       ),
     );
   }
+
+  double _fitTitleSize(String value) {
+    final length = value.characters.length;
+    if (length >= 22) {
+      return 42;
+    }
+    if (length >= 14) {
+      return 50;
+    }
+    return 64;
+  }
 }
 
 class _PosterHeroCard extends StatelessWidget {
@@ -906,131 +1016,435 @@ class _PosterHeroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.88),
-        borderRadius: BorderRadius.circular(34),
+        color: const Color(0xFFFFFCF4),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF1F292A), width: 4),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFB68CA5).withValues(alpha: 0.12),
-            blurRadius: 28,
-            offset: const Offset(0, 14),
+            color: Colors.black.withValues(alpha: 0.14),
+            blurRadius: 24,
+            offset: const Offset(10, 14),
           ),
         ],
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(26),
-        child: Stack(
-          children: [
-            AspectRatio(
-              aspectRatio: 4 / 3,
-              child: PathImage(
+      child: Stack(
+        children: [
+          ClipPath(
+            clipper: _PosterShapeClipper(style: 2),
+            child: AspectRatio(
+              aspectRatio: 1.28,
+              child: _PosterPathImage(
                 path: photo.path,
-                fit: BoxFit.cover,
+                alignment: Alignment.center,
               ),
             ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(22, 30, 22, 18),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.transparent,
-                      Colors.black.withValues(alpha: 0.72),
-                    ],
-                  ),
-                ),
-                child: Text(
-                  photo.caption?.trim().isNotEmpty ?? false
-                      ? photo.caption!.trim()
-                      : (photo.location?.trim().isNotEmpty ?? false)
-                          ? photo.location!.trim()
-                          : '把这一刻留在记忆里',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                        height: 1.3,
-                      ),
+          ),
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+              decoration: BoxDecoration(
+                color: const Color(0xE8172326),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                photo.caption?.trim().isNotEmpty ?? false
+                    ? photo.caption!.trim()
+                    : (photo.location?.trim().isNotEmpty ?? false)
+                    ? photo.location!.trim()
+                    : '把这一刻留在记忆里',
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: const Color(0xFFF8F3E7),
+                  fontWeight: FontWeight.w800,
+                  height: 1.25,
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
 class _PosterSectionCard extends StatelessWidget {
-  const _PosterSectionCard({required this.section});
+  const _PosterSectionCard({required this.section, required this.index});
 
   final StorySection section;
+  final int index;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.80),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.85)),
+    final flip = index.isOdd;
+    final text = section.text.trim();
+    final rotation = <double>[-0.025, 0.018, -0.012, 0.024][index % 4];
+    final image = Transform.rotate(
+      angle: rotation,
+      child: _PosterFramedImage(
+        photo: section.photo,
+        index: index,
+        compact: index % 3 == 1,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    );
+    final textBlock = _PosterTextBlock(text: text, index: index);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 26),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(22),
-            child: AspectRatio(
-              aspectRatio: 16 / 10,
-              child: PathImage(
-                path: section.photo.path,
-                fit: BoxFit.cover,
-              ),
-            ),
-          ),
-          if (section.text.trim().isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Text(
-              section.text.trim(),
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: const Color(0xFF2C2027),
-                    height: 1.55,
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
-          ],
+          Expanded(flex: flip ? 11 : 9, child: flip ? textBlock : image),
+          const SizedBox(width: 24),
+          Expanded(flex: flip ? 9 : 11, child: flip ? image : textBlock),
         ],
       ),
     );
   }
 }
 
-class _PosterGlow extends StatelessWidget {
-  const _PosterGlow({required this.color, required this.size});
+class _PosterFramedImage extends StatelessWidget {
+  const _PosterFramedImage({
+    required this.photo,
+    required this.index,
+    required this.compact,
+  });
 
-  final Color color;
-  final double size;
+  final Photo photo;
+  final int index;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: size,
-      height: size,
+      padding: EdgeInsets.fromLTRB(12, 12, 12, compact ? 30 : 18),
       decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: color,
+        color: const Color(0xFFFFFCF4),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFDED4C4), width: 2),
         boxShadow: [
           BoxShadow(
-            color: color.withValues(alpha: 0.18),
-            blurRadius: 80,
-            spreadRadius: 24,
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 18,
+            offset: const Offset(6, 9),
           ),
         ],
+      ),
+      child: ClipPath(
+        clipper: _PosterShapeClipper(style: index % 4),
+        child: AspectRatio(
+          aspectRatio: compact ? 0.9 : 1.16,
+          child: _PosterPathImage(
+            path: photo.path,
+            alignment: Alignment.center,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PosterTextBlock extends StatelessWidget {
+  const _PosterTextBlock({required this.text, required this.index});
+
+  final String text;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    final accentColors = const <Color>[
+      Color(0xFFCC775A),
+      Color(0xFF3D6C64),
+      Color(0xFFB18A33),
+      Color(0xFF6D5E8C),
+    ];
+    final accent = accentColors[index % accentColors.length];
+    final displayText = text.isEmpty ? '这一帧，也在故事里发光。' : text;
+    final fontSize = displayText.characters.length > 70 ? 28.0 : 33.0;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
+      decoration: BoxDecoration(
+        color: index.isEven ? const Color(0xFFFFFCF4) : Colors.transparent,
+        border: Border(
+          left: BorderSide(color: accent, width: 8),
+          top: BorderSide(color: accent.withValues(alpha: 0.32), width: 1.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            (index + 1).toString().padLeft(2, '0'),
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              color: accent,
+              fontSize: 26,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            displayText,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: const Color(0xFF202321),
+              fontSize: fontSize,
+              height: 1.34,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PosterPathImage extends StatelessWidget {
+  const _PosterPathImage({
+    required this.path,
+    this.alignment = Alignment.center,
+  });
+
+  final String path;
+  final AlignmentGeometry alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(color: Color(0xFFE4DDD0)),
+      child: PathImage(
+        path: path,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        alignment: alignment,
+        enableSmartCache: false,
+      ),
+    );
+  }
+}
+
+class _PosterShapeClipper extends CustomClipper<Path> {
+  const _PosterShapeClipper({required this.style});
+
+  final int style;
+
+  @override
+  Path getClip(Size size) {
+    final path = Path();
+    switch (style) {
+      case 1:
+        path
+          ..moveTo(size.width * 0.06, 0)
+          ..lineTo(size.width, size.height * 0.04)
+          ..lineTo(size.width * 0.94, size.height)
+          ..lineTo(0, size.height * 0.96)
+          ..close();
+        return path;
+      case 2:
+        path
+          ..moveTo(0, size.height * 0.08)
+          ..quadraticBezierTo(0, 0, size.width * 0.08, 0)
+          ..lineTo(size.width * 0.92, 0)
+          ..quadraticBezierTo(size.width, 0, size.width, size.height * 0.08)
+          ..lineTo(size.width, size.height * 0.86)
+          ..quadraticBezierTo(
+            size.width * 0.72,
+            size.height,
+            size.width * 0.48,
+            size.height,
+          )
+          ..lineTo(size.width * 0.08, size.height)
+          ..quadraticBezierTo(0, size.height, 0, size.height * 0.92)
+          ..close();
+        return path;
+      case 3:
+        path
+          ..moveTo(size.width * 0.12, 0)
+          ..lineTo(size.width, 0)
+          ..lineTo(size.width, size.height * 0.88)
+          ..lineTo(size.width * 0.88, size.height)
+          ..lineTo(0, size.height)
+          ..lineTo(0, size.height * 0.12)
+          ..close();
+        return path;
+      default:
+        return Path()..addRRect(
+          RRect.fromRectAndRadius(
+            Offset.zero & size,
+            const Radius.circular(18),
+          ),
+        );
+    }
+  }
+
+  @override
+  bool shouldReclip(covariant _PosterShapeClipper oldClipper) {
+    return oldClipper.style != style;
+  }
+}
+
+class _SharePosterPreviewSheet extends StatefulWidget {
+  const _SharePosterPreviewSheet({
+    required this.posterFile,
+    required this.caption,
+  });
+
+  final File posterFile;
+  final String caption;
+
+  @override
+  State<_SharePosterPreviewSheet> createState() =>
+      _SharePosterPreviewSheetState();
+}
+
+class _SharePosterPreviewSheetState extends State<_SharePosterPreviewSheet>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _scale;
+  bool _autoShareTriggered = false;
+  bool _isSharing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 720),
+    );
+    _scale = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        return;
+      }
+      await _controller.forward();
+      if (mounted && !_autoShareTriggered) {
+        _autoShareTriggered = true;
+        await _share();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _share() async {
+    if (_isSharing) {
+      return;
+    }
+    setState(() => _isSharing = true);
+    try {
+      final box = context.findRenderObject() as RenderBox?;
+      await Share.shareXFiles(
+        [XFile(widget.posterFile.path, mimeType: 'image/png')],
+        text: widget.caption,
+        sharePositionOrigin: box == null
+            ? null
+            : box.localToGlobal(Offset.zero) & box.size,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSharing = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final previewWidth = math.min(media.size.width - 36, 390.0);
+    final previewHeight = media.size.height * 0.56;
+
+    return SafeArea(
+      child: Material(
+        color: Colors.transparent,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+          child: Column(
+            children: [
+              Expanded(
+                child: Center(
+                  child: AnimatedBuilder(
+                    animation: _scale,
+                    builder: (context, child) {
+                      final topOffset = Tween<double>(
+                        begin: media.size.height * 0.12,
+                        end: 0,
+                      ).evaluate(_scale);
+                      final scale = Tween<double>(
+                        begin: 1.16,
+                        end: 1,
+                      ).evaluate(_scale);
+                      return Transform.translate(
+                        offset: Offset(0, topOffset),
+                        child: Transform.scale(scale: scale, child: child),
+                      );
+                    },
+                    child: Container(
+                      width: previewWidth,
+                      height: previewHeight,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF111718),
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.32),
+                            blurRadius: 34,
+                            offset: const Offset(0, 18),
+                          ),
+                        ],
+                      ),
+                      padding: const EdgeInsets.all(10),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: InteractiveViewer(
+                          minScale: 0.65,
+                          maxScale: 4,
+                          child: SingleChildScrollView(
+                            child: Image.file(
+                              widget.posterFile,
+                              width: previewWidth - 20,
+                              fit: BoxFit.fitWidth,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: _isSharing ? null : _share,
+                      icon: const Icon(Icons.ios_share),
+                      label: Text(_isSharing ? '分享中...' : '分享'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close),
+                      label: const Text('退出'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -152,6 +152,7 @@ class _StoriesPageState extends State<StoriesPage> {
         builder: (context) => StoryResultPage.fromStoryEntity(
           storyEntity: story,
           photos: photos,
+          customMusicPath: story.customMusicPath,
           isHorizontal: _safeStoryIsHorizontal(story),
           targetPlatform: story.targetPlatform ?? '小红书',
         ),

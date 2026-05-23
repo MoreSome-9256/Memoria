@@ -263,11 +263,26 @@ class _StoryResultPageState extends State<StoryResultPage> {
   late List<StorySection> _sections;
   bool _isSaving = false;
   bool _hasSaved = false;
+  bool _isSaved = false;
 
   @override
   void initState() {
     super.initState();
     _sections = List<StorySection>.from(widget.sections);
+    _checkIfSaved();
+  }
+
+  Future<void> _checkIfSaved() async {
+    if (widget.storyEntityId == null) return;
+    try {
+      final storyBox = ObjectBoxService().store.box<StoryEntity>();
+      final story = storyBox.get(widget.storyEntityId!);
+      if (story != null && mounted) {
+        setState(() {
+          _isSaved = story.isManuallySaved;
+        });
+      }
+    } catch (_) {}
   }
 
   void _editText(int index) {
@@ -340,6 +355,9 @@ class _StoryResultPageState extends State<StoryResultPage> {
       story.content = StoryEntity.sectionsToMarkdown(sectionMaps);
       story.updatedAt = DateTime.now().millisecondsSinceEpoch;
       story.isManuallySaved = true; // 标记为手动保存
+      if (widget.customMusicPath != null && widget.customMusicPath!.trim().isNotEmpty) {
+        story.customMusicPath = widget.customMusicPath;
+      }
       
       store.runInTransaction(TxMode.write, () {
         // 删除所有自动保存的记录（因为用户已经手动保存了）
@@ -363,6 +381,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
 
       setState(() {
         _hasSaved = true;
+        _isSaved = true;
       });
       ScaffoldMessenger.of(
         context,
@@ -384,11 +403,18 @@ class _StoryResultPageState extends State<StoryResultPage> {
   }
 
   void _closePage() {
-    if (Navigator.of(context).canPop()) {
-      Navigator.of(context).pop(_hasSaved);
-      return;
-    }
     Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
+  Future<void> _deleteStory() async {
+    if (widget.storyEntityId == null) return;
+    try {
+      final storyBox = ObjectBoxService().store.box<StoryEntity>();
+      storyBox.remove(widget.storyEntityId!);
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (_) {}
   }
 
   Future<void> _shareStory() async {
@@ -854,11 +880,18 @@ class _StoryResultPageState extends State<StoryResultPage> {
                 label: const Text('关闭'),
               ),
               const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: _isSaving ? null : _saveStory,
-                icon: const Icon(Icons.save),
-                label: Text(_isSaving ? '保存中...' : '保存'),
-              ),
+              if (_isSaved)
+                FilledButton.tonalIcon(
+                  onPressed: _deleteStory,
+                  icon: const Icon(Icons.delete),
+                  label: const Text('删除'),
+                )
+              else
+                FilledButton.icon(
+                  onPressed: _isSaving ? null : _saveStory,
+                  icon: const Icon(Icons.save),
+                  label: Text(_isSaving ? '保存中...' : '保存'),
+                ),
               const SizedBox(width: 8),
               TextButton.icon(
                 onPressed: _openDigitalAlbum,

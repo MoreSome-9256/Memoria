@@ -22,6 +22,7 @@ import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:gal/gal.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
+import '../../service/story_service.dart';
 import '../../service/video_cache_service.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 import '../../models/entity/story_entity.dart';
@@ -190,9 +191,23 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     try {
       // fallback 也走本地分析：使用当前实际要播放的音频文件。
       String audioPath;
-      if (widget.customMusicPath != null &&
-          widget.customMusicPath!.isNotEmpty) {
-        audioPath = widget.customMusicPath!;
+      String? resolvedMusicPath;
+      if (widget.storyEntityId != null) {
+        try {
+          final store = ObjectBoxService().store;
+          final storyBox = store.box<StoryEntity>();
+          final story = storyBox.get(widget.storyEntityId!);
+          if (story != null) {
+            resolvedMusicPath = await StoryService.resolveMusicFile(story);
+          }
+        } catch (_) {}
+      }
+      resolvedMusicPath ??= widget.customMusicPath;
+
+      if (resolvedMusicPath != null &&
+          resolvedMusicPath.isNotEmpty &&
+          await File(resolvedMusicPath).exists()) {
+        audioPath = resolvedMusicPath;
       } else {
         audioPath = await _extractAssetForFFmpeg(
           'assets/audio/sandal_leap.mp3',
@@ -770,13 +785,26 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     File? safeAudioFile;
 
     // 准备音频
-    if (widget.customMusicPath != null) {
-      File originalAudio = File(widget.customMusicPath!);
+    String? resolvedMusicPath;
+    if (widget.storyEntityId != null) {
+      try {
+        final store = ObjectBoxService().store;
+        final storyBox = store.box<StoryEntity>();
+        final story = storyBox.get(widget.storyEntityId!);
+        if (story != null) {
+                      resolvedMusicPath = await StoryService.resolveMusicFile(story);
+        }
+      } catch (_) {}
+    }
+    resolvedMusicPath ??= widget.customMusicPath;
+
+    if (resolvedMusicPath != null &&
+        await File(resolvedMusicPath).exists()) {
       safeAudioFile = File(
         '${tempDir.path}/safe_custom_audio_${DateTime.now().millisecondsSinceEpoch}.mp3',
       );
       if (safeAudioFile.existsSync()) safeAudioFile.deleteSync();
-      await originalAudio.copy(safeAudioFile.path);
+      await File(resolvedMusicPath).copy(safeAudioFile.path);
       audioPath = safeAudioFile.path;
     } else {
       final ByteData audioData = await rootBundle.load(
@@ -1019,6 +1047,9 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
             story.cachedVideoPath = finalPath;
             story.cachedVideoKey = _exportCacheKey;
             story.customMusicPath = widget.customMusicPath;
+            story.customMusicBytes = await StoryService.loadMusicBytes(
+              widget.customMusicPath,
+            );
             story.dynamicBeatDataJson = widget.dynamicBeatData != null
                 ? jsonEncode(widget.dynamicBeatData)
                 : null;

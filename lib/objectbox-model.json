@@ -766,82 +766,6 @@
       "relations": []
     },
     {
-      "id": "9:1998729358182538669",
-      "lastPropertyId": "13:4584622389087554935",
-      "name": "StoryEntity",
-      "properties": [
-        {
-          "id": "1:7644336574004328075",
-          "name": "id",
-          "type": 6,
-          "flags": 1
-        },
-        {
-          "id": "2:6889058360260629718",
-          "name": "title",
-          "type": 9
-        },
-        {
-          "id": "3:4326161548329055360",
-          "name": "subtitle",
-          "type": 9
-        },
-        {
-          "id": "4:8465443514937530671",
-          "name": "content",
-          "type": 9
-        },
-        {
-          "id": "5:4954696596947524044",
-          "name": "createdAt",
-          "type": 6
-        },
-        {
-          "id": "6:6161947646806929454",
-          "name": "updatedAt",
-          "type": 6
-        },
-        {
-          "id": "7:7215074744161046604",
-          "name": "isHorizontal",
-          "type": 1
-        },
-        {
-          "id": "8:8614247265968657218",
-          "name": "targetPlatform",
-          "type": 9
-        },
-        {
-          "id": "9:8720485849283863613",
-          "name": "eventId",
-          "indexId": "31:5483441673720632673",
-          "type": 6,
-          "flags": 8
-        },
-        {
-          "id": "10:1053423065816094911",
-          "name": "photoIds",
-          "type": 27
-        },
-        {
-          "id": "11:4540083781270415707",
-          "name": "photoCount",
-          "type": 6
-        },
-        {
-          "id": "12:1514215392286596427",
-          "name": "isLlmGenerated",
-          "type": 1
-        },
-        {
-          "id": "13:4584622389087554935",
-          "name": "isManuallySaved",
-          "type": 1
-        }
-      ],
-      "relations": []
-    },
-    {
       "id": "10:9054987076692487709",
       "lastPropertyId": "7:3945062749267567143",
       "name": "ChatMessage",
@@ -881,18 +805,139 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "11:1699499076567489273",
+      "lastPropertyId": "19:8687408424089195971",
+      "name": "StoryEntity",
+      "properties": [
+        {
+          "id": "1:6344089549888909694",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:3972612000778500646",
+          "name": "title",
+          "type": 9
+        },
+        {
+          "id": "3:1657061502580176959",
+          "name": "subtitle",
+          "type": 9
+        },
+        {
+          "id": "4:5342680558897413338",
+          "name": "content",
+          "type": 9
+        },
+        {
+          "id": "5:5456194538741816749",
+          "name": "createdAt",
+          "type": 6
+        },
+        {
+          "id": "6:5110413165771527486",
+          "name": "updatedAt",
+          "type": 6
+        },
+        {
+          "id": "7:7825833357353092995",
+          "name": "isHorizontal",
+          "type": 1
+        },
+        {
+          "id": "8:3594590019100492918",
+          "name": "targetPlatform",
+          "type": 9
+        },
+        {
+          "id": "9:5881847991487823403",
+          "name": "eventId",
+          "indexId": "33:3349099751825984572",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "10:5517207021643285423",
+          "name": "photoIds",
+          "type": 27
+        },
+        {
+          "id": "11:3213314393119662163",
+          "name": "photoCount",
+          "type": 6
+        },
+        {
+          "id": "12:5842243322726239840",
+          "name": "isLlmGenerated",
+          "type": 1
+        },
+        {
+          "id": "13:2240022570441485686",
+          "name": "isManuallySaved",
+          "type": 1
+        },
+        {
+          "id": "14:1087694229523212213",
+          "name": "cachedVideoPath",
+          "type": 9
+        },
+        {
+          "id": "15:2191034752666487137",
+          "name": "cachedVideoKey",
+          "type": 9
+        },
+        {
+          "id": "16:4957853242616100171",
+          "name": "customMusicPath",
+          "type": 9
+        },
+        {
+          "id": "17:2215956905300574343",
+          "name": "customMusicBytes",
+          "type": 23
+        },
+        {
+          "id": "18:5102043749508120616",
+          "name": "dynamicBeatDataJson",
+          "type": 9
+        },
+        {
+          "id": "19:8687408424089195971",
+          "name": "videoParamsJson",
+          "type": 9
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "10:9054987076692487709",
-  "lastIndexId": "32:7101798331720811262",
+  "lastEntityId": "11:1699499076567489273",
+  "lastIndexId": "33:3349099751825984572",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,
   "modelVersionParserMinimum": 5,
-  "retiredEntityUids": [],
+  "retiredEntityUids": [
+    1998729358182538669
+  ],
   "retiredIndexUids": [],
   "retiredPropertyUids": [
-    3945062749267567143
+    3945062749267567143,
+    7644336574004328075,
+    6889058360260629718,
+    4326161548329055360,
+    8465443514937530671,
+    4954696596947524044,
+    6161947646806929454,
+    7215074744161046604,
+    8614247265968657218,
+    8720485849283863613,
+    1053423065816094911,
+    4540083781270415707,
+    1514215392286596427,
+    4584622389087554935
   ],
   "retiredRelationUids": [],
   "version": 1

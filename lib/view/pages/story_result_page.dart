@@ -653,13 +653,27 @@ class _StoryResultPageState extends State<StoryResultPage> {
       return;
     }
 
+    // 解析音乐文件路径（优先从数据库二进制恢复）
+    String? resolvedMusicPath;
+    if (widget.storyEntityId != null) {
+      try {
+        final store = ObjectBoxService().store;
+        final storyBox = store.box<StoryEntity>();
+        final story = storyBox.get(widget.storyEntityId!);
+        if (story != null) {
+          resolvedMusicPath = await StoryService.resolveMusicFile(story);
+        }
+      } catch (_) {}
+    }
+    resolvedMusicPath ??= widget.customMusicPath;
+
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => StoryVideoPage(
           title: widget.title,
           subtitle: widget.subtitle,
           sections: finalVideoSections,
-          customMusicPath: widget.customMusicPath,
+          customMusicPath: resolvedMusicPath,
           isHorizontal: widget.isHorizontal,
           dynamicBeatData: widget.dynamicBeatData,
           targetPlatform: widget.targetPlatform,

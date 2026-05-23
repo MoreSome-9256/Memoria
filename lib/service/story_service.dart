@@ -1,5 +1,11 @@
 /// 故事服务，负责故事内容的保存、读取和更新。
 
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../data/tag_taxonomy_v2.dart';
@@ -482,5 +488,40 @@ class StoryService {
     if (latestPath != null && latestPath.isNotEmpty && latestPath != photo.path) {
       photo.path = latestPath;
     }
+  }
+
+  /// 从数据库固化的音乐二进制数据恢复出缓存文件
+  /// 使用 SHA256 命名以去重，同一音乐文件只写一次磁盘
+  static Future<String?> resolveMusicFile(StoryEntity story) async {
+    final bytes = story.customMusicBytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      final hash = sha256.convert(bytes).toString();
+      final tempDir = await getTemporaryDirectory();
+      final cacheDir = Directory('${tempDir.path}/MusicCache');
+      final cachedFile = File('${cacheDir.path}/$hash.mp3');
+      if (await cachedFile.exists()) {
+        return cachedFile.path;
+      }
+      await cacheDir.create(recursive: true);
+      await cachedFile.writeAsBytes(bytes);
+      return cachedFile.path;
+    }
+    if (story.customMusicPath != null &&
+        await File(story.customMusicPath!).exists()) {
+      return story.customMusicPath;
+    }
+    return null;
+  }
+
+  /// 从文件路径读取音乐二进制数据
+  static Future<Uint8List?> loadMusicBytes(String? path) async {
+    if (path == null || path.isEmpty) return null;
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        return await file.readAsBytes();
+      }
+    } catch (_) {}
+    return null;
   }
 }

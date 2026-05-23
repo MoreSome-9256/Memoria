@@ -5,18 +5,10 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-import org.gradle.api.tasks.Sync
-
 android {
     namespace = "com.example.photo_album"
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-        }
-    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -44,11 +36,6 @@ android {
         versionCode = flutter.versionCode.toInt()
         versionName = flutter.versionName
 
-        externalNativeBuild {
-            cmake {
-                cppFlags += listOf("-std=c++17")
-            }
-        }
     }
 
     buildTypes {
@@ -62,40 +49,13 @@ android {
     }
 }
 
-val localLlmAssetDir = layout.buildDirectory.dir("generated/localLlmAssets")
-
-val prepareLocalLlmAssets = tasks.register<Sync>("prepareLocalLlmAssets") {
-    into(localLlmAssetDir)
-
-    from("../../third_party/llama.cpp/install-android-baseline/bin") {
-        include("llama-server", "llama-mtmd-cli")
-        into("local_llm/install-android-baseline/bin")
-    }
-
-    from("../../third_party/llama.cpp/install-android-baseline/lib") {
-        include("libggml-base.so", "libggml-cpu.so", "libggml.so", "libllama.so", "libmtmd.so")
-        into("local_llm/install-android-baseline/lib")
-    }
-
-    from("../../checkpoints/qwen") {
-        include("Qwen3.5-0.8B-Q4_K_M.gguf", "mmproj-F16.gguf")
-        into("local_llm/checkpoints/qwen")
-    }
-}
-
-android.sourceSets.getByName("main").assets.srcDir(localLlmAssetDir)
-
-tasks.matching { task ->
-    task.name == "mergeDebugAssets" || task.name == "mergeReleaseAssets"
-}.configureEach {
-    dependsOn(prepareLocalLlmAssets)
-}
-
 flutter {
     source = "../.."
 }
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.google.mlkit:text-recognition-chinese:16.0.0")
 }

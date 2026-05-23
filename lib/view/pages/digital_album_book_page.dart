@@ -15,7 +15,7 @@ import '../../service/digital_album_book_service.dart';
 import '../../service/digital_album_layout_service.dart';
 import '../../service/digital_album_validator_service.dart';
 import '../widgets/path_image.dart';
-// import 'vlm_photo_picker_page.dart';
+import 'vlm_photo_picker_page.dart';
 
 class DigitalAlbumBookResult {
   const DigitalAlbumBookResult({
@@ -3566,5 +3566,4 @@ Alignment _alignmentFromTextAlign(AlbumTextAlignValue value) {
       return Alignment.centerRight;
   }
 }
-
 

@@ -47,6 +47,8 @@ class _AiPhotoProcessingRequest {
     required this.junkPhotoFilterService,
     required this.skipJunkFilter,
     required this.stopRequested,
+    required this.ocrEnabled,
+    required this.faceAnalysisEnabled,
   });
 
   final PhotoEntity photo;
@@ -60,6 +62,8 @@ class _AiPhotoProcessingRequest {
   final JunkPhotoFilterService junkPhotoFilterService;
   final bool skipJunkFilter;
   final bool stopRequested;
+  final bool ocrEnabled;
+  final bool faceAnalysisEnabled;
 }
 
 class _AiPhotoWriteRequest {

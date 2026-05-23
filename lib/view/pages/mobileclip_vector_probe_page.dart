@@ -2,7 +2,6 @@
 
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,7 +9,6 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../data/tag_taxonomy_v2.dart';
 import '../../service/mobileclip_vision_service.dart';
-import '../../service/ncnn_mobileclip_native_service.dart';
 import '../../service/semantic_matching_service.dart';
 import '../../service/vector_index_benchmark_service.dart';
 
@@ -24,8 +22,6 @@ class MobileClipVectorProbePage extends StatefulWidget {
 
 class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
   final MobileClipVisionService _visionService = MobileClipVisionService();
-  final NcnnMobileClipNativeService _ncnnService =
-      NcnnMobileClipNativeService();
   final SemanticMatchingService _semanticService = SemanticMatchingService();
   final VectorIndexStorageBenchmarkService _storageBenchmarkService =
       VectorIndexStorageBenchmarkService();
@@ -54,7 +50,6 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
 
     try {
       await _visionService.warmUp();
-      await _ncnnService.ensureModelInitialized();
       var zeroShotEnabled = true;
       try {
         await _semanticService.warmUp();
@@ -82,17 +77,8 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
           bytes,
         );
         final onnxVector = await _visionService.embedPreprocessedInput(input);
-        final ncnnVector = await _ncnnService.encodeImageBytes(bytes);
 
-        output.add(
-          _VectorProbeResult(
-            sample: sample,
-            onnxVector: onnxVector,
-            ncnnVector: ncnnVector,
-            cosine: _cosine(onnxVector, ncnnVector),
-            l2Distance: _l2Distance(onnxVector, ncnnVector),
-          ),
-        );
+        output.add(_VectorProbeResult(sample: sample, onnxVector: onnxVector));
       }
 
       // Zero-shot tagging: reuse the onnxVectors already computed above.
@@ -173,7 +159,7 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            '固定测试三张图片，ONNX 使用当前 Flutter 预处理；NCNN 使用作者提供的 mobileclip_s2_export 模型和 native resize/normalize。完整 JSON 会输出到 debug log。',
+            '固定测试三张图片，ONNX 使用当前 Flutter 预处理。完整 JSON 会输出到 debug log。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -205,7 +191,7 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                     SizedBox(width: 12),
-                    Expanded(child: Text('正在提取手机端 ONNX / NCNN 向量...')),
+                    Expanded(child: Text('正在提取手机端 ONNX 向量...')),
                   ],
                 ),
               ),
@@ -285,12 +271,6 @@ class _VectorProbeCard extends StatelessWidget {
                       const SizedBox(height: 6),
                       SelectableText(result.sample.assetPath),
                       const SizedBox(height: 6),
-                      Text(
-                        'cosine(onnx, ncnn): ${result.cosine.toStringAsFixed(6)}',
-                      ),
-                      Text(
-                        'l2(onnx, ncnn): ${result.l2Distance.toStringAsFixed(6)}',
-                      ),
                     ],
                   ),
                 ),
@@ -299,10 +279,6 @@ class _VectorProbeCard extends StatelessWidget {
             const SizedBox(height: 12),
             SelectableText(
               'onnx first16: ${_formatVectorSlice(result.onnxVector, 16)}',
-            ),
-            const SizedBox(height: 8),
-            SelectableText(
-              'ncnn first16: ${_formatVectorSlice(result.ncnnVector, 16)}',
             ),
             const SizedBox(height: 8),
             ExpansionTile(
@@ -326,28 +302,16 @@ class _ProbeSample {
 }
 
 class _VectorProbeResult {
-  const _VectorProbeResult({
-    required this.sample,
-    required this.onnxVector,
-    required this.ncnnVector,
-    required this.cosine,
-    required this.l2Distance,
-  });
+  const _VectorProbeResult({required this.sample, required this.onnxVector});
 
   final _ProbeSample sample;
   final List<double> onnxVector;
-  final List<double> ncnnVector;
-  final double cosine;
-  final double l2Distance;
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'label': sample.label,
       'assetPath': sample.assetPath,
       'onnxVector': onnxVector,
-      'ncnnVector': ncnnVector,
-      'cosine': cosine,
-      'l2Distance': l2Distance,
     };
   }
 }
@@ -357,25 +321,6 @@ const List<_ProbeSample> _probeSamples = <_ProbeSample>[
   _ProbeSample(label: 'test1', assetPath: 'ai_tools/test1.png'),
   _ProbeSample(label: 'youleyuan', assetPath: 'ai_tools/test_youleyuan.png'),
 ];
-
-double _cosine(List<double> left, List<double> right) {
-  final usable = math.min(left.length, right.length);
-  var dot = 0.0;
-  for (var index = 0; index < usable; index++) {
-    dot += left[index] * right[index];
-  }
-  return dot;
-}
-
-double _l2Distance(List<double> left, List<double> right) {
-  final usable = math.min(left.length, right.length);
-  var sum = 0.0;
-  for (var index = 0; index < usable; index++) {
-    final delta = left[index] - right[index];
-    sum += delta * delta;
-  }
-  return math.sqrt(sum);
-}
 
 String _formatVectorSlice(List<double> vector, int count) {
   final preview = vector.take(count).map((value) => value.toStringAsFixed(6));

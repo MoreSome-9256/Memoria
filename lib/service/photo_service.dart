@@ -3,9 +3,9 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/create_recommendation_entity.dart';
@@ -21,6 +21,7 @@ import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../utils/photo_filter_helper.dart';
 import 'album_selection_preference_service.dart';
 import 'junk_photo_filter_service.dart';
+import 'media_access_grant_service.dart';
 
 part 'photo_service_models.dart';
 part 'photo_service_scan.dart';
@@ -98,10 +99,18 @@ class PhotoService {
     AssetEntity asset, {
     PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
   }) {
-    return _PhotoAssetBuilder(this).buildSingleAssetPhoto(
-      asset,
-      filterProfile: filterProfile,
-    );
+    return _PhotoAssetBuilder(
+      this,
+    ).buildSingleAssetPhoto(asset, filterProfile: filterProfile);
+  }
+
+  Future<_SingleAssetBuildResult> _buildSingleFilePhoto(
+    File file, {
+    PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
+  }) {
+    return _PhotoAssetBuilder(
+      this,
+    ).buildSingleFilePhoto(file, filterProfile: filterProfile);
   }
 
   Future<File?> _resolveReadableFile(AssetEntity asset) {

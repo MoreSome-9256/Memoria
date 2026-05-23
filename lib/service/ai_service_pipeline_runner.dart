@@ -91,8 +91,16 @@ class _AiPipelineRunner {
     final photoCaptionService = PhotoCaptionService();
     final facePipelineService = FacePipelineService();
     final ocrService = OcrService();
+    final appAiSettings = await AppAiSettingsService.instance.load();
+    OcrPolicy.setRuntimeEnabled(appAiSettings.ocrEnabled);
+    await AiBackgroundTaskService.instance.startIfAllowed(
+      title: 'Memoria 正在分析媒体',
+      text: '只处理你手动添加的照片和视频',
+    );
 
-    final pendingQ = photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
+    final pendingQ = photoBox
+        .query(PhotoEntity_.isAiAnalyzed.equals(false))
+        .build();
     final pendingCount = pendingQ.count();
     pendingQ.close();
     final targetTotal = math.min(pendingCount, maxPhotos ?? pendingCount);
@@ -454,6 +462,8 @@ class _AiPipelineRunner {
                     junkPhotoFilterService: _junkPhotoFilterService,
                     skipJunkFilter: skipJunkFilter,
                     stopRequested: _stopRequested,
+                    ocrEnabled: appAiSettings.ocrEnabled,
+                    faceAnalysisEnabled: appAiSettings.faceAnalysisEnabled,
                   ),
                 ),
                 selectedBackend: selectedBackend,
@@ -536,12 +546,15 @@ class _AiPipelineRunner {
       }
       debugPrint("✅ AI 分析完成，总计处理: $totalAnalyzed 张");
     } finally {
+      await AiBackgroundTaskService.instance.stop();
       pipelineProfiler.logFinalSummary();
       await mobileClipTagService.endWorkflowSession();
       await mobileClipEmbeddingService.endWorkflowSession();
       publishJunkReportIfNeeded();
 
-      final remainingQ = photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
+      final remainingQ = photoBox
+          .query(PhotoEntity_.isAiAnalyzed.equals(false))
+          .build();
       final remainingPending = remainingQ.count();
       remainingQ.close();
       if (remainingPending > 0 && !_stopRequested) {

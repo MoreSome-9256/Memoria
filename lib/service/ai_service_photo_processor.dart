@@ -115,10 +115,11 @@ class _AiPhotoProcessor {
       final inputImage = InputImage.fromFile(analysisFile);
 
       var ocrResult = OcrResult.empty();
-      if (OcrService.shouldRunOcr(
-        visualTags,
-        aspectRatio: request.photo.aspectRatio,
-      )) {
+      if (request.ocrEnabled &&
+          OcrService.shouldRunOcr(
+            visualTags,
+            aspectRatio: request.photo.aspectRatio,
+          )) {
         final ocrWatch = Stopwatch()..start();
         ocrResult = await request.ocrService.analyzeImageFile(analysisFile);
         ocrWatch.stop();
@@ -134,6 +135,7 @@ class _AiPhotoProcessor {
       dimensionWatch.stop();
       profile.analysisDecodeMs = dimensionWatch.elapsedMicroseconds / 1000.0;
       final canRunFaceDetection =
+          request.faceAnalysisEnabled &&
           analysisDimensions != null &&
           analysisDimensions.$1 >= AIService._minFaceDetectorInputSize &&
           analysisDimensions.$2 >= AIService._minFaceDetectorInputSize;
@@ -166,35 +168,37 @@ class _AiPhotoProcessor {
         tags: visualTags,
       );
 
-      final facePipelineProfile = await request.facePipelineService
-          .rebuildFacesForPhoto(
-            photo: request.photo,
-            imageFile: analysisFile,
-            imageBytes: resolvedAnalysisFile.sourceBytes,
-            faces: faces,
-          );
-      profile.facePersistMs = facePipelineProfile.totalMs;
-      profile.faceExistingReadMs = facePipelineProfile.existingReadMs;
-      profile.faceSourceDecodeMs = facePipelineProfile.sourceDecodeMs;
-      profile.faceWarmUpMs = facePipelineProfile.embeddingWarmUpMs;
-      profile.faceCropMs = facePipelineProfile.cropMs;
-      profile.faceDebugCropMs = facePipelineProfile.debugCropMs;
-      profile.faceTempFileMs = facePipelineProfile.tempFileMs;
-      profile.faceEmbeddingMs = facePipelineProfile.embeddingMs;
-      profile.faceIsarWriteMs = facePipelineProfile.isarWriteMs;
-      profile.faceIsarDeleteMs = facePipelineProfile.isarDeleteMs;
-      profile.faceIsarPutMs = facePipelineProfile.isarPutMs;
-      profile.faceObjectBoxWriteMs = facePipelineProfile.objectBoxWriteMs;
-      profile.faceCleanupMs = facePipelineProfile.cleanupMs;
-      profile.faceRequestedCount = facePipelineProfile.requestedFaces;
-      profile.facePersistedCount = facePipelineProfile.persistedFaces;
-      profile.faceStaleIdsCount = facePipelineProfile.staleIdsCount;
-      profile.faceEmbeddingFacesWritten =
-          facePipelineProfile.facesWithEmbedding;
-      profile.faceEmbeddingBytesWritten =
-          facePipelineProfile.embeddingBytesWritten;
-      profile.faceWritesEmbeddingToIsar =
-          facePipelineProfile.writesEmbeddingToIsar;
+      if (request.faceAnalysisEnabled) {
+        final facePipelineProfile = await request.facePipelineService
+            .rebuildFacesForPhoto(
+              photo: request.photo,
+              imageFile: analysisFile,
+              imageBytes: resolvedAnalysisFile.sourceBytes,
+              faces: faces,
+            );
+        profile.facePersistMs = facePipelineProfile.totalMs;
+        profile.faceExistingReadMs = facePipelineProfile.existingReadMs;
+        profile.faceSourceDecodeMs = facePipelineProfile.sourceDecodeMs;
+        profile.faceWarmUpMs = facePipelineProfile.embeddingWarmUpMs;
+        profile.faceCropMs = facePipelineProfile.cropMs;
+        profile.faceDebugCropMs = facePipelineProfile.debugCropMs;
+        profile.faceTempFileMs = facePipelineProfile.tempFileMs;
+        profile.faceEmbeddingMs = facePipelineProfile.embeddingMs;
+        profile.faceIsarWriteMs = facePipelineProfile.isarWriteMs;
+        profile.faceIsarDeleteMs = facePipelineProfile.isarDeleteMs;
+        profile.faceIsarPutMs = facePipelineProfile.isarPutMs;
+        profile.faceObjectBoxWriteMs = facePipelineProfile.objectBoxWriteMs;
+        profile.faceCleanupMs = facePipelineProfile.cleanupMs;
+        profile.faceRequestedCount = facePipelineProfile.requestedFaces;
+        profile.facePersistedCount = facePipelineProfile.persistedFaces;
+        profile.faceStaleIdsCount = facePipelineProfile.staleIdsCount;
+        profile.faceEmbeddingFacesWritten =
+            facePipelineProfile.facesWithEmbedding;
+        profile.faceEmbeddingBytesWritten =
+            facePipelineProfile.embeddingBytesWritten;
+        profile.faceWritesEmbeddingToIsar =
+            facePipelineProfile.writesEmbeddingToIsar;
+      }
 
       final captionLocation =
           request.photo.locationName ??

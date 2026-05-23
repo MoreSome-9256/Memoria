@@ -1,15 +1,16 @@
 /// 个人资料页面，提供设置、调试入口和账户信息展示。
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
+import 'package:photo_album/service/app_ai_settings_service.dart';
+import 'package:photo_album/service/media_access_grant_service.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
-import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/travel_memory_detector.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
-import 'package:photo_manager/photo_manager.dart';
 
 import 'package:photo_album/service/album_selection_preference_service.dart';
 
@@ -31,8 +32,7 @@ class _ProfilePageState extends State<ProfilePage> {
   final _backendPreferenceService = MobileClipBackendPreferenceService();
   final _albumSelectionPreferenceService = AlbumSelectionPreferenceService();
 
-  late bool _autoResumeEnabled;
-  String _albumSelectionSummary = '使用全部相册';
+  String _albumSelectionSummary = '未授权任何媒体';
 
   Future<AuthUser?> _loadUser() async {
     try {
@@ -74,9 +74,10 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _showScanPreferences() async {
     final prefs = await _albumSelectionPreferenceService.loadScanPreferences();
     int? selectedYear = prefs['minYear'];
-    List<int>? selectedPair = prefs['minWidth'] != null && prefs['minHeight'] != null
-      ? [prefs['minWidth']!, prefs['minHeight']!]
-      : null;
+    List<int>? selectedPair =
+        prefs['minWidth'] != null && prefs['minHeight'] != null
+        ? [prefs['minWidth']!, prefs['minHeight']!]
+        : null;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -85,138 +86,122 @@ class _ProfilePageState extends State<ProfilePage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
-        return StatefulBuilder(builder: (context, setSheetState) {
-          return SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('扫描筛选', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 12),
-                  const Text('可选：按时间范围和最小分辨率过滤。默认不开启。'),
-                  const SizedBox(height: 12),
-                  Text('最早年份（含）', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 8),
-                  DropdownButton<int?>(
-                    value: selectedYear,
-                    items: <int?>[null, 2000, 2010, 2015, 2020, 2022]
-                        .map((y) => DropdownMenuItem<int?>(value: y, child: Text(y == null ? '不限制' : y.toString())))
-                        .toList(growable: false),
-                    onChanged: (v) => setSheetState(() => selectedYear = v),
-                  ),
-                  const SizedBox(height: 12),
-                  Text('最小分辨率（宽 x 高）', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 8),
-                  DropdownButton<List<int>?>(
-                    value: selectedPair,
-                    items: <List<int>?>[null, [640, 480], [1280, 720], [1920, 1080]]
-                        .map((pair) {
-                      final label = pair == null ? '不限制' : '${pair[0]} x ${pair[1]}';
-                      return DropdownMenuItem<List<int>?>(value: pair, child: Text(label));
-                    }).toList(growable: false),
-                    onChanged: (pair) => setSheetState(() {
-                      selectedPair = pair;
-                    }),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(children: [
-                    TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-                    const Spacer(),
-                    FilledButton(onPressed: () async {
-                      await _albumSelectionPreferenceService.saveScanPreferences(
-                          minYear: selectedYear,
-                          minWidth: selectedPair?.first,
-                          minHeight: selectedPair?.last,
-                        );
-                      if (!mounted) return;
-                      Navigator.pop(context);
-                    }, child: const Text('保存')),
-                  ])
-                ],
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '扫描筛选',
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('可选：按时间范围和最小分辨率过滤。默认不开启。'),
+                    const SizedBox(height: 12),
+                    Text(
+                      '最早年份（含）',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButton<int?>(
+                      value: selectedYear,
+                      items: <int?>[null, 2000, 2010, 2015, 2020, 2022]
+                          .map(
+                            (y) => DropdownMenuItem<int?>(
+                              value: y,
+                              child: Text(y == null ? '不限制' : y.toString()),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (v) => setSheetState(() => selectedYear = v),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      '最小分辨率（宽 x 高）',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButton<List<int>?>(
+                      value: selectedPair,
+                      items:
+                          <List<int>?>[
+                                null,
+                                [640, 480],
+                                [1280, 720],
+                                [1920, 1080],
+                              ]
+                              .map((pair) {
+                                final label = pair == null
+                                    ? '不限制'
+                                    : '${pair[0]} x ${pair[1]}';
+                                return DropdownMenuItem<List<int>?>(
+                                  value: pair,
+                                  child: Text(label),
+                                );
+                              })
+                              .toList(growable: false),
+                      onChanged: (pair) => setSheetState(() {
+                        selectedPair = pair;
+                      }),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('取消'),
+                        ),
+                        const Spacer(),
+                        FilledButton(
+                          onPressed: () async {
+                            await _albumSelectionPreferenceService
+                                .saveScanPreferences(
+                                  minYear: selectedYear,
+                                  minWidth: selectedPair?.first,
+                                  minHeight: selectedPair?.last,
+                                );
+                            if (!mounted) return;
+                            Navigator.pop(context);
+                          },
+                          child: const Text('保存'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-          );
-        });
+            );
+          },
+        );
       },
     );
   }
 
   Future<void> _refreshAlbumSelectionSummary() async {
-    final snapshot = await _albumSelectionPreferenceService.loadSelection();
+    final snapshot = await MediaAccessGrantService.instance.loadSnapshot();
     if (!mounted) {
       return;
     }
     setState(() {
-      if (snapshot.useAllAlbums) {
-        _albumSelectionSummary = '使用全部相册';
-      } else if (snapshot.selectedAlbumIds.isEmpty) {
-        _albumSelectionSummary = '未选择相册，需先设置范围';
+      if (!snapshot.hasAnyGrant) {
+        _albumSelectionSummary = '未授权任何媒体';
       } else {
-        _albumSelectionSummary = '已选择 ${snapshot.selectedAlbumIds.length} 个相册';
+        final mediaCount =
+            snapshot.selectedAssetIds.length +
+            snapshot.selectedFilePaths.length;
+        _albumSelectionSummary =
+            '已选择 $mediaCount 个媒体，${snapshot.androidTreeUris.length} 个目录';
       }
     });
   }
 
   Future<void> _showAlbumSelectionSettings() async {
-    final permission = await PhotoManager.requestPermissionExtend();
-    if (!permission.isAuth && !permission.hasAccess) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text('没有相册权限，无法选择相册范围。'),
-        ),
-      );
-      return;
-    }
-
-    final filter = FilterOptionGroup(
-      orders: [OrderOption(type: OrderOptionType.createDate, asc: false)],
-    );
-    final albums = await PhotoManager.getAssetPathList(
-      type: RequestType.image,
-      onlyAll: false,
-      filterOption: filter,
-    );
-    if (!mounted) {
-      return;
-    }
-    if (albums.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text('未检测到可用相册。'),
-        ),
-      );
-      return;
-    }
-
-    final albumSummaries = <_AlbumSelectionItem>[];
-    for (final album in albums) {
-      // 🌟 排除本应用的内部输出目录，不让用户扫描它们
-      if (album.name.contains('StoryExports') ||
-          album.name.contains('故事导出') ||
-          album.id.contains('StoryExports')) {
-        debugPrint('📁 已过滤输出目录: ${album.name}');
-        continue;
-      }
-      albumSummaries.add(
-        _AlbumSelectionItem(
-          id: album.id,
-          name: album.name,
-          album: album,
-          assetCount: await album.assetCountAsync,
-        ),
-      );
-    }
-
-    final snapshot = await _albumSelectionPreferenceService.loadSelection();
-    var useAllAlbums = snapshot.useAllAlbums;
-    final selectedIds = snapshot.selectedAlbumIds.toSet();
+    var snapshot = await MediaAccessGrantService.instance.loadSnapshot();
 
     await showModalBottomSheet<void>(
       context: context,
@@ -235,56 +220,92 @@ class _ProfilePageState extends State<ProfilePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '扫描相册范围',
+                      '授权媒体来源',
                       style: Theme.of(context).textTheme.headlineSmall
                           ?.copyWith(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 12),
-                    const Text(
-                      '只扫描你选定的相册。开启“全部相册”将恢复默认扫描策略。',
-                    ),
+                    const Text('默认不访问系统相册。只有你在系统界面选择的照片、视频或目录会进入扫描队列。'),
                     const SizedBox(height: 16),
-                    SwitchListTile(
+                    ListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('使用全部相册'),
-                      subtitle: const Text('关闭后仅扫描勾选的相册'),
-                      value: useAllAlbums,
-                      onChanged: (value) {
-                        setSheetState(() {
-                          useAllAlbums = value;
-                        });
+                      leading: const Icon(Icons.add_photo_alternate_outlined),
+                      title: const Text('选择照片/视频'),
+                      subtitle: Text(
+                        '已授权 ${snapshot.selectedAssetIds.length + snapshot.selectedFilePaths.length} 个媒体',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () async {
+                        final result = await MediaAccessGrantService.instance
+                            .pickMedia();
+                        snapshot = await MediaAccessGrantService.instance
+                            .loadSnapshot();
+                        setSheetState(() {});
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            behavior: SnackBarBehavior.floating,
+                            content: Text(
+                              '新增 ${result.addedAssetIds} 个媒体，当前共 ${result.totalSelectedAssetIds} 个',
+                            ),
+                          ),
+                        );
                       },
                     ),
-                    const Divider(height: 24),
-                    Flexible(
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: albumSummaries.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                          final album = albumSummaries[index];
-                          final isSelected = selectedIds.contains(album.id);
-                          return CheckboxListTile(
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(album.name),
-                            subtitle: Text('${album.assetCount} 张'),
-                            value: useAllAlbums ? true : isSelected,
-                            onChanged: useAllAlbums
-                                ? null
-                                : (checked) {
-                                    setSheetState(() {
-                                      if (checked == true) {
-                                        selectedIds.add(album.id);
-                                      } else {
-                                        selectedIds.remove(album.id);
-                                      }
-                                    });
-                                  },
-                          );
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.photo_library_outlined),
+                      title: const Text('重新管理部分照片访问'),
+                      subtitle: const Text('调用系统受限相册管理界面'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () async {
+                        await MediaAccessGrantService.instance
+                            .presentLimitedLibraryPicker();
+                        snapshot = await MediaAccessGrantService.instance
+                            .loadSnapshot();
+                        setSheetState(() {});
+                      },
+                    ),
+                    if (Platform.isAndroid)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.create_new_folder_outlined),
+                        title: const Text('添加授权文件夹'),
+                        subtitle: Text(
+                          '已授权 ${snapshot.androidTreeUris.length} 个目录',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () async {
+                          await MediaAccessGrantService.instance
+                              .requestAndroidDirectoryGrant();
+                          snapshot = await MediaAccessGrantService.instance
+                              .loadSnapshot();
+                          setSheetState(() {});
                         },
                       ),
-                    ),
+                    if (snapshot.androidTreeUris.isNotEmpty)
+                      const Divider(height: 24),
+                    for (final uri in snapshot.androidTreeUris)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.folder_open_outlined),
+                        title: Text(
+                          uri,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () async {
+                            await MediaAccessGrantService.instance
+                                .removeAndroidDirectoryGrant(uri);
+                            snapshot = await MediaAccessGrantService.instance
+                                .loadSnapshot();
+                            setSheetState(() {});
+                          },
+                        ),
+                      ),
                     const SizedBox(height: 20),
                     Row(
                       children: [
@@ -295,11 +316,6 @@ class _ProfilePageState extends State<ProfilePage> {
                         const Spacer(),
                         FilledButton(
                           onPressed: () async {
-                            await _albumSelectionPreferenceService.saveSelection(
-                              useAllAlbums: useAllAlbums,
-                              selectedAlbumIds:
-                                  selectedIds.toList(growable: false),
-                            );
                             if (!context.mounted) {
                               return;
                             }
@@ -323,7 +339,12 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _showModelTypeSettings() async {
     await _backendPreferenceService.initialize();
-    _autoResumeEnabled = await AIService().getAutoResumePreference();
+    var aiSettings = await AppAiSettingsService.instance.load();
+    final iosContinuedProcessingSupported =
+        !Platform.isIOS || _iosMajorVersion() >= 26;
+    if (Platform.isIOS && !iosContinuedProcessingSupported) {
+      aiSettings = aiSettings.copyWith(iosContinuedProcessingEnabled: false);
+    }
     if (!mounted) {
       return;
     }
@@ -370,11 +391,6 @@ class _ProfilePageState extends State<ProfilePage> {
                             label: Text('MobileCLIP2 ONNX'),
                             icon: Icon(Icons.auto_awesome_outlined),
                           ),
-                          ButtonSegment<MobileClipBackend>(
-                            value: MobileClipBackend.ncnn,
-                            label: Text('NCNN'),
-                            icon: Icon(Icons.flash_on_outlined),
-                          ),
                         ],
                         selected: <MobileClipBackend>{selected},
                         onSelectionChanged: (selection) {
@@ -390,25 +406,119 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       const SizedBox(height: 20),
 
-                      // 自动恢复开关
                       Divider(color: Colors.grey[300]),
                       const SizedBox(height: 12),
                       Text(
-                        '启动行为',
+                        '运行能力',
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                       const SizedBox(height: 10),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('启动时自动恢复'),
-                        subtitle: const Text('应用启动时自动继续未完成的 AI 打标任务'),
-                        value: _autoResumeEnabled,
+                        title: const Text('OCR 文字识别'),
+                        subtitle: const Text('只在你手动添加的分析任务中按需运行'),
+                        value: aiSettings.ocrEnabled,
                         onChanged: (value) {
                           setSheetState(() {
-                            _autoResumeEnabled = value;
+                            aiSettings = aiSettings.copyWith(ocrEnabled: value);
                           });
                         },
                       ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('人脸聚类与表情分析'),
+                        subtitle: const Text('只随同一套图片分析任务执行'),
+                        value: aiSettings.faceAnalysisEnabled,
+                        onChanged: (value) {
+                          setSheetState(() {
+                            aiSettings = aiSettings.copyWith(
+                              faceAnalysisEnabled: value,
+                            );
+                          });
+                        },
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('允许引入视频和动态照片'),
+                        subtitle: const Text('开启后选择器和后续分析允许包含视频资源'),
+                        value: aiSettings.includeVideos,
+                        onChanged: (value) {
+                          setSheetState(() {
+                            aiSettings = aiSettings.copyWith(
+                              includeVideos: value,
+                            );
+                          });
+                        },
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('MobileViClip 视频标签'),
+                        subtitle: const Text(
+                          '模型资产可用时用于视频、Live Photo 和 motion 内容',
+                        ),
+                        value: aiSettings.mobileViClipEnabled,
+                        onChanged: (value) {
+                          setSheetState(() {
+                            aiSettings = aiSettings.copyWith(
+                              mobileViClipEnabled: value,
+                            );
+                          });
+                        },
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('本地 VLM 生成描述'),
+                        subtitle: const Text('用于优先生成照片/视频描述和视频脚本文案'),
+                        value: aiSettings.localVlmDescriptionEnabled,
+                        onChanged: (value) {
+                          setSheetState(() {
+                            aiSettings = aiSettings.copyWith(
+                              localVlmDescriptionEnabled: value,
+                            );
+                          });
+                        },
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('后台常驻分析服务'),
+                        subtitle: Text(
+                          Platform.isIOS
+                              ? '仅 iOS 26+ 支持，不支持时无法开启'
+                              : '仅在你允许后以前台服务处理手动添加的任务',
+                        ),
+                        value: Platform.isIOS
+                            ? aiSettings.iosContinuedProcessingEnabled
+                            : aiSettings.androidForegroundServiceEnabled,
+                        onChanged:
+                            Platform.isIOS && !iosContinuedProcessingSupported
+                            ? null
+                            : (value) {
+                                setSheetState(() {
+                                  aiSettings = Platform.isIOS
+                                      ? aiSettings.copyWith(
+                                          iosContinuedProcessingEnabled: value,
+                                        )
+                                      : aiSettings.copyWith(
+                                          androidForegroundServiceEnabled:
+                                              value,
+                                        );
+                                });
+                              },
+                      ),
+                      if (Platform.isAndroid)
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('请求取消电池优化限制'),
+                          subtitle: const Text('开启后会引导到系统设置，由用户明确授权'),
+                          value: aiSettings.requestUnrestrictedBatteryEnabled,
+                          onChanged: (value) {
+                            setSheetState(() {
+                              aiSettings = aiSettings.copyWith(
+                                requestUnrestrictedBatteryEnabled: value,
+                              );
+                            });
+                          },
+                        ),
                       const SizedBox(height: 6),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -431,9 +541,14 @@ class _ProfilePageState extends State<ProfilePage> {
                             onPressed: () async {
                               await _backendPreferenceService
                                   .setSelectedBackend(selected);
-                              await AIService().setAutoResume(
-                                _autoResumeEnabled,
+                              await AppAiSettingsService.instance.save(
+                                aiSettings,
                               );
+                              if (aiSettings
+                                  .requestUnrestrictedBatteryEnabled) {
+                                await MediaAccessGrantService.instance
+                                    .requestBatteryOptimizationSettings();
+                              }
                               if (!context.mounted) {
                                 return;
                               }
@@ -460,9 +575,7 @@ class _ProfilePageState extends State<ProfilePage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
-        content: Text(
-          '已设置模型类型为 ${latest.label}，自动恢复 ${_autoResumeEnabled ? '已启用' : '已禁用'}',
-        ),
+        content: Text('已保存 ${latest.label} 与运行时 AI 设置'),
       ),
     );
   }
@@ -471,7 +584,7 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _showCacheManagement() async {
     // 获取缓存统计信息
     final cacheStats = await VideoCacheService.instance.getCacheStats();
-    
+
     showDialog(
       context: context,
       builder: (context) {
@@ -493,7 +606,10 @@ class _ProfilePageState extends State<ProfilePage> {
                 const SizedBox(height: 16),
                 const Text(
                   '注意:',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.orange,
+                  ),
                 ),
                 const Text(
                   '• 清理缓存会删除所有缓存的视频文件\n'
@@ -547,12 +663,12 @@ class _ProfilePageState extends State<ProfilePage> {
     final confirmed = await _showConfirmationDialog(
       '清理缓存',
       '确定要清理所有缓存文件吗？\n\n'
-      '这将删除所有缓存的视频文件，但不会影响已导出的视频。\n'
-      '下次导出相同内容时需要重新生成视频。',
+          '这将删除所有缓存的视频文件，但不会影响已导出的视频。\n'
+          '下次导出相同内容时需要重新生成视频。',
     );
-    
+
     if (!confirmed) return;
-    
+
     try {
       await VideoCacheService.instance.clearAllCache();
       if (mounted) {
@@ -566,10 +682,7 @@ class _ProfilePageState extends State<ProfilePage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ 清理失败: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('❌ 清理失败: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -580,18 +693,18 @@ class _ProfilePageState extends State<ProfilePage> {
     final confirmed = await _showConfirmationDialog(
       '清理全部',
       '确定要清理所有缓存和导出文件吗？\n\n'
-      '这将删除：\n'
-      '• 所有缓存的视频文件\n'
-      '• 所有已导出的视频文件\n\n'
-      '这个操作不可恢复！',
+          '这将删除：\n'
+          '• 所有缓存的视频文件\n'
+          '• 所有已导出的视频文件\n\n'
+          '这个操作不可恢复！',
     );
-    
+
     if (!confirmed) return;
-    
+
     try {
       // 清理缓存
       await VideoCacheService.instance.clearAllCache();
-      
+
       // 清理导出目录
       final exportsDir = await VideoCacheService.instance.getExportsDirectory();
       if (await exportsDir.exists()) {
@@ -599,7 +712,7 @@ class _ProfilePageState extends State<ProfilePage> {
         // 重新创建空目录
         await exportsDir.create(recursive: true);
       }
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -611,10 +724,7 @@ class _ProfilePageState extends State<ProfilePage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ 清理失败: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('❌ 清理失败: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -642,7 +752,7 @@ class _ProfilePageState extends State<ProfilePage> {
         );
       },
     );
-    
+
     return result ?? false;
   }
 
@@ -830,7 +940,7 @@ class _ProfilePageState extends State<ProfilePage> {
           _buildSettingsTile(
             context,
             Icons.folder_copy_outlined,
-            '扫描相册范围',
+            '授权媒体来源',
             _albumSelectionSummary,
             onTap: _showAlbumSelectionSettings,
           ),
@@ -901,9 +1011,7 @@ class _ProfilePageState extends State<ProfilePage> {
                             ListTile(
                               leading: const Icon(Icons.science_outlined),
                               title: const Text('MobileCLIP Vector Probe'),
-                              subtitle: const Text(
-                                '检查示例图片在手机端 ONNX / NCNN 的向量',
-                              ),
+                              subtitle: const Text('检查示例图片在手机端 ONNX 的向量'),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () {
                                 Navigator.of(context).push(
@@ -971,7 +1079,7 @@ class _ProfilePageState extends State<ProfilePage> {
           //   context,
           //   Icons.science_outlined,
           //   'MobileCLIP Benchmark',
-          //   '对比 ONNX 基线与未来 ncnn 接入',
+          //   '对比 ONNX 基线性能',
           //   onTap: () {
           //     Navigator.of(context).push(
           //       MaterialPageRoute<void>(
@@ -984,7 +1092,7 @@ class _ProfilePageState extends State<ProfilePage> {
           //   context,
           //   Icons.analytics_outlined,
           //   'MobileCLIP Vector Probe',
-          //   '检查指定图片在手机端 ONNX / NCNN 的向量',
+          //   '检查指定图片在手机端 ONNX 的向量',
           //   onTap: () {
           //     Navigator.of(context).push(
           //       MaterialPageRoute<void>(
@@ -1032,18 +1140,9 @@ class _ProfilePageState extends State<ProfilePage> {
       onTap: onTap,
     );
   }
-}
 
-class _AlbumSelectionItem {
-  const _AlbumSelectionItem({
-    required this.id,
-    required this.name,
-    required this.album,
-    required this.assetCount,
-  });
-
-  final String id;
-  final String name;
-  final AssetPathEntity album;
-  final int assetCount;
+  int _iosMajorVersion() {
+    final match = RegExp(r'(\d+)').firstMatch(Platform.operatingSystemVersion);
+    return int.tryParse(match?.group(1) ?? '') ?? 0;
+  }
 }

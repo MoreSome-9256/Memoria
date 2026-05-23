@@ -19,7 +19,10 @@ import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../storage/vector_index/vector_index_constants.dart';
 import '../utils/ai_score_helper.dart';
+import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
+import 'app_ai_settings_service.dart';
+import 'ai_background_task_service.dart';
 import 'ai_progress_notification_service.dart';
 import 'event_service.dart';
 import 'face_pipeline_service.dart';
@@ -107,8 +110,6 @@ class AIService {
       _AnalysisAuxiliaryConfig.resolve(
         strategyLabel: _analysisAuxiliaryStrategyOverride,
       );
-
-  bool _autoResumeEnabled = false;
 
   bool _isAnalyzing = false;
   bool _pauseRequested = false;

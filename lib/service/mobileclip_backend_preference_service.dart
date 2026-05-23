@@ -3,29 +3,25 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum MobileClipBackend { mobileclip2Onnx, ncnn }
+enum MobileClipBackend { mobileclip2Onnx }
 
 extension MobileClipBackendX on MobileClipBackend {
   String get storageValue => switch (this) {
     MobileClipBackend.mobileclip2Onnx => 'mobileclip2_onnx',
-    MobileClipBackend.ncnn => 'ncnn',
   };
 
   String get label => switch (this) {
     MobileClipBackend.mobileclip2Onnx => 'MobileCLIP2 ONNX',
-    MobileClipBackend.ncnn => 'NCNN',
   };
 
   String get description => switch (this) {
     MobileClipBackend.mobileclip2Onnx =>
       'Android 优先使用 NNAPI hardware，失败时回退到 XNNPACK/CPU',
-    MobileClipBackend.ncnn => '兼容性优先，推理更快但模型更弱',
   };
 
   static MobileClipBackend fromStorageValue(String? value) {
     return switch (value) {
       'mobileclip2_onnx' => MobileClipBackend.mobileclip2Onnx,
-      'ncnn' => MobileClipBackend.ncnn,
       _ => MobileClipBackend.mobileclip2Onnx,
     };
   }

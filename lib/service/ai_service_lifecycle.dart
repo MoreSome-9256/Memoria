@@ -12,7 +12,6 @@ extension AIServiceLifecycle on AIService {
   }
 
   Future<void> setAutoResume(bool enabled) async {
-    _autoResumeEnabled = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(AIService._autoResumeKey, enabled);
   }
@@ -72,7 +71,7 @@ extension AIServiceLifecycle on AIService {
 
   Future<void> loadAutoResumePreference() async {
     final prefs = await SharedPreferences.getInstance();
-    _autoResumeEnabled = prefs.getBool(AIService._autoResumeKey) ?? false;
+    await prefs.remove(AIService._autoResumeKey);
   }
 
   void markJunkCandidatesAsKept(Iterable<int> photoIds) {
@@ -205,10 +204,10 @@ extension AIServiceLifecycle on AIService {
       return;
     }
 
-    await loadAutoResumePreference();
-
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final pendingQ = photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
+    final pendingQ = photoBox
+        .query(PhotoEntity_.isAiAnalyzed.equals(false))
+        .build();
     final pending = pendingQ.count();
     pendingQ.close();
     if (pending <= 0) {
@@ -227,34 +226,14 @@ extension AIServiceLifecycle on AIService {
       return;
     }
 
-    // 用户关闭自动恢复时，启动后只展示可手动恢复的暂停态，不自动续跑。
-    if (!_autoResumeEnabled) {
-      debugPrint('⏸️ 检测到 $pending 张未完成照片，但自动恢复已禁用，显示暂停状态');
-      _progressNotifier.value = AIAnalysisProgress.paused(
-        total: pending,
-        completed: restoredCompleted,
-        failed: runtimeSnapshot.failed,
-        currentStep: runtimeActive ? '检测到上次任务，自动恢复已关闭，点击手动继续' : '已暂停 - 点击手动启动',
-        elapsedMs: 0,
-      );
-      return;
-    }
-
-    if (runtimeActive) {
-      _progressNotifier.value = AIAnalysisProgress.running(
-        total: pending,
-        completed: restoredCompleted,
-        failed: runtimeSnapshot.failed,
-        currentStep: '检测到上次打标任务，正在重连并恢复…',
-        elapsedMs: 0,
-      );
-      debugPrint('🔁 检测到历史运行态(runtime=$runtimeActive)，尝试恢复 AI 打标');
-      unawaited(_runFullAiPipelineInBackground());
-      return;
-    }
-
-    debugPrint('🔁 检测到 $pending 张未完成照片，自动续跑 AI 打标任务');
-    unawaited(_runFullAiPipelineInBackground());
+    debugPrint('检测到 $pending 张未完成照片，等待用户手动继续');
+    _progressNotifier.value = AIAnalysisProgress.paused(
+      total: pending,
+      completed: restoredCompleted,
+      failed: runtimeSnapshot.failed,
+      currentStep: runtimeActive ? '检测到上次任务，点击继续后恢复' : '有未完成任务，点击继续开始',
+      elapsedMs: 0,
+    );
   }
 
   Future<void> _runFullAiPipelineInBackground() async {
@@ -332,9 +311,7 @@ extension AIServiceLifecycle on AIService {
     return !_stopRequested;
   }
 
-  Future<void> _waitForCaptionTasksToDrain({
-    required Duration timeout,
-  }) async {
+  Future<void> _waitForCaptionTasksToDrain({required Duration timeout}) async {
     final deadline = DateTime.now().add(timeout);
     while (_activeCaptionTasks > 0) {
       if (DateTime.now().isAfter(deadline)) {

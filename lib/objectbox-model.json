@@ -808,7 +808,7 @@
     },
     {
       "id": "11:1699499076567489273",
-      "lastPropertyId": "19:8687408424089195971",
+      "lastPropertyId": "20:6949953431353183473",
       "name": "StoryEntity",
       "properties": [
         {
@@ -907,6 +907,11 @@
         {
           "id": "19:8687408424089195971",
           "name": "videoParamsJson",
+          "type": 9
+        },
+        {
+          "id": "20:6949953431353183473",
+          "name": "originalMusicHash",
           "type": 9
         }
       ],

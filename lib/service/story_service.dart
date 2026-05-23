@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:zstandard/zstandard.dart';
 
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/digital_album_book_entity.dart';
@@ -490,12 +491,31 @@ class StoryService {
     }
   }
 
+  /// zstd 压缩二进制数据
+  static Future<Uint8List?> zstdCompress(Uint8List raw) async =>
+      raw.compress(compressionLevel: 3);
+
+  /// zstd 解压二进制数据。若开头不是 zstd magic 字节则原样返回（向后兼容）
+  static Future<Uint8List> zstdDecompress(Uint8List compressed) async {
+    if (compressed.length < 4) return compressed;
+    // zstd magic: 0x28, 0xB5, 0x2F, 0xFD
+    if (compressed[0] != 0x28 ||
+        compressed[1] != 0xB5 ||
+        compressed[2] != 0x2F ||
+        compressed[3] != 0xFD) {
+      return compressed; // 非 zstd 格式，视为未压缩
+    }
+    return (await compressed.decompress()) ?? compressed;
+  }
+
   /// 从数据库固化的音乐二进制数据恢复出缓存文件
   /// 使用 SHA256 命名以去重，同一音乐文件只写一次磁盘
   static Future<String?> resolveMusicFile(StoryEntity story) async {
-    final bytes = story.customMusicBytes;
-    if (bytes != null && bytes.isNotEmpty) {
-      final hash = sha256.convert(bytes).toString();
+    final compressed = story.customMusicBytes;
+    if (compressed != null && compressed.isNotEmpty) {
+      final raw = await zstdDecompress(compressed);
+      final hash = story.originalMusicHash ??
+          sha256.convert(raw).toString();
       final tempDir = await getTemporaryDirectory();
       final cacheDir = Directory('${tempDir.path}/MusicCache');
       final cachedFile = File('${cacheDir.path}/$hash.mp3');
@@ -503,7 +523,7 @@ class StoryService {
         return cachedFile.path;
       }
       await cacheDir.create(recursive: true);
-      await cachedFile.writeAsBytes(bytes);
+      await cachedFile.writeAsBytes(raw);
       return cachedFile.path;
     }
     if (story.customMusicPath != null &&

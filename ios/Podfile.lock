@@ -242,6 +242,8 @@ PODS:
   - video_player_avfoundation (0.0.1):
     - Flutter
     - FlutterMacOS
+  - zstandard_ios (0.0.1):
+    - Flutter
 
 DEPENDENCIES:
   - amplify_auth_cognito (from `.symlinks/plugins/amplify_auth_cognito/darwin`)
@@ -273,6 +275,7 @@ DEPENDENCIES:
   - sqflite_darwin (from `.symlinks/plugins/sqflite_darwin/darwin`)
   - tflite_flutter (from `.symlinks/plugins/tflite_flutter/ios`)
   - video_player_avfoundation (from `.symlinks/plugins/video_player_avfoundation/darwin`)
+  - zstandard_ios (from `.symlinks/plugins/zstandard_ios/ios`)
 
 SPEC REPOS:
   trunk:
@@ -366,6 +369,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/tflite_flutter/ios"
   video_player_avfoundation:
     :path: ".symlinks/plugins/video_player_avfoundation/darwin"
+  zstandard_ios:
+    :path: ".symlinks/plugins/zstandard_ios/ios"
 
 SPEC CHECKSUMS:
   amplify_auth_cognito: a5d9cb77abfbe05e3501ad0c45dddc81503e7074
@@ -427,6 +432,7 @@ SPEC CHECKSUMS:
   TensorFlowLiteSwift: 3a4928286e9e35bdd3e17970f48e53c80d25e793
   tflite_flutter: 64b192e11352fe36943ab6656e1d49207f1a5595
   video_player_avfoundation: 3453f792138786248960ca029747fcd9f318ef52
+  zstandard_ios: b20c54862b56c31c7a47074b79fcf181780268b0
 
 PODFILE CHECKSUM: c44551d04b36de650c091a5e3e0b4597278469bc
 

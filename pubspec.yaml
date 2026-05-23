@@ -74,13 +74,7 @@ dependencies:
   video_player: ^2.11.1
   open_file_manager: ^2.0.1
   music_feature_analyzer: ^1.0.3
-#  runanywhere: ^0.16.0
-#  runanywhere_onnx: ^0.16.0      # STT, TTS, VAD
-#  runanywhere_llamacpp: ^0.16.0  # LLM text generation
-
-#dependency_overrides:
-#  sqflite_android: 2.4.1
-
+  zstandard: ^1.5.0
 dev_dependencies:
   amplify_lints: ^3.0.0
   build_runner: ^2.15.0

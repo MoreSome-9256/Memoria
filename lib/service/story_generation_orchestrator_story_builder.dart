@@ -134,6 +134,16 @@ extension _StoryGenerationOrchestratorStoryBuilder
           ..isHorizontal = request.isHorizontal
           ..targetPlatform = request.targetPlatform;
 
+    // 在故事首次创建时固化音乐二进制到数据库（zstd 压缩）
+    if (request.customMusicPath != null && request.customMusicPath!.trim().isNotEmpty) {
+      final rawBytes = await StoryService.loadMusicBytes(request.customMusicPath);
+      if (rawBytes != null && rawBytes.isNotEmpty) {
+        story.originalMusicHash = sha256.convert(rawBytes).toString();
+        story.customMusicBytes = await StoryService.zstdCompress(rawBytes);
+        story.customMusicPath = request.customMusicPath;
+      }
+    }
+
     final store = ObjectBoxService().store;
     store.runInTransaction(TxMode.write, () {
       // 删除旧的自动保存记录（只保留最新一个）

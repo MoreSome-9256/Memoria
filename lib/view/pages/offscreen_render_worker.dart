@@ -1047,9 +1047,6 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
             story.cachedVideoPath = finalPath;
             story.cachedVideoKey = _exportCacheKey;
             story.customMusicPath = widget.customMusicPath;
-            story.customMusicBytes = await StoryService.loadMusicBytes(
-              widget.customMusicPath,
-            );
             story.dynamicBeatDataJson = widget.dynamicBeatData != null
                 ? jsonEncode(widget.dynamicBeatData)
                 : null;

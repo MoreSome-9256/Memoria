@@ -33,7 +33,8 @@ class StoryEntity {
   String? cachedVideoKey; // 视频缓存指纹，用于 VideoCacheService 查找
   String? customMusicPath; // 自定义音乐文件路径（备用，不依赖其持久性）
   @Property(type: PropertyType.byteVector)
-  Uint8List? customMusicBytes; // 音乐文件二进制，固化在数据库避免被清理
+  Uint8List? customMusicBytes; // 音乐文件二进制（zstd 压缩后），固化在数据库避免被清理
+  String? originalMusicHash; // 压缩前原始二进制的 SHA256，用于缓存文件去重
   String? dynamicBeatDataJson; // 音乐节拍数据（JSON）
   String? videoParamsJson; // 视频渲染参数（JSON，含文字样式、特效等）
 

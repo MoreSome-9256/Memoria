@@ -4,12 +4,14 @@ import 'dart:async';
 
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
+import 'package:photo_album/service/ai_settings_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/travel_memory_detector.dart';
 import 'package:photo_album/service/analysis/analysis_manager.dart';
 import 'package:photo_album/service/system_photo_access_service.dart';
+import 'package:photo_album/utils/ocr_policy.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 import 'package:photo_manager/photo_manager.dart';
 
@@ -525,11 +527,15 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _showModelTypeSettings() async {
     await _backendPreferenceService.initialize();
     _autoResumeEnabled = await AIService().getAutoResumePreference();
+    final ocrEnabled = await AiSettingsService().isOcrEnabled();
+    final faceEnabled = await AiSettingsService().isFaceDetectionEnabled();
     if (!mounted) {
       return;
     }
 
     var selected = _backendPreferenceService.backendListenable.value;
+    var localOcrEnabled = ocrEnabled;
+    var localFaceEnabled = faceEnabled;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -591,7 +597,39 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       const SizedBox(height: 20),
 
-                      // 自动恢复开关
+                      // 相册 AI 模型开关
+                      Divider(color: Colors.grey[300]),
+                      const SizedBox(height: 12),
+                      Text(
+                        '相册 AI 模型',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 10),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('OCR 文字识别'),
+                        subtitle: const Text('检测图片中的文字并生成标签，关闭后跳过 OCR'),
+                        value: localOcrEnabled,
+                        onChanged: (value) {
+                          setSheetState(() {
+                            localOcrEnabled = value;
+                          });
+                        },
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('人脸检测'),
+                        subtitle: const Text('检测照片中的人脸用于聚类，关闭后跳过人脸检测'),
+                        value: localFaceEnabled,
+                        onChanged: (value) {
+                          setSheetState(() {
+                            localFaceEnabled = value;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // 启动行为
                       Divider(color: Colors.grey[300]),
                       const SizedBox(height: 12),
                       Text(
@@ -635,6 +673,9 @@ class _ProfilePageState extends State<ProfilePage> {
                               await AIService().setAutoResume(
                                 _autoResumeEnabled,
                               );
+                              await OcrPolicy.setEnabled(localOcrEnabled);
+                              await AiSettingsService()
+                                  .setFaceDetectionEnabled(localFaceEnabled);
                               if (!context.mounted) {
                                 return;
                               }
@@ -662,7 +703,7 @@ class _ProfilePageState extends State<ProfilePage> {
       SnackBar(
         behavior: SnackBarBehavior.floating,
         content: Text(
-          '已设置模型类型为 ${latest.label}，自动恢复 ${_autoResumeEnabled ? '已启用' : '已禁用'}',
+          '已设置模型类型为 ${latest.label}，OCR ${localOcrEnabled ? '已启用' : '已禁用'}，人脸检测 ${localFaceEnabled ? '已启用' : '已禁用'}，自动恢复 ${_autoResumeEnabled ? '已启用' : '已禁用'}',
         ),
       ),
     );

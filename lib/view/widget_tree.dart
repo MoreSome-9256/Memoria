@@ -20,17 +20,16 @@ class WidgetTree extends StatefulWidget {
 }
 
 class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
-  int _currentIndex = 0; // 默认一打开显示 0（首页）
-  bool _progressBannerHidden = false; // 进度条隐藏状态
+  int _currentIndex = 0;
+  bool _progressBannerHidden = false;
   int _hiddenRefreshProgressRunId = -1;
 
-  // 🌟 去掉 CreatePage 这个"伪占位符"，因为现在它是被 push 出来的
   final List<Widget> _pages = const [
-    HomePage(), // 0: 首页
-    AlbumPage(), // 1: 相册
-    SizedBox(), // 2: 占位用的空盒子，永远不会被渲染，因为我们拦截了 2 的点击
-    ThemeClustersPage(), // 3: 主题聚类
-    ProfilePage(), // 4: 我的
+    HomePage(),
+    AlbumPage(),
+    SizedBox(),
+    ThemeClustersPage(),
+    ProfilePage(),
   ];
 
   @override

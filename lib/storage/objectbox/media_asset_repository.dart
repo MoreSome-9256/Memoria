@@ -12,6 +12,25 @@ class MediaAssetRepository {
 
   bool get isReady => _box != null;
 
+  bool get isEmpty {
+    final box = _box;
+    if (box == null) return true;
+    return box.count() == 0;
+  }
+
+  int countPending() {
+    final box = _box;
+    if (box == null) return 0;
+    final pending = MediaAssetEntity_.status.equals(MediaAssetStatus.pending.index);
+    final dirty = MediaAssetEntity_.status.equals(MediaAssetStatus.dirty.index);
+    final query = box.query(pending.or(dirty)).build();
+    try {
+      return query.count();
+    } finally {
+      query.close();
+    }
+  }
+
   List<MediaAssetEntity> getByAssetIds(Iterable<String> assetIds) {
     final box = _box;
     final keys = assetIds.toSet().toList(growable: false);

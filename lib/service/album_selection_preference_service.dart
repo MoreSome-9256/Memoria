@@ -19,10 +19,10 @@ class AlbumSelectionPreferenceService {
 
   Future<AlbumSelectionSnapshot> loadSelection() async {
     final prefs = await SharedPreferences.getInstance();
-    final useAll = prefs.getBool(_useAllKey) ?? true;
+    final useAll = prefs.getBool(_useAllKey) ?? false;
     final selectedIds = prefs.getStringList(_selectedIdsKey) ?? const <String>[];
     return AlbumSelectionSnapshot(
-      useAllAlbums: useAll || selectedIds.isEmpty,
+      useAllAlbums: useAll,
       selectedAlbumIds: selectedIds,
     );
   }

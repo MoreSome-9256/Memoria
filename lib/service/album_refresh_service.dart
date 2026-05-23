@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'ai_service.dart';
 import 'event_service.dart';
+import '../storage/objectbox/media_asset_repository.dart';
 import 'media_asset_sync_service.dart';
 import 'media_embedding_index_service.dart';
 import 'photo_service.dart';
@@ -320,19 +321,25 @@ class AlbumRefreshService {
     unawaited(
       Future<void>(() async {
         try {
-          final mediaSummary = await MediaAssetSyncService().reconcile(
-            pageSize: math.max(100, math.min(300, batchSize)),
-          );
-          debugPrint(
-            '🧭 ObjectBox media reconcile: discovered=${mediaSummary.discovered} '
-            'upsert=${mediaSummary.insertedOrUpdated} removed=${mediaSummary.removed} '
-            'limited=${mediaSummary.limitedAccess}',
-          );
-          await MediaEmbeddingIndexService().encodePending(
-            maxConcurrency: 2,
-            batchSize: batchSize,
-            inputSize: 336,
-          );
+          final repo = MediaAssetRepository();
+          if (repo.isEmpty) {
+            final mediaSummary = await MediaAssetSyncService().reconcile(
+              pageSize: math.max(100, math.min(300, batchSize)),
+            );
+            debugPrint(
+              '🧭 ObjectBox media first reconcile: discovered=${mediaSummary.discovered} '
+              'upsert=${mediaSummary.insertedOrUpdated} removed=${mediaSummary.removed} '
+              'limited=${mediaSummary.limitedAccess}',
+            );
+          }
+          final pending = repo.countPending();
+          if (pending > 0) {
+            await MediaEmbeddingIndexService().encodePending(
+              maxConcurrency: 2,
+              batchSize: batchSize,
+              inputSize: 336,
+            );
+          }
         } catch (error) {
           debugPrint('Media asset index refresh skipped: $error');
         }

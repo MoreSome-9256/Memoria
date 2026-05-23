@@ -28,20 +28,21 @@ class _ExistingFaceSnapshot {
 }
 
 class FacePipelineService {
-  FacePipelineService({
-    FaceEmbeddingService? embeddingService,
-    bool persistDebugCrops = false,
-    bool writeEmbeddingToIsar = true,
-  })  : _embeddingService =
-            embeddingService ??
-            OnnxFaceEmbeddingService(
-              fallbackService: MobileClipFaceEmbeddingService(),
-            ),
-        _persistDebugCrops = persistDebugCrops,
-        _writeEmbeddingToIsar = writeEmbeddingToIsar;
+  FacePipelineService({FaceEmbeddingService? embeddingService})
+    : _embeddingService =
+          embeddingService ??
+          OnnxFaceEmbeddingService(
+            fallbackService: MobileClipFaceEmbeddingService(),
+          );
 
-  final bool _persistDebugCrops;
-  final bool _writeEmbeddingToIsar;
+  static const bool _persistDebugCrops = bool.fromEnvironment(
+    'FACE_DEBUG_CROPS',
+    defaultValue: false,
+  );
+  static const bool _writeEmbeddingToIsar = bool.fromEnvironment(
+    'FACE_WRITE_EMBEDDING_TO_ISAR',
+    defaultValue: true,
+  );
 
   final FaceEmbeddingService _embeddingService;
   final FaceEmbeddingIndexRepository _faceEmbeddingIndexRepository =

@@ -165,6 +165,13 @@ class _StructuredStoryPayload {
   }
 }
 
+class _LocalRuntime {
+  const _LocalRuntime({required this.profile, required this.server});
+
+  final OnDeviceInternvlProfile? profile;
+  final OnDeviceInternvlServerStatus? server;
+}
+
 extension on String {
   String ifEmpty(String fallback) => trim().isEmpty ? fallback : this;
 }

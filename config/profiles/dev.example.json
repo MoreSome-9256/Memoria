@@ -19,5 +19,6 @@
   "AUDIO_API_ENDPOINT": "/api/analyze_beats",
   "AI_ANALYSIS_INPUT_STRATEGY": "thumbnail_first",
   "AI_ANALYSIS_AUXILIARY_STRATEGY": "always_compress",
-  "AI_ANALYSIS_THUMBNAIL_TIMEOUT_MS": "120"
+  "AI_ANALYSIS_THUMBNAIL_TIMEOUT_MS": "120",
+  "ENABLE_ML_KIT_OCR": "true"
 }

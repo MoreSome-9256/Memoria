@@ -273,6 +273,17 @@ extension _StoryGenerationOrchestratorStoryBuilder
         '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
   }
 
+  String _formatPayloadMeta(OnDeviceInternvlImagePayload payload) {
+    final hasLatLng = payload.latitude != null && payload.longitude != null;
+    final location = payload.locationName.trim().isEmpty
+        ? '未知地点'
+        : payload.locationName.trim();
+    if (!hasLatLng) {
+      return '${payload.capturedAtIso} · $location';
+    }
+    return '${payload.capturedAtIso} · $location (${payload.latitude!.toStringAsFixed(5)}, ${payload.longitude!.toStringAsFixed(5)})';
+  }
+
   Map<String, dynamic>? _tryParseJsonObject(String rawContent) {
     final direct = _tryDecodeMap(rawContent);
     if (direct != null) {

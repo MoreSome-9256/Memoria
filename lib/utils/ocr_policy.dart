@@ -1,29 +1,23 @@
-import 'package:flutter/foundation.dart';
-import '../service/ai_settings_service.dart';
+/// OCR 策略开关和判断逻辑，用于控制文字识别能力的启用方式。
+
 import 'tag_sanitizer.dart';
 
 class OcrPolicy {
   OcrPolicy._();
 
-  static bool _mlKitEnabled = false;
-
-  static bool get mlKitEnabled => _mlKitEnabled;
-
-  static Future<void> init() async {
-    _mlKitEnabled = await AiSettingsService().isOcrEnabled();
-    debugPrint('🔎 OCR runtime: enabled=$_mlKitEnabled');
-  }
-
-  static Future<void> setEnabled(bool enabled) async {
-    _mlKitEnabled = enabled;
-    await AiSettingsService().setOcrEnabled(enabled);
+  // Disabled by default because noisy OCR fragments were polluting tags,
+  // prompts and summaries more than helping them.
+  // Uses String.fromEnvironment to match --dart-define-from-file JSON string values.
+  static bool get mlKitEnabled {
+    const value = String.fromEnvironment('ENABLE_ML_KIT_OCR', defaultValue: 'false');
+    return value == 'true' || value == '1';
   }
 
   static List<String> effectiveTags(
     Iterable<String>? values, {
     int? maxTags,
   }) {
-    if (!_mlKitEnabled) {
+    if (!mlKitEnabled) {
       return const <String>[];
     }
     return TagSanitizer.sanitizeOcrTags(
@@ -36,7 +30,7 @@ class OcrPolicy {
     String? value, {
     int? maxLength,
   }) {
-    if (!_mlKitEnabled) {
+    if (!mlKitEnabled) {
       return '';
     }
 
@@ -57,7 +51,7 @@ class OcrPolicy {
     int maxTextLength = 36,
     String separator = ' · ',
   }) {
-    if (!_mlKitEnabled) {
+    if (!mlKitEnabled) {
       return null;
     }
 

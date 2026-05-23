@@ -4,14 +4,10 @@ import 'dart:async';
 
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
-import 'package:photo_album/service/ai_settings_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/travel_memory_detector.dart';
-import 'package:photo_album/service/analysis/analysis_manager.dart';
-import 'package:photo_album/service/system_photo_access_service.dart';
-import 'package:photo_album/utils/ocr_policy.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 import 'package:photo_manager/photo_manager.dart';
 
@@ -36,7 +32,7 @@ class _ProfilePageState extends State<ProfilePage> {
   final _albumSelectionPreferenceService = AlbumSelectionPreferenceService();
 
   late bool _autoResumeEnabled;
-  String _albumSelectionSummary = '未选择任何相册，需先设置范围';
+  String _albumSelectionSummary = '使用全部相册';
 
   Future<AuthUser?> _loadUser() async {
     try {
@@ -148,231 +144,27 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _refreshAlbumSelectionSummary() async {
-    final whitelist = await SystemPhotoAccessService().getWhitelistedAlbums();
-    if (!mounted) return;
+    final snapshot = await _albumSelectionPreferenceService.loadSelection();
+    if (!mounted) {
+      return;
+    }
     setState(() {
-      if (whitelist.isNotEmpty) {
-        _albumSelectionSummary = '已授权 ${whitelist.length} 个相册';
+      if (snapshot.useAllAlbums) {
+        _albumSelectionSummary = '使用全部相册';
+      } else if (snapshot.selectedAlbumIds.isEmpty) {
+        _albumSelectionSummary = '未选择相册，需先设置范围';
       } else {
-        _albumSelectionSummary = '未选择任何相册，需先设置范围';
+        _albumSelectionSummary = '已选择 ${snapshot.selectedAlbumIds.length} 个相册';
       }
     });
   }
 
   Future<void> _showAlbumSelectionSettings() async {
-    final access = SystemPhotoAccessService();
-    final whitelist = await access.getWhitelistedAlbums();
-
-    if (!mounted) return;
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setSheetState) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '相册访问权限管理',
-                      style: Theme.of(ctx).textTheme.headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '默认无访问权限。请通过系统选择器授予特定相册或图片的访问权限。',
-                      style: TextStyle(color: Colors.grey, fontSize: 13),
-                    ),
-                    const SizedBox(height: 16),
-                    if (whitelist.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 24),
-                        child: Center(
-                          child: Text(
-                            '尚未授权任何相册\n点击下方按钮添加',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.grey),
-                          ),
-                        ),
-                      )
-                    else
-                      Flexible(
-                        child: ListView.separated(
-                          shrinkWrap: true,
-                          itemCount: whitelist.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (_, i) {
-                            final album = whitelist[i];
-                            return ListTile(
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              title: Text(album['name'] ?? album['id'] ?? ''),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.remove_circle_outline,
-                                    color: Colors.red, size: 20),
-                                onPressed: () async {
-                                  await access.removeAlbumFromWhitelist(
-                                      album['id'] ?? '');
-                                  whitelist.removeAt(i);
-                                  setSheetState(() {});
-                                },
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            icon: const Icon(Icons.photo_library_outlined, size: 18),
-                            label: const Text('从系统选择相册'),
-                            onPressed: () async {
-                              Navigator.pop(ctx);
-                              await _addAlbumViaSystemPicker();
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
-                            label: const Text('选择部分图片'),
-                            onPressed: () async {
-                              Navigator.pop(ctx);
-                              await _addImagesViaSystemPicker();
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        const Spacer(),
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          child: const Text('关闭'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-
-    await _refreshAlbumSelectionSummary();
-  }
-
-  Future<void> _addAlbumViaSystemPicker() async {
-    final access = SystemPhotoAccessService();
-    final hasAccess = await access.requestScopedAccess();
-    if (!hasAccess) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text('需要相册访问权限才能选择相册。'),
-        ),
-      );
-      return;
-    }
-
-    final albums = await PhotoManager.getAssetPathList(
-      type: RequestType.image,
-      onlyAll: false,
-    );
-    if (!mounted || albums.isEmpty) return;
-
-    final selected = await showModalBottomSheet<Map<String, String>>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        final items = albums
-            .where((a) =>
-                !a.name.contains('StoryExports') && !a.name.contains('故事导出'))
-            .toList();
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('选择要添加的相册',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              ),
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: items.length,
-                  itemBuilder: (_, i) => ListTile(
-                    title: Text(items[i].name),
-                    onTap: () =>
-                        Navigator.pop(ctx, {'id': items[i].id, 'name': items[i].name}),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-
-    if (selected != null) {
-      await access.addAlbumToWhitelist(
-          selected['id'] ?? '', selected['name'] ?? '');
-      await _refreshAlbumSelectionSummary();
-    }
-  }
-
-  Future<void> _addImagesViaSystemPicker() async {
-    final images = await SystemPhotoAccessService().pickImagesFromSystem();
-    if (images.isEmpty) return;
-
-    final taskId = await AnalysisManager().enqueueImages(
-      images.map((img) => {
-        'imageId': img.id,
-        'assetId': img.id,
-      }).toList(),
-    );
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        content: Text('已添加 ${images.length} 张图片到分析队列 (${taskId.substring(0, 8)}...)'),
-        action: SnackBarAction(
-          label: '开始分析',
-          onPressed: () => AnalysisManager().startAnalysis(taskId),
-        ),
-      ),
-    );
-  }
-  Future<void> _showAlbumScanScopeSelection() async {
-    final access = SystemPhotoAccessService();
-    final hasAccess = await access.requestScopedAccess();
-    if (!hasAccess) {
-      if (!mounted) return;
+    final permission = await PhotoManager.requestPermissionExtend();
+    if (!permission.isAuth && !permission.hasAccess) {
+      if (!mounted) {
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           behavior: SnackBarBehavior.floating,
@@ -532,15 +324,11 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _showModelTypeSettings() async {
     await _backendPreferenceService.initialize();
     _autoResumeEnabled = await AIService().getAutoResumePreference();
-    final ocrEnabled = await AiSettingsService().isOcrEnabled();
-    final faceEnabled = await AiSettingsService().isFaceDetectionEnabled();
     if (!mounted) {
       return;
     }
 
     var selected = _backendPreferenceService.backendListenable.value;
-    var localOcrEnabled = ocrEnabled;
-    var localFaceEnabled = faceEnabled;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -602,39 +390,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       const SizedBox(height: 20),
 
-                      // 相册 AI 模型开关
-                      Divider(color: Colors.grey[300]),
-                      const SizedBox(height: 12),
-                      Text(
-                        '相册 AI 模型',
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      const SizedBox(height: 10),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('OCR 文字识别'),
-                        subtitle: const Text('检测图片中的文字并生成标签，关闭后跳过 OCR'),
-                        value: localOcrEnabled,
-                        onChanged: (value) {
-                          setSheetState(() {
-                            localOcrEnabled = value;
-                          });
-                        },
-                      ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('人脸检测'),
-                        subtitle: const Text('检测照片中的人脸用于聚类，关闭后跳过人脸检测'),
-                        value: localFaceEnabled,
-                        onChanged: (value) {
-                          setSheetState(() {
-                            localFaceEnabled = value;
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 16),
-
-                      // 启动行为
+                      // 自动恢复开关
                       Divider(color: Colors.grey[300]),
                       const SizedBox(height: 12),
                       Text(
@@ -678,9 +434,6 @@ class _ProfilePageState extends State<ProfilePage> {
                               await AIService().setAutoResume(
                                 _autoResumeEnabled,
                               );
-                              await OcrPolicy.setEnabled(localOcrEnabled);
-                              await AiSettingsService()
-                                  .setFaceDetectionEnabled(localFaceEnabled);
                               if (!context.mounted) {
                                 return;
                               }
@@ -708,7 +461,7 @@ class _ProfilePageState extends State<ProfilePage> {
       SnackBar(
         behavior: SnackBarBehavior.floating,
         content: Text(
-          '已设置模型类型为 ${latest.label}，OCR ${localOcrEnabled ? '已启用' : '已禁用'}，人脸检测 ${localFaceEnabled ? '已启用' : '已禁用'}，自动恢复 ${_autoResumeEnabled ? '已启用' : '已禁用'}',
+          '已设置模型类型为 ${latest.label}，自动恢复 ${_autoResumeEnabled ? '已启用' : '已禁用'}',
         ),
       ),
     );

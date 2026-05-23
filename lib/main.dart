@@ -4,8 +4,9 @@
 /// 初始化绑定、配置 Amplify Cognito、启动 ObjectBox、恢复待处理的 AI
 /// 分析任务，以及根据登录状态在欢迎页和主应用树之间分流。
 ///
-/// 文件里还定义了一个可通过 `--dart-define` 控制的开关：
-/// `MOBILECLIP_VECTOR_PROBE` 会直接进入向量探测页。
+/// 文件里还定义了两个可通过 `--dart-define` 控制的开关：
+/// `MOBILECLIP_VECTOR_PROBE` 会直接进入向量探测页，
+/// `ENABLE_STARTUP_MOBILECLIP_WARMUP` 会在应用启动后延迟预热 MobileCLIP。
 
 import 'dart:async';
 
@@ -15,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/painting.dart';
 import 'package:photo_album/service/amplify_cognito_config.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
+import 'package:photo_album/service/mobileclip_tag_service.dart';
 import 'package:photo_album/service/photo_service.dart';
 import 'package:photo_album/service/ai_progress_notification_service.dart';
 import 'package:photo_album/storage/objectbox/objectbox_service.dart';
@@ -25,6 +27,10 @@ import 'view/widget_tree.dart';
 
 const bool _mobileClipVectorProbeMode = bool.fromEnvironment(
   'MOBILECLIP_VECTOR_PROBE',
+  defaultValue: false,
+);
+const bool _enableStartupMobileClipWarmUp = bool.fromEnvironment(
+  'ENABLE_STARTUP_MOBILECLIP_WARMUP',
   defaultValue: false,
 );
 
@@ -55,9 +61,23 @@ class MyApp extends StatelessWidget {
 
   static final _AppStartupCoordinator _startupCoordinator =
       _AppStartupCoordinator();
+  static bool _mobileClipWarmUpScheduled = false;
+
+  void _scheduleStartupWarmUpIfEnabled() {
+    if (!_enableStartupMobileClipWarmUp || _mobileClipWarmUpScheduled) {
+      return;
+    }
+    _mobileClipWarmUpScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      MobileClipTagService().scheduleWarmUpAtAppStart(
+        initialDelay: const Duration(seconds: 8),
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    _scheduleStartupWarmUpIfEnabled();
     return MaterialApp(
       title: '智能影记',
       debugShowCheckedModeBanner: false,
@@ -115,7 +135,12 @@ class _AppStartupCoordinator {
         );
       }
       await PhotoService().init();
-      await OcrPolicy.init();
+      
+      // 已移到 WidgetTree.initState() 中 defer 执行，不阻塞首屏
+      debugPrint(
+        '🔎 OCR policy: ml_kit_enabled=${OcrPolicy.mlKitEnabled} '
+        '(use --dart-define=ENABLE_ML_KIT_OCR=true to enable)',
+      );
     });
     return _startupFuture!;
   }

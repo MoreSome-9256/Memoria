@@ -3,7 +3,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:collection';
-import 'package:objectbox/objectbox.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/event_entity.dart';
@@ -13,13 +12,11 @@ import '../../objectbox.g.dart';
 import '../../service/ai_service.dart';
 import '../../service/album_refresh_service.dart';
 import '../../service/album_tag_browser_service.dart';
-import '../../service/analysis/analysis_manager.dart';
 import '../../service/event_service.dart';
 import '../../service/junk_photo_cleanup_service.dart';
 import '../../service/junk_photo_filter_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_queue_service.dart';
-import '../../service/system_photo_access_service.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 import '../widgets/event_card.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
@@ -187,30 +184,6 @@ class _AlbumPageState extends State<AlbumPage> {
     );
   }
 
-  Future<void> _pickImagesFromSystem() async {
-    final images = await SystemPhotoAccessService().pickImagesFromSystem();
-    if (images.isEmpty) return;
-
-    final taskId = await AnalysisManager().enqueueImages(
-      images.map((img) => {
-        'imageId': img.id,
-        'assetId': img.id,
-      }).toList(),
-    );
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        content: Text('已添加 ${images.length} 张图片到分析队列'),
-        action: SnackBarAction(
-          label: '开始分析',
-          onPressed: () => AnalysisManager().startAnalysis(taskId),
-        ),
-      ),
-    );
-  }
-
   Future<void> _clearLocalCacheOnly() async {
     if (_isClearingCache || AlbumRefreshService().isRunning) return;
 
@@ -278,7 +251,7 @@ class _AlbumPageState extends State<AlbumPage> {
       return;
     }
 
-    final selected = await showModalBottomSheet<String>(
+    final selected = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
@@ -289,16 +262,9 @@ class _AlbumPageState extends State<AlbumPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const ListTile(
-                  title: Text('选择操作'),
-                  subtitle: Text('从系统选择要分析的图片，或扫描白名单相册'),
+                  title: Text('选择刷新范围'),
+                  subtitle: Text('先只跑最近一部分照片，或者全量运行'),
                 ),
-                ListTile(
-                  leading: const Icon(Icons.add_photo_alternate_outlined),
-                  title: const Text('从系统选择图片'),
-                  subtitle: const Text('使用系统选择器选取要分析的图片'),
-                  onTap: () => Navigator.pop(context, 'picker'),
-                ),
-                const Divider(),
                 ..._refreshPhotoOptions.map((option) {
                   final isFull = option == _fullRefreshOption;
                   final isRemaining = option == _scanRemainingOption;
@@ -322,9 +288,10 @@ class _AlbumPageState extends State<AlbumPage> {
                     ),
                     title: Text(label),
                     subtitle: Text(subtitle),
-                    onTap: () => Navigator.pop(context, option.toString()),
+                    onTap: () => Navigator.pop(context, option),
                   );
                 }),
+                // 鐣欏嚭搴曢儴瀹夊叏璺濈
                 const SizedBox(height: 24),
               ],
             ),
@@ -333,19 +300,13 @@ class _AlbumPageState extends State<AlbumPage> {
       },
     );
 
-    if (!mounted || selected == null) return;
-
-    if (selected == 'picker') {
-      _pickImagesFromSystem();
+    if (!mounted || selected == null) {
       return;
     }
 
-    final option = int.tryParse(selected);
-    if (option == null) return;
-
     _startRefresh(
-      clearCacheFirst: option == _fullRefreshOption,
-      recentPhotoLimit: option == _fullRefreshOption ? null : option,
+      clearCacheFirst: selected == _fullRefreshOption,
+      recentPhotoLimit: selected == _fullRefreshOption ? null : selected,
     );
   }
 

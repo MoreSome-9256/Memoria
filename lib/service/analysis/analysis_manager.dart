@@ -38,6 +38,7 @@ class AnalysisManager {
   }
 
   Future<String> enqueueImages(List<Map<String, dynamic>> images) async {
+    await initialize();
     final taskId = _generateTaskId();
     final itemIds = images
         .map((img) => img['imageId'] as String? ?? '')

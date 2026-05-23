@@ -8,6 +8,8 @@ import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/travel_memory_detector.dart';
+import 'package:photo_album/service/analysis/analysis_manager.dart';
+import 'package:photo_album/service/system_photo_access_service.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 import 'package:photo_manager/photo_manager.dart';
 
@@ -32,7 +34,7 @@ class _ProfilePageState extends State<ProfilePage> {
   final _albumSelectionPreferenceService = AlbumSelectionPreferenceService();
 
   late bool _autoResumeEnabled;
-  String _albumSelectionSummary = '使用全部相册';
+  String _albumSelectionSummary = '未选择任何相册，需先设置范围';
 
   Future<AuthUser?> _loadUser() async {
     try {
@@ -144,25 +146,226 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _refreshAlbumSelectionSummary() async {
-    final snapshot = await _albumSelectionPreferenceService.loadSelection();
-    if (!mounted) {
-      return;
-    }
+    final whitelist = await SystemPhotoAccessService().getWhitelistedAlbums();
+    if (!mounted) return;
     setState(() {
-      if (snapshot.useAllAlbums) {
-        _albumSelectionSummary = '使用全部相册';
+      if (whitelist.isNotEmpty) {
+        _albumSelectionSummary = '已授权 ${whitelist.length} 个相册';
       } else {
-        _albumSelectionSummary = '已选择 ${snapshot.selectedAlbumIds.length} 个相册';
+        _albumSelectionSummary = '未选择任何相册，需先设置范围';
       }
     });
   }
 
   Future<void> _showAlbumSelectionSettings() async {
-    final permission = await PhotoManager.requestPermissionExtend();
-    if (!permission.isAuth && !permission.hasAccess) {
-      if (!mounted) {
-        return;
-      }
+    final access = SystemPhotoAccessService();
+    final whitelist = await access.getWhitelistedAlbums();
+
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '相册访问权限管理',
+                      style: Theme.of(ctx).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '默认无访问权限。请通过系统选择器授予特定相册或图片的访问权限。',
+                      style: TextStyle(color: Colors.grey, fontSize: 13),
+                    ),
+                    const SizedBox(height: 16),
+                    if (whitelist.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 24),
+                        child: Center(
+                          child: Text(
+                            '尚未授权任何相册\n点击下方按钮添加',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ),
+                      )
+                    else
+                      Flexible(
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: whitelist.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (_, i) {
+                            final album = whitelist[i];
+                            return ListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(album['name'] ?? album['id'] ?? ''),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.remove_circle_outline,
+                                    color: Colors.red, size: 20),
+                                onPressed: () async {
+                                  await access.removeAlbumFromWhitelist(
+                                      album['id'] ?? '');
+                                  whitelist.removeAt(i);
+                                  setSheetState(() {});
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.photo_library_outlined, size: 18),
+                            label: const Text('从系统选择相册'),
+                            onPressed: () async {
+                              Navigator.pop(ctx);
+                              await _addAlbumViaSystemPicker();
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
+                            label: const Text('选择部分图片'),
+                            onPressed: () async {
+                              Navigator.pop(ctx);
+                              await _addImagesViaSystemPicker();
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        const Spacer(),
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text('关闭'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    await _refreshAlbumSelectionSummary();
+  }
+
+  Future<void> _addAlbumViaSystemPicker() async {
+    final access = SystemPhotoAccessService();
+    final hasAccess = await access.requestScopedAccess();
+    if (!hasAccess) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('需要相册访问权限才能选择相册。'),
+        ),
+      );
+      return;
+    }
+
+    final albums = await PhotoManager.getAssetPathList(
+      type: RequestType.image,
+      onlyAll: false,
+    );
+    if (!mounted || albums.isEmpty) return;
+
+    final selected = await showModalBottomSheet<Map<String, String>>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        final items = albums
+            .where((a) =>
+                !a.name.contains('StoryExports') && !a.name.contains('故事导出'))
+            .toList();
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('选择要添加的相册',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: items.length,
+                  itemBuilder: (_, i) => ListTile(
+                    title: Text(items[i].name),
+                    onTap: () =>
+                        Navigator.pop(ctx, {'id': items[i].id, 'name': items[i].name}),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (selected != null) {
+      await access.addAlbumToWhitelist(
+          selected['id'] ?? '', selected['name'] ?? '');
+      await _refreshAlbumSelectionSummary();
+    }
+  }
+
+  Future<void> _addImagesViaSystemPicker() async {
+    final images = await SystemPhotoAccessService().pickImagesFromSystem();
+    if (images.isEmpty) return;
+
+    final taskId = await AnalysisManager().enqueueImages(
+      images.map((img) => {
+        'imageId': img.id,
+        'assetId': img.id,
+      }).toList(),
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text('已添加 ${images.length} 张图片到分析队列 (${taskId.substring(0, 8)}...)'),
+        action: SnackBarAction(
+          label: '开始分析',
+          onPressed: () => AnalysisManager().startAnalysis(taskId),
+        ),
+      ),
+    );
+  }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           behavior: SnackBarBehavior.floating,

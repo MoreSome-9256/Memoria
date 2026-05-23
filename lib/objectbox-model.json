@@ -916,10 +916,165 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "12:6971177229072957296",
+      "lastPropertyId": "13:1537742791814627844",
+      "name": "AnalysisImageEntity",
+      "properties": [
+        {
+          "id": "1:2269141036459285670",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:1078439155169850414",
+          "name": "taskId",
+          "indexId": "34:1373939091323798684",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:7293897575405989774",
+          "name": "imageId",
+          "indexId": "35:6502638351452396319",
+          "type": 9,
+          "flags": 2080
+        },
+        {
+          "id": "4:5724338914730738888",
+          "name": "status",
+          "indexId": "36:1097028065375104695",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "5:6976830248417482390",
+          "name": "sortOrder",
+          "type": 6
+        },
+        {
+          "id": "6:4068519522687606924",
+          "name": "assetId",
+          "type": 9
+        },
+        {
+          "id": "7:3967508345696018799",
+          "name": "filePath",
+          "type": 9
+        },
+        {
+          "id": "8:2389482240915293954",
+          "name": "contentUri",
+          "type": 9
+        },
+        {
+          "id": "9:932586904554372459",
+          "name": "resultJson",
+          "type": 9
+        },
+        {
+          "id": "10:4028842578874218427",
+          "name": "resultPath",
+          "type": 9
+        },
+        {
+          "id": "11:5376594408039717078",
+          "name": "errorMessage",
+          "type": 9
+        },
+        {
+          "id": "12:691210647218982169",
+          "name": "createdAtMs",
+          "type": 6
+        },
+        {
+          "id": "13:1537742791814627844",
+          "name": "updatedAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "13:5122727067842506599",
+      "lastPropertyId": "12:6339322695399521919",
+      "name": "AnalysisTaskEntity",
+      "properties": [
+        {
+          "id": "1:7402840136966556997",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:6388268264365374347",
+          "name": "taskId",
+          "indexId": "37:6288581292023907335",
+          "type": 9,
+          "flags": 2080
+        },
+        {
+          "id": "3:3986794161411000247",
+          "name": "status",
+          "indexId": "38:1872945558077952164",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "4:2276566679528515916",
+          "name": "totalCount",
+          "type": 6
+        },
+        {
+          "id": "5:3242589314311251654",
+          "name": "completedCount",
+          "type": 6
+        },
+        {
+          "id": "6:5646782473180497919",
+          "name": "failedCount",
+          "type": 6
+        },
+        {
+          "id": "7:2124384247547157341",
+          "name": "currentItemId",
+          "type": 9
+        },
+        {
+          "id": "8:7769910519805742811",
+          "name": "percent",
+          "type": 8
+        },
+        {
+          "id": "9:7502138899987486401",
+          "name": "errorMessage",
+          "type": 9
+        },
+        {
+          "id": "10:7627601972581765636",
+          "name": "createdAtMs",
+          "indexId": "39:6827518044726972568",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "11:7829036743919990609",
+          "name": "updatedAtMs",
+          "type": 6
+        },
+        {
+          "id": "12:6339322695399521919",
+          "name": "resultJson",
+          "type": 9
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "11:1699499076567489273",
-  "lastIndexId": "33:3349099751825984572",
+  "lastEntityId": "13:5122727067842506599",
+  "lastIndexId": "39:6827518044726972568",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

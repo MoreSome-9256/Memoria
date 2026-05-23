@@ -984,6 +984,15 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "6.1.0"
+  llama_cpp_dart:
+    dependency: "direct main"
+    description:
+      path: "."
+      ref: "v0.9.0-dev.6"
+      resolved-ref: "0e17c5cdd5bad526346e06f6fe6da05b6e707ef0"
+      url: "https://github.com/netdur/llama_cpp_dart.git"
+    source: git
+    version: "0.9.0-dev.6"
   logger:
     dependency: transitive
     description:

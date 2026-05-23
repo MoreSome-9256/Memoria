@@ -1,10 +1,8 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'album_selection_preference_service.dart';
 
 class SystemPhotoAccessService {
   SystemPhotoAccessService._internal();
@@ -56,16 +54,22 @@ class SystemPhotoAccessService {
         }
       }
 
-      final images = await PhotoManager.pickPermission();
-      if (images != PermissionState.authorized &&
-          images != PermissionState.limited) {
+      final permissionState = await PhotoManager.requestPermissionExtend();
+      if (permissionState != PermissionState.authorized &&
+          permissionState != PermissionState.limited) {
         return [];
       }
 
-      final result = await PhotoPicker.pick(
-        maxCount: maxCount,
+      final recent = await PhotoManager.getAssetPathList(
+        type: RequestType.image,
+        onlyAll: true,
       );
-      return result;
+      if (recent.isEmpty) return [];
+      final entities = await recent.first.getAssetListRange(
+        start: 0,
+        end: maxCount > 0 ? maxCount : 20,
+      );
+      return entities;
     } catch (e) {
       debugPrint('Image picker failed: $e');
       return [];

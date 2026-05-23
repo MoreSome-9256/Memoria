@@ -4,7 +4,6 @@ import 'analysis_types.dart';
 import 'analysis_repository.dart';
 import 'analysis_bridge.dart';
 import 'analysis_task_entity.dart';
-import 'analysis_image_entity.dart';
 
 class AnalysisManager {
   AnalysisManager._internal();
@@ -17,12 +16,17 @@ class AnalysisManager {
 
   final ValueNotifier<AnalysisTaskProgress?> currentProgress =
       ValueNotifier<AnalysisTaskProgress?>(null);
+  final StreamController<AnalysisTaskProgress> _progressController =
+      StreamController<AnalysisTaskProgress>.broadcast();
 
   bool _initialized = false;
 
   Future<void> initialize() async {
     if (_initialized) return;
-    _bridge.onProgress = _onNativeProgress;
+    _bridge.onProgress = (progress) {
+      _progressController.add(progress);
+      _onNativeProgress(progress);
+    };
     _bridge.startListening();
     _initialized = true;
   }
@@ -107,10 +111,7 @@ class AnalysisManager {
   }
 
   Stream<AnalysisTaskProgress> watchProgress(String taskId) {
-    return _bridge.onProgress != null
-        ? _bridge.onProgress!
-            .where((p) => p.taskId == taskId)
-        : const Stream.empty();
+    return _progressController.stream.where((p) => p.taskId == taskId);
   }
 
   Future<List<AnalysisTaskEntity>> recoverUnfinishedTasks() async {

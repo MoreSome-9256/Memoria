@@ -19,16 +19,6 @@ class MainActivity : FlutterActivity() {
 
         FlutterEngineCache.getInstance().put(ENGINE_CACHE_KEY, flutterEngine)
 
-        val internvlBridge = OnDeviceInternvlBridge(applicationContext)
-        MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            "memoria/on_device_internvl",
-        ).setMethodCallHandler { call, result ->
-            if (!internvlBridge.handle(call, result)) {
-                result.notImplemented()
-            }
-        }
-
         val analysisService = ForegroundAnalysisService.getInstance()
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,

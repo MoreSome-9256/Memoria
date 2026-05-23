@@ -368,6 +368,11 @@ class _ProfilePageState extends State<ProfilePage> {
       ),
     );
   }
+  Future<void> _showAlbumScanScopeSelection() async {
+    final access = SystemPhotoAccessService();
+    final hasAccess = await access.requestScopedAccess();
+    if (!hasAccess) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           behavior: SnackBarBehavior.floating,

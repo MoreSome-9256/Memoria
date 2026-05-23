@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../models/vo/album_book_models.dart';
 import '../../models/vo/photo.dart';
@@ -15,7 +16,7 @@ import '../../service/digital_album_book_service.dart';
 import '../../service/digital_album_layout_service.dart';
 import '../../service/digital_album_validator_service.dart';
 import '../widgets/path_image.dart';
-import 'vlm_photo_picker_page.dart';
+// import 'vlm_photo_picker_page.dart';
 
 class DigitalAlbumBookResult {
   const DigitalAlbumBookResult({
@@ -1420,15 +1421,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       return;
     }
 
-    final result = await Navigator.of(context).push<List<VlmPhotoPickerResult>>(
-      MaterialPageRoute<List<VlmPhotoPickerResult>>(
-        builder: (BuildContext context) => const VlmPhotoPickerPage(),
-      ),
-    );
-    final picked = result == null || result.isEmpty ? null : result.first;
-    if (picked == null) {
-      return;
-    }
+    final picker = ImagePicker();
+    final xfile = await picker.pickImage(source: ImageSource.gallery);
+    if (xfile == null) return;
 
     final target = _resolveInsertionTarget(document);
     final page = target.side == AlbumPageSide.left
@@ -1450,9 +1445,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       locked: false,
       payload: <String, dynamic>{
         'role': 'photo',
-        'photo_id': picked.assetId,
-        'path': picked.path,
-        'date_taken': picked.createdAt.toIso8601String(),
+        'photo_id': xfile.name,
+        'path': xfile.path,
+        'date_taken': DateTime.now().toIso8601String(),
         'crop': <String, dynamic>{
           'mode': 'cover',
           'focus_x': 0.5,
@@ -1475,22 +1470,16 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       return;
     }
 
-    final result = await Navigator.of(context).push<List<VlmPhotoPickerResult>>(
-      MaterialPageRoute<List<VlmPhotoPickerResult>>(
-        builder: (BuildContext context) => const VlmPhotoPickerPage(),
-      ),
-    );
-    final replacement = result == null || result.isEmpty ? null : result.first;
-    if (replacement == null) {
-      return;
-    }
+    final picker = ImagePicker();
+    final xfile = await picker.pickImage(source: ImageSource.gallery);
+    if (xfile == null) return;
 
     _pushUndoSnapshot();
     _updateSelectedElement((current) {
       final payload = Map<String, dynamic>.from(current.payload);
-      payload['photo_id'] = replacement.assetId;
-      payload['path'] = replacement.path;
-      payload['date_taken'] = replacement.createdAt.toIso8601String();
+      payload['photo_id'] = xfile.name;
+      payload['path'] = xfile.path;
+      payload['date_taken'] = DateTime.now().toIso8601String();
       return current.copyWith(payload: payload);
     });
   }

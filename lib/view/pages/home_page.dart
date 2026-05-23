@@ -554,26 +554,6 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
-        const SizedBox(height: 14),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.85),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.purple.shade100),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('提示', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text(
-                '模型类型设置已迁移到「我的」页面，可在设置中按需切换。',
-                style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
-              ),
-            ],
-          ),
-        ),
       ],
     );
   }

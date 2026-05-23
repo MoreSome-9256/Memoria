@@ -1,5 +1,6 @@
 /// 故事结果页面，展示生成后的故事内容和分享入口。
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -654,22 +655,6 @@ class _StoryResultPageState extends State<StoryResultPage> {
   }
 
   void _openVideoPreview() async {
-    // 检查是否已有缓存的视频文件
-    if (widget.storyEntityId != null) {
-      try {
-        final store = ObjectBoxService().store;
-        final storyBox = store.box<StoryEntity>();
-        final story = storyBox.get(widget.storyEntityId!);
-        if (story?.cachedVideoPath != null &&
-            await File(story!.cachedVideoPath!).exists()) {
-          _openCachedVideo(story.cachedVideoPath!);
-          return;
-        }
-      } catch (_) {
-        // 缓存检查失败，回退到正常流程
-      }
-    }
-
     final finalVideoSections = _buildVideoSections();
     if (finalVideoSections.isEmpty) {
       return;
@@ -693,6 +678,18 @@ class _StoryResultPageState extends State<StoryResultPage> {
     }
     resolvedMusicPath ??= widget.customMusicPath;
 
+    // 从数据库恢复上次导出的视频参数
+    Map<String, dynamic>? savedParams;
+    if (widget.storyEntityId != null) {
+      try {
+        final storyBox = ObjectBoxService().store.box<StoryEntity>();
+        final story = storyBox.get(widget.storyEntityId!);
+        if (story?.videoParamsJson != null) {
+          savedParams = jsonDecode(story!.videoParamsJson!) as Map<String, dynamic>;
+        }
+      } catch (_) {}
+    }
+
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => StoryVideoPage(
@@ -705,34 +702,21 @@ class _StoryResultPageState extends State<StoryResultPage> {
           targetPlatform: widget.targetPlatform,
           storyEntityId: widget.storyEntityId,
           onComplete: (_, _) {},
-          currentTextStyle: 'hero',
-          textYPosition: 0.8,
-          textSize: 24.0,
-          textBlurIntensity: 4.0,
-          shakeIntensity: 0.0,
-          shakeFrequency: 1.0,
-          glitchIntensity: 0.0,
-          enableFlash: true,
-          useVignette: false,
-          useGrain: false,
-          useCameraFrame: false,
-          useGlowRing: false,
-          useCloudBorder: false,
+          currentTextStyle: savedParams?['currentTextStyle'] as String? ?? 'hero',
+          textYPosition: (savedParams?['textYPosition'] as num?)?.toDouble() ?? 0.8,
+          textSize: (savedParams?['textSize'] as num?)?.toDouble() ?? 24.0,
+          textBlurIntensity: (savedParams?['textBlurIntensity'] as num?)?.toDouble() ?? 4.0,
+          shakeIntensity: (savedParams?['shakeIntensity'] as num?)?.toDouble() ?? 0.0,
+          shakeFrequency: (savedParams?['shakeFrequency'] as num?)?.toDouble() ?? 1.0,
+          glitchIntensity: (savedParams?['glitchIntensity'] as num?)?.toDouble() ?? 0.0,
+          enableFlash: savedParams?['enableFlash'] as bool? ?? true,
+          useVignette: savedParams?['useVignette'] as bool? ?? false,
+          useGrain: savedParams?['useGrain'] as bool? ?? false,
+          useCameraFrame: savedParams?['useCameraFrame'] as bool? ?? false,
+          useGlowRing: savedParams?['useGlowRing'] as bool? ?? false,
+          useCloudBorder: savedParams?['useCloudBorder'] as bool? ?? false,
         ),
       ),
-    );
-  }
-
-  void _openCachedVideo(String videoPath) async {
-    await showGeneralDialog<void>(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: '视频预览',
-      barrierColor: Colors.black.withValues(alpha: 0.9),
-      transitionDuration: const Duration(milliseconds: 300),
-      pageBuilder: (context, animation, secondaryAnimation) {
-        return _CachedVideoPlayerSheet(videoPath: videoPath);
-      },
     );
   }
 
@@ -1690,70 +1674,4 @@ class _SharePosterPreviewSheetState extends State<_SharePosterPreviewSheet>
   }
 }
 
-class _CachedVideoPlayerSheet extends StatefulWidget {
-  const _CachedVideoPlayerSheet({required this.videoPath});
 
-  final String videoPath;
-
-  @override
-  State<_CachedVideoPlayerSheet> createState() => _CachedVideoPlayerSheetState();
-}
-
-class _CachedVideoPlayerSheetState extends State<_CachedVideoPlayerSheet> {
-  VideoPlayerController? _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = VideoPlayerController.file(File(widget.videoPath))
-      ..initialize().then((_) {
-        if (mounted) {
-          _controller!.play();
-          setState(() {});
-        }
-      });
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Center(
-            child: _controller?.value.isInitialized == true
-                ? GestureDetector(
-                    onTap: () {
-                      if (_controller!.value.isPlaying) {
-                        _controller!.pause();
-                      } else {
-                        _controller!.play();
-                      }
-                      setState(() {});
-                    },
-                    child: AspectRatio(
-                      aspectRatio: _controller!.value.aspectRatio,
-                      child: VideoPlayer(_controller!),
-                    ),
-                  )
-                : const CircularProgressIndicator(color: Colors.white),
-          ),
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 12,
-            right: 16,
-            child: IconButton(
-              icon: const Icon(Icons.close, color: Colors.white, size: 28),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}

@@ -35,6 +35,8 @@ class ExportManager {
     required bool useGlowRing,
     required bool useCloudBorder,
     int? storyEntityId,
+    /// 若提供，导出完成后直接调起系统分享，不弹"导出成功"对话框
+    void Function(String videoPath)? onShareReady,
   }) {
     if (isExporting) return;
     isExporting = true;
@@ -85,21 +87,23 @@ class ExportManager {
                       useCloudBorder: useCloudBorder,
                        storyEntityId: storyEntityId,
                        onProgress: (p) => progressNotifier.value = p,
-                      onComplete: (String finalPath, Future<String>? aiCopy) {
-                        // 1. 任务完成，销毁幽灵画布
+                       onComplete: (String finalPath, Future<String>? aiCopy) {
                         overlayEntry.remove();
                         isExporting = false;
 
-                        // 🌟 核心修复 2：不再传递那个会死掉的 overlayContext，而是传递我们手里的全局导航器！
-                        _showSuccessDialog(
-                          rootNavigator,
-                          title,
-                          subtitle,
-                          targetPlatform,
-                          finalPath,
-                          aiCopy,
-                          sections,
-                        );
+                        if (onShareReady != null) {
+                          onShareReady(finalPath);
+                        } else {
+                          _showSuccessDialog(
+                            rootNavigator,
+                            title,
+                            subtitle,
+                            targetPlatform,
+                            finalPath,
+                            aiCopy,
+                            sections,
+                          );
+                        }
                       },
                     ),
                   ),

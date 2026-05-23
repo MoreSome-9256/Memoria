@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:math' as math;
+import '../../models/entity/story_entity.dart';
 import '../../models/vo/story_section.dart';
 import '../../effects/subtitle_effect.dart';
 import '../../effects/glitch_effect.dart';
@@ -17,7 +18,9 @@ import 'package:flutter/rendering.dart';
 import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'export_manager.dart';
+import 'publish_page.dart';
 import '../../service/music_service.dart';
+import '../../service/video_cache_service.dart';
 import '../widgets/path_image.dart';
 import '../../models/entity/face_entity.dart';
 import '../../objectbox.g.dart';
@@ -121,33 +124,23 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
   int _currentLyricIndex = 0;
   String _currentLyricText = "";
-  // 🎛️ VFX 控制台参数
-  double _shakeIntensity = 0.0; // 震动幅度 (Amplitude)
-  double _shakeFrequency = 1.0; // 🌟 新增：震动频率/马达转速 (Frequency)，默认15
-
-  // 🌟 新增 1：故障特效的独立强度 (0.0 到 1.0)
+  // 🎛️ VFX 控制台参数（从 widget 参数初始化，允许后续覆盖）
+  double _shakeIntensity = 0.0;
+  double _shakeFrequency = 1.0;
   double _glitchIntensity = 0.0;
-  // 🌟 新增 2：给故障特效专用的“永动机”时间控制器
   late AnimationController _continuousTimeController;
-
-  // 滤镜状态
-  bool _useVignette = false; // 暗角
-  bool _useGrain = false; // 噪点
-  bool _useCameraFrame = false; // 相机边框
-  bool _useGlowRing = false; // 光圈
-  bool _useCloudBorder = false; // 云朵边框
-
+  bool _useVignette = false;
+  bool _useGrain = false;
+  bool _useCameraFrame = false;
+  bool _useGlowRing = false;
+  bool _useCloudBorder = false;
   bool _showPreviewTransition = false;
-
   bool _enableFlash = true;
   double _textBlurIntensity = 4.0;
   final GlobalKey _renderKey = GlobalKey();
-  int _beatIntervalMs = 500; // 默认给个500，等加载JSON时会被覆盖
-
-  // 🔤 字幕引擎参数
-  String _currentTextStyle =
-      'hero'; // 'standard' (普通底栏), 'hero' (居中大字), 'cards' (字卡散落)
-  double _textYPosition = 0.8; // 0.0 为顶部，0.5 为屏幕正中，1.0 为贴底
+  int _beatIntervalMs = 500;
+  String _currentTextStyle = 'hero';
+  double _textYPosition = 0.8;
   double _textSize = 24.0;
   final String _fontFamily = 'sans-serif'; // 以后可以接入 Google Fonts
 
@@ -165,6 +158,21 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     // 🌟 2. 拷贝一份传进来的切片，让它变成可以修改的状态
     _localSections = List.from(widget.sections);
 
+    // 从 widget 参数恢复 VFX 状态
+    _shakeIntensity = widget.shakeIntensity;
+    _shakeFrequency = widget.shakeFrequency;
+    _glitchIntensity = widget.glitchIntensity;
+    _useVignette = widget.useVignette;
+    _useGrain = widget.useGrain;
+    _useCameraFrame = widget.useCameraFrame;
+    _useGlowRing = widget.useGlowRing;
+    _useCloudBorder = widget.useCloudBorder;
+    _enableFlash = widget.enableFlash;
+    _textBlurIntensity = widget.textBlurIntensity;
+    _currentTextStyle = widget.currentTextStyle;
+    _textYPosition = widget.textYPosition;
+    _textSize = widget.textSize;
+
     // 🌟 3. 启动人脸雷达：去数据库捞取人脸数据
     _loadFaceDataAsync();
     _vfxController = AnimationController(
@@ -178,6 +186,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       duration: const Duration(seconds: 2),
     )..repeat(); // 无限重复！
 
+    // 主题推荐特效（仅在无已保存参数时生效）
     _autoConfigVFXAndSubtitles();
 
     // 先给一个最小可播放节拍，随后异步替换为本地分析结果。
@@ -488,6 +497,22 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   // 🤖 智能导演：自动分配字幕样式与画面特效
   // ==========================================
   void _autoConfigVFXAndSubtitles() {
+    // 若已有用户/已保存参数（非全部默认值），跳过自动配置
+    final hasCustomParams = widget.shakeIntensity != 0.0 ||
+        widget.shakeFrequency != 1.0 ||
+        widget.glitchIntensity != 0.0 ||
+        widget.textBlurIntensity != 4.0 ||
+        widget.textSize != 24.0 ||
+        widget.textYPosition != 0.8 ||
+        widget.currentTextStyle != 'hero' ||
+        widget.enableFlash != true ||
+        widget.useVignette ||
+        widget.useGrain ||
+        widget.useCameraFrame ||
+        widget.useGlowRing ||
+        widget.useCloudBorder;
+    if (hasCustomParams) return;
+
     // 1. 🎲 盲盒抽取：随机字幕样式
     final subtitleStyles = [
       'standard',
@@ -1014,38 +1039,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                     Icons.movie_creation,
                     color: Colors.pinkAccent,
                   ),
-                  onPressed: () {
-                    // 🌟 核心改变：把任务外包给 ExportManager，然后直接关掉当前页面！
-                    ExportManager.instance.startBackgroundExport(
-                      context: context,
-                      title: widget.title,
-                      subtitle: widget.subtitle,
-                      sections: widget.sections,
-                      customMusicPath: widget.customMusicPath,
-                      dynamicBeatData: _beatData.isNotEmpty
-                          ? {'data': _beatData, 'bpm': 60000 / _beatIntervalMs}
-                          : null,
-                      targetPlatform: widget.targetPlatform,
-                      isHorizontal: widget.isHorizontal, // 解决画幅不对的问题
-                      storyEntityId: widget.storyEntityId,
-                      currentTextStyle: _currentTextStyle,
-                      textYPosition: _textYPosition,
-                      textSize: _textSize,
-                      textBlurIntensity: _textBlurIntensity,
-                      shakeIntensity: _shakeIntensity,
-                      shakeFrequency: _shakeFrequency,
-                      glitchIntensity: _glitchIntensity,
-                      enableFlash: _enableFlash,
-                      useVignette: _useVignette,
-                      useGrain: _useGrain,
-                      useCameraFrame: _useCameraFrame,
-                      useGlowRing: _useGlowRing,
-                      useCloudBorder: _useCloudBorder,
-                    );
-
-                    // 潇洒离场，回首页！
-                    Navigator.pop(context);
-                  },
+                  onPressed: _onVideoButtonPressed,
                 ),
               ],
             ),
@@ -1077,6 +1071,105 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         ],
       ),
     );
+  }
+
+  // 🎬 视频按钮：检查缓存 → 分享，否则导出 → 分享
+  Future<void> _onVideoButtonPressed() async {
+    // 1. 计算当前参数对应的缓存 key
+    final sectionsData = widget.sections.map((s) {
+      return {
+        'photo': {'path': s.photo.path},
+        'text': s.text,
+      };
+    }).toList();
+    final dynamicBeatData = _beatData.isNotEmpty
+        ? {'data': _beatData, 'bpm': 60000 / _beatIntervalMs}
+        : null;
+    final cacheKey = VideoCacheService.instance.buildVideoCacheKey(
+      title: widget.title,
+      subtitle: widget.subtitle,
+      sections: sectionsData,
+      customMusicPath: widget.customMusicPath,
+      dynamicBeatData: dynamicBeatData,
+      targetPlatform: widget.targetPlatform,
+      isHorizontal: widget.isHorizontal,
+      currentTextStyle: _currentTextStyle,
+      textYPosition: _textYPosition,
+      textSize: _textSize,
+      textBlurIntensity: _textBlurIntensity,
+      shakeIntensity: _shakeIntensity,
+      shakeFrequency: _shakeFrequency,
+      glitchIntensity: _glitchIntensity,
+      enableFlash: _enableFlash,
+      useVignette: _useVignette,
+      useGrain: _useGrain,
+      useCameraFrame: _useCameraFrame,
+      useGlowRing: _useGlowRing,
+      useCloudBorder: _useCloudBorder,
+    );
+
+    // 2. 检查已有视频（entity + cache + export 目录）
+    String? existingPath;
+    if (widget.storyEntityId != null) {
+      try {
+        final storyBox = ObjectBoxService().store.box<StoryEntity>();
+        final story = storyBox.get(widget.storyEntityId!);
+        if (story?.cachedVideoKey == cacheKey &&
+            story?.cachedVideoPath != null &&
+            await File(story!.cachedVideoPath!).exists()) {
+          existingPath = story.cachedVideoPath;
+        }
+      } catch (_) {}
+    }
+    existingPath ??= await VideoCacheService.instance.getCachedVideoPath(
+      sections: sectionsData,
+      cacheKey: cacheKey,
+    );
+
+    if (existingPath != null && await File(existingPath).exists()) {
+      // 3a. 缓存命中 → 跳转发布页面（复用已有视频 + 文案）
+      if (!mounted) return;
+      final path = existingPath;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PublishPage(
+            title: widget.title,
+            subtitle: widget.subtitle,
+            captions: widget.sections.map((s) => s.text).toList(),
+            targetPlatform: widget.targetPlatform ?? '小红书',
+            exportedVideoPath: path,
+          ),
+        ),
+      );
+      return;
+    }
+
+    // 3b. 无缓存 → 导出，完成后弹出发布页面（含文案 + 4按钮）
+    ExportManager.instance.startBackgroundExport(
+      context: context,
+      title: widget.title,
+      subtitle: widget.subtitle,
+      sections: widget.sections,
+      customMusicPath: widget.customMusicPath,
+      dynamicBeatData: dynamicBeatData,
+      targetPlatform: widget.targetPlatform,
+      isHorizontal: widget.isHorizontal,
+      storyEntityId: widget.storyEntityId,
+      currentTextStyle: _currentTextStyle,
+      textYPosition: _textYPosition,
+      textSize: _textSize,
+      textBlurIntensity: _textBlurIntensity,
+      shakeIntensity: _shakeIntensity,
+      shakeFrequency: _shakeFrequency,
+      glitchIntensity: _glitchIntensity,
+      enableFlash: _enableFlash,
+      useVignette: _useVignette,
+      useGrain: _useGrain,
+      useCameraFrame: _useCameraFrame,
+      useGlowRing: _useGlowRing,
+      useCloudBorder: _useCloudBorder,
+    );
+    Navigator.pop(context);
   }
 
   // 🎛️ 导演控制台面板

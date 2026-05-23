@@ -242,6 +242,10 @@ class _ConfigPageState extends State<ConfigPage> {
 
   // 🌟 新增：拣选音乐的方法
   Future<void> _pickMusic() async {
+    // iOS 18 已知问题：若存在活跃焦点(键盘)，系统文件选择器可能无法响应触摸
+    FocusManager.instance.primaryFocus?.unfocus();
+    await Future.delayed(const Duration(milliseconds: 100));
+
     FilePickerResult? result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['mp3', 'wav', 'aac', 'm4a', 'flac', 'ogg'],

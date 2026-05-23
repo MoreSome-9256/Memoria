@@ -4,43 +4,29 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:math' as math;
+import '../../models/entity/story_entity.dart';
 import '../../models/vo/story_section.dart';
 import '../../effects/subtitle_effect.dart';
 import '../../effects/glitch_effect.dart';
 import '../../effects/static_filters.dart';
-import '../../effects/cloud_border_effect.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/return_code.dart';
-import 'package:gal/gal.dart';
-import 'publish_page.dart';
 import 'export_manager.dart';
-import 'offscreen_render_worker.dart';
-import '../../service/llm_service.dart';
+import 'publish_page.dart';
 import '../../service/music_service.dart';
-import '../../service/photo_service.dart';
+import '../../service/video_cache_service.dart';
 import '../widgets/path_image.dart';
-import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
 import '../../models/entity/face_entity.dart';
-import 'package:isar/isar.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class StoryVideoPage extends StatefulWidget {
-  final String title;
-  final List<StorySection> sections;
-  final bool isHorizontal;
-  final String? customMusicPath;
-  final Map<String, dynamic>? dynamicBeatData; // 🌟 接收云端数据
-  final String subtitle;
-  final String targetPlatform;
-
   const StoryVideoPage({
     super.key,
     required this.title,
@@ -50,7 +36,52 @@ class StoryVideoPage extends StatefulWidget {
     this.dynamicBeatData,
     required this.subtitle,
     required this.targetPlatform,
+    required this.onComplete,
+    this.storyEntityId,
+    required this.currentTextStyle,
+    required this.textYPosition,
+    required this.textSize,
+    required this.textBlurIntensity,
+    required this.shakeIntensity,
+    required this.shakeFrequency,
+    required this.glitchIntensity,
+    required this.enableFlash,
+    required this.useVignette,
+    required this.useGrain,
+    required this.useCameraFrame,
+    required this.useGlowRing,
+    required this.useCloudBorder,
+    this.onProgress,
   });
+
+  final String title;
+  final List<StorySection> sections;
+  final bool isHorizontal;
+  final String? customMusicPath;
+  final Map<String, dynamic>? dynamicBeatData;
+  final String subtitle;
+  final String targetPlatform;
+  final Function(String videoPath, Future<String>? aiCopy) onComplete;
+
+  final int? storyEntityId;
+
+  // 🌟 新增：接收老板（预览页）传来的所有特效和字幕状态！
+  final String currentTextStyle;
+  final double textYPosition;
+  final double textSize;
+  final double textBlurIntensity;
+  final double shakeIntensity;
+  final double shakeFrequency;
+  final double glitchIntensity;
+  final bool enableFlash;
+  final bool useVignette;
+  final bool useGrain;
+  final bool useCameraFrame;
+  final bool useGlowRing;
+  final bool useCloudBorder;
+
+  // 🌟 新增：工作进度汇报专线
+  final Function(double progress)? onProgress;
 
   @override
   State<StoryVideoPage> createState() => _StoryVideoPageState();
@@ -93,33 +124,23 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
   int _currentLyricIndex = 0;
   String _currentLyricText = "";
-  // 🎛️ VFX 控制台参数
-  double _shakeIntensity = 0.0; // 震动幅度 (Amplitude)
-  double _shakeFrequency = 1.0; // 🌟 新增：震动频率/马达转速 (Frequency)，默认15
-
-  // 🌟 新增 1：故障特效的独立强度 (0.0 到 1.0)
+  // 🎛️ VFX 控制台参数（从 widget 参数初始化，允许后续覆盖）
+  double _shakeIntensity = 0.0;
+  double _shakeFrequency = 1.0;
   double _glitchIntensity = 0.0;
-  // 🌟 新增 2：给故障特效专用的“永动机”时间控制器
   late AnimationController _continuousTimeController;
-
-  // 滤镜状态
-  bool _useVignette = false; // 暗角
-  bool _useGrain = false; // 噪点
-  bool _useCameraFrame = false; // 相机边框
-  bool _useGlowRing = false; // 光圈
-  bool _useCloudBorder = false; // 云朵边框
-
+  bool _useVignette = false;
+  bool _useGrain = false;
+  bool _useCameraFrame = false;
+  bool _useGlowRing = false;
+  bool _useCloudBorder = false;
   bool _showPreviewTransition = false;
-
   bool _enableFlash = true;
   double _textBlurIntensity = 4.0;
   final GlobalKey _renderKey = GlobalKey();
-  int _beatIntervalMs = 500; // 默认给个500，等加载JSON时会被覆盖
-
-  // 🔤 字幕引擎参数
-  String _currentTextStyle =
-      'hero'; // 'standard' (普通底栏), 'hero' (居中大字), 'cards' (字卡散落)
-  double _textYPosition = 0.8; // 0.0 为顶部，0.5 为屏幕正中，1.0 为贴底
+  int _beatIntervalMs = 500;
+  String _currentTextStyle = 'hero';
+  double _textYPosition = 0.8;
   double _textSize = 24.0;
   final String _fontFamily = 'sans-serif'; // 以后可以接入 Google Fonts
 
@@ -137,6 +158,21 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     // 🌟 2. 拷贝一份传进来的切片，让它变成可以修改的状态
     _localSections = List.from(widget.sections);
 
+    // 从 widget 参数恢复 VFX 状态
+    _shakeIntensity = widget.shakeIntensity;
+    _shakeFrequency = widget.shakeFrequency;
+    _glitchIntensity = widget.glitchIntensity;
+    _useVignette = widget.useVignette;
+    _useGrain = widget.useGrain;
+    _useCameraFrame = widget.useCameraFrame;
+    _useGlowRing = widget.useGlowRing;
+    _useCloudBorder = widget.useCloudBorder;
+    _enableFlash = widget.enableFlash;
+    _textBlurIntensity = widget.textBlurIntensity;
+    _currentTextStyle = widget.currentTextStyle;
+    _textYPosition = widget.textYPosition;
+    _textSize = widget.textSize;
+
     // 🌟 3. 启动人脸雷达：去数据库捞取人脸数据
     _loadFaceDataAsync();
     _vfxController = AnimationController(
@@ -150,16 +186,17 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       duration: const Duration(seconds: 2),
     )..repeat(); // 无限重复！
 
+    // 主题推荐特效（仅在无已保存参数时生效）
     _autoConfigVFXAndSubtitles();
 
-    // 先给一个最小可播放节拍，随后异步替换为后端分析结果。
+    // 先给一个最小可播放节拍，随后异步替换为本地分析结果。
     _beatData = [
       {"ms": 0, "energy": 0.1},
       {"ms": 500, "energy": 0.6},
       {"ms": 1000, "energy": 0.2},
     ];
     _beatIntervalMs = 500;
-    unawaited(_loadBeatDataFromBackend());
+    unawaited(_loadBeatDataFromLocalAnalyzer());
 
     if (widget.sections.isNotEmpty) {
       _currentLyricText = widget.sections[0].text;
@@ -189,22 +226,41 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       "🎵 成功加载真实节拍！BPM: ${bpmRaw.toDouble()}, 间隔: ${_beatIntervalMs}ms, 共 ${_beatData.length} 拍",
     );
   }
+
+  String? _resolvePlayableAudioPath() {
+    final customPath = widget.customMusicPath?.trim();
+    if (customPath != null &&
+        customPath.isNotEmpty &&
+        File(customPath).existsSync()) {
+      return customPath;
+    }
+    return null;
+  }
+
+  int _clampSectionIndex(int index) {
+    if (widget.sections.isEmpty) {
+      return 0;
+    }
+    return index.clamp(0, widget.sections.length - 1).toInt();
+  }
+
   // ==========================================
   // 🎯 人脸数据后台加载与热更新
   // ==========================================
   Future<void> _loadFaceDataAsync() async {
     try {
       // 拿到本地数据库实例
-      final isar = PhotoService().isar;
+      final _faceBox = ObjectBoxService().store.box<FaceEntity>();
 
       for (int i = 0; i < _localSections.length; i++) {
         final photo = _localSections[i].photo;
 
         // 🚀 极速查询：根据 assetId 去 FaceEntity 表里捞出这张照片对应的所有人脸
-        final faces = await isar.faceEntitys
-            .filter()
-            .assetIdEqualTo(photo.id)
-            .findAll();
+        final _fq = _faceBox
+            .query(FaceEntity_.assetId.equals(photo.id))
+            .build();
+        final faces = _fq.find();
+        _fq.close();
 
         if (faces.isNotEmpty && mounted) {
           setState(() {
@@ -223,18 +279,20 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     }
   }
 
-  Future<void> _loadBeatDataFromBackend() async {
+  Future<void> _loadBeatDataFromLocalAnalyzer() async {
     // 优先使用上一个页面已经分析好的数据。
-    if (widget.dynamicBeatData != null && widget.dynamicBeatData!['data'] != null) {
+    if (widget.dynamicBeatData != null &&
+        widget.dynamicBeatData!['data'] != null) {
       _applyBeatData(widget.dynamicBeatData!);
       return;
     }
 
     try {
-      // fallback 也走云端分析：上传当前实际要播放的音频文件。
+      // fallback 也走本地分析：使用当前实际要播放的音频文件。
       String audioPath;
-      if (widget.customMusicPath != null && widget.customMusicPath!.isNotEmpty) {
-        audioPath = widget.customMusicPath!;
+      final playableAudioPath = _resolvePlayableAudioPath();
+      if (playableAudioPath != null) {
+        audioPath = playableAudioPath;
       } else {
         audioPath = await _extractAssetForFFmpeg(
           'assets/audio/sandal_leap.mp3',
@@ -248,9 +306,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         return;
       }
 
-      debugPrint("⚠️ fallback 云端节拍分析失败，保留最小兜底节拍");
+      debugPrint("⚠️ fallback 本地节拍分析失败，保留最小兜底节拍");
     } catch (e) {
-      debugPrint("❌ fallback 云端节拍分析异常: $e");
+      debugPrint("❌ fallback 本地节拍分析异常: $e");
     }
   }
 
@@ -260,10 +318,16 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     // ==========================================
     // 🌟 1. 安全降级：获取这首歌的真实时长（修复空指针崩溃！）
     // ==========================================
-    if (widget.customMusicPath != null && widget.customMusicPath!.isNotEmpty) {
-      await _audioPlayer.setSourceDeviceFile(widget.customMusicPath!);
-    } else {
-      // 队友没生成音乐/网络失败时，也给监听器喂一口本地测试音乐！
+    try {
+      final playableAudioPath = _resolvePlayableAudioPath();
+      if (playableAudioPath != null) {
+        await _audioPlayer.setSourceDeviceFile(playableAudioPath);
+      } else {
+        // 队友没生成音乐/网络失败时，也给监听器喂一口本地测试音乐！
+        await _audioPlayer.setSourceAsset('audio/sandal_leap.mp3');
+      }
+    } catch (e) {
+      debugPrint('⚠️ 音频源初始化失败，改用默认内置音乐: $e');
       await _audioPlayer.setSourceAsset('audio/sandal_leap.mp3');
     }
 
@@ -368,10 +432,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
         // 🖼️ 决定切图 (每 8 拍切一张)
         int beatsPerImage = 8;
-        int targetImageIndex = targetBeatIndex ~/ beatsPerImage;
-        if (targetImageIndex >= widget.sections.length) {
-          targetImageIndex = widget.sections.length - 1;
-        }
+        int targetImageIndex = _clampSectionIndex(
+          targetBeatIndex ~/ beatsPerImage,
+        );
 
         if (mounted) {
           setState(() {
@@ -414,9 +477,10 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       await _audioPlayer.pause();
     } else {
       // 🌟 核心改动：判断音乐来源
-      if (widget.customMusicPath != null) {
+      final playableAudioPath = _resolvePlayableAudioPath();
+      if (playableAudioPath != null) {
         // 如果是用户手动导入的音乐，使用 DeviceFileSource
-        await _audioPlayer.play(DeviceFileSource(widget.customMusicPath!));
+        await _audioPlayer.play(DeviceFileSource(playableAudioPath));
       } else {
         // 否则播放 assets 里的默认测试音乐
         await _audioPlayer.play(AssetSource('audio/sandal_leap.mp3'));
@@ -428,10 +492,27 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       });
     }
   }
+
   // ==========================================
   // 🤖 智能导演：自动分配字幕样式与画面特效
   // ==========================================
   void _autoConfigVFXAndSubtitles() {
+    // 若已有用户/已保存参数（非全部默认值），跳过自动配置
+    final hasCustomParams = widget.shakeIntensity != 0.0 ||
+        widget.shakeFrequency != 1.0 ||
+        widget.glitchIntensity != 0.0 ||
+        widget.textBlurIntensity != 4.0 ||
+        widget.textSize != 24.0 ||
+        widget.textYPosition != 0.8 ||
+        widget.currentTextStyle != 'hero' ||
+        widget.enableFlash != true ||
+        widget.useVignette ||
+        widget.useGrain ||
+        widget.useCameraFrame ||
+        widget.useGlowRing ||
+        widget.useCloudBorder;
+    if (hasCustomParams) return;
+
     // 1. 🎲 盲盒抽取：随机字幕样式
     final subtitleStyles = [
       'standard',
@@ -616,7 +697,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       return const Scaffold(body: Center(child: Text('无内容')));
     }
 
-    final currentSection = widget.sections[_currentIndex];
+    final currentSection = widget.sections[_clampSectionIndex(_currentIndex)];
+    final mediaQuery = MediaQuery.of(context);
 
     // 🌟 核心判断：当前是不是第 0 帧（片头帧）
     final bool isIntro = _currentIndex == 0;
@@ -743,7 +825,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                         subtitle: widget.subtitle, // 使用上一个页面传来的副标题
                       ),
                     ),
-                    // ==========================================
+                  // ==========================================
                   // 🎭 核心新增：预览专属的转场替身！
                   // ⚠️ 注意条件：只在规定的时间显示，并且导出时绝对不显示！
                   // ==========================================
@@ -800,15 +882,14 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         );
       }
     } else {
-      // 用 SizedBox 或 AspectRatio 给它一个绝对偶数的逻辑容器
-screenBody = Center(
-  child: SizedBox(
-    // 取决于你手机的逻辑分辨率，这里给一个标准的 9:16 偶数容器
-    width: 360,  // 360 * pixelRatio(2.0) = 720 (偶数)
-    height: 640, // 640 * pixelRatio(2.0) = 1280 (偶数)
-    child: RepaintBoundary(key: _renderKey, child: videoContent),
-  ),
-);
+      // 直接使用设备真实可用尺寸，避免导出时把画面压到 720x1280。
+      screenBody = Center(
+        child: SizedBox(
+          width: mediaQuery.size.width,
+          height: mediaQuery.size.height,
+          child: RepaintBoundary(key: _renderKey, child: videoContent),
+        ),
+      );
     }
 
     return Scaffold(
@@ -958,45 +1039,7 @@ screenBody = Center(
                     Icons.movie_creation,
                     color: Colors.pinkAccent,
                   ),
-                  onPressed: () {
-                    // 🌟 核心改变：把任务外包给 ExportManager，然后直接关掉当前页面！
-                    ExportManager.instance.startBackgroundExport(
-                      context: context,
-                      title: widget.title,
-                      subtitle: widget.subtitle,
-                      sections: widget.sections,
-                      customMusicPath: widget.customMusicPath,
-                      dynamicBeatData: _beatData.isNotEmpty
-                          ? {'data': _beatData, 'bpm': 60000 / _beatIntervalMs}
-                          : null,
-                      targetPlatform: widget.targetPlatform,
-                      isHorizontal: widget.isHorizontal, // 解决画幅不对的问题
-                      currentTextStyle: _currentTextStyle,
-                      textYPosition: _textYPosition,
-                      textSize: _textSize,
-                      textBlurIntensity: _textBlurIntensity,
-                      shakeIntensity: _shakeIntensity,
-                      shakeFrequency: _shakeFrequency,
-                      glitchIntensity: _glitchIntensity,
-                      enableFlash: _enableFlash,
-                      useVignette: _useVignette,
-                      useGrain: _useGrain,
-                      useCameraFrame: _useCameraFrame,
-                      useGlowRing: _useGlowRing,
-                      useCloudBorder: _useCloudBorder,
-                    );
-
-                    // 弹个 Toast 安抚用户
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('🚀 正在后台静默加速渲染中，您可以去干点别的，完成后将通知您~'),
-                        backgroundColor: Colors.pinkAccent,
-                      ),
-                    );
-
-                    // 潇洒离场，回首页！
-                    Navigator.pop(context);
-                  },
+                  onPressed: _onVideoButtonPressed,
                 ),
               ],
             ),
@@ -1030,6 +1073,104 @@ screenBody = Center(
     );
   }
 
+  // 🎬 视频按钮：检查缓存 → 分享，否则导出 → 分享
+  Future<void> _onVideoButtonPressed() async {
+    // 1. 计算当前参数对应的缓存 key
+    final sectionsData = widget.sections.map((s) {
+      return {
+        'photo': {'path': s.photo.path},
+        'text': s.text,
+      };
+    }).toList();
+    final dynamicBeatData = _beatData.isNotEmpty
+        ? {'data': _beatData, 'bpm': 60000 / _beatIntervalMs}
+        : null;
+    final cacheKey = VideoCacheService.instance.buildVideoCacheKey(
+      title: widget.title,
+      subtitle: widget.subtitle,
+      sections: sectionsData,
+      customMusicPath: widget.customMusicPath,
+      dynamicBeatData: dynamicBeatData,
+      targetPlatform: widget.targetPlatform,
+      isHorizontal: widget.isHorizontal,
+      currentTextStyle: _currentTextStyle,
+      textYPosition: _textYPosition,
+      textSize: _textSize,
+      textBlurIntensity: _textBlurIntensity,
+      shakeIntensity: _shakeIntensity,
+      shakeFrequency: _shakeFrequency,
+      glitchIntensity: _glitchIntensity,
+      enableFlash: _enableFlash,
+      useVignette: _useVignette,
+      useGrain: _useGrain,
+      useCameraFrame: _useCameraFrame,
+      useGlowRing: _useGlowRing,
+      useCloudBorder: _useCloudBorder,
+    );
+
+    // 2. 检查已有视频（entity + cache + export 目录）
+    String? existingPath;
+    if (widget.storyEntityId != null) {
+      try {
+        final storyBox = ObjectBoxService().store.box<StoryEntity>();
+        final story = storyBox.get(widget.storyEntityId!);
+        if (story?.cachedVideoKey == cacheKey &&
+            story?.cachedVideoPath != null &&
+            await File(story!.cachedVideoPath!).exists()) {
+          existingPath = story.cachedVideoPath;
+        }
+      } catch (_) {}
+    }
+    existingPath ??= await VideoCacheService.instance.getCachedVideoPath(
+      sections: sectionsData,
+      cacheKey: cacheKey,
+    );
+
+    if (existingPath != null && await File(existingPath).exists()) {
+      // 3a. 缓存命中 → 跳转发布页面（复用已有视频 + 文案）
+      if (!mounted) return;
+      final path = existingPath;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PublishPage(
+            title: widget.title,
+            subtitle: widget.subtitle,
+            captions: widget.sections.map((s) => s.text).toList(),
+            targetPlatform: widget.targetPlatform ?? '小红书',
+            exportedVideoPath: path,
+          ),
+        ),
+      );
+      return;
+    }
+
+    // 3b. 无缓存 → 导出，完成后弹出发布页面（含文案 + 4按钮）
+    ExportManager.instance.startBackgroundExport(
+      context: context,
+      title: widget.title,
+      subtitle: widget.subtitle,
+      sections: widget.sections,
+      customMusicPath: widget.customMusicPath,
+      dynamicBeatData: dynamicBeatData,
+      targetPlatform: widget.targetPlatform,
+      isHorizontal: widget.isHorizontal,
+      storyEntityId: widget.storyEntityId,
+      currentTextStyle: _currentTextStyle,
+      textYPosition: _textYPosition,
+      textSize: _textSize,
+      textBlurIntensity: _textBlurIntensity,
+      shakeIntensity: _shakeIntensity,
+      shakeFrequency: _shakeFrequency,
+      glitchIntensity: _glitchIntensity,
+      enableFlash: _enableFlash,
+      useVignette: _useVignette,
+      useGrain: _useGrain,
+      useCameraFrame: _useCameraFrame,
+      useGlowRing: _useGlowRing,
+      useCloudBorder: _useCloudBorder,
+    );
+    Navigator.pop(context);
+  }
 
   // 🎛️ 导演控制台面板
   void _showVfxPanel() {
@@ -1165,17 +1306,20 @@ screenBody = Center(
                                 ],
                               ),
                               // 2. 闪光弹开关
-                              SwitchListTile(
-                                title: const Text(
-                                  '高光闪烁 (Flash)',
-                                  style: TextStyle(color: Colors.white70),
+                              Material(
+                                color: Colors.transparent,
+                                child: SwitchListTile(
+                                  title: const Text(
+                                    '高光闪烁 (Flash)',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  activeThumbColor: Colors.pinkAccent,
+                                  value: _enableFlash,
+                                  onChanged: (val) {
+                                    setModalState(() => _enableFlash = val);
+                                    setState(() {});
+                                  },
                                 ),
-                                activeThumbColor: Colors.pinkAccent,
-                                value: _enableFlash,
-                                onChanged: (val) {
-                                  setModalState(() => _enableFlash = val);
-                                  setState(() {});
-                                },
                               ),
 
                               // 3. 字幕模糊度滑块
@@ -1313,67 +1457,82 @@ screenBody = Center(
                                 ],
                               ),
                               const Divider(color: Colors.white24),
-                              CheckboxListTile(
-                                title: const Text(
-                                  '复古暗角',
-                                  style: TextStyle(color: Colors.white70),
+                              Material(
+                                color: Colors.transparent,
+                                child: CheckboxListTile(
+                                  title: const Text(
+                                    '复古暗角',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  value: _useVignette,
+                                  activeColor: Colors.pinkAccent,
+                                  onChanged: (val) {
+                                    setModalState(() => _useVignette = val!);
+                                    setState(() {});
+                                  },
                                 ),
-                                value: _useVignette,
-                                activeColor: Colors.pinkAccent,
-                                onChanged: (val) {
-                                  setModalState(() => _useVignette = val!);
-                                  setState(() {});
-                                },
                               ),
-                              CheckboxListTile(
-                                title: const Text(
-                                  '胶片噪点',
-                                  style: TextStyle(color: Colors.white70),
+                              Material(
+                                color: Colors.transparent,
+                                child: CheckboxListTile(
+                                  title: const Text(
+                                    '胶片噪点',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  value: _useGrain,
+                                  activeColor: Colors.pinkAccent,
+                                  onChanged: (val) {
+                                    setModalState(() => _useGrain = val!);
+                                    setState(() {});
+                                  },
                                 ),
-                                value: _useGrain,
-                                activeColor: Colors.pinkAccent,
-                                onChanged: (val) {
-                                  setModalState(() => _useGrain = val!);
-                                  setState(() {});
-                                },
                               ),
-                              CheckboxListTile(
-                                title: const Text(
-                                  '相机取景器',
-                                  style: TextStyle(color: Colors.white70),
+                              Material(
+                                color: Colors.transparent,
+                                child: CheckboxListTile(
+                                  title: const Text(
+                                    '相机取景器',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  value: _useCameraFrame,
+                                  activeColor: Colors.pinkAccent,
+                                  onChanged: (val) {
+                                    setModalState(() => _useCameraFrame = val!);
+                                    setState(() {});
+                                  },
                                 ),
-                                value: _useCameraFrame,
-                                activeColor: Colors.pinkAccent,
-                                onChanged: (val) {
-                                  setModalState(() => _useCameraFrame = val!);
-                                  setState(() {});
-                                },
                               ),
-                              CheckboxListTile(
-                                title: const Text(
-                                  '霓虹光圈',
-                                  style: TextStyle(color: Colors.white70),
+                              Material(
+                                color: Colors.transparent,
+                                child: CheckboxListTile(
+                                  title: const Text(
+                                    '霓虹光圈',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  value: _useGlowRing,
+                                  activeColor: Colors.pinkAccent,
+                                  onChanged: (val) {
+                                    setModalState(() => _useGlowRing = val!);
+                                    setState(() {});
+                                  },
                                 ),
-                                value: _useGlowRing,
-                                activeColor: Colors.pinkAccent,
-                                onChanged: (val) {
-                                  setModalState(() => _useGlowRing = val!);
-                                  setState(() {});
-                                },
                               ),
-                              CheckboxListTile(
-                                title: const Text(
-                                  '云朵边框',
-                                  style: TextStyle(color: Colors.white70),
+                              Material(
+                                color: Colors.transparent,
+                                child: CheckboxListTile(
+                                  title: const Text(
+                                    '云朵边框',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  value: _useCloudBorder,
+                                  activeColor: Colors.pinkAccent,
+                                  onChanged: (val) {
+                                    // 这里极其重要：必须同时调用 setModalState 和 setState
+                                    // 这样才能让面板上的勾选框和背后的视频画面同时刷新！
+                                    setModalState(() => _useCloudBorder = val!);
+                                    setState(() {});
+                                  },
                                 ),
-                                value: _useCloudBorder,
-                                activeColor: Colors.pinkAccent,
-                                onChanged: (val) {
-                                  // 这里极其重要：必须同时调用 setModalState 和 setState
-                                  // 这样才能让面板上的勾选框和背后的视频画面同时刷新！
-                                  setModalState(() => _useCloudBorder = val!);
-                                  setState(() {});
-                                },
                               ),
                               // 底部留出一点空白，防止被系统手势条挡住
                               const SizedBox(height: 20),
@@ -1422,6 +1581,7 @@ screenBody = Center(
       ),
     );
   }
+
   // ==========================================
   // 🎯 智能裁切：基于面积加权的人脸重心计算
   // ==========================================
@@ -1530,6 +1690,7 @@ screenBody = Center(
       _currentLyricText = widget.sections[_currentIndex].text;
     });
   }
+
   // 📸 全新：直接抓取 RGBA 原始像素，并强制裁剪为偶数分辨率
   Future<(Uint8List?, int, int)> _captureFrameRgba() async {
     try {
@@ -1537,8 +1698,9 @@ screenBody = Center(
           _renderKey.currentContext!.findRenderObject()
               as RenderRepaintBoundary;
 
-      // 这里的 pixelRatio 控制清晰度，2.0 大约等于 1080p。如果想要更快，可以改成 1.5。
-      ui.Image rawImage = await boundary.toImage(pixelRatio: 2.0);
+      // 这里直接用设备真实像素比，保证导出帧不被人为降采样。
+      final pixelRatio = MediaQuery.of(context).devicePixelRatio;
+      ui.Image rawImage = await boundary.toImage(pixelRatio: pixelRatio);
 
       int width = rawImage.width;
       int height = rawImage.height;
@@ -1572,7 +1734,6 @@ screenBody = Center(
       return (null, 0, 0);
     }
   }
-
 
   // 🎬 专门给取景器提供纯净画面的层（无黑边）
   // 🌟 修改点 1：把参数里的 String imagePath 改成 var photo (或者 PhotoEntity photo)
@@ -1609,6 +1770,7 @@ screenBody = Center(
       ],
     );
   }
+
   // 🌟 核心工具：把 asset 里的文件释放到手机真实的临时目录中
   Future<String> _extractAssetForFFmpeg(
     String assetPath,

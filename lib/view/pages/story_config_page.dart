@@ -1,7 +1,6 @@
 /// 配置页面，提供应用运行参数、调试开关和环境选项。
 
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
@@ -9,7 +8,6 @@ import '../../models/entity/event_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/entity/story_entity.dart';
 import '../../models/vo/story_generation_models.dart';
-import '../../service/photo_service.dart';
 import '../../service/llm_service.dart';
 import '../../utils/ocr_policy.dart';
 import 'story_result_page.dart';
@@ -21,6 +19,8 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:convert';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 // 🌟 新增：视频长宽比枚举
 enum VideoAspectRatio { vertical, horizontal }
@@ -97,6 +97,7 @@ class _ConfigPageState extends State<ConfigPage> {
       _selectedSubtitle = _deriveSmartSubtitle();
     }
   }
+
   // ==========================================
   // 🌟 核心提炼逻辑：直接调用专用的标题生成 API！
   // ==========================================
@@ -167,6 +168,7 @@ class _ConfigPageState extends State<ConfigPage> {
       if (mounted) setState(() => _isGeneratingTheme = false);
     }
   }
+
   // ==========================================
   // 🧠 智能推断 1：核心主题 (Title) 兜底策略
   // ==========================================
@@ -210,6 +212,7 @@ class _ConfigPageState extends State<ConfigPage> {
         ? '专属回忆'
         : widget.selectedTheme.title;
   }
+
   // ==========================================
   // 🧠 智能推断 2：副标题 (Subtitle)
   // ==========================================
@@ -239,7 +242,11 @@ class _ConfigPageState extends State<ConfigPage> {
 
   // 🌟 新增：拣选音乐的方法
   Future<void> _pickMusic() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
+    // iOS 18 已知问题：若存在活跃焦点(键盘)，系统文件选择器可能无法响应触摸
+    FocusManager.instance.primaryFocus?.unfocus();
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    FilePickerResult? result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['mp3', 'wav', 'aac', 'm4a', 'flac', 'ogg'],
       allowMultiple: false,
@@ -341,7 +348,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
     try {
       // 1. 获取 EventEntity（通过 Event.id 查询）
-      final isar = PhotoService().isar;
+      final store = ObjectBoxService().store;
       EventEntity? eventEntity;
 
       if (widget.event.id == '-1') {
@@ -355,7 +362,7 @@ class _ConfigPageState extends State<ConfigPage> {
       } else {
         // 正常走系统自动聚类的相册逻辑
         final eventEntityId = int.parse(widget.event.id);
-        eventEntity = await isar.collection<EventEntity>().get(eventEntityId);
+        eventEntity = store.box<EventEntity>().get(eventEntityId);
       }
 
       if (eventEntity == null) {
@@ -366,12 +373,13 @@ class _ConfigPageState extends State<ConfigPage> {
       final selectedAssetIds = widget.selectedPhotos
           .map((photo) => photo.id)
           .toList();
-      final List<PhotoEntity> photoEntities = await isar
-          .collection<PhotoEntity>()
-          .filter()
-          .anyOf(selectedAssetIds, (q, assetId) => q.assetIdEqualTo(assetId))
-          .sortByTimestamp()
-          .findAll();
+      final photoBox = store.box<PhotoEntity>();
+      final _pq = photoBox
+          .query(PhotoEntity_.assetId.oneOf(selectedAssetIds))
+          .order(PhotoEntity_.timestamp)
+          .build();
+      final List<PhotoEntity> photoEntities = _pq.find();
+      _pq.close();
 
       if (photoEntities.isEmpty) {
         throw Exception('No photos found');
@@ -444,24 +452,22 @@ class _ConfigPageState extends State<ConfigPage> {
         }
       }
       // ==========================================
-      // 🌟 核心：云端 Librosa 接入点
+      // 🌟 核心：端侧音乐分析接入点
       // ==========================================
       Map<String, dynamic>? dynamicBeatData;
 
       // 现在不管是“手动导入”还是刚才生成的“AI配乐”，只要有路径，统统拿去分析！
       if (_customMusicPath != null) {
         setState(() {
-          _loadingText = '🥁 正在分析音乐节拍与鼓点...';
+          _loadingText = '🥁 正在本地分析音乐节拍与情绪变化...';
         });
 
         dynamicBeatData = await MusicService.analyzeAudio(_customMusicPath!);
 
         if (dynamicBeatData == null) {
-          throw Exception('云端音乐分析失败，请检查 Python 后端服务');
+          throw Exception('本地音乐分析失败，请检查音频文件是否可解码');
         }
-      } else {
-
-      }
+      } else {}
       // ==========================================
       // 🌟 平台名称转换 (供最终发布页文案生成使用)
       // ==========================================
@@ -598,7 +604,7 @@ Sandal Leap
               photos: photoEntities,
               storyTemplateId: _selectedStoryTemplateId,
               customMusicPath: _customMusicPath,
-              // 🌟 新增：把刚才拿到的云端节拍数据一起传过去！
+              // 🌟 新增：把刚才拿到的本地节拍数据一起传过去！
               dynamicBeatData: dynamicBeatData,
               videoCaptions: finalCaptions,
               photoOverrides: widget.selectedPhotos,
@@ -630,7 +636,14 @@ Sandal Leap
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // appBar: AppBar(title: const Text('配置故事')),
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          onPressed: () => Navigator.of(context).maybePop(),
+          tooltip: '返回',
+        ),
+        title: const Text('配置故事'),
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -747,7 +760,7 @@ Sandal Leap
                         );
                       })
                       .toList(),
-          ),
+            ),
           const SizedBox(height: 24),
 
           // 🎬 删除了原来的“篇幅选择”，换成“视频长宽比”
@@ -924,38 +937,39 @@ Sandal Leap
           ),
 
           // Generate video button
-          if (false) FilledButton(
-            onPressed: _isGenerating ? null : _generateStory,
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
+          if (false)
+            FilledButton(
+              onPressed: _isGenerating ? null : _generateStory,
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
+              // 🌟 修复 UI 溢出：给 Text 加上 Flexible 和溢出处理
+              child: _isGenerating
+                  ? Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min, // 核心：让 Row 紧凑一点
+                      children: [
+                        const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        // 🌟 核心修复：用 Flexible 包裹长文字，太长就显示省略号
+                        Flexible(
+                          child: Text(
+                            _loadingText,
+                            style: const TextStyle(fontSize: 16),
+                            overflow: TextOverflow.ellipsis, // 超出显示 ...
+                          ),
+                        ),
+                      ],
+                    )
+                  : Text(_loadingText, style: const TextStyle(fontSize: 16)),
             ),
-            // 🌟 修复 UI 溢出：给 Text 加上 Flexible 和溢出处理
-            child: _isGenerating
-                ? Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min, // 核心：让 Row 紧凑一点
-                    children: [
-                      const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      // 🌟 核心修复：用 Flexible 包裹长文字，太长就显示省略号
-                      Flexible(
-                        child: Text(
-                          _loadingText,
-                          style: const TextStyle(fontSize: 16),
-                          overflow: TextOverflow.ellipsis, // 超出显示 ...
-                        ),
-                      ),
-                    ],
-                  )
-                : Text(_loadingText, style: const TextStyle(fontSize: 16)),
-          ),
           const SizedBox(height: 16),
         ],
       ),
@@ -1054,76 +1068,77 @@ Sandal Leap
           children: StoryGenerationMode.values
               .where((mode) => mode != StoryGenerationMode.localDirectVlm)
               .map((mode) {
-            final selected = _selectedStoryMode == mode;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(18),
-                onTap: () {
-                  setState(() {
-                    _selectedStoryMode = mode;
-                  });
-                },
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? Theme.of(
-                            context,
-                          ).colorScheme.primaryContainer.withValues(alpha: 0.92)
-                        : Theme.of(context).colorScheme.surface,
+                final selected = _selectedStoryMode == mode;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: InkWell(
                     borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: selected
-                          ? Theme.of(context).colorScheme.primary
-                          : Theme.of(context).colorScheme.outlineVariant,
-                      width: selected ? 1.6 : 1.0,
-                    ),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        selected
-                            ? Icons.check_circle_rounded
-                            : Icons.radio_button_unchecked_rounded,
+                    onTap: () {
+                      setState(() {
+                        _selectedStoryMode = mode;
+                      });
+                    },
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
                         color: selected
-                            ? Theme.of(context).colorScheme.primary
-                            : Colors.grey[500],
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              mode.title,
-                              style: Theme.of(context).textTheme.titleSmall
-                                  ?.copyWith(fontWeight: FontWeight.w700),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              mode.subtitle,
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: Colors.grey[700],
-                                    height: 1.4,
-                                  ),
-                            ),
-                          ],
+                            ? Theme.of(context).colorScheme.primaryContainer
+                                  .withValues(alpha: 0.92)
+                            : Theme.of(context).colorScheme.surface,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: selected
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context).colorScheme.outlineVariant,
+                          width: selected ? 1.6 : 1.0,
                         ),
                       ),
-                    ],
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            selected
+                                ? Icons.check_circle_rounded
+                                : Icons.radio_button_unchecked_rounded,
+                            color: selected
+                                ? Theme.of(context).colorScheme.primary
+                                : Colors.grey[500],
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  mode.title,
+                                  style: Theme.of(context).textTheme.titleSmall
+                                      ?.copyWith(fontWeight: FontWeight.w700),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  mode.subtitle,
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: Colors.grey[700],
+                                        height: 1.4,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            );
-          }).toList(growable: false),
+                );
+              })
+              .toList(growable: false),
         ),
       ],
     );
   }
+
   Widget _buildStoryTemplateSection() {
     final selectedTemplate = storyPromptTemplateById(_selectedStoryTemplateId);
 
@@ -1149,13 +1164,14 @@ Sandal Leap
             width: double.infinity,
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: Theme.of(context)
-                  .colorScheme
-                  .primaryContainer
-                  .withValues(alpha: 0.35),
+              color: Theme.of(
+                context,
+              ).colorScheme.primaryContainer.withValues(alpha: 0.35),
               borderRadius: BorderRadius.circular(18),
               border: Border.all(
-                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+                color: Theme.of(
+                  context,
+                ).colorScheme.primary.withValues(alpha: 0.3),
               ),
             ),
             child: Column(
@@ -1163,17 +1179,17 @@ Sandal Leap
               children: [
                 Text(
                   '${selectedTemplate.category.title} · ${selectedTemplate.title}',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 6),
                 Text(
                   selectedTemplate.preview,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey[700],
-                        height: 1.45,
-                      ),
+                    color: Colors.grey[700],
+                    height: 1.45,
+                  ),
                 ),
               ],
             ),
@@ -1211,57 +1227,63 @@ Sandal Leap
               ),
             ),
             child: Theme(
-              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              data: Theme.of(
+                context,
+              ).copyWith(dividerColor: Colors.transparent),
               child: ExpansionTile(
                 key: PageStorageKey<String>('story-template-${category.name}'),
                 initiallyExpanded: isExpanded,
-                tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                tilePadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 2,
+                ),
                 childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
                 title: Text(
                   category.title,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 subtitle: Text(
                   category.subtitle,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey[600],
-                        height: 1.35,
-                      ),
+                    color: Colors.grey[600],
+                    height: 1.35,
+                  ),
                 ),
-                children: templates.map((template) {
-                  final selected = template.id == _selectedStoryTemplateId;
-                  return ListTile(
-                    onTap: () {
-                      setState(() {
-                        _selectedStoryTemplateId = template.id;
-                      });
-                    },
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                    leading: Icon(
-                      selected
-                          ? Icons.radio_button_checked_rounded
-                          : Icons.radio_button_off_rounded,
-                      color: selected
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.grey[500],
-                    ),
-                    title: Text(
-                      template.title,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                    ),
-                    subtitle: Text(
-                      template.preview,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.grey[700],
-                            height: 1.45,
-                          ),
-                    ),
-                  );
-                }).toList(growable: false),
+                children: templates
+                    .map((template) {
+                      final selected = template.id == _selectedStoryTemplateId;
+                      return ListTile(
+                        onTap: () {
+                          setState(() {
+                            _selectedStoryTemplateId = template.id;
+                          });
+                        },
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                        ),
+                        leading: Icon(
+                          selected
+                              ? Icons.radio_button_checked_rounded
+                              : Icons.radio_button_off_rounded,
+                          color: selected
+                              ? Theme.of(context).colorScheme.primary
+                              : Colors.grey[500],
+                        ),
+                        title: Text(
+                          template.title,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          template.preview,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: Colors.grey[700], height: 1.45),
+                        ),
+                      );
+                    })
+                    .toList(growable: false),
               ),
             ),
           );
@@ -1269,6 +1291,7 @@ Sandal Leap
       ],
     );
   }
+
   // ==========================================
   // 🍱 预制菜核心 V2.0：权重打分匹配算法
   // ==========================================

@@ -5,6 +5,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import '../../objectbox.g.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/entity/story_entity.dart';
 import '../../service/create_recommendation_service.dart';
@@ -15,6 +16,7 @@ import 'album_search_page.dart';
 import 'create_page.dart';
 import 'stories_page.dart';
 import 'story_result_page.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class CreateHubPage extends StatefulWidget {
   const CreateHubPage({super.key});
@@ -165,7 +167,34 @@ class _CreateHubPageState extends State<CreateHubPage>
   Future<List<_StoryPreviewItem>> _loadStoryPreviews(
     _SavedStorySortMode sortMode,
   ) async {
-    final stories = await StoryService().getAllStories();
+    final storyBox = ObjectBoxService().store.box<StoryEntity>();
+    
+    // 计算一周前的时间戳
+    final oneWeekAgo = DateTime.now().subtract(const Duration(days: 7)).millisecondsSinceEpoch;
+    
+    // 获取一周内手动保存的故事
+    final manuallySavedQuery = storyBox.query(
+      StoryEntity_.isManuallySaved.equals(true) &
+      StoryEntity_.updatedAt.greaterThan(oneWeekAgo),
+    ).build();
+    final manuallySavedStories = manuallySavedQuery.find();
+    manuallySavedQuery.close();
+    
+    // 获取最新的一个自动保存（未手动保存）的故事
+    final autoSavedQuery = storyBox.query(
+      StoryEntity_.isManuallySaved.equals(false),
+    ).order(StoryEntity_.updatedAt, flags: Order.descending).build();
+    final autoSavedStories = autoSavedQuery.find();
+    autoSavedQuery.close();
+    
+    final latestAutoSaved = autoSavedStories.isNotEmpty ? autoSavedStories.first : null;
+    
+    // 合并列表：一周内手动保存的 + 最新的自动保存
+    final stories = <StoryEntity>[
+      ...manuallySavedStories,
+      if (latestAutoSaved != null) latestAutoSaved,
+    ];
+    
     if (stories.isEmpty) {
       return const <_StoryPreviewItem>[];
     }
@@ -194,7 +223,7 @@ class _CreateHubPageState extends State<CreateHubPage>
         .whereType<int>()
         .toSet()
         .toList(growable: false);
-    final covers = (await PhotoService().isar.photoEntitys.getAll(coverIds))
+    final covers = ObjectBoxService().store.box<PhotoEntity>().getMany(coverIds)
         .whereType<PhotoEntity>()
         .toList(growable: false);
     final reconciled = await PhotoService().reconcileAccessiblePhotos(covers);
@@ -243,6 +272,7 @@ class _CreateHubPageState extends State<CreateHubPage>
         builder: (context) => StoryResultPage.fromStoryEntity(
           storyEntity: story,
           photos: photos,
+          customMusicPath: story.customMusicPath,
           isHorizontal: _safeStoryIsHorizontal(story),
           targetPlatform: story.targetPlatform ?? '小红书',
         ),
@@ -751,7 +781,7 @@ class _RecommendationPreviewCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _RecommendationCover(photo: card.cover),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               Row(
                 children: [
                   Container(
@@ -892,56 +922,109 @@ class _SavedStoryCard extends StatelessWidget {
     final date = DateTime.fromMillisecondsSinceEpoch(item.story.updatedAt);
     final subtitle =
         '${date.year}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')} · ${item.story.photoCount} 张';
+    final isUnsaved = !item.story.isManuallySaved;
 
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        width: 220,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          color: const Color(0xFFF9F6FC),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(24),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          width: 220,
+          decoration: BoxDecoration(
+            color: isUnsaved ? const Color(0xFFFFF9E6) : const Color(0xFFF9F6FC),
+            border: isUnsaved 
+                ? Border.all(color: const Color(0xFFFFB84D), width: 2)
+                : null,
+          ),
+          child: Column(
+            children: [
+              Expanded(
+                child: Stack(
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: item.cover == null
+                          ? Container(
+                              color: const Color(0xFFF1EBF7),
+                              alignment: Alignment.center,
+                              child: const Icon(Icons.menu_book_outlined, size: 40),
+                            )
+                          : PathImage(path: item.cover!.path, fit: BoxFit.cover),
+                    ),
+                    if (isUnsaved)
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFB84D),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.15),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.restore, size: 14, color: Colors.white),
+                              SizedBox(width: 4),
+                              Text(
+                                '未保存',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-                child: item.cover == null
-                    ? Container(
-                        color: const Color(0xFFF1EBF7),
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.menu_book_outlined, size: 40),
-                      )
-                    : PathImage(path: item.cover!.path, fit: BoxFit.cover),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.story.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (isUnsaved)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          '是否需要恢复上一个创作？',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: const Color(0xFFD97706),
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    subtitle,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.grey.shade600,
-                        ),
-                  ),
-                ],
+                      ),
+                    Text(
+                      item.story.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.grey.shade600,
+                          ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

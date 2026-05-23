@@ -78,19 +78,14 @@ extension _StoryGenerationOrchestratorGeneration
   Future<List<PhotoEntity>> _loadSelectedPhotoEntities(
     StoryGenerationRequest request,
   ) async {
-    final isar = PhotoService().isar;
     final selectedAssetIds = request.selectedPhotos
         .map((photo) => photo.id)
         .where((id) => id.trim().isNotEmpty)
         .toList(growable: false);
-    final photos = await isar
-        .collection<PhotoEntity>()
-        .filter()
-        .anyOf(
-          selectedAssetIds,
-          (query, assetId) => query.assetIdEqualTo(assetId),
-        )
-        .findAll();
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final q = photoBox.query(PhotoEntity_.assetId.oneOf(selectedAssetIds)).build();
+    final photos = q.find();
+    q.close();
 
     final latestPathByAssetId = <String, String>{
       for (final photo in request.selectedPhotos)

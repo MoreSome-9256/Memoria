@@ -42,7 +42,8 @@ class StoryVideoPreparationService {
         request.title,
         request.subtitle.isEmpty ? '美好时光' : request.subtitle,
       ];
-      if (photos.isNotEmpty && (photos.first.aiCaption?.trim().isNotEmpty ?? false)) {
+      if (photos.isNotEmpty &&
+          (photos.first.aiCaption?.trim().isNotEmpty ?? false)) {
         promptTags.add(photos.first.aiCaption!.trim());
       }
 
@@ -60,7 +61,7 @@ class StoryVideoPreparationService {
     }
 
     if (preparedMusicPath != null && preparedMusicPath.isNotEmpty) {
-      onStatus?.call('正在分析音乐节拍');
+      onStatus?.call('正在本地分析音乐节拍与情绪变化');
       dynamicBeatData = await MusicService.analyzeAudio(preparedMusicPath);
     }
 
@@ -90,12 +91,16 @@ class StoryVideoPreparationService {
     void Function(String status)? onStatus,
   }) async {
     onStatus?.call('正在撰写视频字幕');
-    final narrative = story.content.trim().isEmpty ? request.title : story.content;
+    final narrative = story.content.trim().isEmpty
+        ? request.title
+        : story.content;
     final styleTags = <String>[
       request.subtitle.isEmpty ? '治愈感' : request.subtitle,
       request.targetPlatform,
     ];
-    final photoDescriptions = photos.map(_describePhoto).toList(growable: false);
+    final photoDescriptions = photos
+        .map(_describePhoto)
+        .toList(growable: false);
 
     try {
       return await LLMService().generateVideoCaptionsFromScript(
@@ -138,7 +143,9 @@ class StoryVideoPreparationService {
       }
     }
     return photos
-        .map((photo) => byAssetId[photo.assetId] ?? photo.aiCaption?.trim() ?? '')
+        .map(
+          (photo) => byAssetId[photo.assetId] ?? photo.aiCaption?.trim() ?? '',
+        )
         .toList(growable: false);
   }
 
@@ -217,7 +224,9 @@ class StoryVideoPreparationService {
 
     final upbeatScore = upbeatWords.where(lowerPrompt.contains).length;
     final cinematicScore = cinematicWords.where(lowerPrompt.contains).length;
-    final melancholicScore = melancholicWords.where(lowerPrompt.contains).length;
+    final melancholicScore = melancholicWords
+        .where(lowerPrompt.contains)
+        .length;
     final lofiScore = lofiWords.where(lowerPrompt.contains).length;
 
     var assetPath = 'assets/audio/premade/Soft Save Point.mp3';

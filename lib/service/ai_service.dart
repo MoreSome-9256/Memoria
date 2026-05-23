@@ -4,30 +4,32 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
-import 'package:isar/isar.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/entity/photo_entity.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
+import '../storage/vector_index/photo_embedding_index_repository.dart';
+import '../storage/vector_index/vector_index_constants.dart';
 import '../utils/ai_score_helper.dart';
 import '../utils/tag_sanitizer.dart';
-import 'junk_photo_filter_service.dart';
-import 'face_pipeline_service.dart';
-import 'photo_service.dart';
+import 'ai_progress_notification_service.dart';
 import 'event_service.dart';
+import 'face_pipeline_service.dart';
+import 'junk_photo_filter_service.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_embedding_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'ocr_service.dart';
+import 'photo_service.dart';
 import 'photo_caption_service.dart';
-import 'ai_progress_notification_service.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
-import '../storage/vector_index/photo_embedding_index_repository.dart';
-import '../storage/vector_index/vector_index_constants.dart';
 
 part 'ai_service_progress.dart';
 part 'ai_service_input.dart';
@@ -93,7 +95,7 @@ class AIService {
       JunkPhotoFilterService();
   final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
       PhotoEmbeddingIndexRepository();
-  final Set<Id> _junkFilterBypassPhotoIds = <Id>{};
+  final Set<int> _junkFilterBypassPhotoIds = <int>{};
   final ListQueue<_AsyncCaptionTask> _pendingCaptionTasks =
       ListQueue<_AsyncCaptionTask>();
   static final _AnalysisInputConfig _analysisInputConfig =

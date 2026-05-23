@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../../service/story_queue_service.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/path_image.dart';
-import 'config_page.dart';
+import 'story_config_page.dart';
 
 class StoryQueuePage extends StatelessWidget {
   const StoryQueuePage({super.key});
@@ -15,6 +15,11 @@ class StoryQueuePage extends StatelessWidget {
     final queue = StoryQueueService();
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          onPressed: () => Navigator.of(context).maybePop(),
+          tooltip: '返回',
+        ),
         title: const Text('故事队列'),
         actions: [
           ValueListenableBuilder<List<StoryQueueItem>>(

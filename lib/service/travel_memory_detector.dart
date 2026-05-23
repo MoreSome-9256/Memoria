@@ -2,36 +2,39 @@
 
 import 'dart:isolate';
 
-import 'package:isar/isar.dart';
+import 'package:objectbox/objectbox.dart';
 
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
-import 'photo_service.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 
 class TravelMemoryService {
-  TravelMemoryService({PhotoService? photoService})
-    : _photoService = photoService ?? PhotoService();
+  TravelMemoryService({ObjectBoxService? objectBoxService})
+    : _objectBoxService = objectBoxService ?? ObjectBoxService();
 
-  final PhotoService _photoService;
+  final ObjectBoxService _objectBoxService;
 
   Future<List<TravelMemoryCandidate>> detectRecentTravelMemories({
     int lookbackDays = 90,
   }) async {
     final safeLookbackDays = lookbackDays <= 0 ? 90 : lookbackDays;
-    final isar = _photoService.isar;
+    final store = _objectBoxService.store;
+    final eventBox = store.box<EventEntity>();
+    final photoBox = store.box<PhotoEntity>();
 
-    final latestEvent = await isar
-        .collection<EventEntity>()
-        .where()
-        .sortByEndTimeDesc()
-        .limit(1)
-        .findFirst();
-    final latestPhoto = await isar
-        .collection<PhotoEntity>()
-        .where()
-        .sortByTimestampDesc()
-        .limit(1)
-        .findFirst();
+    final latestEventQuery = eventBox
+        .query()
+        .order(EventEntity_.endTime, flags: Order.descending)
+        .build();
+    final latestEvent = latestEventQuery.findFirst();
+    latestEventQuery.close();
+    final latestPhotoQuery = photoBox
+        .query()
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    final latestPhoto = latestPhotoQuery.findFirst();
+    latestPhotoQuery.close();
     final latestTime = _latestTimestamp(
       latestEvent?.endTime,
       latestPhoto?.timestamp,
@@ -43,16 +46,16 @@ class TravelMemoryService {
     final windowStart = DateTime.fromMillisecondsSinceEpoch(
       latestTime,
     ).subtract(Duration(days: safeLookbackDays - 1)).millisecondsSinceEpoch;
-    final events = await isar
-        .collection<EventEntity>()
-        .filter()
-        .endTimeGreaterThan(windowStart, include: true)
-        .findAll();
-    final photos = await isar
-        .collection<PhotoEntity>()
-        .filter()
-        .timestampGreaterThan(windowStart, include: true)
-        .findAll();
+    final eventsQuery = eventBox
+        .query(EventEntity_.endTime.greaterThan(windowStart - 1))
+        .build();
+    final events = eventsQuery.find();
+    eventsQuery.close();
+    final photosQuery = photoBox
+        .query(PhotoEntity_.timestamp.greaterThan(windowStart - 1))
+        .build();
+    final photos = photosQuery.find();
+    photosQuery.close();
     events.sort((a, b) => a.startTime.compareTo(b.startTime));
     photos.sort((a, b) => a.timestamp.compareTo(b.timestamp));
 

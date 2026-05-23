@@ -129,13 +129,39 @@ extension _StoryGenerationOrchestratorStoryBuilder
             content: markdown,
             eventId: int.tryParse(request.event.id) ?? -1,
             photoIds: photos.map((photo) => photo.id).toList(growable: false),
+            isManuallySaved: false, // 自动保存标记为未手动保存
           )
           ..isHorizontal = request.isHorizontal
           ..targetPlatform = request.targetPlatform;
 
-    final isar = PhotoService().isar;
-    await isar.writeTxn(() async {
-      await isar.collection<StoryEntity>().put(story);
+    // 在故事首次创建时固化音乐二进制到数据库（zstd 压缩）
+    if (request.customMusicPath != null && request.customMusicPath!.trim().isNotEmpty) {
+      final rawBytes = await StoryService.loadMusicBytes(request.customMusicPath);
+      if (rawBytes != null && rawBytes.isNotEmpty) {
+        story.originalMusicHash = sha256.convert(rawBytes).toString();
+        story.customMusicBytes = await StoryService.zstdCompress(rawBytes);
+        story.customMusicPath = request.customMusicPath;
+      }
+    }
+
+    final store = ObjectBoxService().store;
+    store.runInTransaction(TxMode.write, () {
+      // 删除旧的自动保存记录（只保留最新一个）
+      final storyBox = store.box<StoryEntity>();
+      final autoSavedQuery = storyBox.query(
+        StoryEntity_.isManuallySaved.equals(false),
+      ).build();
+      final autoSavedStories = autoSavedQuery.find()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      autoSavedQuery.close();
+      
+      // 删除除了即将保存的这个之外的所有自动保存记录
+      if (autoSavedStories.isNotEmpty) {
+        storyBox.removeMany(autoSavedStories.map((s) => s.id).toList());
+      }
+      
+      // 保存新的自动保存记录
+      storyBox.put(story);
     });
     return story;
   }

@@ -3,12 +3,11 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
 
 import '../../models/entity/face_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/face_cluster_service.dart';
-import '../../service/photo_service.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class FaceClusterDebugPage extends StatefulWidget {
   const FaceClusterDebugPage({super.key});
@@ -86,9 +85,9 @@ class _FaceClusterDebugPageState extends State<FaceClusterDebugPage> {
   }
 
   Future<FaceClusterDebugSnapshot> _buildSnapshot() async {
-    final isar = PhotoService().isar;
-    final faces = await isar.collection<FaceEntity>().where().findAll();
-    final photos = await isar.collection<PhotoEntity>().where().findAll();
+    final store = ObjectBoxService().store;
+    final faces = store.box<FaceEntity>().getAll();
+    final photos = store.box<PhotoEntity>().getAll();
     final photoById = <int, PhotoEntity>{
       for (final photo in photos) photo.id: photo,
     };

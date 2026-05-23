@@ -4,16 +4,16 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
 import 'package:path/path.dart' as p;
 
 import '../../models/entity/photo_entity.dart';
 import '../../service/internvl_experiment_service.dart';
 import '../../service/internvl_output_archive_service.dart';
 import '../../service/on_device_internvl_service.dart';
-import '../../service/photo_service.dart';
 import '../widgets/path_image.dart';
 import 'vlm_photo_picker_page.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 enum LocalVlmTaskMode { captions, story }
 
@@ -174,7 +174,7 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
   Future<List<OnDeviceInternvlImagePayload>> _buildImagePayloads(
     List<VlmPhotoPickerResult> picks,
   ) async {
-    final isar = PhotoService().isar;
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
     final payloads = <OnDeviceInternvlImagePayload>[];
 
     for (final item in picks) {
@@ -182,11 +182,9 @@ class _LocalVlmTestPageState extends State<LocalVlmTestPage> {
         continue;
       }
 
-      final photo = await isar
-          .collection<PhotoEntity>()
-          .filter()
-          .assetIdEqualTo(item.assetId)
-          .findFirst();
+      final q = photoBox.query(PhotoEntity_.assetId.equals(item.assetId)).build();
+      final photo = q.findFirst();
+      q.close();
 
       payloads.add(
         OnDeviceInternvlImagePayload(

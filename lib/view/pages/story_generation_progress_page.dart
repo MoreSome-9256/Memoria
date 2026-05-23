@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math;
 
 import '../../models/vo/story_generation_models.dart';
+import '../../service/story_queue_service.dart';
 import '../../service/story_video_preparation_service.dart';
 import '../../service/story_generation_orchestrator.dart';
 import '../widgets/path_image.dart';
@@ -96,6 +97,8 @@ class _StoryGenerationProgressPageState
         return;
       }
 
+      StoryQueueService().clear();
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -120,7 +123,7 @@ class _StoryGenerationProgressPageState
         _isRunning = false;
         _state = StoryGenerationProgressState(
           steps: _state?.steps ?? const <StoryGenerationProgressStep>[],
-          headline: '故事生成失败',
+          headline: '故事生成失败，请重试或返回修改输入。你选中的图片还在队列里面哦~',
           errorMessage: error.toString(),
           isCompleted: false,
         );

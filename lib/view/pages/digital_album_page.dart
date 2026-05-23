@@ -7,8 +7,9 @@ import '../../models/entity/photo_entity.dart';
 import '../../models/entity/story_entity.dart';
 import '../../models/vo/photo.dart';
 import '../../models/vo/story_section.dart';
-import '../../service/photo_service.dart';
 import '../widgets/path_image.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 class DigitalAlbumResult {
   const DigitalAlbumResult({
@@ -157,13 +158,13 @@ class _DigitalAlbumPageState extends State<DigitalAlbumPage> {
     });
 
     try {
-      final isar = PhotoService().isar;
-      final story = await isar.collection<StoryEntity>().get(widget.storyEntityId!);
+      final store = ObjectBoxService().store;
+      final story = store.box<StoryEntity>().get(widget.storyEntityId!);
       if (story == null) {
         throw StateError('Story not found');
       }
 
-      final photos = await isar.collection<PhotoEntity>().getAll(story.photoIds);
+      final photos = store.box<PhotoEntity>().getMany(story.photoIds);
       final existingPhotos = photos.whereType<PhotoEntity>().toList(growable: false);
 
       final photoByAssetId = <String, PhotoEntity>{
@@ -197,10 +198,10 @@ class _DigitalAlbumPageState extends State<DigitalAlbumPage> {
         changedPhotos.add(photoEntity);
       }
 
-      await isar.writeTxn(() async {
-        await isar.collection<StoryEntity>().put(story);
+      store.runInTransaction(TxMode.write, () {
+        store.box<StoryEntity>().put(story);
         if (changedPhotos.isNotEmpty) {
-          await isar.collection<PhotoEntity>().putAll(changedPhotos);
+          store.box<PhotoEntity>().putMany(changedPhotos);
         }
       });
 

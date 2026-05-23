@@ -58,11 +58,9 @@ class _AiPipelineRunner {
 
   Future<_PhotoProcessResult> _applyPhotoProcessResult(
     _PhotoProcessResult result, {
-    required Isar isar,
     required MobileClipBackend selectedBackend,
   }) => _service._applyPhotoProcessResult(
     result,
-    isar: isar,
     selectedBackend: selectedBackend,
   );
 
@@ -86,18 +84,17 @@ class _AiPipelineRunner {
     _inflightCount = 0;
     _analysisCompleter = Completer<void>();
     clearPendingJunkCleanupReport();
-    final isar = PhotoService().isar;
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
     final mobileClipEmbeddingService = MobileClipEmbeddingService();
     final mobileClipTagService = MobileClipTagService();
     final photoCaptionService = PhotoCaptionService();
     final facePipelineService = FacePipelineService();
     final ocrService = OcrService();
 
-    final pendingCount = await isar
-        .collection<PhotoEntity>()
-        .filter()
-        .isAiAnalyzedEqualTo(false)
-        .count();
+    final pendingQ = photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
+    final pendingCount = pendingQ.count();
+    pendingQ.close();
     final targetTotal = math.min(pendingCount, maxPhotos ?? pendingCount);
     int? processingStartedAtMs;
     int elapsedMs() {
@@ -152,8 +149,8 @@ class _AiPipelineRunner {
     var processedCount = 0;
     var scheduledCount = 0;
     final junkCandidates = <JunkPhotoCleanupCandidate>[];
-    final attemptedPhotoIds = <Id>{};
-    final queuedPhotoIds = <Id>{};
+    final attemptedPhotoIds = <int>{};
+    final queuedPhotoIds = <int>{};
     final queue = ListQueue<PhotoEntity>();
     final recentDurationsMs = ListQueue<int>();
     final pipelineProfiler = _AiPipelineRunProfiler(
@@ -163,6 +160,17 @@ class _AiPipelineRunner {
     var inflightCount = 0;
     var activeWorkerCount = 1;
     var engineBootstrapped = false;
+    var junkReportPublished = false;
+    void publishJunkReportIfNeeded() {
+      if (junkReportPublished || junkCandidates.isEmpty) {
+        return;
+      }
+      junkReportPublished = true;
+      replacePendingJunkCleanupReport(
+        JunkPhotoCleanupReport.fromCandidates(junkCandidates),
+      );
+    }
+
     final baselineWorkItems = math.max(1, math.min(batchSize, targetTotal));
     final maxWorkerCount = _resolveWorkerCount(
       math.max(baselineWorkItems, targetTotal),
@@ -262,13 +270,15 @@ class _AiPipelineRunner {
             var fetchedCount = 0;
             final photosToAnalyze = <PhotoEntity>[];
             while (true) {
-              final fetchedCandidates = await isar
-                  .collection<PhotoEntity>()
-                  .filter()
-                  .isAiAnalyzedEqualTo(false)
-                  .sortByTimestampDesc()
-                  .limit(candidateLimit)
-                  .findAll();
+              final pendingQ = photoBox
+                  .query(PhotoEntity_.isAiAnalyzed.equals(false))
+                  .order(PhotoEntity_.timestamp, flags: Order.descending)
+                  .build();
+              final fetchedCandidates = pendingQ
+                  .find()
+                  .take(candidateLimit)
+                  .toList(growable: false);
+              pendingQ.close();
               fetchedCount = fetchedCandidates.length;
 
               photosToAnalyze
@@ -434,7 +444,6 @@ class _AiPipelineRunner {
                 await _processSinglePhoto(
                   _AiPhotoProcessingRequest(
                     photo: photo,
-                    isar: isar,
                     selectedBackend: selectedBackend,
                     mobileClipEmbeddingService: mobileClipEmbeddingService,
                     mobileClipTagService: mobileClipTagService,
@@ -447,7 +456,6 @@ class _AiPipelineRunner {
                     stopRequested: _stopRequested,
                   ),
                 ),
-                isar: isar,
                 selectedBackend: selectedBackend,
               );
 
@@ -521,11 +529,7 @@ class _AiPipelineRunner {
         ...workers,
       ]);
 
-      if (junkCandidates.isNotEmpty) {
-        replacePendingJunkCleanupReport(
-          JunkPhotoCleanupReport.fromCandidates(junkCandidates),
-        );
-      }
+      publishJunkReportIfNeeded();
 
       if (affectedEventIds.isNotEmpty) {
         await EventService().refreshEventSmartInfo(affectedEventIds.toList());
@@ -535,12 +539,11 @@ class _AiPipelineRunner {
       pipelineProfiler.logFinalSummary();
       await mobileClipTagService.endWorkflowSession();
       await mobileClipEmbeddingService.endWorkflowSession();
+      publishJunkReportIfNeeded();
 
-      final remainingPending = await isar
-          .collection<PhotoEntity>()
-          .filter()
-          .isAiAnalyzedEqualTo(false)
-          .count();
+      final remainingQ = photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
+      final remainingPending = remainingQ.count();
+      remainingQ.close();
       if (remainingPending > 0 && !_stopRequested) {
         _progressNotifier.value = AIAnalysisProgress.paused(
           total: remainingPending,

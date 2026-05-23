@@ -80,6 +80,12 @@ extension AIServiceLifecycle on AIService {
     _junkFilterBypassPhotoIds.addAll(normalized);
   }
 
+  void unmarkJunkCandidatesAsKept(Iterable<int> photoIds) {
+    for (final photoId in photoIds.where((id) => id > 0)) {
+      _junkFilterBypassPhotoIds.remove(photoId);
+    }
+  }
+
   bool _consumeJunkFilterBypassForPhoto(int photoId) {
     return _junkFilterBypassPhotoIds.remove(photoId);
   }
@@ -141,6 +147,7 @@ extension AIServiceLifecycle on AIService {
 
   void stopAnalysis() {
     final current = _progressNotifier.value;
+    _clearPendingCaptionTasks();
     if (!_isAnalyzing) {
       if (current.isPaused && current.total > 0) {
         _pauseRequested = false;
@@ -162,6 +169,15 @@ extension AIServiceLifecycle on AIService {
         currentStep: '正在结束本轮打标…',
       );
     }
+  }
+
+  Future<void> endCurrentRoundSafely({
+    Duration timeout = const Duration(seconds: 45),
+  }) async {
+    _clearPendingCaptionTasks();
+    stopAnalysis();
+    await stopAnalysisAndWait(timeout: timeout);
+    await _waitForCaptionTasksToDrain(timeout: const Duration(seconds: 8));
   }
 
   Future<void> stopAnalysisAndWait({
@@ -191,11 +207,10 @@ extension AIServiceLifecycle on AIService {
 
     await loadAutoResumePreference();
 
-    final pending = await PhotoService().isar
-        .collection<PhotoEntity>()
-        .filter()
-        .isAiAnalyzedEqualTo(false)
-        .count();
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final pendingQ = photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
+    final pending = pendingQ.count();
+    pendingQ.close();
     if (pending <= 0) {
       await AIProgressNotificationService().clearProgressNotificationSurfaces();
       await _persistRuntimeState(isActive: false);
@@ -315,5 +330,18 @@ extension AIServiceLifecycle on AIService {
       await Future.delayed(const Duration(milliseconds: 300));
     }
     return !_stopRequested;
+  }
+
+  Future<void> _waitForCaptionTasksToDrain({
+    required Duration timeout,
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (_activeCaptionTasks > 0) {
+      if (DateTime.now().isAfter(deadline)) {
+        debugPrint('⚠️ 等待 caption 任务结束超时，剩余=$_activeCaptionTasks');
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    }
   }
 }

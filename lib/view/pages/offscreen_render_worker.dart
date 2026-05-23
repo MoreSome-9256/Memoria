@@ -2,9 +2,9 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -22,6 +22,10 @@ import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:gal/gal.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
+import '../../service/story_service.dart';
+import '../../service/video_cache_service.dart';
+import '../../storage/objectbox/objectbox_service.dart';
+import '../../models/entity/story_entity.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
 
 class OffscreenRenderWorker extends StatefulWidget {
@@ -51,6 +55,7 @@ class OffscreenRenderWorker extends StatefulWidget {
 
   // 🌟 新增：工作进度汇报专线
   final Function(double progress)? onProgress;
+  final int? storyEntityId;
 
   const OffscreenRenderWorker({
     super.key,
@@ -77,6 +82,7 @@ class OffscreenRenderWorker extends StatefulWidget {
     required this.useGlowRing,
     required this.useCloudBorder,
     this.onProgress,
+    this.storyEntityId,
   });
 
   @override
@@ -85,7 +91,6 @@ class OffscreenRenderWorker extends StatefulWidget {
 
 class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     with TickerProviderStateMixin {
-
   int _currentIndex = 0;
 
   int _currentLyricIndex = 0;
@@ -143,7 +148,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     // 我们强制让它处于导出模式
     _isExporting = true;
 
-    unawaited(_loadBeatDataFromBackend());
+    unawaited(_loadBeatDataFromLocalAnalyzer());
 
     if (widget.sections.isNotEmpty) {
       _currentLyricText = widget.sections[0].text;
@@ -156,6 +161,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       _startExport();
     });
   }
+
   void _applyBeatData(Map<String, dynamic> beatResponse) {
     final data = beatResponse['data'];
     final bpmRaw = beatResponse['bpm'];
@@ -174,7 +180,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     );
   }
 
-  Future<void> _loadBeatDataFromBackend() async {
+  Future<void> _loadBeatDataFromLocalAnalyzer() async {
     // 优先使用上一个页面已经分析好的数据。
     if (widget.dynamicBeatData != null &&
         widget.dynamicBeatData!['data'] != null) {
@@ -183,11 +189,25 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     }
 
     try {
-      // fallback 也走云端分析：上传当前实际要播放的音频文件。
+      // fallback 也走本地分析：使用当前实际要播放的音频文件。
       String audioPath;
-      if (widget.customMusicPath != null &&
-          widget.customMusicPath!.isNotEmpty) {
-        audioPath = widget.customMusicPath!;
+      String? resolvedMusicPath;
+      if (widget.storyEntityId != null) {
+        try {
+          final store = ObjectBoxService().store;
+          final storyBox = store.box<StoryEntity>();
+          final story = storyBox.get(widget.storyEntityId!);
+          if (story != null) {
+            resolvedMusicPath = await StoryService.resolveMusicFile(story);
+          }
+        } catch (_) {}
+      }
+      resolvedMusicPath ??= widget.customMusicPath;
+
+      if (resolvedMusicPath != null &&
+          resolvedMusicPath.isNotEmpty &&
+          await File(resolvedMusicPath).exists()) {
+        audioPath = resolvedMusicPath;
       } else {
         audioPath = await _extractAssetForFFmpeg(
           'assets/audio/sandal_leap.mp3',
@@ -201,14 +221,13 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         return;
       }
 
-      debugPrint("⚠️ fallback 云端节拍分析失败，保留最小兜底节拍");
+      debugPrint("⚠️ fallback 本地节拍分析失败，保留最小兜底节拍");
     } catch (e) {
-      debugPrint("❌ fallback 云端节拍分析异常: $e");
+      debugPrint("❌ fallback 本地节拍分析异常: $e");
     }
   }
 
   int _currentBeatIndexForPreview = -1; // 记录当前演到第几拍了
-
 
   @override
   void dispose() {
@@ -356,8 +375,8 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
               ),
             ),
           ),
-        )
-      )
+        ),
+      ),
     );
 
     // 🌟 2. 核心化简：只返回取景器本身，去掉所有的 Scaffold 和进度条
@@ -570,6 +589,82 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       captions: currentCaptions,
     );
 
+    final sectionsData = widget.sections
+        .map((section) {
+          return {
+            'photo': {'path': section.photo.path},
+            'text': section.text,
+          };
+        })
+        .toList(growable: false);
+
+    _exportCacheKey = VideoCacheService.instance.buildVideoCacheKey(
+      title: widget.title,
+      subtitle: widget.subtitle,
+      sections: sectionsData,
+      customMusicPath: widget.customMusicPath,
+      dynamicBeatData: widget.dynamicBeatData,
+      targetPlatform: widget.targetPlatform,
+      isHorizontal: widget.isHorizontal,
+      currentTextStyle: _currentTextStyle,
+      textYPosition: _textYPosition,
+      textSize: _textSize,
+      textBlurIntensity: _textBlurIntensity,
+      shakeIntensity: _shakeIntensity,
+      shakeFrequency: _shakeFrequency,
+      glitchIntensity: _glitchIntensity,
+      enableFlash: _enableFlash,
+      useVignette: widget.useVignette,
+      useGrain: widget.useGrain,
+      useCameraFrame: widget.useCameraFrame,
+      useGlowRing: widget.useGlowRing,
+      useCloudBorder: widget.useCloudBorder,
+    );
+
+    // 🌟 第一步：优先检查故事实体中固化的视频路径
+    String? cachedVideoPath;
+    if (widget.storyEntityId != null) {
+      try {
+        final store = ObjectBoxService().store;
+        final storyBox = store.box<StoryEntity>();
+        final story = storyBox.get(widget.storyEntityId!);
+        if (story?.cachedVideoPath != null &&
+            await File(story!.cachedVideoPath!).exists()) {
+          cachedVideoPath = story.cachedVideoPath;
+          debugPrint('✅ 使用故事实体固化视频路径: $cachedVideoPath');
+        }
+      } catch (_) {}
+    }
+
+    // 第二步：回退到缓存服务检查
+    if (cachedVideoPath == null) {
+      cachedVideoPath = await VideoCacheService.instance.getCachedVideoPath(
+        sections: sectionsData,
+        cacheKey: _exportCacheKey,
+      );
+    }
+
+    if (cachedVideoPath != null) {
+      debugPrint('✅ 使用缓存视频: $cachedVideoPath');
+      widget.onProgress?.call(1.0);
+      // 将缓存视频移动到导出目录（如果已经在这个目录则跳过）
+      final destDir = await VideoCacheService.instance.getExportsDirectory();
+      if (File(cachedVideoPath).parent.path == destDir.path) {
+        _handleExportSuccess(cachedVideoPath);
+      } else {
+        final finalPath = await VideoCacheService.instance.moveToExportsDirectory(
+          cachedVideoPath,
+          customName:
+              'Story_${_exportCacheKey ?? DateTime.now().millisecondsSinceEpoch.toString()}.mp4',
+        );
+        _handleExportSuccess(finalPath);
+      }
+      return;
+    }
+
+    // 🌟 第二步：没有缓存，开始生成新视频
+    debugPrint('🔄 未找到缓存，开始生成新视频...');
+
     // 计算最终毫秒数
     int totalBeatsNeeded = widget.sections.length * 8;
     int finalExportDurationMs = totalBeatsNeeded * _beatIntervalMs;
@@ -596,26 +691,32 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
     int videoWidth = firstFrame.$2;
     int videoHeight = firstFrame.$3;
+    final int videoBitrate = (videoWidth * videoHeight * 12)
+        .clamp(16000000, 80000000)
+        .toInt();
 
-    final docDir = await getApplicationDocumentsDirectory();
+    final tempDir = await getTemporaryDirectory();
     final String silentVideoPath =
-        "${docDir.path}/silent_temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
+        "${tempDir.path}/silent_temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
 
-    // 🎬 2. 轰鸣启动硬件编码器引擎！
+    // 🎬 2. 轰鸣启动硬件编码器引擎！确保启用 GPU 硬件加速
     try {
       FlutterQuickVideoEncoder.setLogLevel(LogLevel.none); // 保持控制台清爽
+      // 🌟 硬件编码配置：使用 main profile 以获得更好的硬件编码支持
       await FlutterQuickVideoEncoder.setup(
         width: videoWidth,
         height: videoHeight,
         fps: 24,
-        videoBitrate: 4000000, // 4Mbps 码率，保障画质不糊
-        profileLevel: ProfileLevel.any,
+        videoBitrate: videoBitrate, // 按实际分辨率动态提高码率，尽量保留细节
+        profileLevel: ProfileLevel
+            .any, // ✅ 插件自动选择最优硬件编码配置（iOS: H.264/HEVC, Android: H.264）
         filepath: silentVideoPath,
         // 👇 新增这三个必填的音频占位参数
-        audioBitrate: 64000, // 随便给个 64kbps
+        audioBitrate: 128000, // 提升到 128kbps 以获得更好音质
         audioChannels: 2, // 双声道立体声
         sampleRate: 44100, // 标准的 44.1kHz 采样率
       );
+      debugPrint('🚀 硬件视频编码器已启动（自动检测最优硬件编码方案：iOS/Android 均优先 H.264/HEVC 硬件路径）');
     } catch (e) {
       debugPrint("❌ 硬件编码器启动失败: $e");
       setState(() => _isExporting = false);
@@ -669,7 +770,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     // 🎬 4. 封口！此时无声的高清视频已经生成完毕
     await FlutterQuickVideoEncoder.finish();
 
-    // 🎬 5. 移交接力棒，让 FFmpeg 做最后的极速音视频缝合
+    // 🎬 5. 移交接力棒，进行音视频合并
     await _fastMuxAudio(silentVideoPath, exactExportSeconds);
   }
 
@@ -678,78 +779,312 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     double exactSeconds,
   ) async {
     widget.onProgress?.call(0.95);
-    try {
-      final docDir = await getApplicationDocumentsDirectory();
-      String audioPath;
+    final tempDir = await getTemporaryDirectory();
+    String audioPath;
+    File? tempAudioFile;
+    File? safeAudioFile;
 
-      // 准备音频 (和你之前的逻辑完全一样)
-      if (widget.customMusicPath != null) {
-        File originalAudio = File(widget.customMusicPath!);
-        File safeAudioFile = File('${docDir.path}/safe_custom_audio.mp3');
-        if (safeAudioFile.existsSync()) safeAudioFile.deleteSync();
-        await originalAudio.copy(safeAudioFile.path);
-        audioPath = safeAudioFile.path;
+    // 准备音频
+    String? resolvedMusicPath;
+    if (widget.storyEntityId != null) {
+      try {
+        final store = ObjectBoxService().store;
+        final storyBox = store.box<StoryEntity>();
+        final story = storyBox.get(widget.storyEntityId!);
+        if (story != null) {
+                      resolvedMusicPath = await StoryService.resolveMusicFile(story);
+        }
+      } catch (_) {}
+    }
+    resolvedMusicPath ??= widget.customMusicPath;
+
+    if (resolvedMusicPath != null &&
+        await File(resolvedMusicPath).exists()) {
+      safeAudioFile = File(
+        '${tempDir.path}/safe_custom_audio_${DateTime.now().millisecondsSinceEpoch}.mp3',
+      );
+      if (safeAudioFile.existsSync()) safeAudioFile.deleteSync();
+      await File(resolvedMusicPath).copy(safeAudioFile.path);
+      audioPath = safeAudioFile.path;
+    } else {
+      final ByteData audioData = await rootBundle.load(
+        'assets/audio/sandal_leap.mp3',
+      );
+      tempAudioFile = File(
+        '${tempDir.path}/temp_audio_${DateTime.now().millisecondsSinceEpoch}.mp3',
+      );
+      await tempAudioFile.writeAsBytes(audioData.buffer.asUint8List());
+      audioPath = tempAudioFile.path;
+    }
+
+    // 生成缓存视频路径（在缓存目录）
+    final cacheDir = await VideoCacheService.instance.getCacheDirectory();
+    final cacheVideoPath =
+        "${cacheDir.path}/temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
+
+    try {
+      // 使用 FFmpeg 合并音频和视频
+      debugPrint('🎵 开始使用 FFmpeg 合并音频和视频...');
+
+      // 优先使用 stream copy（不重新编码，最快）
+      // 如果失败，则使用硬件加速重新编码
+      bool success = await _tryMergeWithStreamCopy(
+        silentVideoPath,
+        audioPath,
+        cacheVideoPath,
+        exactSeconds,
+      );
+
+      if (success) {
+        try {
+          await File(silentVideoPath).delete();
+        } catch (_) {}
+        _handleExportSuccess(cacheVideoPath);
       } else {
-        final ByteData audioData = await rootBundle.load(
-          'assets/audio/sandal_leap.mp3',
+        // 如果 stream copy 失败，尝试使用硬件加速重新编码
+        debugPrint('⚠️ Stream copy 失败，尝试使用硬件加速重新编码...');
+        success = await _tryMergeWithHardwareAccel(
+          silentVideoPath,
+          audioPath,
+          cacheVideoPath,
+          exactSeconds,
         );
-        final File tempAudioFile = File('${docDir.path}/temp_audio.mp3');
-        await tempAudioFile.writeAsBytes(audioData.buffer.asUint8List());
-        audioPath = tempAudioFile.path;
+
+        if (success) {
+          try {
+            await File(silentVideoPath).delete();
+          } catch (_) {}
+          _handleExportSuccess(cacheVideoPath);
+        } else {
+          // 最后回退：使用无声视频
+          debugPrint('⚠️ 所有合并方法失败，使用无声视频作为最终产物');
+          await File(silentVideoPath).copy(cacheVideoPath);
+          try {
+            await File(silentVideoPath).delete();
+          } catch (_) {}
+          _handleExportSuccess(cacheVideoPath);
+        }
+      }
+    } catch (e, stackTrace) {
+      debugPrint('❌ 音频合并异常: $e');
+      debugPrint('Stack trace: $stackTrace');
+      // 回退：使用无声视频
+      try {
+        await File(silentVideoPath).copy(cacheVideoPath);
+        try {
+          await File(silentVideoPath).delete();
+        } catch (_) {}
+        debugPrint('⚠️ 使用回退路径：生成无声视频作为最终产物');
+        _handleExportSuccess(cacheVideoPath);
+      } catch (e2) {
+        debugPrint('❌ 回退合并失败: $e2');
+      }
+    } finally {
+      try {
+        if (tempAudioFile != null && tempAudioFile.existsSync()) {
+          tempAudioFile.deleteSync();
+        }
+      } catch (_) {}
+      try {
+        if (safeAudioFile != null && safeAudioFile.existsSync()) {
+          safeAudioFile.deleteSync();
+        }
+      } catch (_) {}
+    }
+  }
+
+  /// 尝试使用 stream copy 合并（不重新编码，最快）
+  Future<bool> _tryMergeWithStreamCopy(
+    String videoPath,
+    String audioPath,
+    String outputPath,
+    double duration,
+  ) async {
+    try {
+      // -c:v copy: 直接复制视频流，不重新编码
+      // -c:a aac: 使用 AAC 编码音频
+      final command =
+          '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+          '-map 0:v:0 -map 1:a:0 '
+          '-t $duration -c:v copy -c:a aac -b:a 128k -shortest "$outputPath"';
+
+      debugPrint('🎬 FFmpeg (stream copy): $command');
+
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+
+      if (ReturnCode.isSuccess(returnCode)) {
+        debugPrint('✅ FFmpeg stream copy 成功');
+        return true;
+      } else {
+        final output = await session.getOutput();
+        debugPrint('❌ FFmpeg stream copy 失败: $output');
+        return false;
+      }
+    } catch (e) {
+      debugPrint('❌ Stream copy 异常: $e');
+      return false;
+    }
+  }
+
+  /// 尝试使用硬件加速重新编码合并
+  Future<bool> _tryMergeWithHardwareAccel(
+    String videoPath,
+    String audioPath,
+    String outputPath,
+    double duration,
+  ) async {
+    try {
+      String videoCodec;
+
+      // 根据平台选择硬件编码器
+      if (Platform.isIOS || Platform.isMacOS) {
+        // iOS/macOS: 使用 VideoToolbox 硬件加速
+        videoCodec = 'h264_videotoolbox';
+      } else if (Platform.isAndroid) {
+        // Android: 使用 MediaCodec 硬件加速
+        videoCodec = 'h264_mediacodec';
+      } else {
+        // 其他平台：使用软件编码
+        videoCodec = 'libx264';
       }
 
-      final String outputPath =
-          "${docDir.path}/FINAL_STORY_${DateTime.now().millisecondsSinceEpoch}.mp4";
+      // 使用硬件加速编码
+      // -c:v: 视频编码器
+      // -b:v: 视频比特率
+      // -preset: 编码速度预设（仅软件编码）
+      final command =
+          '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+          '-map 0:v:0 -map 1:a:0 '
+          '-t $duration -c:v $videoCodec -b:v 2500k -c:a aac -b:a 128k '
+          '-shortest "$outputPath"';
 
-      // 🚀 FFmpeg 终极魔法：精准音视频映射
-      String command = [
-        "-y",
-        "-i", "'$silentVideoPath'", // 输入 0：静音视频
-        "-stream_loop", "-1", // 音频无限循环
-        "-i", "'$audioPath'", // 输入 1：背景音乐
-        "-map", "0:v:0", // 🌟 强行指定：只拿第1个输入的视频流
-        "-map", "1:a:0", // 🌟 强行指定：只拿第2个输入的音频流
-        "-c:v", "copy", // 视频流直接复制
-        "-c:a", "aac", // 音频流压成 aac
-        "-shortest", // 🌟 关键：以最短的流（通常是视频）为准结束
-        "'$outputPath'",
-      ].join(" ");
+      debugPrint('🎬 FFmpeg (hardware accel): $command');
 
-      debugPrint("🎬 FFmpeg 光速混音开始: $command");
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
 
-      await FFmpegKit.execute(command).then((session) async {
-        final returnCode = await session.getReturnCode();
-        if (ReturnCode.isSuccess(returnCode)) {
-          debugPrint("✅✅✅ 硬件直出+极速混音，完美结束！");
+      if (ReturnCode.isSuccess(returnCode)) {
+        debugPrint('✅ FFmpeg 硬件加速编码成功');
+        return true;
+      } else {
+        final output = await session.getOutput();
+        debugPrint('❌ FFmpeg 硬件加速失败: $output');
 
-          // 顺手做个垃圾回收，删掉那个无声视频
-          File(silentVideoPath).delete().catchError((_) {});
+        // 如果硬件加速失败，尝试软件编码
+        if (videoCodec != 'libx264') {
+          debugPrint('⚠️ 硬件加速失败，尝试软件编码...');
+          final softwareCommand =
+              '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+              '-map 0:v:0 -map 1:a:0 '
+              '-t $duration -c:v libx264 -preset ultrafast -b:v 2500k '
+              '-c:a aac -b:a 128k -shortest "$outputPath"';
 
-          _handleExportSuccess(outputPath);
-        } else {
-          final logs = await session.getLogsAsString();
-          debugPrint("❌ FFmpeg 混音失败:\n$logs");
+          debugPrint('🎬 FFmpeg (software): $softwareCommand');
+
+          final softwareSession = await FFmpegKit.execute(softwareCommand);
+          final softwareReturnCode = await softwareSession.getReturnCode();
+
+          if (ReturnCode.isSuccess(softwareReturnCode)) {
+            debugPrint('✅ FFmpeg 软件编码成功');
+            return true;
+          } else {
+            final softwareOutput = await softwareSession.getOutput();
+            debugPrint('❌ FFmpeg 软件编码失败: $softwareOutput');
+            return false;
+          }
         }
-      });
-    } finally {
-      
+
+        return false;
+      }
+    } catch (e) {
+      debugPrint('❌ 硬件加速编码异常: $e');
+      return false;
     }
   }
 
   // 🌟 新增一个变量，用来装这个“未来的文案”
   Future<String>? _aiCopyFuture;
+  String? _exportCacheKey;
 
-  void _handleExportSuccess(String outputPath) async {
+  void _handleExportSuccess(String cacheVideoPath) async {
     try {
-      // 可选：你依然可以选择在这里存进相册，或者等上层弹窗点了再去存
-      await Gal.putVideo(outputPath);
+      debugPrint('✅ 视频生成完成，缓存路径: $cacheVideoPath');
+
+      // 🌟 第一步：缓存视频（只基于图片和文本）
+      final sectionsData = widget.sections.map((section) {
+        return {
+          'photo': {'path': section.photo.path},
+          'text': section.text,
+        };
+      }).toList();
+
+      final cachedPath = await VideoCacheService.instance.cacheVideo(
+        sections: sectionsData,
+        videoPath: cacheVideoPath,
+        cacheKey: _exportCacheKey,
+      );
+
+      debugPrint('✅ 视频已缓存: $cachedPath');
+
+      // 🌟 第二步：将视频移动到导出目录（用户可见）
+      final finalPath = await VideoCacheService.instance.moveToExportsDirectory(
+        cachedPath,
+        customName:
+            'Story_${_exportCacheKey ?? DateTime.now().millisecondsSinceEpoch.toString()}.mp4',
+      );
+
+      debugPrint('✅ 视频已移动到导出目录: $finalPath');
+      debugPrint('📱 用户可在发布页面选择分享或手动保存到相册');
+
+      // 🌟 第三步：保存视频路径、音乐和渲染参数到故事实体
+      if (widget.storyEntityId != null) {
+        try {
+          final store = ObjectBoxService().store;
+          final storyBox = store.box<StoryEntity>();
+          final story = storyBox.get(widget.storyEntityId!);
+          if (story != null) {
+            story.cachedVideoPath = finalPath;
+            story.cachedVideoKey = _exportCacheKey;
+            story.customMusicPath = widget.customMusicPath;
+            story.dynamicBeatDataJson = widget.dynamicBeatData != null
+                ? jsonEncode(widget.dynamicBeatData)
+                : null;
+            story.videoParamsJson = jsonEncode({
+              'currentTextStyle': widget.currentTextStyle,
+              'textYPosition': widget.textYPosition,
+              'textSize': widget.textSize,
+              'textBlurIntensity': widget.textBlurIntensity,
+              'shakeIntensity': widget.shakeIntensity,
+              'shakeFrequency': widget.shakeFrequency,
+              'glitchIntensity': widget.glitchIntensity,
+              'enableFlash': widget.enableFlash,
+              'useVignette': widget.useVignette,
+              'useGrain': widget.useGrain,
+              'useCameraFrame': widget.useCameraFrame,
+              'useGlowRing': widget.useGlowRing,
+              'useCloudBorder': widget.useCloudBorder,
+              'targetPlatform': widget.targetPlatform,
+              'isHorizontal': widget.isHorizontal,
+            });
+            storyBox.put(story);
+            debugPrint('✅ 视频参数已固化保存到故事实体 ID=${widget.storyEntityId}');
+          }
+        } catch (e) {
+          debugPrint('❌ 保存视频参数到故事实体失败: $e');
+        }
+      }
+
+      // 🌟 第四步：清理本次导出产生的临时文件
+      await VideoCacheService.instance.cleanupExportTempFiles();
 
       // 🌟 核心：触发回调，通知 ExportManager 任务完成！
-      widget.onComplete(outputPath, _aiCopyFuture);
+      widget.onComplete(finalPath, _aiCopyFuture);
     } catch (e) {
-      debugPrint("❌ 保存到相册失败: $e");
+      debugPrint("❌ 导出处理失败: $e");
     }
   }
+
   // 🎬 专门给取景器提供纯净画面的层（无黑边）
   Widget _buildPureImageLayer(String imagePath, Widget subtitle) {
     final file = File(imagePath);

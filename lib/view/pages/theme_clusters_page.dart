@@ -419,6 +419,7 @@ class _ThemeClusterDetailBodyState extends State<_ThemeClusterDetailBody> {
     return Scaffold(
       appBar: AppBar(title: Text(widget.cluster.definition.title)),
       body: CustomScrollView(
+        cacheExtent: 700,
         slivers: [
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -990,6 +991,7 @@ class _TimelineGroupSection extends StatelessWidget {
               GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
+                cacheExtent: 500,
                 itemCount: visibleGridPhotos.length,
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 3,

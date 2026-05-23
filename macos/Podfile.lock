@@ -7,8 +7,6 @@ PODS:
   - audioplayers_darwin (0.0.1):
     - Flutter
     - FlutterMacOS
-  - connectivity_plus (0.0.1):
-    - FlutterMacOS
   - device_info_plus (0.0.1):
     - FlutterMacOS
   - ffmpeg_kit_flutter_new (1.0.0):
@@ -49,14 +47,11 @@ PODS:
   - sqflite_darwin (0.0.4):
     - Flutter
     - FlutterMacOS
-  - url_launcher_macos (0.0.1):
-    - FlutterMacOS
 
 DEPENDENCIES:
   - amplify_auth_cognito (from `Flutter/ephemeral/.symlinks/plugins/amplify_auth_cognito/darwin`)
   - amplify_secure_storage (from `Flutter/ephemeral/.symlinks/plugins/amplify_secure_storage/macos`)
   - audioplayers_darwin (from `Flutter/ephemeral/.symlinks/plugins/audioplayers_darwin/darwin`)
-  - connectivity_plus (from `Flutter/ephemeral/.symlinks/plugins/connectivity_plus/macos`)
   - device_info_plus (from `Flutter/ephemeral/.symlinks/plugins/device_info_plus/macos`)
   - ffmpeg_kit_flutter_new (from `Flutter/ephemeral/.symlinks/plugins/ffmpeg_kit_flutter_new/macos`)
   - file_picker (from `Flutter/ephemeral/.symlinks/plugins/file_picker/macos`)
@@ -73,7 +68,6 @@ DEPENDENCIES:
   - photo_manager (from `Flutter/ephemeral/.symlinks/plugins/photo_manager/darwin`)
   - shared_preferences_foundation (from `Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin`)
   - sqflite_darwin (from `Flutter/ephemeral/.symlinks/plugins/sqflite_darwin/darwin`)
-  - url_launcher_macos (from `Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos`)
 
 SPEC REPOS:
   trunk:
@@ -86,8 +80,6 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/amplify_secure_storage/macos
   audioplayers_darwin:
     :path: Flutter/ephemeral/.symlinks/plugins/audioplayers_darwin/darwin
-  connectivity_plus:
-    :path: Flutter/ephemeral/.symlinks/plugins/connectivity_plus/macos
   device_info_plus:
     :path: Flutter/ephemeral/.symlinks/plugins/device_info_plus/macos
   ffmpeg_kit_flutter_new:
@@ -120,15 +112,12 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin
   sqflite_darwin:
     :path: Flutter/ephemeral/.symlinks/plugins/sqflite_darwin/darwin
-  url_launcher_macos:
-    :path: Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos
 
 SPEC CHECKSUMS:
   amplify_auth_cognito: a5d9cb77abfbe05e3501ad0c45dddc81503e7074
   amplify_secure_storage: 0d69a14bac20aed7e9ece9ac982ee5cd18756bf2
   audioplayers_darwin: 835ced6edd4c9fc8ebb0a7cc9e294a91d99917d5
-  connectivity_plus: 4adf20a405e25b42b9c9f87feff8f4b6fde18a4e
-  device_info_plus: a56e6e74dbbd2bb92f2da12c64ddd4f67a749041
+  device_info_plus: 4fb280989f669696856f8b129e4a5e3cd6c48f76
   ffmpeg_kit_flutter_new: 4eb1908463948e877ff5c4f2c7bb28f2a5dfd11b
   file_picker: 7584aae6fa07a041af2b36a2655122d42f578c1a
   file_selector_macos: 9e9e068e90ebee155097d00e89ae91edb2374db7
@@ -145,7 +134,6 @@ SPEC CHECKSUMS:
   photo_manager: 25fd77df14f4f0ba5ef99e2c61814dde77e2bceb
   shared_preferences_foundation: 7036424c3d8ec98dfe75ff1667cb0cd531ec82bb
   sqflite_darwin: 20b2a3a3b70e43edae938624ce550a3cbf66a3d0
-  url_launcher_macos: f87a979182d112f911de6820aefddaf56ee9fbfd
 
 PODFILE CHECKSUM: 26ee6f5033708847cf1376fbc9a71d19413c5b16
 

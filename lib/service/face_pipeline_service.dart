@@ -5,10 +5,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
-import 'package:isar/isar.dart';
 
 import '../models/entity/face_entity.dart';
 import '../models/entity/photo_entity.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/face_embedding_index_repository.dart';
 import '../utils/face_crop_util.dart';
 import 'face_embedding_service.dart';
@@ -48,16 +49,17 @@ class FacePipelineService {
       FaceEmbeddingIndexRepository();
 
   Future<FacePipelineProfile> rebuildFacesForPhoto({
-    required Isar isar,
     required PhotoEntity photo,
     required File imageFile,
     Uint8List? imageBytes,
     required List<Face> faces,
   }) async {
+    final store = ObjectBoxService().store;
+    final faceBox = store.box<FaceEntity>();
     final totalWatch = Stopwatch()..start();
     final existingReadWatch = Stopwatch()..start();
-    final existingFaces = await _loadExistingFaceSnapshot(
-      isar: isar,
+    final existingFaces = _loadExistingFaceSnapshot(
+      faceBox: faceBox,
       photoId: photo.id,
       includeDebugCropPaths: _persistDebugCrops,
     );
@@ -84,8 +86,8 @@ class FacePipelineService {
         staleIdsCount = existingIds.length;
         final isarWriteWatch = Stopwatch()..start();
         final deleteWatch = Stopwatch()..start();
-        await isar.writeTxn(() async {
-          await isar.collection<FaceEntity>().deleteAll(existingIds);
+        store.runInTransaction(TxMode.write, () {
+          faceBox.removeMany(existingIds);
         });
         deleteWatch.stop();
         isarWriteWatch.stop();
@@ -298,17 +300,16 @@ class FacePipelineService {
         face.embedding = null;
       }
     }
-    await isar.writeTxn(() async {
+    store.runInTransaction(TxMode.write, () {
       if (existingIds.isNotEmpty) {
         deleteWatch.start();
-        await isar.collection<FaceEntity>().deleteAll(existingIds);
+        faceBox.removeMany(existingIds);
         deleteWatch.stop();
       }
       putWatch.start();
-      await isar.collection<FaceEntity>().putAll(results);
+      faceBox.putMany(results);
       putWatch.stop();
-    });
-    if (embeddingBackups != null) {
+    });    if (embeddingBackups != null) {
       for (var index = 0; index < results.length; index++) {
         results[index].embedding = embeddingBackups[index];
       }
@@ -356,26 +357,27 @@ class FacePipelineService {
     );
   }
 
-  Future<_ExistingFaceSnapshot> _loadExistingFaceSnapshot({
-    required Isar isar,
+  _ExistingFaceSnapshot _loadExistingFaceSnapshot({
+    required Box<FaceEntity> faceBox,
     required int photoId,
     required bool includeDebugCropPaths,
-  }) async {
-    final query = isar.collection<FaceEntity>().filter().photoIdEqualTo(
-      photoId,
-    );
-
-    final ids = await query.idProperty().findAll();
-    if (!includeDebugCropPaths || ids.isEmpty) {
-      return _ExistingFaceSnapshot(ids: ids, debugCropPaths: const <String>[]);
+  }) {
+    final q = faceBox.query(FaceEntity_.photoId.equals(photoId)).build();
+    try {
+      final existing = q.find();
+      final ids = existing.map((f) => f.id).toList(growable: false);
+      if (!includeDebugCropPaths || ids.isEmpty) {
+        return _ExistingFaceSnapshot(ids: ids, debugCropPaths: const <String>[]);
+      }
+      final paths = existing
+          .map((f) => f.debugCropPath)
+          .whereType<String>()
+          .where((p) => p.isNotEmpty)
+          .toList(growable: false);
+      return _ExistingFaceSnapshot(ids: ids, debugCropPaths: paths);
+    } finally {
+      q.close();
     }
-
-    final paths = await query.debugCropPathProperty().findAll();
-    final normalizedPaths = paths
-        .whereType<String>()
-        .where((path) => path.isNotEmpty)
-        .toList(growable: false);
-    return _ExistingFaceSnapshot(ids: ids, debugCropPaths: normalizedPaths);
   }
 
   void _deleteDebugCropFiles(Iterable<String> paths) {

@@ -1,16 +1,23 @@
 /// 故事服务，负责故事内容的保存、读取和更新。
 
-import 'package:isar/isar.dart';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:zstandard/zstandard.dart';
 
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/digital_album_book_entity.dart';
 import '../models/entity/story_entity.dart';
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
-import 'photo_service.dart';
 import 'llm_service.dart';
 import 'event_service.dart';
 
@@ -19,6 +26,8 @@ class StoryService {
   static final StoryService _instance = StoryService._internal();
   factory StoryService() => _instance;
   StoryService._internal();
+
+  static const int _photoPathRefreshBatchSize = 8;
 
   static const Set<String> _textSceneTags = <String>{
     '文字',
@@ -204,9 +213,9 @@ class StoryService {
       // story.bgmUrl = bgmUrl;
 
       // 6. 存入数据库
-      final isar = PhotoService().isar;
-      await isar.writeTxn(() async {
-        await isar.collection<StoryEntity>().put(story);
+      final store = ObjectBoxService().store;
+      store.runInTransaction(TxMode.write, () {
+        store.box<StoryEntity>().put(story);
       });
 
       print("✅ 综合视听故事生成成功：ID=${story.id}");
@@ -404,99 +413,135 @@ class StoryService {
     );
   }*/
 
-  /// 📊 获取所有故事
   Future<List<StoryEntity>> getAllStories() async {
-    final isar = PhotoService().isar;
-    return await isar
-        .collection<StoryEntity>()
-        .where()
-        .sortByCreatedAtDesc()
-        .findAll();
+    final storyBox = ObjectBoxService().store.box<StoryEntity>();
+    final stories = storyBox.getAll()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return stories;
   }
 
-  /// 🔍 根据事件 ID 获取故事
   Future<List<StoryEntity>> getStoriesByEventId(int eventId) async {
-    final isar = PhotoService().isar;
-    return await isar
-        .collection<StoryEntity>()
-        .filter()
-        .eventIdEqualTo(eventId)
-        .sortByCreatedAtDesc()
-        .findAll();
+    final storyBox = ObjectBoxService().store.box<StoryEntity>();
+    final q = storyBox.query(StoryEntity_.eventId.equals(eventId)).build();
+    final stories = q.find()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    q.close();
+    return stories;
   }
 
-  /// 💾 更新故事内容（保存编辑）
   Future<bool> updateStory(StoryEntity story) async {
-    final isar = PhotoService().isar;
     story.updatedAt = DateTime.now().millisecondsSinceEpoch;
-
-    await isar.writeTxn(() async {
-      await isar.collection<StoryEntity>().put(story);
-    });
-
+    final store = ObjectBoxService().store;
+    store.runInTransaction(TxMode.write, () => store.box<StoryEntity>().put(story));
     print("💾 故事已更新：ID=${story.id}");
     return true;
   }
 
-  /// 🗑️ 删除故事
   Future<bool> deleteStory(int storyId) async {
     final deletedCount = await deleteStories(<int>[storyId]);
     return deletedCount > 0;
   }
 
-  /// 🗑️ 批量删除故事，同时清理关联的故事相册缓存。
   Future<int> deleteStories(Iterable<int> storyIds) async {
-    final isar = PhotoService().isar;
+    final store = ObjectBoxService().store;
     final ids = storyIds.where((id) => id > 0).toSet().toList(growable: false);
-    if (ids.isEmpty) {
-      return 0;
-    }
+    if (ids.isEmpty) return 0;
 
-    final linkedAlbums = await isar
-        .collection<DigitalAlbumBookEntity>()
-        .filter()
-        .anyOf(ids, (query, storyId) => query.storyIdEqualTo(storyId))
-        .findAll();
+    final albumBox = store.box<DigitalAlbumBookEntity>();
+    final storyBox = store.box<StoryEntity>();
+
+    final linkedQ = albumBox.query(DigitalAlbumBookEntity_.storyId.oneOf(ids)).build();
+    final linkedAlbums = linkedQ.find();
+    linkedQ.close();
 
     var deletedCount = 0;
-    await isar.writeTxn(() async {
+    store.runInTransaction(TxMode.write, () {
       if (linkedAlbums.isNotEmpty) {
-        await isar.collection<DigitalAlbumBookEntity>().deleteAll(
-          linkedAlbums.map((album) => album.id).toList(growable: false),
-        );
+        albumBox.removeMany(linkedAlbums.map((a) => a.id).toList(growable: false));
       }
-      deletedCount = await isar.collection<StoryEntity>().deleteAll(ids);
+      storyBox.removeMany(ids);
+      deletedCount = ids.length;
     });
     print("🗑️ 故事已删除：$deletedCount/${ids.length}");
     return deletedCount;
   }
 
-  /// 📸 根据 photoIds 加载照片实体
   Future<List<PhotoEntity>> loadPhotos(List<int> photoIds) async {
-    final isar = PhotoService().isar;
-    final photos = await isar
-        .collection<PhotoEntity>()
-        .where()
-        .anyOf(photoIds, (q, id) => q.idEqualTo(id))
-        .sortByTimestamp()
-        .findAll();
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final photos = photoBox.getMany(photoIds).whereType<PhotoEntity>().toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-    // 优先基于 assetId 解析当前可用路径，避免读取临时文件失效
-    for (final photo in photos) {
-      final asset = await AssetEntity.fromId(photo.assetId);
-      final file = await asset?.file;
-      final latestPath = file?.path;
-      if (latestPath != null &&
-          latestPath.isNotEmpty &&
-          latestPath != photo.path) {
-        photo.path = latestPath;
-      }
+    for (var start = 0; start < photos.length; start += _photoPathRefreshBatchSize) {
+      final batchEnd = start + _photoPathRefreshBatchSize;
+      final end = batchEnd > photos.length ? photos.length : batchEnd;
+      final batch = photos.sublist(start, end);
+      await Future.wait(batch.map(_refreshPhotoPath));
     }
 
-    await isar.writeTxn(() async {
-      await isar.collection<PhotoEntity>().putAll(photos);
-    });
-
+    final store = ObjectBoxService().store;
+    store.runInTransaction(TxMode.write, () => store.box<PhotoEntity>().putMany(photos));
     return photos;
+  }
+
+  Future<void> _refreshPhotoPath(PhotoEntity photo) async {
+    final asset = await AssetEntity.fromId(photo.assetId);
+    final file = await asset?.file;
+    final latestPath = file?.path;
+    if (latestPath != null && latestPath.isNotEmpty && latestPath != photo.path) {
+      photo.path = latestPath;
+    }
+  }
+
+  /// zstd 压缩二进制数据
+  static Future<Uint8List?> zstdCompress(Uint8List raw) async =>
+      raw.compress(compressionLevel: 3);
+
+  /// zstd 解压二进制数据。若开头不是 zstd magic 字节则原样返回（向后兼容）
+  static Future<Uint8List> zstdDecompress(Uint8List compressed) async {
+    if (compressed.length < 4) return compressed;
+    // zstd magic: 0x28, 0xB5, 0x2F, 0xFD
+    if (compressed[0] != 0x28 ||
+        compressed[1] != 0xB5 ||
+        compressed[2] != 0x2F ||
+        compressed[3] != 0xFD) {
+      return compressed; // 非 zstd 格式，视为未压缩
+    }
+    return (await compressed.decompress()) ?? compressed;
+  }
+
+  /// 从数据库固化的音乐二进制数据恢复出缓存文件
+  /// 使用 SHA256 命名以去重，同一音乐文件只写一次磁盘
+  static Future<String?> resolveMusicFile(StoryEntity story) async {
+    final compressed = story.customMusicBytes;
+    if (compressed != null && compressed.isNotEmpty) {
+      final raw = await zstdDecompress(compressed);
+      final hash = story.originalMusicHash ??
+          sha256.convert(raw).toString();
+      final tempDir = await getTemporaryDirectory();
+      final cacheDir = Directory('${tempDir.path}/MusicCache');
+      final cachedFile = File('${cacheDir.path}/$hash.mp3');
+      if (await cachedFile.exists()) {
+        return cachedFile.path;
+      }
+      await cacheDir.create(recursive: true);
+      await cachedFile.writeAsBytes(raw);
+      return cachedFile.path;
+    }
+    if (story.customMusicPath != null &&
+        await File(story.customMusicPath!).exists()) {
+      return story.customMusicPath;
+    }
+    return null;
+  }
+
+  /// 从文件路径读取音乐二进制数据
+  static Future<Uint8List?> loadMusicBytes(String? path) async {
+    if (path == null || path.isEmpty) return null;
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        return await file.readAsBytes();
+      }
+    } catch (_) {}
+    return null;
   }
 }

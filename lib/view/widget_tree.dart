@@ -1,6 +1,7 @@
 /// 应用的主底部导航树，负责在首页、相册、创作、个人页和主题页之间切换。
 
 import 'package:flutter/material.dart';
+import 'package:flutter/painting.dart';
 import '../service/ai_progress_notification_service.dart';
 import '../service/ai_service.dart';
 import '../service/album_refresh_service.dart';
@@ -21,6 +22,7 @@ class WidgetTree extends StatefulWidget {
 class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
   int _currentIndex = 0; // 默认一打开显示 0（首页）
   bool _progressBannerHidden = false; // 进度条隐藏状态
+  int _hiddenRefreshProgressRunId = -1;
 
   // 🌟 去掉 CreatePage 这个"伪占位符"，因为现在它是被 push 出来的
   final List<Widget> _pages = const [
@@ -66,6 +68,13 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
         _progressBannerHidden = false;
       });
     }
+  }
+
+  @override
+  void didHaveMemoryPressure() {
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+    super.didHaveMemoryPressure();
   }
 
   @override
@@ -168,13 +177,18 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
         return ValueListenableBuilder<AIAnalysisProgress>(
           valueListenable: AIService().progressListenable,
           builder: (context, aiProgress, child) {
-            if (refreshProgress.isVisible) {
+            if (refreshProgress.isVisible &&
+                _hiddenRefreshProgressRunId != refreshProgress.runId) {
               return _TopProgressBanner(
                 key: const ValueKey<String>('album-refresh-progress'),
                 title: refreshProgress.title,
                 message: refreshProgress.message,
                 progress: refreshProgress.progress,
-                onHide: null, // 相册刷新进度不能隐藏
+                onHide: () {
+                  setState(() {
+                    _hiddenRefreshProgressRunId = refreshProgress.runId;
+                  });
+                },
               );
             }
             if (_currentIndex == 1 || !aiProgress.isVisible || _progressBannerHidden) {

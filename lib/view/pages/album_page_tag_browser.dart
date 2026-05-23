@@ -102,8 +102,6 @@ class _AlbumTagClusterSheet extends StatefulWidget {
   State<_AlbumTagClusterSheet> createState() => _AlbumTagClusterSheetState();
 }
 
-enum _ClusterSelectionMenuAction { selectAll, clear, cancel }
-
 enum _ClusterActionMode { none, story, delete }
 
 class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
@@ -122,9 +120,12 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
   void initState() {
     super.initState();
     _photosStream = _debounceStream<void>(
-      PhotoService().isar.collection<PhotoEntity>().watchLazy(
-        fireImmediately: true,
-      ),
+      ObjectBoxService()
+          .store
+          .box<PhotoEntity>()
+          .query()
+          .watch(triggerImmediately: true)
+          .map((_) => null),
       const Duration(milliseconds: 650),
     ).asyncMap((_) => _loadCurrentPhotos());
   }
@@ -267,6 +268,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                             ),
                           )
                         : CustomScrollView(
+                            cacheExtent: 700,
                             slivers: [
                               for (final group in monthGroups) ...[
                                 SliverToBoxAdapter(
@@ -377,30 +379,49 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildSelectionMenuButton(
-                    enableSelectAll: clusterPhotos.isNotEmpty,
-                    onSelected: (action) {
-                      switch (action) {
-                        case _ClusterSelectionMenuAction.selectAll:
-                          setState(() {
-                            _selectedPhotoIds.addAll(
-                              clusterPhotos.map((photo) => photo.id),
-                            );
-                          });
-                          break;
-                        case _ClusterSelectionMenuAction.clear:
-                          setState(() {
-                            _selectedPhotoIds.clear();
-                          });
-                          break;
-                        case _ClusterSelectionMenuAction.cancel:
-                          setState(() {
-                            _actionMode = _ClusterActionMode.none;
-                            _selectedPhotoIds.clear();
-                          });
-                          break;
-                      }
+                  FloatingActionButton.small(
+                    heroTag: 'tag-cluster-back',
+                    onPressed: () {
+                      setState(() {
+                        _actionMode = _ClusterActionMode.none;
+                        _selectedPhotoIds.clear();
+                      });
                     },
+                    child: const Icon(Icons.arrow_back_rounded),
+                  ),
+                  const SizedBox(width: 10),
+                  FilledButton.tonalIcon(
+                    onPressed: clusterPhotos.isEmpty
+                        ? null
+                        : () {
+                            final allSelected = clusterPhotos
+                                .every((p) => _selectedPhotoIds.contains(p.id));
+                            if (allSelected) {
+                              setState(() {
+                                _selectedPhotoIds.clear();
+                              });
+                            } else {
+                              setState(() {
+                                _selectedPhotoIds.addAll(
+                                  clusterPhotos.map((p) => p.id),
+                                );
+                              });
+                            }
+                          },
+                    icon: Icon(
+                      clusterPhotos.isNotEmpty &&
+                              clusterPhotos
+                                  .every((p) => _selectedPhotoIds.contains(p.id))
+                          ? Icons.deselect_rounded
+                          : Icons.select_all_rounded,
+                    ),
+                    label: Text(
+                      clusterPhotos.isNotEmpty &&
+                              clusterPhotos
+                                  .every((p) => _selectedPhotoIds.contains(p.id))
+                          ? '取消全选'
+                          : '全选',
+                    ),
                   ),
                   const SizedBox(width: 10),
                   FloatingActionButton.extended(
@@ -454,42 +475,6 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
           ],
         );
       },
-    );
-  }
-
-  Widget _buildSelectionMenuButton({
-    required ValueChanged<_ClusterSelectionMenuAction> onSelected,
-    required bool enableSelectAll,
-  }) {
-    return Material(
-      color: Theme.of(context).colorScheme.surface,
-      elevation: 4,
-      shadowColor: Colors.black.withValues(alpha: 0.15),
-      shape: const CircleBorder(),
-      child: PopupMenuButton<_ClusterSelectionMenuAction>(
-        tooltip: '选图操作',
-        onSelected: onSelected,
-        itemBuilder: (context) => <PopupMenuEntry<_ClusterSelectionMenuAction>>[
-          PopupMenuItem<_ClusterSelectionMenuAction>(
-            value: _ClusterSelectionMenuAction.selectAll,
-            enabled: enableSelectAll,
-            child: const Text('全选'),
-          ),
-          const PopupMenuItem<_ClusterSelectionMenuAction>(
-            value: _ClusterSelectionMenuAction.clear,
-            child: Text('清空'),
-          ),
-          const PopupMenuItem<_ClusterSelectionMenuAction>(
-            value: _ClusterSelectionMenuAction.cancel,
-            child: Text('取消'),
-          ),
-        ],
-        child: const SizedBox(
-          width: 48,
-          height: 48,
-          child: Icon(Icons.more_horiz_rounded),
-        ),
-      ),
     );
   }
 

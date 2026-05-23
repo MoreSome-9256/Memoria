@@ -1,5 +1,5 @@
 name: photo_album
-description: "A new Flutter project."
+description: "Memoria, a personal photo album app built with Flutter, leveraging AI for smart organization and enhanced user experience."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev

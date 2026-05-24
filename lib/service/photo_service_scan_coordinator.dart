@@ -23,9 +23,6 @@ class _PhotoScanCoordinator {
 
   // ── session 级缓存 ────────────────────────────────────────────────
   static List<AssetEntity> _cachedAssets = <AssetEntity>[];
-  static List<File> _cachedFiles = <File>[];
-  static List<AndroidGrantedMediaReference> _cachedGrantedMedia =
-      <AndroidGrantedMediaReference>[];
   static int _cachedTotalCount = -1;
   static String _cachedSelectionSignature = '';
 
@@ -41,71 +38,23 @@ class _PhotoScanCoordinator {
       filterProfile: filterProfile,
       resolveFile: true,
     );
-    final fileResults = await Future.wait(
-      prepared.files.map(
-        (file) =>
-            _service._buildSingleFilePhoto(file, filterProfile: filterProfile),
-      ),
-    );
-    final grantedMediaResults = await Future.wait(
-      prepared.grantedMedia.map(
-        (media) => _service._buildSingleGrantedMediaPhoto(
-          media,
-          filterProfile: filterProfile,
-        ),
-      ),
-    );
-    final allPhotos = <PhotoEntity>[
-      ...built.photos,
-      ...fileResults.map((result) => result.photo).whereType<PhotoEntity>(),
-      ...grantedMediaResults
-          .map((result) => result.photo)
-          .whereType<PhotoEntity>(),
-    ];
-    var fileStats = _ScanStats();
-    for (final result in fileResults) {
-      fileStats = fileStats.merge(result);
-    }
-    var grantedMediaStats = _ScanStats();
-    for (final result in grantedMediaResults) {
-      grantedMediaStats = grantedMediaStats.merge(result);
-    }
-    final mergedBuilt = _ScanBuildResult(
-      photos: allPhotos,
-      insertedCount: allPhotos.length,
-      insertedNoGps:
-          built.insertedNoGps +
-          fileStats.insertedNoGps +
-          grantedMediaStats.insertedNoGps,
-      skippedInvalidTime:
-          built.skippedInvalidTime +
-          fileStats.skippedInvalidTime +
-          grantedMediaStats.skippedInvalidTime,
-      skippedNonCamera:
-          built.skippedNonCamera +
-          fileStats.skippedNonCamera +
-          grantedMediaStats.skippedNonCamera,
-      skippedScreenshot:
-          built.skippedScreenshot +
-          fileStats.skippedScreenshot +
-          grantedMediaStats.skippedScreenshot,
-    );
-    if (mergedBuilt.photos.isEmpty) {
+
+    if (built.photos.isEmpty) {
       throw const PhotoScanException(
         PhotoScanError.noEligiblePhoto,
-        'No eligible photos were found. Please add photos or videos from system picker first.',
+        '没有找到符合条件的照片。',
       );
     }
 
     debugPrint(
       maxAssets == null
-          ? '全量重建完成: fetch=${prepared.fetchCount} 入库=${mergedBuilt.insertedCount}'
-          : '部分重建完成: fetch=${prepared.fetchCount} 入库=${mergedBuilt.insertedCount}',
+          ? '全量重建完成: fetch=${prepared.fetchCount} 入库=${built.insertedCount}'
+          : '部分重建完成: fetch=${prepared.fetchCount} 入库=${built.insertedCount}',
     );
     return _PhotoRebuildPlan(
       totalBefore: totalBefore,
       prepared: prepared,
-      built: mergedBuilt,
+      built: built,
     );
   }
 
@@ -166,30 +115,8 @@ class _PhotoScanCoordinator {
               math.min(end, albumBundle.assets.length),
             )
           : const <AssetEntity>[];
-      final fileStart = math.max(0, cursor - albumBundle.assets.length);
-      final fileEnd = math.max(0, end - albumBundle.assets.length);
-      final files = fileStart < albumBundle.files.length
-          ? albumBundle.files.sublist(
-              fileStart,
-              math.min(fileEnd, albumBundle.files.length),
-            )
-          : const <File>[];
-      final mediaStart = math.max(
-        0,
-        cursor - albumBundle.assets.length - albumBundle.files.length,
-      );
-      final mediaEnd = math.max(
-        0,
-        end - albumBundle.assets.length - albumBundle.files.length,
-      );
-      final grantedMedia = mediaStart < albumBundle.grantedMedia.length
-          ? albumBundle.grantedMedia.sublist(
-              mediaStart,
-              math.min(mediaEnd, albumBundle.grantedMedia.length),
-            )
-          : const <AndroidGrantedMediaReference>[];
-      if (assets.isEmpty && files.isEmpty && grantedMedia.isEmpty) break;
-      totalScanned += assets.length + files.length + grantedMedia.length;
+      if (assets.isEmpty) break;
+      totalScanned += assets.length;
 
       // 批量过滤已存在
       final skipIds = _existingAssetIdSet(assets);
@@ -197,19 +124,7 @@ class _PhotoScanCoordinator {
       for (final asset in assets) {
         if (!skipIds.contains(asset.id)) newAssets.add(asset);
       }
-      final skipFileIds = _existingFileIdSet(files);
-      final newFiles = <File>[];
-      for (final file in files) {
-        if (!skipFileIds.contains('file:${file.path}')) newFiles.add(file);
-      }
-      final skipGrantedMediaIds = _existingGrantedMediaIdSet(grantedMedia);
-      final newGrantedMedia = <AndroidGrantedMediaReference>[];
-      for (final media in grantedMedia) {
-        if (!skipGrantedMediaIds.contains('document:${media.uri}')) {
-          newGrantedMedia.add(media);
-        }
-      }
-      if (newAssets.isEmpty && newFiles.isEmpty && newGrantedMedia.isEmpty) {
+      if (newAssets.isEmpty) {
         onProgress?.call(
           BatchScanProgress(
             scannedCount: totalScanned,
@@ -226,16 +141,7 @@ class _PhotoScanCoordinator {
       final buildAssets = newAssets.length > remainingSlots
           ? newAssets.take(remainingSlots).toList(growable: false)
           : newAssets;
-      remainingSlots -= buildAssets.length;
-      final buildFiles = newFiles.length > remainingSlots
-          ? newFiles.take(remainingSlots).toList(growable: false)
-          : newFiles;
-      remainingSlots -= buildFiles.length;
-      final buildGrantedMedia = newGrantedMedia.length > remainingSlots
-          ? newGrantedMedia.take(remainingSlots).toList(growable: false)
-          : newGrantedMedia;
-      candidateCount +=
-          buildAssets.length + buildFiles.length + buildGrantedMedia.length;
+      candidateCount += buildAssets.length;
       onProgress?.call(
         BatchScanProgress(
           scannedCount: totalScanned,
@@ -247,25 +153,15 @@ class _PhotoScanCoordinator {
       );
 
       // 并行构建（扫描阶段跳过 file 解析，GPS 从缓存读取）
-      final results = await Future.wait(<Future<_SingleAssetBuildResult>>[
-        ...buildAssets.map(
+      final results = await Future.wait(
+        buildAssets.map(
           (a) => _service._buildSingleAssetPhoto(
             a,
             filterProfile: filterProfile,
             resolveFile: false,
           ),
         ),
-        ...buildFiles.map(
-          (f) =>
-              _service._buildSingleFilePhoto(f, filterProfile: filterProfile),
-        ),
-        ...buildGrantedMedia.map(
-          (media) => _service._buildSingleGrantedMediaPhoto(
-            media,
-            filterProfile: filterProfile,
-          ),
-        ),
-      ]);
+      );
       for (final r in results) {
         if (r.photo != null) {
           collectedPhotos.add(r.photo!);
@@ -303,8 +199,6 @@ class _PhotoScanCoordinator {
       removedCount: 0,
       prepared: _PreparedScanData(
         assets: const [],
-        files: const [],
-        grantedMedia: const [],
         totalCount: _cachedTotalCount,
         fetchCount: totalScanned,
         startOffset: offsetFromNewest,
@@ -318,7 +212,7 @@ class _PhotoScanCoordinator {
     bool runCleanupOnce = false,
     bool forceRefresh = false,
   }) async {
-    final settings = await AppAiSettingsService().loadSettings();
+    final settings = await AppAiSettingsService.instance.load();
     final requestType = settings.includeVideos
         ? RequestType.common
         : RequestType.image;
@@ -330,36 +224,90 @@ class _PhotoScanCoordinator {
       );
     }
 
+    final albSel = await AlbumSelectionPreferenceService().loadSelection();
+    final selectedIds = albSel.selectedAlbumIds.toSet();
+
+    // 没有选中的相册 → 用 onlyAll 路径获取全部
+    if (selectedIds.isEmpty) {
+      return _resolveAllAlbums(requestType, runCleanupOnce, forceRefresh);
+    }
+
+    // 按选定相册分别加载
+    final allAlbums = await PhotoManager.getAssetPathList(type: requestType);
+    final targetAlbums = allAlbums.where((a) => selectedIds.contains(a.id));
+
+    if (targetAlbums.isEmpty) {
+      _cachedAssets = const <AssetEntity>[];
+      _cachedTotalCount = 0;
+      _cachedSelectionSignature = 'custom:empty';
+      return const _AlbumBundle(assets: <AssetEntity>[]);
+    }
+
+    final signature = 'custom:${selectedIds.join(',')}';
+    if (!forceRefresh &&
+        _cachedTotalCount >= 0 &&
+        _cachedSelectionSignature == signature) {
+      return _AlbumBundle(assets: _cachedAssets);
+    }
+
+    // 分批加载每个选中相册的照片
+    final allAssets = <AssetEntity>[];
+    for (final album in targetAlbums) {
+      final count = await album.assetCountAsync;
+      const pageSize = 1000;
+      for (var offset = 0; offset < count; offset += pageSize) {
+        final end = math.min(count, offset + pageSize);
+        final page = await album.getAssetListRange(start: offset, end: end);
+        allAssets.addAll(page);
+      }
+    }
+
+    // 按 assetId 去重（同一张照片可能属于多个相册）
+    final seen = <String>{};
+    final unique = <AssetEntity>[];
+    for (final a in allAssets) {
+      if (!seen.contains(a.id)) {
+        seen.add(a.id);
+        unique.add(a);
+      }
+    }
+    unique.sort((a, b) => b.createDateTime.compareTo(a.createDateTime));
+
+    _cachedAssets = unique;
+    _cachedTotalCount = unique.length;
+    _cachedSelectionSignature = signature;
+
+    if (runCleanupOnce) {
+      _service._removeUnavailablePhotos().ignore();
+    }
+
+    return _AlbumBundle(assets: unique);
+  }
+
+  /// 回退路径：加载系统全部照片（用户未选择特定相册时）。
+  Future<_AlbumBundle> _resolveAllAlbums(
+    RequestType requestType,
+    bool runCleanupOnce,
+    bool forceRefresh,
+  ) async {
     final albums = await PhotoManager.getAssetPathList(
       onlyAll: true,
       type: requestType,
     );
     if (albums.isEmpty) {
       _cachedAssets = const <AssetEntity>[];
-      _cachedFiles = const <File>[];
-      _cachedGrantedMedia = const <AndroidGrantedMediaReference>[];
       _cachedTotalCount = 0;
-      _cachedSelectionSignature = 'system-album:${requestType.name}:empty';
-      return const _AlbumBundle(
-        assets: <AssetEntity>[],
-        files: <File>[],
-        grantedMedia: <AndroidGrantedMediaReference>[],
-        isUserSelection: false,
-      );
+      _cachedSelectionSignature = 'system-album:${requestType.value}:empty';
+      return const _AlbumBundle(assets: <AssetEntity>[]);
     }
 
     final allAlbum = albums.first;
     final total = await allAlbum.assetCountAsync;
-    final selectionSignature = 'system-album:${requestType.name}:$total';
+    final selectionSignature = 'system-album:${requestType.value}:$total';
     if (!forceRefresh &&
         _cachedTotalCount >= 0 &&
         _cachedSelectionSignature == selectionSignature) {
-      return _AlbumBundle(
-        assets: _cachedAssets,
-        files: const <File>[],
-        grantedMedia: const <AndroidGrantedMediaReference>[],
-        isUserSelection: false,
-      );
+      return _AlbumBundle(assets: _cachedAssets);
     }
 
     final assets = <AssetEntity>[];
@@ -372,56 +320,20 @@ class _PhotoScanCoordinator {
     assets.sort((a, b) => b.createDateTime.compareTo(a.createDateTime));
 
     _cachedAssets = assets;
-    _cachedFiles = const <File>[];
-    _cachedGrantedMedia = const <AndroidGrantedMediaReference>[];
     _cachedTotalCount = assets.length;
     _cachedSelectionSignature = selectionSignature;
 
     if (runCleanupOnce) {
-      // session 首次运行：清理一次已删除照片
       _service._removeUnavailablePhotos().ignore();
     }
 
-    return _AlbumBundle(
-      assets: assets,
-      files: const <File>[],
-      grantedMedia: const <AndroidGrantedMediaReference>[],
-      isUserSelection: false,
-    );
+    return _AlbumBundle(assets: assets);
   }
 
   // ── 批量查 ObjectBox，返回已存在的 assetId 集合 ──────────────────
   Set<String> _existingAssetIdSet(List<AssetEntity> assets) {
     final ids = assets
         .map((a) => a.id)
-        .where((id) => id.isNotEmpty)
-        .toList(growable: false);
-    if (ids.isEmpty) return {};
-
-    final q = _service._photoBox.query(PhotoEntity_.assetId.oneOf(ids)).build();
-    final existing = q.find().map((e) => e.assetId).toSet();
-    q.close();
-    return existing;
-  }
-
-  Set<String> _existingFileIdSet(List<File> files) {
-    final ids = files
-        .map((file) => 'file:${file.path}')
-        .where((id) => id.isNotEmpty)
-        .toList(growable: false);
-    if (ids.isEmpty) return {};
-
-    final q = _service._photoBox.query(PhotoEntity_.assetId.oneOf(ids)).build();
-    final existing = q.find().map((e) => e.assetId).toSet();
-    q.close();
-    return existing;
-  }
-
-  Set<String> _existingGrantedMediaIdSet(
-    List<AndroidGrantedMediaReference> media,
-  ) {
-    final ids = media
-        .map((item) => 'document:${item.uri}')
         .where((id) => id.isNotEmpty)
         .toList(growable: false);
     if (ids.isEmpty) return {};
@@ -442,8 +354,6 @@ class _PhotoScanCoordinator {
     if (albumBundle.isEmpty || _cachedTotalCount <= 0) {
       return _PreparedScanData(
         assets: const [],
-        files: const [],
-        grantedMedia: const [],
         totalCount: 0,
         fetchCount: 0,
         startOffset: 0,
@@ -457,22 +367,10 @@ class _PhotoScanCoordinator {
     final assets = albumBundle.assets.length > fetchCount
         ? albumBundle.assets.take(fetchCount).toList(growable: false)
         : albumBundle.assets;
-    final remaining = math.max(0, fetchCount - assets.length);
-    final files = albumBundle.files.length > remaining
-        ? albumBundle.files.take(remaining).toList(growable: false)
-        : albumBundle.files;
-    final remainingAfterFiles = math.max(0, remaining - files.length);
-    final grantedMedia = albumBundle.grantedMedia.length > remainingAfterFiles
-        ? albumBundle.grantedMedia
-              .take(remainingAfterFiles)
-              .toList(growable: false)
-        : albumBundle.grantedMedia;
     return _PreparedScanData(
       assets: assets,
-      files: files,
-      grantedMedia: grantedMedia,
       totalCount: count,
-      fetchCount: assets.length + files.length + grantedMedia.length,
+      fetchCount: assets.length,
       startOffset: 0,
     );
   }
@@ -499,8 +397,6 @@ class _PhotoScanCoordinator {
       removedCount: 0,
       prepared: _PreparedScanData(
         assets: const [],
-        files: const [],
-        grantedMedia: const [],
         totalCount: 0,
         fetchCount: 0,
         startOffset: 0,
@@ -542,16 +438,10 @@ class _ScanStats {
 class _AlbumBundle {
   const _AlbumBundle({
     required this.assets,
-    required this.files,
-    required this.grantedMedia,
-    required this.isUserSelection,
   });
 
   final List<AssetEntity> assets;
-  final List<File> files;
-  final List<AndroidGrantedMediaReference> grantedMedia;
-  final bool isUserSelection;
 
-  bool get isEmpty => assets.isEmpty && files.isEmpty && grantedMedia.isEmpty;
-  int get totalLength => assets.length + files.length + grantedMedia.length;
+  bool get isEmpty => assets.isEmpty;
+  int get totalLength => assets.length;
 }

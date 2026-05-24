@@ -5,16 +5,12 @@ part of 'photo_service.dart';
 class _PreparedScanData {
   const _PreparedScanData({
     required this.assets,
-    required this.files,
-    required this.grantedMedia,
     required this.totalCount,
     required this.fetchCount,
     required this.startOffset,
   });
 
   final List<AssetEntity> assets;
-  final List<File> files;
-  final List<AndroidGrantedMediaReference> grantedMedia;
   final int totalCount;
   final int fetchCount;
   final int startOffset;

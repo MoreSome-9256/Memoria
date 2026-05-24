@@ -1,25 +1,36 @@
-/// AI 前台任务处理器 — 独立执行持久 AI 队列。
+/// AI 前台任务处理器 — Spool 模式。
 ///
-/// App 只负责写入待分析照片和启动服务；实际计算在本服务 isolate 中完成。
-/// 进度通过持久状态和前台服务通知暴露，不依赖界面进程。
+/// 主进程写 manifest 到 spool → 启动前台服务 → 本 isolate 只做纯计算
+/// → result/embedding/progress 写入 spool → done.marker → 主进程消费写库。
 
-part of 'ai_service.dart';
+import 'dart:io';
+import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'analysis_spool_service.dart';
+import 'app_ai_settings_service.dart';
+
+import 'photo_service.dart';
+import 'spool_analysis_worker.dart';
 
 /// 前台任务回调入口，在后台 isolate 中运行。
 @pragma('vm:entry-point')
 void foregroundTaskCallback() {
-  FlutterForegroundTask.setTaskHandler(_MemoriaTaskHandler());
+  FlutterForegroundTask.setTaskHandler(_SpoolTaskHandler());
 }
 
-class _MemoriaTaskHandler extends TaskHandler {
+class _SpoolTaskHandler extends TaskHandler {
+  SpoolAnalysisWorker? _worker;
   bool _started = false;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     WidgetsFlutterBinding.ensureInitialized();
-    if (_started) {
-      return;
-    }
+    if (_started) return;
     _started = true;
     unawaited(_runWorker());
   }
@@ -29,87 +40,36 @@ class _MemoriaTaskHandler extends TaskHandler {
 
   Future<void> _runWorker() async {
     try {
-      await ObjectBoxService().init();
-      await PhotoService().init();
-      final settings = await AppAiSettingsService.instance.load();
-      OcrPolicy.setRuntimeEnabled(settings.ocrEnabled);
-      AIService.uiIntegrationEnabled = false;
-      final aiService = AIService();
-      var listenerAttached = false;
-      void syncForegroundProgress() {
-        final progress = aiService.progressListenable.value;
-        unawaited(
-          aiService._persistRuntimeState(
-            isActive: progress.isVisible,
-            total: progress.total,
-            completed: progress.completed,
-            failed: progress.failed,
-            currentStep: progress.currentStep,
-            elapsedMs: progress.elapsedMs,
-            warmUpCompleted: progress.warmUpCompleted,
-            warmUpTotal: progress.warmUpTotal,
-            isPaused: progress.isPaused,
-            isStopping: progress.isStopping,
-          ),
-        );
-        if (!progress.isVisible) {
-          return;
-        }
-        final title = progress.isStopping
-            ? 'AI 打标正在结束'
-            : progress.isPaused
-            ? 'AI 打标已暂停'
-            : 'AI 打标进行中';
-        final text =
-            '${progress.completed}/${progress.total}${progress.failed > 0 ? ' · 失败 ${progress.failed}' : ''} · ${progress.currentStep}';
-        unawaited(
-          AiBackgroundTaskService.instance.updateNotification(
-            title: title,
-            text: text,
-          ),
-        );
+      // 从 spool 读取最新未完成的 manifest
+      final manifest = await AiBackgroundTaskService.instance
+          .takePendingManifest();
+      if (manifest == null) {
+        debugPrint('[spool-worker] 没有待处理的 manifest');
+        return;
       }
-      aiService.progressListenable.addListener(syncForegroundProgress);
-      listenerAttached = true;
-      try {
-        while (true) {
-          final request = await AiBackgroundTaskService.instance.readRequest();
-          if (request == null) {
-            break;
-          }
-          await AiBackgroundTaskService.instance.clearRequest(
-            createdAtMs: request.createdAtMs,
-          );
-          await aiService.analyzePhotosInBackground(
-            manageForegroundService: false,
-            maxPhotos: request.maxPhotos,
-            photoIds: request.photoIds,
-          );
-        }
-      } finally {
-        if (listenerAttached) {
-          aiService.progressListenable.removeListener(syncForegroundProgress);
-        }
-      }
+
+      _worker = SpoolAnalysisWorker();
+      await _worker!.run(manifest);
     } catch (error) {
-      debugPrint('❌ AI worker 执行失败: $error');
+      debugPrint('❌ Spool worker 执行失败: $error');
     } finally {
       await AiBackgroundTaskService.instance.stop();
     }
   }
 
   @override
-  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {}
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
+    _worker?.requestStop();
+  }
 }
 
+/// 前台服务生命周期管理。
 class AiBackgroundTaskService {
   AiBackgroundTaskService._();
   static final AiBackgroundTaskService instance = AiBackgroundTaskService._();
 
   static bool _initialized = false;
-  static const _requestMaxPhotosKey = 'ai_worker_request_max_photos';
-  static const _requestPhotoIdsKey = 'ai_worker_request_photo_ids';
-  static const _requestCreatedAtKey = 'ai_worker_request_created_at';
+  static const _pendingManifestJobIdKey = 'spool_pending_manifest_job_id';
 
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
@@ -136,20 +96,18 @@ class AiBackgroundTaskService {
     );
   }
 
+  /// 写入 manifest → 启动前台服务。
   Future<void> startAnalysisWorker({
     int? maxPhotos,
     List<int>? photoIds,
+    AnalysisJobManifest? manifest,
   }) async {
-    await _writeRequest(maxPhotos: maxPhotos, photoIds: photoIds);
-    if (!Platform.isAndroid) {
-      if (!Platform.isIOS) {
-        debugPrint('AI durable worker is not wired for this platform yet.');
-        return;
-      }
-      await startService(
-        title: 'Memoria 正在分析媒体',
-        text: '只处理你加入分析队列的照片和视频',
-      );
+    if (manifest != null) {
+      await AnalysisSpoolService.instance.writeManifest(manifest);
+      await _recordPendingJobId(manifest.jobId);
+    }
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      debugPrint('[spool] 非 Android/iOS 平台暂不支持前台服务');
       return;
     }
     await startService(
@@ -158,19 +116,48 @@ class AiBackgroundTaskService {
     );
   }
 
+  /// 获取并认领下一个待处理的 manifest。
+  ///
+  /// 检查 SharedPreferences 中记录的 pending jobId，
+  /// 如果 spool 中存在且没有 done.marker，则认领并返回。
+  Future<AnalysisJobManifest?> takePendingManifest() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jobId = prefs.getString(_pendingManifestJobIdKey);
+    if (jobId == null || jobId.isEmpty) return null;
+
+    final spool = AnalysisSpoolService.instance;
+    if (await spool.hasDoneMarker(jobId)) {
+      debugPrint('[spool-worker] job $jobId 已有 done.marker，跳过');
+      return null;
+    }
+    final manifest = await spool.readManifest(jobId);
+    if (manifest == null) {
+      debugPrint('[spool-worker] manifest 不存在 jobId=$jobId');
+      return null;
+    }
+    return manifest;
+  }
+
+  Future<void> _recordPendingJobId(String jobId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_pendingManifestJobIdKey, jobId);
+  }
+
+  Future<void> _clearPendingJobId() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_pendingManifestJobIdKey);
+  }
+
+  // ── 前台服务生命周期 ──
+
   Future<void> startService({
     required String title,
     required String text,
   }) async {
-    if (!Platform.isAndroid && !Platform.isIOS) {
-      return;
-    }
+    if (!Platform.isAndroid && !Platform.isIOS) return;
     await _ensureInitialized();
     if (await FlutterForegroundTask.isRunningService) {
       await updateNotification(title: title, text: text);
-      FlutterForegroundTask.sendDataToTask(<String, Object?>{
-        'type': 'run_request_updated',
-      });
       return;
     }
     await FlutterForegroundTask.startService(
@@ -198,86 +185,4 @@ class AiBackgroundTaskService {
     if (!Platform.isAndroid && !Platform.isIOS) return;
     await FlutterForegroundTask.stopService();
   }
-
-  Future<void> _writeRequest({
-    int? maxPhotos,
-    List<int>? photoIds,
-  }) async {
-    final prefs = await SharedPreferences.getInstance();
-    if (maxPhotos == null) {
-      await prefs.remove(_requestMaxPhotosKey);
-    } else {
-      await prefs.setInt(_requestMaxPhotosKey, maxPhotos);
-    }
-    final normalizedPhotoIds = photoIds
-        ?.where((id) => id > 0)
-        .map((id) => id.toString())
-        .toList(growable: false);
-    if (normalizedPhotoIds == null || normalizedPhotoIds.isEmpty) {
-      await prefs.remove(_requestPhotoIdsKey);
-    } else {
-      await prefs.setStringList(_requestPhotoIdsKey, normalizedPhotoIds);
-    }
-    await prefs.setInt(
-      _requestCreatedAtKey,
-      DateTime.now().millisecondsSinceEpoch,
-    );
-  }
-
-  Future<int?> readRequestedMaxPhotos() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt(_requestMaxPhotosKey);
-  }
-
-  Future<List<int>?> readRequestedPhotoIds() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList(_requestPhotoIdsKey);
-    if (raw == null || raw.isEmpty) {
-      return null;
-    }
-    final ids = raw
-        .map((value) => int.tryParse(value))
-        .whereType<int>()
-        .where((id) => id > 0)
-        .toList(growable: false);
-    return ids.isEmpty ? null : ids;
-  }
-
-  Future<_AiWorkerRequest?> readRequest() async {
-    final prefs = await SharedPreferences.getInstance();
-    final maxPhotos = prefs.getInt(_requestMaxPhotosKey);
-    final photoIds = await readRequestedPhotoIds();
-    final createdAtMs = prefs.getInt(_requestCreatedAtKey) ?? 0;
-    if (maxPhotos == null && (photoIds == null || photoIds.isEmpty)) {
-      return null;
-    }
-    return _AiWorkerRequest(
-      maxPhotos: maxPhotos,
-      photoIds: photoIds,
-      createdAtMs: createdAtMs,
-    );
-  }
-
-  Future<void> clearRequest({int? createdAtMs}) async {
-    final prefs = await SharedPreferences.getInstance();
-    if (createdAtMs != null &&
-        prefs.getInt(_requestCreatedAtKey) != createdAtMs) {
-      return;
-    }
-    await prefs.remove(_requestMaxPhotosKey);
-    await prefs.remove(_requestPhotoIdsKey);
-    await prefs.remove(_requestCreatedAtKey);
-  }
-}
-
-class _AiWorkerRequest {
-  const _AiWorkerRequest({
-    required this.maxPhotos,
-    required this.photoIds,
-    required this.createdAtMs,
-  });
-
-  final int? maxPhotos;
-  final List<int>? photoIds;
-  final int createdAtMs;
 }

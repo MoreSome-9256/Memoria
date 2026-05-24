@@ -14,22 +14,14 @@ class PhotoScanFilterProfile {
     this.minHeight,
   });
 
-  /// 现有筛选策略汇总：
-  /// - requireValidDimensions: 宽高必须有效
-  /// - requireCameraLikePath: 仅接收“相机路径/命名”照片
-  /// - requireValidTimestamp: 仅接收有效时间戳
-  /// - skipScreenshotByRatio: 跳过疑似截图比例
-  // 默认策略：不进行预先的截图/路径/时间戳筛选，仅可选的尺寸与时间阈值由用户偏好控制。
   static const PhotoScanFilterProfile strict = PhotoScanFilterProfile(
     requireValidDimensions: true,
   );
 
-  /// 用户自选相册：同样不做自动筛选（以用户偏好为准）。
   static const PhotoScanFilterProfile userSelectedAlbums =
       PhotoScanFilterProfile(requireValidDimensions: true);
 
   final bool requireValidDimensions;
-  // 可选的用户阈值（若为 null 则表示不限制）
   final int? minTimestampMs;
   final int? minWidth;
   final int? minHeight;
@@ -203,98 +195,6 @@ class _PhotoAssetBuilder {
     return _SingleAssetBuildResult(photo: photo, insertedNoGps: hasGps ? 0 : 1);
   }
 
-  Future<_SingleAssetBuildResult> buildSingleFilePhoto(
-    File file, {
-    PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
-  }) async {
-    if (!await file.exists()) {
-      return const _SingleAssetBuildResult(skippedNonCamera: 1);
-    }
-    final dimensions = await _readLocalImageDimensions(file);
-    if (dimensions == null) {
-      return const _SingleAssetBuildResult(skippedNonCamera: 1);
-    }
-    final timestamp = await _resolveBestFileTimestampMs(file);
-    final photo = PhotoEntity()
-      ..assetId = 'file:${file.path}'
-      ..timestamp = timestamp
-      ..path = file.path
-      ..width = dimensions.$1
-      ..height = dimensions.$2
-      ..isLocationProcessed = false
-      ..faceCount = 0
-      ..smileProb = 0.0;
-
-    if (filterProfile.minTimestampMs != null &&
-        photo.timestamp < filterProfile.minTimestampMs!) {
-      return const _SingleAssetBuildResult(skippedInvalidTime: 1);
-    }
-    if (filterProfile.minWidth != null && filterProfile.minHeight != null) {
-      final selMax = math.max(
-        filterProfile.minWidth!,
-        filterProfile.minHeight!,
-      );
-      final selMin = math.min(
-        filterProfile.minWidth!,
-        filterProfile.minHeight!,
-      );
-      final pMax = math.max(photo.width, photo.height);
-      final pMin = math.min(photo.width, photo.height);
-      if (pMax < selMax || pMin < selMin) {
-        return const _SingleAssetBuildResult(skippedInvalidTime: 1);
-      }
-    }
-
-    return _SingleAssetBuildResult(photo: photo, insertedNoGps: 1);
-  }
-
-  Future<_SingleAssetBuildResult> buildSingleGrantedMediaPhoto(
-    AndroidGrantedMediaReference media, {
-    PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
-  }) async {
-    if (!media.isImage) {
-      return const _SingleAssetBuildResult(skippedNonCamera: 1);
-    }
-    // SAF 已确认 mimeType = image/*，跳过 requireValidDimensions 检查
-    //（width/height 为 0 是正常情况，readImageBounds 已在之前优化移除）
-    final width = media.width;
-    final height = media.height;
-    final timestamp = PhotoFilterHelper.hasValidTimestamp(media.modifiedMs)
-        ? media.modifiedMs
-        : DateTime.now().millisecondsSinceEpoch;
-    final photo = PhotoEntity()
-      ..assetId = 'document:${media.uri}'
-      ..timestamp = timestamp
-      ..path = media.uri
-      ..width = width
-      ..height = height
-      ..isLocationProcessed = false
-      ..faceCount = 0
-      ..smileProb = 0.0;
-
-    if (filterProfile.minTimestampMs != null &&
-        photo.timestamp < filterProfile.minTimestampMs!) {
-      return const _SingleAssetBuildResult(skippedInvalidTime: 1);
-    }
-    if (filterProfile.minWidth != null && filterProfile.minHeight != null) {
-      final selMax = math.max(
-        filterProfile.minWidth!,
-        filterProfile.minHeight!,
-      );
-      final selMin = math.min(
-        filterProfile.minWidth!,
-        filterProfile.minHeight!,
-      );
-      final pMax = math.max(photo.width, photo.height);
-      final pMin = math.min(photo.width, photo.height);
-      if (pMax < selMax || pMin < selMin) {
-        return const _SingleAssetBuildResult(skippedInvalidTime: 1);
-      }
-    }
-
-    return _SingleAssetBuildResult(photo: photo, insertedNoGps: 1);
-  }
-
   // ── File 解析：Android 跳过 originFile（快 2×）──────────────────
   Future<File?> resolveReadableFile(AssetEntity asset) async {
     final directFile = await asset.file;
@@ -322,40 +222,6 @@ class _PhotoAssetBuilder {
       candidates.add(modifiedMs);
     }
     return candidates.isEmpty ? 0 : candidates.reduce(math.min);
-  }
-
-  Future<int> _resolveBestFileTimestampMs(File file) async {
-    final fileNameMs = PhotoFilterHelper.extractTimestampFromFileName(
-      file.path,
-    );
-    if (fileNameMs != null && PhotoFilterHelper.hasValidTimestamp(fileNameMs)) {
-      return fileNameMs;
-    }
-    final stat = await file.stat();
-    final modifiedMs = stat.modified.millisecondsSinceEpoch;
-    if (PhotoFilterHelper.hasValidTimestamp(modifiedMs)) {
-      return modifiedMs;
-    }
-    return DateTime.now().millisecondsSinceEpoch;
-  }
-
-  Future<(int, int)?> _readLocalImageDimensions(File file) async {
-    try {
-      final raf = await file.open(mode: FileMode.read);
-      try {
-        final header = await raf.read(32768);
-        final decoder = img.findDecoderForData(header);
-        final info = decoder?.startDecode(header);
-        if (info != null && info.width > 0 && info.height > 0) {
-          return (info.width, info.height);
-        }
-        return null;
-      } finally {
-        await raf.close();
-      }
-    } catch (_) {
-      return null;
-    }
   }
 
   // ── 仅当字段变化时刷新 ──────────────────────────────────────────

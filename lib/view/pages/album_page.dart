@@ -15,10 +15,13 @@ import '../../service/album_tag_browser_service.dart';
 import '../../service/event_service.dart';
 import '../../service/junk_photo_cleanup_service.dart';
 import '../../service/junk_photo_filter_service.dart';
+import '../../service/app_ai_settings_service.dart';
+import '../../service/media_access_grant_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_queue_service.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 import '../widgets/event_card.dart';
+import 'media_access_range_page.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/junk_photo_cleanup_banner.dart';
 import '../widgets/junk_photo_cleanup_dialog.dart';
@@ -36,6 +39,8 @@ enum _ImportAction {
   importAllNew,
   importLatest100,
   rebuildAll,
+  addMorePhotos,
+  managePermissions,
 }
 
 // Keep the tag overview and detail sheet on the same snapshot window so a
@@ -252,10 +257,110 @@ class _AlbumPageState extends State<AlbumPage> {
     }
   }
 
+  Future<PermissionState> _requestPhotoPermission({
+    required String title,
+    required String message,
+    required RequestType type,
+  }) async {
+    var state = await PhotoManager.requestPermissionExtend(
+      requestOption: PermissionRequestOption(
+        androidPermission: AndroidPermission(type: type, mediaLocation: false),
+      ),
+    );
+    if (state.hasAccess) return state;
+
+    if (!mounted) return state;
+
+    final retry = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final s = await PhotoManager.requestPermissionExtend(
+                requestOption: PermissionRequestOption(
+                  androidPermission:
+                      AndroidPermission(type: type, mediaLocation: false),
+                ),
+              );
+              Navigator.pop(ctx, s.hasAccess);
+            },
+            child: const Text('授予权限'),
+          ),
+        ],
+      ),
+    );
+
+    if (retry != true || !mounted) return state;
+
+    state = await PhotoManager.requestPermissionExtend(
+      requestOption: PermissionRequestOption(
+        androidPermission: AndroidPermission(type: type, mediaLocation: false),
+      ),
+    );
+
+    if (!state.hasAccess && mounted) {
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('权限被拒绝'),
+          content: const Text('请在系统设置中手动开启相册访问权限。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('知道了'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return state;
+  }
+
   Future<void> _showRefreshOptions() async {
     if (_isClearingCache) {
       return;
     }
+
+    // ── 确保有相册权限 ──
+    // 先申请图片权限
+    final imageState = await _requestPhotoPermission(
+      title: '需要图片访问权限',
+      message: 'Memoria 需要读取您的照片，才能进行分析和管理。',
+      type: RequestType.image,
+    );
+    if (!imageState.hasAccess || !mounted) return;
+
+    // 如果用户开启了「包含视频」，额外申请视频权限
+    final settings = await AppAiSettingsService.instance.load();
+    if (settings.includeVideos) {
+      final videoState = await _requestPhotoPermission(
+        title: '需要视频访问权限',
+        message: 'Memoria 需要读取您的视频，才能进行分析和管理。',
+        type: RequestType.video,
+      );
+      if (!videoState.hasAccess || !mounted) return;
+    }
+
+    final permState = await PhotoManager.requestPermissionExtend(
+      requestOption: const PermissionRequestOption(
+        androidPermission: AndroidPermission(
+          type: RequestType.common,
+          mediaLocation: false,
+        ),
+      ),
+    );
+    final isLimited = permState.isLimited;
+
+    if (!mounted) return;
 
     final selected = await showModalBottomSheet<_ImportAction>(
       context: context,
@@ -273,23 +378,39 @@ class _AlbumPageState extends State<AlbumPage> {
                 ),
                 ListTile(
                   leading: const Icon(Icons.done_all_outlined),
-                  title: const Text('导入全部新的图片和视频'),
+                  title: const Text('导入已授权范围内的新图片'),
                   subtitle: const Text('按相册时间倒序加入全部未分析项目'),
                   onTap: () =>
                       Navigator.pop(context, _ImportAction.importAllNew),
                 ),
                 ListTile(
                   leading: const Icon(Icons.flash_on_outlined),
-                  title: const Text('导入最新的 100 个未分析项目'),
+                  title: const Text('导入最新 100 张未分析图片'),
                   subtitle: const Text('按创建时间或修改时间倒序加入最新一批'),
                   onTap: () =>
                       Navigator.pop(context, _ImportAction.importLatest100),
                 ),
+                if (isLimited)
+                  ListTile(
+                    leading: const Icon(Icons.add_photo_alternate_outlined),
+                    title: const Text('添加更多可分析照片'),
+                    subtitle: const Text('从系统相册中选择更多照片'),
+                    onTap: () =>
+                        Navigator.pop(context, _ImportAction.addMorePhotos),
+                  ),
+                if (isLimited) const Divider(),
                 ListTile(
                   leading: const Icon(Icons.restart_alt_outlined),
                   title: const Text('重新分析全部'),
                   subtitle: const Text('删除缓存和分析结果后按系统相册重建'),
                   onTap: () => Navigator.pop(context, _ImportAction.rebuildAll),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.tune),
+                  title: const Text('管理照片访问权限'),
+                  subtitle: const Text('修改授权范围、选择分析相册'),
+                  onTap: () =>
+                      Navigator.pop(context, _ImportAction.managePermissions),
                 ),
                 const SizedBox(height: 24),
               ],
@@ -310,6 +431,14 @@ class _AlbumPageState extends State<AlbumPage> {
         _startRefresh(recentPhotoLimit: 100);
       case _ImportAction.rebuildAll:
         await _confirmAndRebuildAnalysis();
+      case _ImportAction.addMorePhotos:
+        await MediaAccessGrantService.instance.presentLimitedLibraryPicker();
+      case _ImportAction.managePermissions:
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => const MediaAccessRangePage(),
+          ),
+        );
     }
   }
 

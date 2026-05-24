@@ -196,12 +196,7 @@ class _ProfilePageState extends State<ProfilePage> {
       return;
     }
     setState(() {
-      if (!snapshot.hasAnyGrant) {
-        _albumSelectionSummary = '未设置可分析范围';
-      } else {
-        _albumSelectionSummary =
-            '自动来源 ${snapshot.androidTreeUris.length} 个，手动加入 ${snapshot.manualMediaCount} 项';
-      }
+      _albumSelectionSummary = '使用系统相册（全部照片）';
     });
   }
 
@@ -948,7 +943,7 @@ class _ProfilePageState extends State<ProfilePage> {
             context,
             Icons.folder_copy_outlined,
             '相册访问权限',
-            '导入使用系统相册；手动来源仅用于少量额外项目',
+            '查看系统相册授权状态',
             onTap: _showAlbumSelectionSettings,
           ),
           _buildSettingsTile(

@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -16,26 +17,34 @@ import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/tag_taxonomy_v2.dart';
+import '../models/entity/face_entity.dart';
 import '../models/entity/photo_entity.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
+import '../storage/vector_index/face_embedding_index_repository.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../storage/vector_index/vector_index_constants.dart';
 import '../utils/ai_score_helper.dart';
+import '../utils/face_crop_util.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
-import 'app_ai_settings_service.dart';
+import 'ai_background_task_service.dart';
 import 'ai_progress_notification_service.dart';
+import 'analysis_spool_progress_notifier.dart';
+import 'analysis_spool_service.dart';
+import 'app_ai_settings_service.dart';
 import 'event_service.dart';
+import 'face_embedding_service.dart';
 import 'face_pipeline_service.dart';
 import 'junk_photo_filter_service.dart';
+import 'onnx_face_embedding_service.dart';
+import 'media_access_grant_service.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_embedding_service.dart';
 import 'mobileclip_tag_service.dart';
-import 'media_access_grant_service.dart';
 import 'ocr_service.dart';
-import 'photo_service.dart';
 import 'photo_caption_service.dart';
+import 'photo_service.dart';
 
 part 'ai_service_progress.dart';
 part 'ai_service_input.dart';
@@ -47,7 +56,6 @@ part 'ai_service_pipeline.dart';
 part 'ai_service_pipeline_runner.dart';
 part 'ai_service_photo_processing.dart';
 part 'ai_service_photo_processor.dart';
-part 'ai_background_task_service.dart';
 
 class AIService {
   static final AIService _instance = AIService._internal();

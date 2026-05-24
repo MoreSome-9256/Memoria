@@ -32,20 +32,6 @@ extension AIServiceLifecycle on AIService {
       ),
     );
 
-    if (progress.isVisible) {
-      final title = progress.isStopping
-          ? 'AI 打标正在结束'
-          : progress.isPaused
-          ? 'AI 打标已暂停'
-          : 'AI 打标进行中';
-      final body =
-          '${progress.completed}/${progress.total}${progress.failed > 0 ? ' · 失败 ${progress.failed}' : ''} · ${progress.currentStep}';
-      unawaited(AiBackgroundTaskService.instance.updateNotification(
-        title: title,
-        text: body,
-      ));
-    }
-
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     if (progress.isVisible) {
       if (nowMs - _lastRuntimeHeartbeatPersistAtMs >= 1500) {
@@ -68,7 +54,6 @@ extension AIServiceLifecycle on AIService {
     } else {
       _lastRuntimeHeartbeatPersistAtMs = 0;
       unawaited(_persistRuntimeState(isActive: false));
-      unawaited(AiBackgroundTaskService.instance.stop());
     }
   }
 
@@ -91,12 +76,48 @@ extension AIServiceLifecycle on AIService {
       (_) => unawaited(_refreshProgressFromRuntimeState()),
     );
     unawaited(_refreshProgressFromRuntimeState());
+    unawaited(SpoolProgressNotifier.instance.tryResumePolling());
   }
 
   Future<void> _refreshProgressFromRuntimeState() async {
     if (_isAnalyzing) {
       return;
     }
+
+    // 1. 检查 spool 是否有活跃任务
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pendingJobId = prefs.getString('spool_pending_manifest_job_id');
+      if (pendingJobId != null && pendingJobId.isNotEmpty) {
+        final spool = AnalysisSpoolService.instance;
+        if (await spool.hasDoneMarker(pendingJobId)) {
+          // 已完成但未消费的 job — 尽快消费
+          unawaited(consumeSpoolResults(pendingJobId));
+        } else {
+          final manifest = await spool.readManifest(pendingJobId);
+          if (manifest != null) {
+            final snapshot = await spool.readProgress(pendingJobId);
+            final processed = snapshot?.processed ?? 0;
+            final isPaused = snapshot?.status == 'paused';
+            _progressNotifier.value = AIAnalysisProgress(
+              isRunning: !isPaused,
+              isPaused: isPaused,
+              isStopping: false,
+              total: manifest.totalItems,
+              completed: processed,
+              failed: snapshot?.failed ?? 0,
+              currentStep: isPaused
+                  ? '后台分析已暂停'
+                  : '后台分析中 $processed/${manifest.totalItems}',
+              elapsedMs: 0,
+            );
+            return;
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 2. Fallback 到 SharedPreferences 历史
     final snapshot = await _readRuntimeSnapshot();
     if (!snapshot.isActive || snapshot.total <= 0) {
       if (_progressNotifier.value.isVisible) {
@@ -258,6 +279,36 @@ extension AIServiceLifecycle on AIService {
   Future<void> resumePendingAnalysisIfNeeded() async {
     if (_isAnalyzing) {
       return;
+    }
+
+    // 1. 检查 spool 中是否有进行中的任务
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final pendingJobId = prefs.getString('spool_pending_manifest_job_id');
+      if (pendingJobId != null && pendingJobId.isNotEmpty) {
+        final spool = AnalysisSpoolService.instance;
+        if (await spool.hasDoneMarker(pendingJobId)) {
+          debugPrint('[spool] 检测到已完成的任务 jobId=$pendingJobId，开始消费');
+          await consumeSpoolResults(pendingJobId);
+        } else {
+          // 有进行中的任务，显示进度而不是干预
+          final manifest = await spool.readManifest(pendingJobId);
+          if (manifest != null) {
+            final snapshot = await spool.readProgress(pendingJobId);
+            final processed = snapshot?.processed ?? 0;
+            _progressNotifier.value = AIAnalysisProgress.running(
+              total: manifest.totalItems,
+              completed: processed,
+              failed: snapshot?.failed ?? 0,
+              currentStep: '后台分析中 $processed/${manifest.totalItems}',
+              elapsedMs: 0,
+            );
+            return;
+          }
+        }
+      }
+    } catch (error) {
+      debugPrint('[spool] spool 检查失败: $error');
     }
 
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();

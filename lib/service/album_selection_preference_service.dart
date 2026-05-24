@@ -2,50 +2,49 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class AlbumSelectionSnapshot {
   const AlbumSelectionSnapshot({
-    required this.useAllAlbums,
     required this.selectedAlbumIds,
   });
 
-  final bool useAllAlbums;
   final List<String> selectedAlbumIds;
 }
 
 class AlbumSelectionPreferenceService {
-  static const String _useAllKey = 'album_selection_use_all';
   static const String _selectedIdsKey = 'album_selection_ids';
   static const String _minYearKey = 'scan_min_year';
   static const String _minWidthKey = 'scan_min_width';
   static const String _minHeightKey = 'scan_min_height';
 
+  /// 默认选中 DCIM 和 Camera 相册。
+  static const List<String> defaultAlbumIds = ['DCIM', 'Camera'];
+
   Future<AlbumSelectionSnapshot> loadSelection() async {
     final prefs = await SharedPreferences.getInstance();
-    final useAll = prefs.getBool(_useAllKey) ?? false;
-    final selectedIds = prefs.getStringList(_selectedIdsKey) ?? const <String>[];
-    return AlbumSelectionSnapshot(
-      useAllAlbums: useAll,
-      selectedAlbumIds: selectedIds,
-    );
+    final selectedIds =
+        prefs.getStringList(_selectedIdsKey) ?? defaultAlbumIds;
+    return AlbumSelectionSnapshot(selectedAlbumIds: selectedIds);
   }
 
   Future<void> saveSelection({
-    required bool useAllAlbums,
     required List<String> selectedAlbumIds,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_useAllKey, useAllAlbums);
-    await prefs.setStringList(_selectedIdsKey, selectedAlbumIds);
+    final deduped = selectedAlbumIds.toSet().toList(growable: false)..sort();
+    await prefs.setStringList(_selectedIdsKey, deduped);
   }
 
   Future<void> reset() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_useAllKey);
     await prefs.remove(_selectedIdsKey);
     await prefs.remove(_minYearKey);
     await prefs.remove(_minWidthKey);
     await prefs.remove(_minHeightKey);
   }
 
-  Future<void> saveScanPreferences({int? minYear, int? minWidth, int? minHeight}) async {
+  Future<void> saveScanPreferences({
+    int? minYear,
+    int? minWidth,
+    int? minHeight,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     if (minYear == null) {
       await prefs.remove(_minYearKey);

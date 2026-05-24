@@ -1,28 +1,361 @@
-/// AI 服务的主处理管线，串联输入准备、分析执行和结果落盘。
+/// AI 服务的主处理管线 — Spool 编排模式。
+///
+/// 主进程：写 manifest → 启动前台服务 → (后台) 轮询 spool → 消费结果 → 写 ObjectBox。
+/// 前台服务：读 manifest → 纯计算 → 写 result/embedding/progress → 写 done.marker。
 
 part of 'ai_service.dart';
 
 extension AIServicePipeline on AIService {
+  /// 启动 AI 分析管线。
+  ///
+  /// [manageForegroundService] = true（默认）：写 manifest + 启动前台服务，返回后
+  /// 前台服务在独立 isolate 中做纯计算，结果写入 spool。
+  ///
+  /// [manageForegroundService] = false：在调用方 isolate 中直接运行完整管线
+  /// （仅供旧路径兼容，新代码应走 spool 模式）。
   Future<void> analyzePhotosInBackground({
     int batchSize = 6,
     int? maxPhotos,
     List<int>? photoIds,
     bool manageForegroundService = true,
   }) async {
-    if (manageForegroundService) {
-      await AiBackgroundTaskService.instance.startAnalysisWorker(
+    if (!manageForegroundService) {
+      await _AiPipelineRunner(
+        service: this,
+        batchSize: batchSize,
         maxPhotos: maxPhotos,
         photoIds: photoIds,
-      );
+        manageForegroundService: manageForegroundService,
+      ).run();
       return;
     }
-    await _AiPipelineRunner(
-      service: this,
-      batchSize: batchSize,
-      maxPhotos: maxPhotos,
-      photoIds: photoIds,
-      manageForegroundService: manageForegroundService,
-    ).run();
+
+    // ── Spool 模式：写 manifest → 启动前台服务 ──
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
+
+    final requestedPhotoIds = photoIds
+        ?.where((id) => id > 0)
+        .toSet()
+        .toList(growable: false);
+
+    final q = requestedPhotoIds != null && requestedPhotoIds.isNotEmpty
+        ? photoBox
+            .query(
+              PhotoEntity_.isAiAnalyzed
+                  .equals(false)
+                  .and(PhotoEntity_.id.oneOf(requestedPhotoIds)),
+            )
+            .order(PhotoEntity_.timestamp, flags: Order.descending)
+            .build()
+        : photoBox
+            .query(PhotoEntity_.isAiAnalyzed.equals(false))
+            .order(PhotoEntity_.timestamp, flags: Order.descending)
+            .build();
+    final pendingPhotos = q.find();
+    q.close();
+
+    final limit = maxPhotos ?? pendingPhotos.length;
+    final batch = pendingPhotos.take(limit).toList(growable: false);
+
+    if (batch.isEmpty) {
+      debugPrint('[spool] 没有待分析的照片');
+      _progressNotifier.value = AIAnalysisProgress.idle();
+      return;
+    }
+
+    final items = batch.map((photo) {
+      return AnalysisSpoolItem(
+        photoKey: photo.assetId,
+        contentUri: photo.path.startsWith('content://') ? photo.path : null,
+        path: !photo.path.startsWith('content://') ? photo.path : null,
+        photoId: photo.id,
+        modifiedAt: photo.timestamp,
+        latitude: photo.latitude,
+        longitude: photo.longitude,
+      );
+    }).toList(growable: false);
+
+    final jobId = 'ai_${DateTime.now().millisecondsSinceEpoch}';
+    final manifest = AnalysisJobManifest(
+      jobId: jobId,
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+      mode: 'full',
+      items: items,
+    );
+
+    await AnalysisSpoolService.instance.writeManifest(manifest);
+    debugPrint(
+      '[spool] manifest 已写入 jobId=$jobId items=${items.length}',
+    );
+
+    // 启动前台服务
+    await AiBackgroundTaskService.instance.startAnalysisWorker(
+      manifest: manifest,
+    );
+
+    _progressNotifier.value = AIAnalysisProgress.running(
+      total: items.length,
+      completed: 0,
+      failed: 0,
+      currentStep: '已提交 ${items.length} 张照片到后台分析服务',
+      elapsedMs: 0,
+    );
+  }
+
+  /// 消费 spool 结果：检测 done.marker → 读取所有 pending result → 写入 ObjectBox。
+  Future<SpoolConsumeReport> consumeSpoolResults(String jobId) async {
+    final spool = AnalysisSpoolService.instance;
+    final manifest = await spool.readManifest(jobId);
+    if (manifest == null) {
+      return SpoolConsumeReport(jobId: jobId, consumedCount: 0);
+    }
+
+    if (!await spool.hasDoneMarker(jobId)) {
+      return SpoolConsumeReport(jobId: jobId, consumedCount: 0);
+    }
+
+    final pendingFiles = await spool.listPendingResults(jobId);
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
+    var consumedCount = 0;
+    var failedCount = 0;
+    var affectedEventIds = <int>{};
+
+    final photoById = <int, PhotoEntity>{};
+    for (final photo in photoBox.getAll()) {
+      photoById[photo.id] = photo;
+    }
+
+    for (final filePath in pendingFiles) {
+      final result = await spool.readResultFile(filePath);
+      if (result == null) {
+        final basename = filePath.split(Platform.pathSeparator).last;
+        final key = basename.endsWith('.json')
+            ? basename.substring(0, basename.length - 5)
+            : 'unknown_${DateTime.now().millisecondsSinceEpoch}';
+        await spool.moveToFailed(jobId, key);
+        failedCount++;
+        continue;
+      }
+
+      final photo = result.photoId > 0
+          ? photoById[result.photoId]
+          : null;
+      if (photo == null) {
+        await spool.moveToFailed(jobId, result.photoKey);
+        failedCount++;
+        continue;
+      }
+
+      if (result.isSucceeded) {
+        List<double>? embedding;
+        if (result.embeddingFile != null) {
+          embedding = await spool.readEmbedding(jobId, result.photoKey);
+        }
+
+        final faceResults = await _readFaceResults(spool, jobId, result.photoKey);
+
+        await _applySpoolResult(
+          photo: photo,
+          embedding: embedding ?? const <double>[],
+          faceResults: faceResults,
+          result: result,
+        );
+
+        if (photo.eventId != null && photo.eventId! > 0) {
+          affectedEventIds.add(photo.eventId!);
+        }
+
+        await spool.moveToCommitted(jobId, result.photoKey);
+        consumedCount++;
+      } else {
+        await spool.moveToFailed(jobId, result.photoKey);
+        failedCount++;
+      }
+    }
+
+    // 刷新事件智能信息
+    if (affectedEventIds.isNotEmpty) {
+      await EventService().refreshEventSmartInfo(affectedEventIds.toList());
+    }
+
+    // 清理 spool job 目录 + 清除 pending 标记
+    await spool.cleanupJob(jobId);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('spool_pending_manifest_job_id');
+
+    return SpoolConsumeReport(
+      jobId: jobId,
+      consumedCount: consumedCount,
+      failedCount: failedCount,
+    );
+  }
+
+  Future<List<_SpoolFaceFileResult>> _readFaceResults(
+    AnalysisSpoolService spool,
+    String jobId,
+    String photoKey,
+  ) async {
+    final baseDir = await spool.baseDir;
+    final faceFile = File(
+      '${baseDir.path}/jobs/$jobId/results_pending/${photoKey}_faces.json',
+    );
+    if (!await faceFile.exists()) return const <_SpoolFaceFileResult>[];
+    try {
+      final json = await faceFile.readAsString();
+      final decoded = jsonDecode(json) as List<Object?>;
+      return decoded
+          .cast<Map<String, Object?>>()
+          .map(_SpoolFaceFileResult.fromJson)
+          .toList();
+    } catch (_) {
+      return const <_SpoolFaceFileResult>[];
+    }
+  }
+
+  Future<void> _applySpoolResult({
+    required PhotoEntity photo,
+    required List<double> embedding,
+    required List<_SpoolFaceFileResult> faceResults,
+    required AnalysisSpoolResult result,
+  }) async {
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
+
+    final selectedBackend = await MobileClipEmbeddingService()
+        .getSelectedBackend();
+
+    store.runInTransaction(TxMode.write, () {
+      final p = photoBox.get(photo.id);
+      if (p == null) return;
+
+      p.aiTags = result.tags;
+      p.isAiAnalyzed = true;
+      p.aiCaption = result.aiCaption.isEmpty ? null : result.aiCaption;
+      p.imageEmbedding = embedding.isEmpty ? null : embedding;
+      p.ocrText = result.ocrText.isEmpty ? null : result.ocrText;
+      p.ocrTags = result.ocrTags;
+      p.faceCount = result.faceCount;
+      p.smileProb = result.smileProb;
+      p.joyScore = result.joyScore;
+
+      p.province = result.province;
+      p.city = result.city;
+      p.district = result.district;
+      p.locationName = result.locationName;
+      p.formattedAddress = result.formattedAddress;
+      p.adcode = result.adcode;
+      p.isLocationProcessed =
+          result.province != null || result.city != null;
+
+      photoBox.put(p);
+    });
+
+    // 写入 embedding 索引
+    if (embedding.isNotEmpty) {
+      _photoEmbeddingIndexRepository.upsertEmbedding(
+        photoId: photo.id,
+        vector: embedding,
+        modelVersion: buildPhotoEmbeddingModelVersion(selectedBackend),
+      );
+    }
+
+    // 写入 face 结果
+    if (faceResults.isNotEmpty) {
+      await _applyFaceResults(photo, faceResults);
+    }
+  }
+
+  Future<void> _applyFaceResults(
+    PhotoEntity photo,
+    List<_SpoolFaceFileResult> faceResults,
+  ) async {
+    if (faceResults.isEmpty) return;
+
+    final store = ObjectBoxService().store;
+    final faceBox = store.box<FaceEntity>();
+
+    final existingQ = faceBox
+        .query(FaceEntity_.photoId.equals(photo.id))
+        .build();
+    final existingIds = existingQ.find().map((f) => f.id).toList();
+    existingQ.close();
+
+    // 加载原图，用于人脸裁剪 -> 嵌入计算
+    img.Image? decodedImage;
+    try {
+      final imageFile = File(photo.path);
+      if (await imageFile.exists()) {
+        decodedImage = await FaceCropUtil.decodeSourceImage(imageFile);
+      }
+    } catch (_) {}
+
+    FaceEmbeddingService? embeddingService;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final faces = <FaceEntity>[];
+
+    for (final fr in faceResults) {
+      List<double>? embedding;
+      String modelVersion = '';
+
+      if (decodedImage != null) {
+        try {
+          final faceRect = Rect.fromLTRB(
+            fr.left, fr.top, fr.right, fr.bottom,
+          );
+          final cropped = FaceCropUtil.cropFaceImage(
+            sourceImage: decodedImage,
+            boundingBox: faceRect,
+          );
+          if (cropped != null) {
+            final cropBytes = FaceCropUtil.encodeFaceImageToJpegBytes(cropped);
+            embeddingService ??= OnnxFaceEmbeddingService(
+              fallbackService: MobileClipFaceEmbeddingService(),
+            );
+            final result = await embeddingService.embedFaceCropBytes(cropBytes);
+            if (result != null) {
+              embedding = result.embedding;
+              modelVersion = result.modelVersion;
+            }
+          }
+        } catch (_) {}
+      }
+
+      faces.add(FaceEntity()
+        ..photoId = photo.id
+        ..assetId = photo.assetId
+        ..faceIndex = fr.faceIndex
+        ..left = fr.left
+        ..top = fr.top
+        ..right = fr.right
+        ..bottom = fr.bottom
+        ..roll = fr.roll
+        ..yaw = fr.yaw
+        ..smilingProbability = fr.smilingProbability
+        ..leftEyeOpenProbability = fr.leftEyeOpenProbability
+        ..rightEyeOpenProbability = fr.rightEyeOpenProbability
+        ..embedding = embedding
+        ..embeddingModelVersion = modelVersion
+        ..qualityScore = fr.qualityScore
+        ..isPrimaryFace = fr.isPrimaryFace
+        ..clusterId = null
+        ..createdAt = now
+        ..updatedAt = now);
+    }
+
+    store.runInTransaction(TxMode.write, () {
+      if (existingIds.isNotEmpty) {
+        faceBox.removeMany(existingIds);
+      }
+      faceBox.putMany(faces);
+    });
+
+    final faceIndexRepo = FaceEmbeddingIndexRepository();
+    faceIndexRepo.replaceForPhoto(
+      photoId: photo.id,
+      faces: faces,
+    );
   }
 
   void _enqueueAsyncCaption(_AsyncCaptionTask task) {
@@ -88,9 +421,7 @@ extension AIServicePipeline on AIService {
   }
 
   void _clearPendingCaptionTasks() {
-    if (_pendingCaptionTasks.isEmpty) {
-      return;
-    }
+    if (_pendingCaptionTasks.isEmpty) return;
     final skipped = _pendingCaptionTasks.length;
     while (_pendingCaptionTasks.isNotEmpty) {
       _disposeSkippedCaptionTask(_pendingCaptionTasks.removeFirst());
@@ -99,9 +430,7 @@ extension AIServicePipeline on AIService {
   }
 
   void _clearAnalysisQueue() {
-    if (_analysisQueue.isEmpty) {
-      return;
-    }
+    if (_analysisQueue.isEmpty) return;
     final dropped = _analysisQueue.length;
     for (final photo in _analysisQueue) {
       _analysisQueuedPhotoIds.remove(photo.id);
@@ -111,9 +440,7 @@ extension AIServicePipeline on AIService {
   }
 
   void _disposeSkippedCaptionTask(_AsyncCaptionTask task) {
-    if (!task.deleteImageFileAfterUse) {
-      return;
-    }
+    if (!task.deleteImageFileAfterUse) return;
     unawaited(
       Future<void>(() async {
         try {
@@ -127,26 +454,19 @@ extension AIServicePipeline on AIService {
 
   Future<void> _updatePhotoCaption(int photoId, String caption) async {
     final trimmed = caption.trim();
-    if (trimmed.isEmpty) {
-      return;
-    }
-
+    if (trimmed.isEmpty) return;
     final store = ObjectBoxService().store;
     final photoBox = store.box<PhotoEntity>();
     store.runInTransaction(TxMode.write, () {
       final photo = photoBox.get(photoId);
-      if (photo == null) {
-        return;
-      }
+      if (photo == null) return;
       photo.aiCaption = trimmed;
       photoBox.put(photo);
     });
   }
 
   int _resolveWorkerCount(int workItems) {
-    if (workItems <= 1) {
-      return 1;
-    }
+    if (workItems <= 1) return 1;
     final cpuCores = Platform.numberOfProcessors;
     final suggested = Platform.isAndroid || Platform.isIOS
         ? (cpuCores <= 4 ? 2 : 3)
@@ -156,10 +476,79 @@ extension AIServicePipeline on AIService {
   }
 
   String _formatWorkerWarmupStatus(List<int> readyWorkers, int totalWorkers) {
-    if (readyWorkers.isEmpty) {
-      return 'workers无 / 共$totalWorkers';
-    }
+    if (readyWorkers.isEmpty) return 'workers无 / 共$totalWorkers';
     final labels = readyWorkers.map((id) => 'workers$id').join(',');
     return '$labels / 共$totalWorkers';
+  }
+}
+
+/// Spool 消费报告。
+class SpoolConsumeReport {
+  final String jobId;
+  final int consumedCount;
+  final int failedCount;
+
+  const SpoolConsumeReport({
+    required this.jobId,
+    required this.consumedCount,
+    this.failedCount = 0,
+  });
+}
+
+/// Spool face result 反序列化模型。
+class _SpoolFaceFileResult {
+  final int faceIndex;
+  final double left;
+  final double top;
+  final double right;
+  final double bottom;
+  final double? roll;
+  final double? yaw;
+  final double? smilingProbability;
+  final double? leftEyeOpenProbability;
+  final double? rightEyeOpenProbability;
+  final List<double>? embedding;
+  final String? embeddingModelVersion;
+  final double qualityScore;
+  final bool isPrimaryFace;
+
+  const _SpoolFaceFileResult({
+    required this.faceIndex,
+    required this.left,
+    required this.top,
+    required this.right,
+    required this.bottom,
+    this.roll,
+    this.yaw,
+    this.smilingProbability,
+    this.leftEyeOpenProbability,
+    this.rightEyeOpenProbability,
+    this.embedding,
+    this.embeddingModelVersion,
+    required this.qualityScore,
+    required this.isPrimaryFace,
+  });
+
+  factory _SpoolFaceFileResult.fromJson(Map<String, Object?> json) {
+    return _SpoolFaceFileResult(
+      faceIndex: (json['faceIndex'] as num).toInt(),
+      left: (json['left'] as num).toDouble(),
+      top: (json['top'] as num).toDouble(),
+      right: (json['right'] as num).toDouble(),
+      bottom: (json['bottom'] as num).toDouble(),
+      roll: (json['roll'] as num?)?.toDouble(),
+      yaw: (json['yaw'] as num?)?.toDouble(),
+      smilingProbability:
+          (json['smilingProbability'] as num?)?.toDouble(),
+      leftEyeOpenProbability:
+          (json['leftEyeOpenProbability'] as num?)?.toDouble(),
+      rightEyeOpenProbability:
+          (json['rightEyeOpenProbability'] as num?)?.toDouble(),
+      embedding: (json['embedding'] as List<Object?>?)
+          ?.cast<double>(),
+      embeddingModelVersion: json['embeddingModelVersion'] as String?,
+      qualityScore: (json['qualityScore'] as num).toDouble(),
+      isPrimaryFace: (json['isPrimaryFace'] as bool?) ?? false,
+    );
   }
 }

@@ -396,6 +396,7 @@ class MediaAccessGrantService {
     }
     final raw = await _channel.invokeListMethod<Object?>('listGrantedMedia', {
       'treeUris': enabledTreeUris,
+      'sourcesWithoutChildren': snapshot.sourcesWithoutChildren.toList(),
       'limit': limit,
     });
     if (raw == null || raw.isEmpty) {

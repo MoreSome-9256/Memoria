@@ -168,6 +168,8 @@ class _AiPipelineRunner {
     var inflightCount = 0;
     var activeWorkerCount = 1;
     var engineBootstrapped = false;
+    var warmUpCompleted = 0;
+    var warmUpTotal = 0;
     var junkReportPublished = false;
     void publishJunkReportIfNeeded() {
       if (junkReportPublished || junkCandidates.isEmpty) {
@@ -186,36 +188,50 @@ class _AiPipelineRunner {
 
     try {
       if (!engineBootstrapped) {
+        const warmUpMainSteps = 3;
+        warmUpTotal = warmUpMainSteps + maxWorkerCount + 1;
+        warmUpCompleted = 0;
+
+        warmUpCompleted++;
         _progressNotifier.value = AIAnalysisProgress.running(
           total: targetTotal,
           completed: processedCount,
           failed: failedCount,
           currentStep: '正在预热引擎 (1/3)：加载图像模型 ${selectedBackend.label}',
           elapsedMs: elapsedMs(),
+          warmUpCompleted: warmUpCompleted,
+          warmUpTotal: warmUpTotal,
         );
         await mobileClipEmbeddingService.warmUpBackend(selectedBackend);
 
+        warmUpCompleted++;
         _progressNotifier.value = AIAnalysisProgress.running(
           total: targetTotal,
           completed: processedCount,
           failed: failedCount,
           currentStep: '正在预热引擎 (2/3)：加载标签语义模型',
           elapsedMs: elapsedMs(),
+          warmUpCompleted: warmUpCompleted,
+          warmUpTotal: warmUpTotal,
         );
         await mobileClipTagService.warmUp();
 
+        warmUpCompleted++;
         _progressNotifier.value = AIAnalysisProgress.running(
           total: targetTotal,
           completed: processedCount,
           failed: failedCount,
           currentStep: '正在预热引擎 (3/3)：加载低价值过滤模板',
           elapsedMs: elapsedMs(),
+          warmUpCompleted: warmUpCompleted,
+          warmUpTotal: warmUpTotal,
         );
         await _junkPhotoFilterService.warmUp();
 
         final readyWorkers = <int>[];
         for (var index = 1; index <= maxWorkerCount; index++) {
           readyWorkers.add(index);
+          warmUpCompleted++;
           _progressNotifier.value = AIAnalysisProgress.running(
             total: targetTotal,
             completed: processedCount,
@@ -223,12 +239,15 @@ class _AiPipelineRunner {
             currentStep:
                 '正在预热并行引擎：${_formatWorkerWarmupStatus(readyWorkers, maxWorkerCount)}',
             elapsedMs: elapsedMs(),
+            warmUpCompleted: warmUpCompleted,
+            warmUpTotal: warmUpTotal,
           );
           await Future<void>.delayed(const Duration(milliseconds: 60));
         }
 
         activeWorkerCount = 1;
 
+        warmUpCompleted++;
         _progressNotifier.value = AIAnalysisProgress.running(
           total: targetTotal,
           completed: processedCount,
@@ -236,6 +255,8 @@ class _AiPipelineRunner {
           currentStep:
               '引擎预热完成：${_formatWorkerWarmupStatus(readyWorkers, maxWorkerCount)}，初始并发 $activeWorkerCount / $maxWorkerCount',
           elapsedMs: elapsedMs(),
+          warmUpCompleted: warmUpCompleted,
+          warmUpTotal: warmUpTotal,
         );
         engineBootstrapped = true;
       }
@@ -328,6 +349,8 @@ class _AiPipelineRunner {
               failed: failedCount,
               currentStep: '任务已入队 $scheduledCount / $targetTotal，等待 workers 处理',
               elapsedMs: elapsedMs(),
+              warmUpCompleted: warmUpCompleted,
+              warmUpTotal: warmUpTotal,
             );
           }
         } finally {
@@ -446,6 +469,8 @@ class _AiPipelineRunner {
               currentStep:
                   '并行处理中 (worker ${workerIndex + 1}) 第 ${processedCount + 1} / $targetTotal 张',
               elapsedMs: elapsedMs(),
+              warmUpCompleted: warmUpCompleted,
+              warmUpTotal: warmUpTotal,
             );
 
             try {
@@ -505,6 +530,8 @@ class _AiPipelineRunner {
                 failed: failedCount,
                 currentStep: '正在结束本轮打标…',
                 elapsedMs: elapsedMs(),
+                warmUpCompleted: warmUpCompleted,
+                warmUpTotal: warmUpTotal,
               );
             } else if (_pauseRequested) {
               _progressNotifier.value = AIAnalysisProgress.paused(
@@ -513,6 +540,8 @@ class _AiPipelineRunner {
                 failed: failedCount,
                 currentStep: '已暂停，随时可以继续',
                 elapsedMs: elapsedMs(),
+                warmUpCompleted: warmUpCompleted,
+                warmUpTotal: warmUpTotal,
               );
             } else {
               _progressNotifier.value = AIAnalysisProgress.running(
@@ -523,6 +552,8 @@ class _AiPipelineRunner {
                     ? '正在收尾整理结果'
                     : '已完成 $processedCount / $targetTotal 张 (并发 $activeWorkerCount / $maxWorkerCount)',
                 elapsedMs: elapsedMs(),
+                warmUpCompleted: warmUpCompleted,
+                warmUpTotal: warmUpTotal,
               );
             }
 
@@ -569,6 +600,8 @@ class _AiPipelineRunner {
               ? '已暂停，剩余 $remainingPending 张待打标'
               : '本轮结束，剩余 $remainingPending 张待打标，点击继续',
           elapsedMs: elapsedMs(),
+          warmUpCompleted: warmUpCompleted,
+          warmUpTotal: warmUpTotal,
         );
       } else {
         _progressNotifier.value = AIAnalysisProgress.idle();

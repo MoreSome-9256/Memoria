@@ -2,13 +2,11 @@ package com.example.photo_album
 
 import android.app.Activity
 import android.content.Intent
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.documentfile.provider.DocumentFile
-import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -43,8 +41,9 @@ class MainActivity : FlutterActivity() {
 				"listGrantedMedia" -> {
 					val args = call.arguments as? Map<*, *>
 					val treeUris = args?.get("treeUris") as? List<*>
+					val sourcesWithoutChildren = (args?.get("sourcesWithoutChildren") as? List<*>)?.map { it.toString() }?.toSet() ?: emptySet()
 					val limit = (args?.get("limit") as? Number)?.toInt() ?: 500
-					result.success(listGrantedMedia(treeUris, limit))
+					result.success(listGrantedMedia(treeUris, sourcesWithoutChildren, limit))
 				}
 				"readContentUriBytes" -> {
 					val uriString = call.arguments as? String
@@ -58,26 +57,7 @@ class MainActivity : FlutterActivity() {
 			}
 		}
 
-		MethodChannel(
-			flutterEngine.dartExecutor.binaryMessenger,
-			"memoria/ai_background_task",
-		).setMethodCallHandler { call, result ->
-			when (call.method) {
-				"startForegroundTask" -> {
-					val args = call.arguments as? Map<*, *>
-					startAiForegroundTask(
-						args?.get("title") as? String,
-						args?.get("text") as? String,
-					)
-					result.success(null)
-				}
-				"stopForegroundTask" -> {
-					stopService(Intent(this, AiForegroundTaskService::class.java))
-					result.success(null)
-				}
-				else -> result.notImplemented()
-			}
-		}
+		// Foreground service is managed by flutter_foreground_task plugin
 	}
 
 	private fun requestDirectoryGrant(result: MethodChannel.Result) {
@@ -144,42 +124,50 @@ class MainActivity : FlutterActivity() {
 		}
 	}
 
-	private fun listGrantedMedia(treeUriValues: List<*>?, limit: Int): List<Map<String, Any?>> {
+	private fun listGrantedMedia(
+		treeUriValues: List<*>?,
+		sourcesWithoutChildren: Set<String>,
+		limit: Int,
+	): List<Map<String, Any?>> {
 		if (treeUriValues.isNullOrEmpty()) {
 			return emptyList()
 		}
 		val media = mutableListOf<Map<String, Any?>>()
+		val effectiveLimit = limit.coerceAtLeast(1)
 		for (value in treeUriValues) {
-			val treeUri = Uri.parse(value as? String ?: continue)
+			if (media.size >= effectiveLimit) break
+			val uriStr = value as? String ?: continue
+			val treeUri = Uri.parse(uriStr)
 			val root = DocumentFile.fromTreeUri(this, treeUri) ?: continue
-			collectDocumentMedia(root, "", media)
+			val traverseChildren = uriStr !in sourcesWithoutChildren
+			collectDocumentMedia(root, "", media, effectiveLimit, traverseChildren)
 		}
 		return media
 			.sortedByDescending { it["modifiedMs"] as? Long ?: 0L }
-			.take(limit.coerceAtLeast(1))
+			.take(effectiveLimit)
 	}
 
 	private fun collectDocumentMedia(
 		document: DocumentFile,
 		relativePath: String,
 		out: MutableList<Map<String, Any?>>,
+		limit: Int,
+		traverseChildren: Boolean = true,
 	) {
+		if (out.size >= limit) return
 		if (document.isDirectory) {
 			for (child in document.listFiles()) {
+				if (out.size >= limit) break
 				val childName = child.name ?: continue
+				if (child.isDirectory && !traverseChildren) continue
 				val childPath = if (relativePath.isEmpty()) childName else "$relativePath/$childName"
-				collectDocumentMedia(child, childPath, out)
+				collectDocumentMedia(child, childPath, out, limit, traverseChildren)
 			}
 			return
 		}
 		val mimeType = document.type ?: return
 		if (!mimeType.startsWith("image/") && !mimeType.startsWith("video/")) {
 			return
-		}
-		val dimensions = if (mimeType.startsWith("image/")) {
-			readImageBounds(document.uri)
-		} else {
-			null
 		}
 		out.add(
 			mapOf(
@@ -189,32 +177,10 @@ class MainActivity : FlutterActivity() {
 				"mimeType" to mimeType,
 				"modifiedMs" to document.lastModified(),
 				"size" to document.length(),
-				"width" to (dimensions?.first ?: 0),
-				"height" to (dimensions?.second ?: 0),
+				"width" to 0,
+				"height" to 0,
 			),
 		)
-	}
-
-	private fun readImageBounds(uri: Uri): Pair<Int, Int>? {
-		return try {
-			contentResolver.openInputStream(uri).use { input ->
-				if (input == null) {
-					null
-				} else {
-					val options = BitmapFactory.Options().apply {
-						inJustDecodeBounds = true
-					}
-					BitmapFactory.decodeStream(input, null, options)
-					if (options.outWidth > 0 && options.outHeight > 0) {
-						Pair(options.outWidth, options.outHeight)
-					} else {
-						null
-					}
-				}
-			}
-		} catch (_: Exception) {
-			null
-		}
 	}
 
 	private fun readContentUriBytes(uriString: String): ByteArray? {
@@ -269,11 +235,4 @@ class MainActivity : FlutterActivity() {
 		return powerManager?.isIgnoringBatteryOptimizations(packageName) == true
 	}
 
-	private fun startAiForegroundTask(title: String?, text: String?) {
-		val intent = Intent(this, AiForegroundTaskService::class.java).apply {
-			putExtra("title", title)
-			putExtra("text", text)
-		}
-		ContextCompat.startForegroundService(this, intent)
-	}
 }

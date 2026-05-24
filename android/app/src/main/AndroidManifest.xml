@@ -17,10 +17,12 @@
             android:value="882068209088957ae9afdc7e7bbae4f9" />
 
         <service android:name="com.amap.api.location.APSService" />
+        <!-- Warning: Do not change service name - required by flutter_foreground_task -->
         <service
-            android:name=".AiForegroundTaskService"
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="dataSync"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:stopWithTask="true" />
 
         <activity
             android:name=".MainActivity"

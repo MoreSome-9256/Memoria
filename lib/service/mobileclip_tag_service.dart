@@ -72,6 +72,16 @@ class MobileClipTagService {
     }
   }
 
+  /// 可被 `compute()` 序列化的细粒度标签原型（标签名 → 向量）
+  Map<String, List<double>> get finePrototypes =>
+      Map<String, List<double>>.unmodifiable(_prototypeByLabel);
+
+  /// 可被 `compute()` 序列化的粗粒度类别原型（类别ID → 向量）
+  Map<String, List<double>> get coarsePrototypes =>
+      Map<String, List<double>>.unmodifiable(_coarsePrototypeById);
+
+  bool get isWarmedUp => _warmedUp;
+
   void _touchUsage() {
     _cancelIdleDisposeTimer();
   }

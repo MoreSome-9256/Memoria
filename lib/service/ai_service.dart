@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';

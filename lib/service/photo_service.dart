@@ -87,21 +87,24 @@ class PhotoService {
     List<AssetEntity> assets, {
     required bool skipExisting,
     PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
+    bool resolveFile = true,
   }) {
     return _PhotoAssetBuilder(this).buildPhotoEntities(
       assets,
       skipExisting: skipExisting,
       filterProfile: filterProfile,
+      resolveFile: resolveFile,
     );
   }
 
   Future<_SingleAssetBuildResult> _buildSingleAssetPhoto(
     AssetEntity asset, {
     PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
+    bool resolveFile = false,
   }) {
     return _PhotoAssetBuilder(
       this,
-    ).buildSingleAssetPhoto(asset, filterProfile: filterProfile);
+    ).buildSingleAssetPhoto(asset, filterProfile: filterProfile, resolveFile: resolveFile);
   }
 
   Future<_SingleAssetBuildResult> _buildSingleFilePhoto(

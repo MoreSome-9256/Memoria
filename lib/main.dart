@@ -11,6 +11,7 @@ import 'dart:async';
 import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:photo_album/service/amplify_cognito_config.dart';
 import 'package:photo_album/service/app_ai_settings_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
@@ -24,6 +25,7 @@ import 'view/widget_tree.dart';
 void main() async {
   // 保证绑定可用后尽快 runApp，把重初始化放到应用内异步执行。
   WidgetsFlutterBinding.ensureInitialized();
+  FlutterForegroundTask.initCommunicationPort();
   PaintingBinding.instance.imageCache.maximumSizeBytes = 200 * 1024 * 1024;
   PaintingBinding.instance.imageCache.maximumSize = 800;
   runApp(const MyApp());

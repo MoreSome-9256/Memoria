@@ -39,6 +39,7 @@ class _PhotoScanCoordinator {
       prepared.assets,
       skipExisting: false,
       filterProfile: filterProfile,
+      resolveFile: true,
     );
     final fileResults = await Future.wait(
       prepared.files.map(
@@ -245,11 +246,14 @@ class _PhotoScanCoordinator {
         ),
       );
 
-      // 并行构建
+      // 并行构建（扫描阶段跳过 file 解析，GPS 从缓存读取）
       final results = await Future.wait(<Future<_SingleAssetBuildResult>>[
         ...buildAssets.map(
-          (a) =>
-              _service._buildSingleAssetPhoto(a, filterProfile: filterProfile),
+          (a) => _service._buildSingleAssetPhoto(
+            a,
+            filterProfile: filterProfile,
+            resolveFile: false,
+          ),
         ),
         ...buildFiles.map(
           (f) =>
@@ -345,18 +349,51 @@ class _PhotoScanCoordinator {
       );
     }
 
+    // ★ BATCH 方式：用 getAssetListRange 批量获取照片，避免 N 次 ContentResolver 查询
     final assets = <AssetEntity>[];
-    for (final assetId in snapshot.selectedAssetIds) {
-      final asset = await AssetEntity.fromId(assetId);
-      if (asset != null) {
-        assets.add(asset);
+    final selectedIds = snapshot.selectedAssetIds;
+    if (selectedIds.isNotEmpty) {
+      try {
+        final albums = await PhotoManager.getAssetPathList(
+          onlyAll: true,
+          type: RequestType.common,
+        );
+        if (albums.isNotEmpty) {
+          final allAlbum = albums.first;
+          final total = await allAlbum.assetCountAsync;
+          const batchPageSize = 1000;
+          final idSet = selectedIds.toSet();
+          for (var offset = 0; offset < total; offset += batchPageSize) {
+            final end = offset + batchPageSize > total
+                ? total
+                : offset + batchPageSize;
+            final page = await allAlbum.getAssetListRange(
+              start: offset,
+              end: end,
+            );
+            for (final asset in page) {
+              if (idSet.contains(asset.id)) {
+                assets.add(asset);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('批量解析失败，回退到逐张解析: $e');
+        for (final assetId in selectedIds) {
+          final asset = await AssetEntity.fromId(assetId);
+          if (asset != null) assets.add(asset);
+        }
       }
     }
     assets.sort((a, b) => b.createDateTime.compareTo(a.createDateTime));
-    final files = snapshot.selectedFilePaths
-        .map((path) => File(path))
-        .where((file) => file.existsSync())
-        .toList(growable: false);
+    final files = <File>[];
+    for (final path in snapshot.selectedFilePaths) {
+      final file = File(path);
+      if (await file.exists()) {
+        files.add(file);
+      }
+    }
     final grantedMedia = await MediaAccessGrantService.instance
         .listAndroidGrantedMedia(snapshot: snapshot, limit: 2000);
 

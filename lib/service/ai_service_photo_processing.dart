@@ -111,35 +111,3 @@ extension AIServicePhotoProcessing on AIService {
     return {'total': total, 'analyzed': analyzed, 'pending': total - analyzed};
   }
 }
-
-Future<(int, int)?> _readImageDimensions(
-  File imageFile, {
-  int? knownWidth,
-  int? knownHeight,
-}) async {
-  try {
-    if (knownWidth != null &&
-        knownHeight != null &&
-        knownWidth > 0 &&
-        knownHeight > 0) {
-      return (knownWidth, knownHeight);
-    }
-
-    final bytes = await imageFile.readAsBytes();
-    final decoder = img.findDecoderForData(bytes);
-    final info = decoder?.startDecode(bytes);
-    if (info != null && info.width > 0 && info.height > 0) {
-      return (info.width, info.height);
-    }
-
-    final decoded = img.decodeImage(bytes);
-    if (decoded == null) {
-      return null;
-    }
-    final baked = img.bakeOrientation(decoded);
-    return (baked.width, baked.height);
-  } catch (error) {
-    debugPrint('读取分析图片尺寸失败 path=${imageFile.path}: $error');
-    return null;
-  }
-}

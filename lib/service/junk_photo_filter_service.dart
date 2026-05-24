@@ -257,6 +257,22 @@ class JunkPhotoFilterService {
 
   List<JunkPhotoCategoryDefinition> get definitions => _definitions;
 
+  /// 可被 `compute()` 序列化的原型缓存
+  Map<String, List<double>> get prototypeCache => Map<String, List<double>>.unmodifiable(_prototypeCache);
+
+  /// 可被 `compute()` 序列化的分类定义列表
+  List<Map<String, Object?>> get definitionsJson {
+    return _definitions.map((d) => <String, Object?>{
+      'id': d.id,
+      'label': d.label,
+      'description': d.description,
+      'threshold': d.threshold,
+      'screenshotBoost': d.screenshotBoost,
+      'ocrBoostThreshold': d.ocrBoostThreshold,
+      'ocrBoost': d.ocrBoost,
+    }).toList(growable: false);
+  }
+
   Future<void> warmUp() async {
     if (_isWarmedUp) {
       return;

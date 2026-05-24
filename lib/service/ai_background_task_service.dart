@@ -35,8 +35,6 @@ class _MemoriaTaskHandler extends TaskHandler {
       OcrPolicy.setRuntimeEnabled(settings.ocrEnabled);
       AIService.uiIntegrationEnabled = false;
       final aiService = AIService();
-      final maxPhotos = await AiBackgroundTaskService.instance
-          .readRequestedMaxPhotos();
       var listenerAttached = false;
       void syncForegroundProgress() {
         final progress = aiService.progressListenable.value;
@@ -60,10 +58,20 @@ class _MemoriaTaskHandler extends TaskHandler {
       aiService.progressListenable.addListener(syncForegroundProgress);
       listenerAttached = true;
       try {
-        await aiService.analyzePhotosInBackground(
-          manageForegroundService: false,
-          maxPhotos: maxPhotos,
-        );
+        while (true) {
+          final request = await AiBackgroundTaskService.instance.readRequest();
+          if (request == null) {
+            break;
+          }
+          await AiBackgroundTaskService.instance.clearRequest(
+            createdAtMs: request.createdAtMs,
+          );
+          await aiService.analyzePhotosInBackground(
+            manageForegroundService: false,
+            maxPhotos: request.maxPhotos,
+            photoIds: request.photoIds,
+          );
+        }
       } finally {
         if (listenerAttached) {
           aiService.progressListenable.removeListener(syncForegroundProgress);
@@ -72,7 +80,6 @@ class _MemoriaTaskHandler extends TaskHandler {
     } catch (error) {
       debugPrint('❌ AI worker 执行失败: $error');
     } finally {
-      await AiBackgroundTaskService.instance.clearRequest();
       await AiBackgroundTaskService.instance.stop();
     }
   }
@@ -87,6 +94,7 @@ class AiBackgroundTaskService {
 
   static bool _initialized = false;
   static const _requestMaxPhotosKey = 'ai_worker_request_max_photos';
+  static const _requestPhotoIdsKey = 'ai_worker_request_photo_ids';
   static const _requestCreatedAtKey = 'ai_worker_request_created_at';
 
   Future<void> _ensureInitialized() async {
@@ -114,30 +122,19 @@ class AiBackgroundTaskService {
     );
   }
 
-  Future<void> startAnalysisWorker({int? maxPhotos}) async {
-    await _writeRequest(maxPhotos: maxPhotos);
+  Future<void> startAnalysisWorker({
+    int? maxPhotos,
+    List<int>? photoIds,
+  }) async {
+    await _writeRequest(maxPhotos: maxPhotos, photoIds: photoIds);
     if (!Platform.isAndroid) {
       if (!Platform.isIOS) {
         debugPrint('AI durable worker is not wired for this platform yet.');
         return;
       }
-      final settings = await AppAiSettingsService.instance.load();
-      if (!settings.iosContinuedProcessingEnabled) {
-        debugPrint(
-          'AI durable worker request saved; iOS continued processing is disabled.',
-        );
-        return;
-      }
       await startService(
         title: 'Memoria 正在分析媒体',
         text: '只处理你加入分析队列的照片和视频',
-      );
-      return;
-    }
-    final settings = await AppAiSettingsService.instance.load();
-    if (!settings.androidForegroundServiceEnabled) {
-      debugPrint(
-        'AI durable worker request saved; Android foreground worker is disabled.',
       );
       return;
     }
@@ -157,6 +154,9 @@ class AiBackgroundTaskService {
     await _ensureInitialized();
     if (await FlutterForegroundTask.isRunningService) {
       await updateNotification(title: title, text: text);
+      FlutterForegroundTask.sendDataToTask(<String, Object?>{
+        'type': 'run_request_updated',
+      });
       return;
     }
     await FlutterForegroundTask.startService(
@@ -173,7 +173,7 @@ class AiBackgroundTaskService {
     required String title,
     required String text,
   }) async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid && !Platform.isIOS) return;
     await FlutterForegroundTask.updateService(
       notificationTitle: title,
       notificationText: text,
@@ -181,16 +181,28 @@ class AiBackgroundTaskService {
   }
 
   Future<void> stop() async {
-    if (!Platform.isAndroid) return;
+    if (!Platform.isAndroid && !Platform.isIOS) return;
     await FlutterForegroundTask.stopService();
   }
 
-  Future<void> _writeRequest({int? maxPhotos}) async {
+  Future<void> _writeRequest({
+    int? maxPhotos,
+    List<int>? photoIds,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     if (maxPhotos == null) {
       await prefs.remove(_requestMaxPhotosKey);
     } else {
       await prefs.setInt(_requestMaxPhotosKey, maxPhotos);
+    }
+    final normalizedPhotoIds = photoIds
+        ?.where((id) => id > 0)
+        .map((id) => id.toString())
+        .toList(growable: false);
+    if (normalizedPhotoIds == null || normalizedPhotoIds.isEmpty) {
+      await prefs.remove(_requestPhotoIdsKey);
+    } else {
+      await prefs.setStringList(_requestPhotoIdsKey, normalizedPhotoIds);
     }
     await prefs.setInt(
       _requestCreatedAtKey,
@@ -203,9 +215,55 @@ class AiBackgroundTaskService {
     return prefs.getInt(_requestMaxPhotosKey);
   }
 
-  Future<void> clearRequest() async {
+  Future<List<int>?> readRequestedPhotoIds() async {
     final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getStringList(_requestPhotoIdsKey);
+    if (raw == null || raw.isEmpty) {
+      return null;
+    }
+    final ids = raw
+        .map((value) => int.tryParse(value))
+        .whereType<int>()
+        .where((id) => id > 0)
+        .toList(growable: false);
+    return ids.isEmpty ? null : ids;
+  }
+
+  Future<_AiWorkerRequest?> readRequest() async {
+    final prefs = await SharedPreferences.getInstance();
+    final maxPhotos = prefs.getInt(_requestMaxPhotosKey);
+    final photoIds = await readRequestedPhotoIds();
+    final createdAtMs = prefs.getInt(_requestCreatedAtKey) ?? 0;
+    if (maxPhotos == null && (photoIds == null || photoIds.isEmpty)) {
+      return null;
+    }
+    return _AiWorkerRequest(
+      maxPhotos: maxPhotos,
+      photoIds: photoIds,
+      createdAtMs: createdAtMs,
+    );
+  }
+
+  Future<void> clearRequest({int? createdAtMs}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (createdAtMs != null &&
+        prefs.getInt(_requestCreatedAtKey) != createdAtMs) {
+      return;
+    }
     await prefs.remove(_requestMaxPhotosKey);
+    await prefs.remove(_requestPhotoIdsKey);
     await prefs.remove(_requestCreatedAtKey);
   }
+}
+
+class _AiWorkerRequest {
+  const _AiWorkerRequest({
+    required this.maxPhotos,
+    required this.photoIds,
+    required this.createdAtMs,
+  });
+
+  final int? maxPhotos;
+  final List<int>? photoIds;
+  final int createdAtMs;
 }

@@ -7,12 +7,14 @@ class _AiPipelineRunner {
     required AIService service,
     required this.batchSize,
     required this.maxPhotos,
+    required this.photoIds,
     required this.manageForegroundService,
   }) : _service = service;
 
   final AIService _service;
   final int batchSize;
   final int? maxPhotos;
+  final List<int>? photoIds;
   final bool manageForegroundService;
 
   ValueNotifier<AIAnalysisProgress> get _progressNotifier =>
@@ -96,9 +98,19 @@ class _AiPipelineRunner {
     final appAiSettings = await AppAiSettingsService.instance.load();
     OcrPolicy.setRuntimeEnabled(appAiSettings.ocrEnabled);
 
-    final pendingQ = photoBox
-        .query(PhotoEntity_.isAiAnalyzed.equals(false))
-        .build();
+    final requestedPhotoIds = photoIds
+        ?.where((id) => id > 0)
+        .toSet()
+        .toList(growable: false);
+    final pendingQ = requestedPhotoIds != null && requestedPhotoIds.isNotEmpty
+        ? photoBox
+              .query(
+                PhotoEntity_.isAiAnalyzed
+                    .equals(false)
+                    .and(PhotoEntity_.id.oneOf(requestedPhotoIds)),
+              )
+              .build()
+        : photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
     final pendingCount = pendingQ.count();
     pendingQ.close();
     final targetTotal = math.min(pendingCount, maxPhotos ?? pendingCount);
@@ -292,10 +304,20 @@ class _AiPipelineRunner {
             var fetchedCount = 0;
             final photosToAnalyze = <PhotoEntity>[];
             while (true) {
-              final pendingQ = photoBox
-                  .query(PhotoEntity_.isAiAnalyzed.equals(false))
-                  .order(PhotoEntity_.timestamp, flags: Order.descending)
-                  .build();
+              final pendingQ = requestedPhotoIds != null &&
+                      requestedPhotoIds.isNotEmpty
+                  ? photoBox
+                        .query(
+                          PhotoEntity_.isAiAnalyzed
+                              .equals(false)
+                              .and(PhotoEntity_.id.oneOf(requestedPhotoIds)),
+                        )
+                        .order(PhotoEntity_.timestamp, flags: Order.descending)
+                        .build()
+                  : photoBox
+                        .query(PhotoEntity_.isAiAnalyzed.equals(false))
+                        .order(PhotoEntity_.timestamp, flags: Order.descending)
+                        .build();
               final fetchedCandidates = pendingQ
                   .find()
                   .take(candidateLimit)

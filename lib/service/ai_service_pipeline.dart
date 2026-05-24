@@ -6,11 +6,13 @@ extension AIServicePipeline on AIService {
   Future<void> analyzePhotosInBackground({
     int batchSize = 6,
     int? maxPhotos,
+    List<int>? photoIds,
     bool manageForegroundService = true,
   }) async {
     if (manageForegroundService) {
       await AiBackgroundTaskService.instance.startAnalysisWorker(
         maxPhotos: maxPhotos,
+        photoIds: photoIds,
       );
       return;
     }
@@ -18,6 +20,7 @@ extension AIServicePipeline on AIService {
       service: this,
       batchSize: batchSize,
       maxPhotos: maxPhotos,
+      photoIds: photoIds,
       manageForegroundService: manageForegroundService,
     ).run();
   }

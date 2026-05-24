@@ -127,8 +127,8 @@ class AlbumRefreshService {
     _setProgress(
       AlbumRefreshStage.scanning,
       0.04,
-      '正在准备相册预处理',
-      '正在读取系统相册索引，目标：$scopeLabel',
+      '正在读取图片',
+      '从最新项目开始读取，目标：$scopeLabel；读到目标数量或没有更多新项目后交给 AI。',
     );
 
     // step 1: stop-early 扫描，只找新照片
@@ -152,8 +152,8 @@ class AlbumRefreshService {
         _setProgress(
           AlbumRefreshStage.scanning,
           progress,
-          '从最新照片往前检查',
-          '已检查 ${scanProgress.scannedCount}/${scanProgress.totalCount} 张，新增候选 ${scanProgress.candidateCount} 张，可入库 ${scanProgress.acceptedCount} 张',
+          '正在读取图片',
+          '已读取 ${scanProgress.scannedCount}/${scanProgress.totalCount} 项，找到 ${scanProgress.acceptedCount}/${scanProgress.targetNew} 个可加入 AI 的新项目。',
         );
       },
     );
@@ -161,8 +161,8 @@ class AlbumRefreshService {
     _setProgress(
       AlbumRefreshStage.queueing,
       0.64,
-      '正在写入预处理结果',
-      '从最新往前检查了 ${scanResult.scannedCount} 张，可入库 ${scanResult.insertedCount} 张',
+      '正在整理图片列表',
+      '读取完成：检查 ${scanResult.scannedCount} 项，整理出 ${scanResult.insertedCount} 个新项目，正在写入 AI 队列。',
     );
 
     // 构建兼容的 PhotoScanSummary
@@ -208,7 +208,7 @@ class AlbumRefreshService {
       AlbumRefreshStage.clustering,
       0.72,
       '正在更新相册索引',
-      '已加入 ${scanResult.insertedCount} 张照片，正在重建事件分类',
+      '已加入 ${scanResult.insertedCount} 个项目，正在更新事件、时间和索引信息。',
     );
 
     // step 3: 事件聚类
@@ -217,13 +217,20 @@ class AlbumRefreshService {
     // step 4: 触发 AI 打标
     final aiRunning = AIService().isAnalyzing;
     if (!aiRunning) {
-      unawaited(_runAiPipeline(maxPhotos: batchSize));
+      unawaited(
+        _runAiPipeline(
+          maxPhotos: scanResult.insertedPhotoIds.length,
+          photoIds: scanResult.insertedPhotoIds,
+        ),
+      );
     }
     _setProgress(
       AlbumRefreshStage.handoff,
       0.95,
-      '预处理完成',
-      aiRunning ? 'AI 队列正在继续处理' : '已交给后台 AI 队列',
+      '已交付 AI',
+      aiRunning
+          ? 'AI 队列正在继续处理；这批图片已经写入待处理列表。'
+          : '图片列表已交给后台 AI 服务，接下来会调度标签、OCR、人脸和地理位置处理。',
     );
 
     return AlbumRefreshResult(
@@ -308,10 +315,13 @@ class AlbumRefreshService {
     );
   }
 
-  Future<void> _runAiPipeline({int? maxPhotos}) async {
+  Future<void> _runAiPipeline({int? maxPhotos, List<int>? photoIds}) async {
     try {
       await Future.delayed(const Duration(milliseconds: 300));
-      await AIService().analyzePhotosInBackground(maxPhotos: maxPhotos);
+      await AIService().analyzePhotosInBackground(
+        maxPhotos: maxPhotos,
+        photoIds: photoIds,
+      );
     } catch (error) {
       debugPrint('❌ 后台 AI 管线执行失败: $error');
     }

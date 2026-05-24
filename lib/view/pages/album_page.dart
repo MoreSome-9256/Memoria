@@ -752,6 +752,18 @@ class _AlbumPageState extends State<AlbumPage> {
                             ? _buildAnalysisProgressBanner(progress)
                             : const SizedBox.shrink(),
                       ),
+                      ValueListenableBuilder<AlbumRefreshProgress>(
+                        valueListenable: AlbumRefreshService()
+                            .progressListenable,
+                        builder: (context, refreshProgress, _) {
+                          return AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 250),
+                            child: refreshProgress.isVisible
+                                ? _buildImportProgressBanner(refreshProgress)
+                                : const SizedBox.shrink(),
+                          );
+                        },
+                      ),
                       ValueListenableBuilder<JunkPhotoCleanupReport?>(
                         valueListenable:
                             AIService().junkCleanupReportListenable,
@@ -876,6 +888,68 @@ class _AlbumPageState extends State<AlbumPage> {
                 label: const Text('结束本轮'),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildImportProgressBanner(AlbumRefreshProgress progress) {
+    final color = switch (progress.stage) {
+      AlbumRefreshStage.failed => Colors.redAccent,
+      AlbumRefreshStage.handoff => Colors.indigo,
+      AlbumRefreshStage.queueing => Colors.blue,
+      AlbumRefreshStage.clustering => Colors.deepPurple,
+      _ => Colors.pinkAccent,
+    };
+    final icon = switch (progress.stage) {
+      AlbumRefreshStage.queueing => Icons.playlist_add_check,
+      AlbumRefreshStage.clustering => Icons.hub_outlined,
+      AlbumRefreshStage.handoff => Icons.rocket_launch_outlined,
+      AlbumRefreshStage.failed => Icons.error_outline,
+      _ => Icons.photo_library_outlined,
+    };
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  progress.title,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Text(
+                '${(progress.progress * 100).round()}%',
+                style: TextStyle(fontWeight: FontWeight.w700, color: color),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          LinearProgressIndicator(
+            value: progress.progress <= 0 ? null : progress.progress,
+            minHeight: 8,
+            borderRadius: BorderRadius.circular(999),
+            backgroundColor: color.withValues(alpha: 0.12),
+            valueColor: AlwaysStoppedAnimation<Color>(color),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            progress.message,
+            style: TextStyle(color: Colors.grey[700], fontSize: 12),
           ),
         ],
       ),

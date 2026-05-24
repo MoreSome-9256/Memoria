@@ -74,6 +74,10 @@ run_output.txt
 
 # Exported model directories
 /ai_tools/exported_models/
+/ai_tools/.tmp/
+/ai_tools/.uv-cache/
+/ai_tools/uv-cache-local/
+/ai_tools/vendor/
 
 # Regenerated tag dictionaries and checkpoints
 /ai_tools/expanded_tags_vectors.json
@@ -102,6 +106,11 @@ run_output.txt
 # Local model artifacts synced outside Git
 *.onnx
 *.onnx.data
+!/assets/mobileviclip/
+!/assets/mobileviclip/**
+!/assets/mobileviclip/**/*.onnx
+!/assets/mobileviclip/**/*.mlpackage/
+!/assets/mobileviclip/**/*.mlpackage/**
 /assets/expanded_tags_vectors.json
 /third_party/mobileclip2-onnx/onnx/
 /third_party/mobileclip2-onnx/my_custom_onnx/

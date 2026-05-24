@@ -115,6 +115,8 @@ flutter:
     - assets/expanded_tags_taxonomy.json
     - assets/mobileclip2/s2/vision_model.onnx
     - assets/mobileclip2/s2/text_model.onnx
+    - assets/mobileviclip/small/mobileviclip_small.onnx
+    - assets/mobileviclip/small/mobileviclip_small_metadata.json
     - assets/face/   
     - ai_tools/test_student.png
     - ai_tools/test1.png

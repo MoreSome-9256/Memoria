@@ -7,8 +7,11 @@ import 'package:onnxruntime/onnxruntime.dart';
 
 enum OnnxSessionProviderPreference {
   auto,
+  mobileGpuPreferred,
+  appleCoreMlPreferred,
   nnapiHardwareOnly,
   nnapiFp16Relaxed,
+  coreMl,
   xnnpack,
   cpu,
 }
@@ -68,11 +71,46 @@ class OnnxSessionProviderService {
                 _ProviderAttempt.xnnpack(),
                 _ProviderAttempt.cpu(),
               ]
+            : Platform.isIOS || Platform.isMacOS
+            ? const <_ProviderAttempt>[
+                _ProviderAttempt.coreMl(),
+                _ProviderAttempt.xnnpack(),
+                _ProviderAttempt.cpu(),
+              ]
+            : const <_ProviderAttempt>[_ProviderAttempt.cpu()],
+      OnnxSessionProviderPreference.mobileGpuPreferred =>
+        Platform.isAndroid
+            ? const <_ProviderAttempt>[
+                _ProviderAttempt.nnapiStrict(),
+                _ProviderAttempt.nnapiFp16Relaxed(),
+                _ProviderAttempt.xnnpack(),
+                _ProviderAttempt.cpu(),
+              ]
+            : Platform.isIOS || Platform.isMacOS
+            ? const <_ProviderAttempt>[
+                _ProviderAttempt.coreMl(),
+                _ProviderAttempt.xnnpack(),
+                _ProviderAttempt.cpu(),
+              ]
+            : const <_ProviderAttempt>[
+                _ProviderAttempt.xnnpack(),
+                _ProviderAttempt.cpu(),
+              ],
+      OnnxSessionProviderPreference.appleCoreMlPreferred =>
+        Platform.isIOS || Platform.isMacOS
+            ? const <_ProviderAttempt>[
+                _ProviderAttempt.coreMl(),
+                _ProviderAttempt.xnnpack(),
+                _ProviderAttempt.cpu(),
+              ]
             : const <_ProviderAttempt>[_ProviderAttempt.cpu()],
       OnnxSessionProviderPreference.nnapiHardwareOnly =>
         const <_ProviderAttempt>[_ProviderAttempt.nnapiStrict()],
       OnnxSessionProviderPreference.nnapiFp16Relaxed =>
         const <_ProviderAttempt>[_ProviderAttempt.nnapiFp16Relaxed()],
+      OnnxSessionProviderPreference.coreMl => const <_ProviderAttempt>[
+        _ProviderAttempt.coreMl(),
+      ],
       OnnxSessionProviderPreference.xnnpack => const <_ProviderAttempt>[
         _ProviderAttempt.xnnpack(),
       ],
@@ -128,6 +166,15 @@ class _ProviderAttempt {
       ),
       configure = _appendNnapiFp16Relaxed;
 
+  const _ProviderAttempt.coreMl()
+    : provider = const OnnxExecutionProvider(
+        id: 'coreml',
+        label: 'Core ML',
+        description:
+            'Apple Core ML execution provider, preferring device acceleration when supported.',
+      ),
+      configure = _appendCoreMl;
+
   const _ProviderAttempt.xnnpack()
     : provider = const OnnxExecutionProvider(
         id: 'xnnpack',
@@ -153,6 +200,10 @@ class _ProviderAttempt {
 
   static void _appendNnapiFp16Relaxed(OrtSessionOptions options) {
     options.appendNnapiProvider(NnapiFlags.useFp16);
+  }
+
+  static void _appendCoreMl(OrtSessionOptions options) {
+    options.appendCoreMLProvider(CoreMLFlags.onlyEnableDeviceWithANE);
   }
 
   static void _appendXnnpack(OrtSessionOptions options) {

@@ -11,7 +11,7 @@ import 'onnx_session_provider_service.dart';
 class MobileViClipVideoService {
   MobileViClipVideoService._internal({
     OnnxSessionProviderPreference providerPreference =
-        OnnxSessionProviderPreference.mobileGpuPreferred,
+        OnnxSessionProviderPreference.androidRecommended,
   }) : _providerPreference = providerPreference;
 
   static final MobileViClipVideoService _instance =

@@ -64,7 +64,7 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
               summary.adapterId: summary,
           };
     final cpuSummary = summariesById['onnx_cpu'];
-    final npuSummary = summariesById['onnx_nnapi_hardware'];
+    final xnnpackSummary = summariesById['onnx_xnnpack'];
 
     return Scaffold(
       appBar: AppBar(title: const Text('MobileCLIP Benchmark')),
@@ -72,7 +72,7 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            '在同一批照片上对比同一个 MobileCLIP2 ONNX 模型在手机端 CPU 与 NNAPI hardware 上的速度。当前默认会展示 ONNX CPU 与 ONNX NNAPI hardware 两条链路，且共享同一份 Flutter 预处理输入。',
+            '在同一批照片上对比同一个 MobileCLIP2 ONNX 模型在手机端 CPU、XNNPACK 与 legacy NNAPI 上的速度。NNAPI 已在 Android 15 废弃，仅作为兼容参考。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -129,8 +129,11 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
             const SizedBox(height: 16),
             _ReportOverviewCard(report: report),
             const SizedBox(height: 16),
-            if (cpuSummary != null && npuSummary != null) ...[
-              _SpeedupCard(cpuSummary: cpuSummary, npuSummary: npuSummary),
+            if (cpuSummary != null && xnnpackSummary != null) ...[
+              _SpeedupCard(
+                cpuSummary: cpuSummary,
+                candidateSummary: xnnpackSummary,
+              ),
               const SizedBox(height: 16),
             ],
             ...report.warnings.map(
@@ -252,20 +255,23 @@ class _AdapterSummaryCard extends StatelessWidget {
 }
 
 class _SpeedupCard extends StatelessWidget {
-  const _SpeedupCard({required this.cpuSummary, required this.npuSummary});
+  const _SpeedupCard({
+    required this.cpuSummary,
+    required this.candidateSummary,
+  });
 
   final MobileClipAdapterSummary cpuSummary;
-  final MobileClipAdapterSummary npuSummary;
+  final MobileClipAdapterSummary candidateSummary;
 
   @override
   Widget build(BuildContext context) {
     final inferenceSpeedup = _speedup(
       baselineMs: cpuSummary.meanInferenceMs,
-      candidateMs: npuSummary.meanInferenceMs,
+      candidateMs: candidateSummary.meanInferenceMs,
     );
     final totalSpeedup = _speedup(
       baselineMs: cpuSummary.meanTotalMs,
-      candidateMs: npuSummary.meanTotalMs,
+      candidateMs: candidateSummary.meanTotalMs,
     );
 
     return Card(
@@ -276,23 +282,21 @@ class _SpeedupCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'CPU vs NNAPI hardware 速度对比',
+              'CPU vs XNNPACK 速度对比',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
             Text(
               '平均推理: CPU ${cpuSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
-              'NNAPI hardware ${npuSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
+              'XNNPACK ${candidateSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
               '加速比 $inferenceSpeedup',
             ),
             Text(
               '平均总耗时: CPU ${cpuSummary.meanTotalMs.toStringAsFixed(1)} ms, '
-              'NNAPI hardware ${npuSummary.meanTotalMs.toStringAsFixed(1)} ms, '
+              'XNNPACK ${candidateSummary.meanTotalMs.toStringAsFixed(1)} ms, '
               '加速比 $totalSpeedup',
             ),
-            Text(
-              '共享预处理后，这里的差异主要反映 ONNX Runtime 在 CPU 与 NNAPI hardware 上的执行差异。',
-            ),
+            Text('共享预处理后，这里的差异主要反映 ONNX Runtime 在 CPU 与 XNNPACK 上的执行差异。'),
           ],
         ),
       ),

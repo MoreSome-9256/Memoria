@@ -996,7 +996,7 @@ class _ProfilePageState extends State<ProfilePage> {
                               leading: const Icon(Icons.analytics_outlined),
                               title: const Text('MobileCLIP Benchmark'),
                               subtitle: const Text(
-                                '对比 ONNX 在 CPU 与 NNAPI hardware 上的速度',
+                                '对比 ONNX 在 CPU、XNNPACK 与 legacy NNAPI 上的速度',
                               ),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () {

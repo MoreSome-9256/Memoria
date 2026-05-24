@@ -16,7 +16,7 @@ extension MobileClipBackendX on MobileClipBackend {
 
   String get description => switch (this) {
     MobileClipBackend.mobileclip2Onnx =>
-      'Android 优先使用 NNAPI hardware，失败时回退到 XNNPACK/CPU',
+      'Android 默认使用 XNNPACK/CPU；NNAPI 已废弃，仅保留为显式兼容 benchmark',
   };
 
   static MobileClipBackend fromStorageValue(String? value) {

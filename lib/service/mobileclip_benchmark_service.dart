@@ -162,9 +162,14 @@ class MobileClipBenchmarkService {
   static List<MobileClipBenchmarkAdapter> _buildDefaultAdapters() {
     final adapters = <MobileClipBenchmarkAdapter>[
       OnnxMobileClipBenchmarkAdapter(
-        adapterId: 'onnx_nnapi_hardware',
-        adapterDisplayName: 'ONNX NNAPI hardware',
+        adapterId: 'onnx_nnapi_legacy',
+        adapterDisplayName: 'ONNX NNAPI legacy',
         providerPreference: OnnxSessionProviderPreference.nnapiHardwareOnly,
+      ),
+      OnnxMobileClipBenchmarkAdapter(
+        adapterId: 'onnx_xnnpack',
+        adapterDisplayName: 'ONNX XNNPACK',
+        providerPreference: OnnxSessionProviderPreference.xnnpack,
       ),
       OnnxMobileClipBenchmarkAdapter(
         adapterId: 'onnx_cpu',

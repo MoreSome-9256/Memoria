@@ -7,7 +7,7 @@ import 'package:onnxruntime/onnxruntime.dart';
 
 enum OnnxSessionProviderPreference {
   auto,
-  mobileGpuPreferred,
+  androidRecommended,
   appleCoreMlPreferred,
   nnapiHardwareOnly,
   nnapiFp16Relaxed,
@@ -66,8 +66,6 @@ class OnnxSessionProviderService {
       OnnxSessionProviderPreference.auto =>
         Platform.isAndroid
             ? const <_ProviderAttempt>[
-                _ProviderAttempt.nnapiStrict(),
-                _ProviderAttempt.nnapiFp16Relaxed(),
                 _ProviderAttempt.xnnpack(),
                 _ProviderAttempt.cpu(),
               ]
@@ -78,11 +76,9 @@ class OnnxSessionProviderService {
                 _ProviderAttempt.cpu(),
               ]
             : const <_ProviderAttempt>[_ProviderAttempt.cpu()],
-      OnnxSessionProviderPreference.mobileGpuPreferred =>
+      OnnxSessionProviderPreference.androidRecommended =>
         Platform.isAndroid
             ? const <_ProviderAttempt>[
-                _ProviderAttempt.nnapiStrict(),
-                _ProviderAttempt.nnapiFp16Relaxed(),
                 _ProviderAttempt.xnnpack(),
                 _ProviderAttempt.cpu(),
               ]

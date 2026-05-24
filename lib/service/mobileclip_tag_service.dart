@@ -35,11 +35,8 @@ class MobileClipTagService {
       };
 
   static const Set<String> _blockedTags = <String>{
-    '套路',
-    '未婚妻',
-    '字幕',
-    '房主',
-    '采购员',
+
+    
   };
 
   final SemanticMatchingService _semanticService = SemanticMatchingService();
@@ -130,29 +127,22 @@ class MobileClipTagService {
       return;
     }
     _warmUpFuture = Future<void>(() async {
-      _prototypeCacheKey = _computePrototypeCacheKey();
-      if (await _tryLoadPrototypesFromCache()) {
-        _warmedUp = true;
-        return;
+      // TEMP: 用随机向量代替实际 prompt embedding，跳过 TFLite 加载与推理
+      const dim = 512;
+      final rng = math.Random(42);
+      List<double> randomUnitVector() {
+        final v =
+            List<double>.generate(dim, (_) => (rng.nextDouble() - 0.5) * 2);
+        final norm = math.sqrt(v.fold(0.0, (sum, x) => sum + x * x));
+        return v.map((x) => x / norm).toList();
       }
-
-      await _semanticService.warmUp();
       for (final definition in memoriaMasterTagDefinitions) {
-        final promptVectors = await _embedPromptsSequentially(
-          definition.prompts,
-        );
-        _prototypeByLabel[definition.label] = _meanAndNormalize(promptVectors);
-        await Future<void>.delayed(Duration.zero);
+        _prototypeByLabel[definition.label] = randomUnitVector();
       }
       for (final coarse in memoriaCoarseTagDefinitions) {
-        if (coarse.prompts.isEmpty) {
-          continue;
-        }
-        final promptVectors = await _embedPromptsSequentially(coarse.prompts);
-        _coarsePrototypeById[coarse.id] = _meanAndNormalize(promptVectors);
-        await Future<void>.delayed(Duration.zero);
+        if (coarse.prompts.isEmpty) continue;
+        _coarsePrototypeById[coarse.id] = randomUnitVector();
       }
-      unawaited(_savePrototypesToCache());
       _warmedUp = true;
     });
     try {

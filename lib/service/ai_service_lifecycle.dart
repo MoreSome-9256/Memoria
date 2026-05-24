@@ -32,6 +32,20 @@ extension AIServiceLifecycle on AIService {
       ),
     );
 
+    if (progress.isVisible) {
+      final title = progress.isStopping
+          ? 'AI 打标正在结束'
+          : progress.isPaused
+          ? 'AI 打标已暂停'
+          : 'AI 打标进行中';
+      final body =
+          '${progress.completed}/${progress.total}${progress.failed > 0 ? ' · 失败 ${progress.failed}' : ''} · ${progress.currentStep}';
+      unawaited(AiBackgroundTaskService.instance.updateNotification(
+        title: title,
+        text: body,
+      ));
+    }
+
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     if (progress.isVisible) {
       if (nowMs - _lastRuntimeHeartbeatPersistAtMs >= 1500) {
@@ -48,6 +62,7 @@ extension AIServiceLifecycle on AIService {
     } else {
       _lastRuntimeHeartbeatPersistAtMs = 0;
       unawaited(_persistRuntimeState(isActive: false));
+      unawaited(AiBackgroundTaskService.instance.stop());
     }
   }
 

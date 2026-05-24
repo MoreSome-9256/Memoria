@@ -565,30 +565,30 @@ class _AiPhotoProcessor {
     }
   }
 
-  List<String> _sanitizeVisualTags(List<String> source, {int maxTags = 5}) {
-    final sanitized = <String>[];
-    for (final tag in source) {
-      final normalized = TagSanitizer.sanitizeVisualTag(tag);
-      if (normalized == null || sanitized.contains(normalized)) {
-        continue;
-      }
-      if (AIService._blockedVisualTags.contains(normalized)) {
-        continue;
-      }
-      if (RegExp(r'^\d{1,2}:\d{2}$').hasMatch(normalized)) {
-        continue;
-      }
-      if (normalized.contains('\u667a\u80fd\u5f71\u8bb0') ||
-          normalized.contains('\u6211\u7684\u76f8\u518c')) {
-        continue;
-      }
-      sanitized.add(normalized);
-      if (sanitized.length >= maxTags) {
-        break;
-      }
+List<String> _sanitizeVisualTags(List<String> source, {int maxTags = 5}) {
+  final sanitized = <String>[];
+  for (final tag in source) {
+    final normalized = TagSanitizer.sanitizeVisualTag(tag);
+    if (normalized == null || sanitized.contains(normalized)) {
+      continue;
     }
-    return TagSanitizer.sanitizeVisualTags(sanitized, maxTags: maxTags);
+    if (AIService._blockedVisualTags.contains(normalized)) {
+      continue;
+    }
+    if (RegExp(r'^\d{1,2}:\d{2}$').hasMatch(normalized)) {
+      continue;
+    }
+    if (normalized.contains('\u667a\u80fd\u5f71\u8bb0') ||
+        normalized.contains('\u6211\u7684\u76f8\u518c')) {
+      continue;
+    }
+    sanitized.add(normalized);
+    if (sanitized.length >= maxTags) {
+      break;
+    }
   }
+  return TagSanitizer.sanitizeVisualTags(sanitized, maxTags: maxTags);
+}
 
   Future<_PreparedAnalysisInput?> _prepareAnalysisInputConfigured(
     PhotoEntity photo,

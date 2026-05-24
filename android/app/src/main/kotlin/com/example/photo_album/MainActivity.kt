@@ -10,6 +10,7 @@ import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import kotlin.concurrent.thread
 
 class MainActivity : FlutterActivity() {
 	private var pendingDirectoryGrantResult: MethodChannel.Result? = null
@@ -38,12 +39,16 @@ class MainActivity : FlutterActivity() {
 					result.success(null)
 				}
 				"requestIgnoreBatteryOptimizations" -> requestIgnoreBatteryOptimizations(result)
+				"isIgnoringBatteryOptimizations" -> result.success(isIgnoringBatteryOptimizations())
 				"listGrantedMedia" -> {
 					val args = call.arguments as? Map<*, *>
 					val treeUris = args?.get("treeUris") as? List<*>
 					val sourcesWithoutChildren = (args?.get("sourcesWithoutChildren") as? List<*>)?.map { it.toString() }?.toSet() ?: emptySet()
 					val limit = (args?.get("limit") as? Number)?.toInt() ?: 500
-					result.success(listGrantedMedia(treeUris, sourcesWithoutChildren, limit))
+					thread(name = "memoria-list-granted-media") {
+						val media = listGrantedMedia(treeUris, sourcesWithoutChildren, limit)
+						runOnUiThread { result.success(media) }
+					}
 				}
 				"readContentUriBytes" -> {
 					val uriString = call.arguments as? String
@@ -135,12 +140,11 @@ class MainActivity : FlutterActivity() {
 		val media = mutableListOf<Map<String, Any?>>()
 		val effectiveLimit = limit.coerceAtLeast(1)
 		for (value in treeUriValues) {
-			if (media.size >= effectiveLimit) break
 			val uriStr = value as? String ?: continue
 			val treeUri = Uri.parse(uriStr)
 			val root = DocumentFile.fromTreeUri(this, treeUri) ?: continue
 			val traverseChildren = uriStr !in sourcesWithoutChildren
-			collectDocumentMedia(root, "", media, effectiveLimit, traverseChildren)
+			collectDocumentMedia(root, "", media, traverseChildren)
 		}
 		return media
 			.sortedByDescending { it["modifiedMs"] as? Long ?: 0L }
@@ -151,17 +155,14 @@ class MainActivity : FlutterActivity() {
 		document: DocumentFile,
 		relativePath: String,
 		out: MutableList<Map<String, Any?>>,
-		limit: Int,
 		traverseChildren: Boolean = true,
 	) {
-		if (out.size >= limit) return
 		if (document.isDirectory) {
 			for (child in document.listFiles()) {
-				if (out.size >= limit) break
 				val childName = child.name ?: continue
 				if (child.isDirectory && !traverseChildren) continue
 				val childPath = if (relativePath.isEmpty()) childName else "$relativePath/$childName"
-				collectDocumentMedia(child, childPath, out, limit, traverseChildren)
+				collectDocumentMedia(child, childPath, out, traverseChildren)
 			}
 			return
 		}

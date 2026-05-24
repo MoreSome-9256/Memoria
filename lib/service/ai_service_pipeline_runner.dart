@@ -7,11 +7,13 @@ class _AiPipelineRunner {
     required AIService service,
     required this.batchSize,
     required this.maxPhotos,
+    required this.manageForegroundService,
   }) : _service = service;
 
   final AIService _service;
   final int batchSize;
   final int? maxPhotos;
+  final bool manageForegroundService;
 
   ValueNotifier<AIAnalysisProgress> get _progressNotifier =>
       _service._progressNotifier;
@@ -93,10 +95,12 @@ class _AiPipelineRunner {
     final ocrService = OcrService();
     final appAiSettings = await AppAiSettingsService.instance.load();
     OcrPolicy.setRuntimeEnabled(appAiSettings.ocrEnabled);
-    await AiBackgroundTaskService.instance.startIfAllowed(
-      title: 'Memoria 正在分析媒体',
-      text: '只处理你手动添加的照片和视频',
-    );
+    if (manageForegroundService) {
+      await AiBackgroundTaskService.instance.startIfAllowed(
+        title: 'Memoria 正在分析媒体',
+        text: '只处理你手动添加的照片和视频',
+      );
+    }
 
     final pendingQ = photoBox
         .query(PhotoEntity_.isAiAnalyzed.equals(false))
@@ -578,7 +582,9 @@ class _AiPipelineRunner {
       }
       debugPrint("✅ AI 分析完成，总计处理: $totalAnalyzed 张");
     } finally {
-      await AiBackgroundTaskService.instance.stop();
+      if (manageForegroundService) {
+        await AiBackgroundTaskService.instance.stop();
+      }
       pipelineProfiler.logFinalSummary();
       await mobileClipTagService.endWorkflowSession();
       await mobileClipEmbeddingService.endWorkflowSession();

@@ -158,7 +158,7 @@ class MediaAccessGrantService {
       excludeScreenshots: prefs.getBool(_excludeScreenshotsKey) ?? true,
       excludeScreenRecordings:
           prefs.getBool(_excludeScreenRecordingsKey) ?? true,
-      excludeSmallMedia: prefs.getBool(_excludeSmallMediaKey) ?? true,
+      excludeSmallMedia: prefs.getBool(_excludeSmallMediaKey) ?? false,
       excludeDuplicates: prefs.getBool(_excludeDuplicatesKey) ?? true,
       excludedMediaTypes:
           prefs.getStringList(_excludedMediaTypesKey) ?? const <String>[],
@@ -221,6 +221,19 @@ class MediaAccessGrantService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_selectedAssetIdsKey);
     await prefs.remove(_selectedFilePathsKey);
+  }
+
+  Future<void> removeSelectedManualMedia({
+    String? assetId,
+    String? filePath,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (assetId != null && assetId.trim().isNotEmpty) {
+      await _removeFromStringListPref(prefs, _selectedAssetIdsKey, assetId);
+    }
+    if (filePath != null && filePath.trim().isNotEmpty) {
+      await _removeFromStringListPref(prefs, _selectedFilePathsKey, filePath);
+    }
   }
 
   Future<AndroidDirectoryGrantResult?> requestAndroidDirectoryGrant() async {
@@ -454,6 +467,16 @@ class MediaAccessGrantService {
     }
     final result = await _channel.invokeMethod<bool>(
       'requestIgnoreBatteryOptimizations',
+    );
+    return result ?? false;
+  }
+
+  Future<bool> isIgnoringBatteryOptimizations() async {
+    if (!Platform.isAndroid) {
+      return true;
+    }
+    final result = await _channel.invokeMethod<bool>(
+      'isIgnoringBatteryOptimizations',
     );
     return result ?? false;
   }

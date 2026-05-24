@@ -6,6 +6,8 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
@@ -23,7 +25,6 @@ import '../utils/ai_score_helper.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 import 'app_ai_settings_service.dart';
-import 'ai_background_task_service.dart';
 import 'ai_progress_notification_service.dart';
 import 'event_service.dart';
 import 'face_pipeline_service.dart';
@@ -46,15 +47,19 @@ part 'ai_service_pipeline.dart';
 part 'ai_service_pipeline_runner.dart';
 part 'ai_service_photo_processing.dart';
 part 'ai_service_photo_processor.dart';
+part 'ai_background_task_service.dart';
 
 class AIService {
   static final AIService _instance = AIService._internal();
   factory AIService() => _instance;
   AIService._internal() {
-    _progressNotifier.addListener(_syncProgressNotification);
-    AIProgressNotificationService().bindActionHandler(_handleForegroundAction);
-    unawaited(resumePendingAnalysisIfNeeded());
+    if (uiIntegrationEnabled) {
+      _progressNotifier.addListener(_syncProgressNotification);
+      AIProgressNotificationService().bindActionHandler(_handleForegroundAction);
+    }
   }
+
+  static bool uiIntegrationEnabled = true;
 
   static const Set<String> _blockedVisualTags = <String>{
     'Screenshot',

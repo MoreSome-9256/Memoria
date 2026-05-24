@@ -3,12 +3,23 @@
 part of 'ai_service.dart';
 
 extension AIServicePipeline on AIService {
-  Future<void> analyzePhotosInBackground({int batchSize = 6, int? maxPhotos}) {
-    return _AiPipelineRunner(
-      service: this,
-      batchSize: batchSize,
-      maxPhotos: maxPhotos,
-    ).run();
+  Future<void> analyzePhotosInBackground({
+    int batchSize = 6,
+    int? maxPhotos,
+    bool manageForegroundService = true,
+  }) async {
+    try {
+      await _AiPipelineRunner(
+        service: this,
+        batchSize: batchSize,
+        maxPhotos: maxPhotos,
+        manageForegroundService: manageForegroundService,
+      ).run();
+    } finally {
+      if (manageForegroundService) {
+        unawaited(AiBackgroundTaskService.instance.stop());
+      }
+    }
   }
 
   void _enqueueAsyncCaption(_AsyncCaptionTask task) {

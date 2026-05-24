@@ -90,6 +90,11 @@ class _ProfilePageState extends State<ProfilePage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
+            final nowYear = DateTime.now().year;
+            final yearItems = <int?>[
+              null,
+              for (var year = nowYear; year >= 1990; year--) year,
+            ];
             return SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(24.0),
@@ -103,7 +108,7 @@ class _ProfilePageState extends State<ProfilePage> {
                           ?.copyWith(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 12),
-                    const Text('可选：按时间范围和最小分辨率过滤。默认不开启。'),
+                    const Text('可选：限制可进入分析队列的拍摄时间和分辨率。默认不限制。'),
                     const SizedBox(height: 12),
                     Text(
                       '最早年份（含）',
@@ -112,7 +117,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     const SizedBox(height: 8),
                     DropdownButton<int?>(
                       value: selectedYear,
-                      items: <int?>[null, 2000, 2010, 2015, 2020, 2022]
+                      items: yearItems
                           .map(
                             (y) => DropdownMenuItem<int?>(
                               value: y,
@@ -133,6 +138,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       items:
                           <List<int>?>[
                                 null,
+                                [320, 320],
                                 [640, 480],
                                 [1280, 720],
                                 [1920, 1080],
@@ -211,6 +217,9 @@ class _ProfilePageState extends State<ProfilePage> {
     var aiSettings = await AppAiSettingsService.instance.load();
     final iosContinuedProcessingSupported =
         !Platform.isIOS || _iosMajorVersion() >= 26;
+    var batteryOptimizationAllowed = Platform.isAndroid
+        ? await MediaAccessGrantService.instance.isIgnoringBatteryOptimizations()
+        : false;
     if (Platform.isIOS && !iosContinuedProcessingSupported) {
       aiSettings = aiSettings.copyWith(iosContinuedProcessingEnabled: false);
     }
@@ -445,24 +454,33 @@ class _ProfilePageState extends State<ProfilePage> {
                         ListTile(
                           contentPadding: EdgeInsets.zero,
                           leading: const Icon(Icons.battery_saver_outlined),
-                          title: const Text('允许后台分析降低电池优化限制'),
-                          subtitle: const Text(
-                            '点击后先弹出系统授权窗口；如果你关闭了授权窗口，再引导到系统设置手动处理。',
+                          title: const Text('电池优化限制'),
+                          subtitle: Text(
+                            batteryOptimizationAllowed
+                                ? '系统已允许后台分析不受电池优化限制。需要撤回时会打开系统设置。'
+                                : '允许后，长时间分析任务更不容易被系统中断。',
                           ),
                           trailing: FilledButton(
-                            onPressed: _requestBatteryOptimizationAccess,
-                            child: const Text('请求允许'),
+                            onPressed: () async {
+                              if (batteryOptimizationAllowed) {
+                                await MediaAccessGrantService.instance
+                                    .openBatteryOptimizationSettings();
+                                return;
+                              }
+                              await _requestBatteryOptimizationAccess();
+                              final latest = await MediaAccessGrantService
+                                  .instance
+                                  .isIgnoringBatteryOptimizations();
+                              setSheetState(() {
+                                batteryOptimizationAllowed = latest;
+                              });
+                            },
+                            child: Text(
+                              batteryOptimizationAllowed ? '撤回允许' : '请求允许',
+                            ),
                           ),
                         ),
-                      const SizedBox(height: 6),
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.info_outline),
-                        title: const Text('后台运行提醒（Android）'),
-                        subtitle: const Text(
-                          'Android 会以前台服务和持续通知处理你明确加入的分析任务。电池优化可能中断长时间任务；需要时请用上方按钮向系统申请允许。',
-                        ),
-                      ),
+                      if (Platform.isAndroid) const SizedBox(height: 6),
                       const SizedBox(height: 24),
 
                       Row(

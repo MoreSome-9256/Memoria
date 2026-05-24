@@ -155,7 +155,7 @@ extension AIServiceLifecycle on AIService {
         isPaused: false,
         currentStep: '正在手动启动后台打标…',
       );
-      unawaited(analyzePhotosInBackground());
+      unawaited(_startForegroundTaskAndRun());
     }
   }
 
@@ -163,6 +163,7 @@ extension AIServiceLifecycle on AIService {
     final current = _progressNotifier.value;
     _clearPendingCaptionTasks();
     _clearAnalysisQueue();
+    unawaited(AiBackgroundTaskService.instance.stop());
     if (!_isAnalyzing) {
       if (current.isPaused && current.total > 0) {
         _pauseRequested = false;
@@ -247,7 +248,7 @@ extension AIServiceLifecycle on AIService {
         currentStep: '自动恢复上次分析任务…',
         elapsedMs: 0,
       );
-      unawaited(analyzePhotosInBackground());
+      unawaited(_startForegroundTaskAndRun());
       return;
     }
 
@@ -268,11 +269,14 @@ extension AIServiceLifecycle on AIService {
       await analyzePhotosInBackground();
     } catch (error) {
       debugPrint('❌ 自动续跑 AI 管线失败: $error');
-      // 为了稳定，我们可以考虑清理掉未完成的状态，避免下次启动时再次触发续跑。然后提示用户，重新启动 AI 打标。
       await stopAnalysisAndWait();
       debugPrint('⚠️ 自动续跑 AI 管线失败，已停止分析任务');
       debugPrint('⚠️ 请重新启动 AI 打标任务');
     }
+  }
+
+  Future<void> _startForegroundTaskAndRun() async {
+    await analyzePhotosInBackground();
   }
 
   Future<void> _setManualStopPending(bool value) async {

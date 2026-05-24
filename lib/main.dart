@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:photo_album/service/amplify_cognito_config.dart';
 import 'package:photo_album/service/app_ai_settings_service.dart';
+import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/photo_service.dart';
 import 'package:photo_album/service/ai_progress_notification_service.dart';
@@ -53,30 +54,32 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '智能影记',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color.fromARGB(255, 255, 64, 129),
-          brightness: Brightness.light,
+    return WithForegroundTask(
+      child: MaterialApp(
+        title: '智能影记',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color.fromARGB(255, 255, 64, 129),
+            brightness: Brightness.light,
+          ),
+          useMaterial3: true,
+          appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
         ),
-        useMaterial3: true,
-        appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
-      ),
-      home: FutureBuilder<_LaunchTarget>(
-        future: _startupCoordinator.resolveLaunchTarget(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
-            );
-          }
-          if (snapshot.data == _LaunchTarget.signedIn) {
-            return const WidgetTree();
-          }
-          return const WelcomePage();
-        },
+        home: FutureBuilder<_LaunchTarget>(
+          future: _startupCoordinator.resolveLaunchTarget(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+            if (snapshot.data == _LaunchTarget.signedIn) {
+              return const WidgetTree();
+            }
+            return const WelcomePage();
+          },
+        ),
       ),
     );
   }
@@ -89,8 +92,8 @@ class _AppStartupCoordinator {
 
   Future<_LaunchTarget> resolveLaunchTarget() async {
     await _ensureStartupComplete();
-    final signedIn = await const CognitoAuthService().isSignedIn();
-    return signedIn ? _LaunchTarget.signedIn : _LaunchTarget.welcome;
+    final signedIn = await const CognitoAuthService().tryIsSignedIn();
+    return signedIn == false ? _LaunchTarget.welcome : _LaunchTarget.signedIn;
   }
 
   Future<void> _ensureStartupComplete() {
@@ -113,6 +116,7 @@ class _AppStartupCoordinator {
       debugPrint(
         'OCR policy: ml_kit_enabled=${OcrPolicy.mlKitEnabled} (runtime setting)',
       );
+      unawaited(AIService().resumePendingAnalysisIfNeeded());
     });
     return _startupFuture!;
   }

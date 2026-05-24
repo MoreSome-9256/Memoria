@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -96,22 +97,83 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
   }
 
   Future<void> _manageManualMedia() async {
-    final count = _snapshot?.manualMediaCount ?? 0;
-    await showDialog<void>(
+    final snapshot = _snapshot;
+    if (snapshot == null) {
+      return;
+    }
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('手动加入的媒体'),
-        content: Text(
-          count == 0
-              ? '当前没有手动加入的照片或视频。'
-              : '当前有 $count 个手动加入的项目。如果某些项目变为无法访问，后续导入时会标记并提示重新选择或移除。',
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.7,
+          minChildSize: 0.35,
+          maxChildSize: 0.9,
+          builder: (context, controller) {
+            final entries = <_ManualMediaEntry>[
+              for (final id in snapshot.selectedAssetIds)
+                _ManualMediaEntry.asset(id),
+              for (final path in snapshot.selectedFilePaths)
+                _ManualMediaEntry.file(path),
+            ];
+            return Column(
+              children: [
+                ListTile(
+                  title: const Text('手动加入的媒体'),
+                  subtitle: Text('${entries.length} 项'),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ),
+                const Divider(height: 1),
+                if (entries.isEmpty)
+                  const Expanded(
+                    child: Center(child: Text('当前没有手动加入的照片或视频')),
+                  )
+                else
+                  Expanded(
+                    child: ListView.builder(
+                      controller: controller,
+                      itemCount: entries.length,
+                      itemBuilder: (context, index) {
+                        final entry = entries[index];
+                        return ListTile(
+                          leading: Icon(
+                            entry.isAsset
+                                ? Icons.photo_library_outlined
+                                : Icons.insert_drive_file_outlined,
+                          ),
+                          title: Text(
+                            entry.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(entry.kindLabel),
+                          trailing: TextButton(
+                            onPressed: () async {
+                              await MediaAccessGrantService.instance
+                                  .removeSelectedManualMedia(
+                                    assetId: entry.assetId,
+                                    filePath: entry.filePath,
+                                  );
+                              if (!context.mounted) return;
+                              Navigator.pop(context);
+                              await _reload();
+                              if (!mounted) return;
+                              unawaited(_manageManualMedia());
+                            },
+                            child: const Text('移除'),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            );
+          },
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('关闭'),
-          ),
-        ],
       ),
     );
   }
@@ -799,3 +861,19 @@ String _permissionLabel(PermissionState? permission) {
 }
 
 enum _RemoveSourceChoice { keepResults, deleteResults }
+
+class _ManualMediaEntry {
+  const _ManualMediaEntry._({this.assetId, this.filePath});
+
+  factory _ManualMediaEntry.asset(String id) =>
+      _ManualMediaEntry._(assetId: id);
+  factory _ManualMediaEntry.file(String path) =>
+      _ManualMediaEntry._(filePath: path);
+
+  final String? assetId;
+  final String? filePath;
+
+  bool get isAsset => assetId != null;
+  String get label => filePath ?? assetId ?? '';
+  String get kindLabel => isAsset ? '系统照片项目' : '文件路径项目';
+}

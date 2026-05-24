@@ -9,14 +9,19 @@ class CognitoAuthService {
   const CognitoAuthService();
 
   Future<bool> isSignedIn() async {
+    final result = await tryIsSignedIn();
+    return result ?? false;
+  }
+
+  Future<bool?> tryIsSignedIn() async {
     try {
       final session = await Amplify.Auth
           .fetchAuthSession()
           .timeout(const Duration(seconds: 10));
       return session.isSignedIn;
     } catch (error) {
-      debugPrint('⚠️ fetchAuthSession 超时或失败，按未登录处理: $error');
-      return false;
+      debugPrint('⚠️ fetchAuthSession 超时或失败，保留当前启动态: $error');
+      return null;
     }
   }
 

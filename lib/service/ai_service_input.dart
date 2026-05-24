@@ -53,6 +53,9 @@ class _AnalysisInputLoader {
   final ThumbnailSize thumbnailSize;
 
   Future<_PreparedAnalysisInput?> load(PhotoEntity photo) async {
+    if (photo.path.startsWith('content://')) {
+      return _loadContentUriInput(photo);
+    }
     final file = File(photo.path);
     if (!file.existsSync()) {
       return null;
@@ -113,6 +116,37 @@ class _AnalysisInputLoader {
       loadMs: loadWatch.elapsedMicroseconds / 1000.0,
       thumbnailReadMs: thumbnailReadMs,
       fileReadMs: fileReadMs,
+    );
+  }
+
+  Future<_PreparedAnalysisInput?> _loadContentUriInput(
+    PhotoEntity photo,
+  ) async {
+    final loadWatch = Stopwatch()..start();
+    final bytes = await MediaAccessGrantService.instance.readContentUriBytes(
+      photo.path,
+    );
+    if (bytes == null || bytes.isEmpty) {
+      return null;
+    }
+    final tempDir = await getTemporaryDirectory();
+    final file = File('${tempDir.path}/memoria_content_${photo.id}.jpg');
+    await file.writeAsBytes(bytes, flush: false);
+    loadWatch.stop();
+    return _PreparedAnalysisInput(
+      photo: photo,
+      file: file,
+      mobileClipBytes: bytes,
+      usedThumbnail: false,
+      inputSource: 'content_uri',
+      inputStrategy: config.strategy.label,
+      thumbnailAttempted: false,
+      thumbnailTimedOut: false,
+      fallbackToOriginal: false,
+      fallbackReason: 'none',
+      loadMs: loadWatch.elapsedMicroseconds / 1000.0,
+      thumbnailReadMs: 0,
+      fileReadMs: loadWatch.elapsedMicroseconds / 1000.0,
     );
   }
 

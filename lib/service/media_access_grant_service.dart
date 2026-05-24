@@ -84,6 +84,31 @@ class AndroidDirectoryGrantResult {
   final String displayName;
 }
 
+class AndroidGrantedMediaReference {
+  const AndroidGrantedMediaReference({
+    required this.uri,
+    required this.displayName,
+    required this.relativePath,
+    required this.mimeType,
+    required this.modifiedMs,
+    required this.size,
+    required this.width,
+    required this.height,
+  });
+
+  final String uri;
+  final String displayName;
+  final String relativePath;
+  final String mimeType;
+  final int modifiedMs;
+  final int size;
+  final int width;
+  final int height;
+
+  bool get isImage => mimeType.toLowerCase().startsWith('image/');
+  bool get isVideo => mimeType.toLowerCase().startsWith('video/');
+}
+
 class MediaAccessGrantService {
   MediaAccessGrantService._();
   static final MediaAccessGrantService instance = MediaAccessGrantService._();
@@ -356,6 +381,72 @@ class MediaAccessGrantService {
     await prefs.setStringList(_excludedMediaTypesKey, excludedMediaTypes);
   }
 
+  Future<List<AndroidGrantedMediaReference>> listAndroidGrantedMedia({
+    required MediaAccessGrantSnapshot snapshot,
+    int limit = 500,
+  }) async {
+    if (!Platform.isAndroid || snapshot.androidTreeUris.isEmpty) {
+      return const <AndroidGrantedMediaReference>[];
+    }
+    final enabledTreeUris = snapshot.androidTreeUris
+        .where(snapshot.isAutoSourceEnabled)
+        .toList(growable: false);
+    if (enabledTreeUris.isEmpty) {
+      return const <AndroidGrantedMediaReference>[];
+    }
+    final raw = await _channel.invokeListMethod<Object?>('listGrantedMedia', {
+      'treeUris': enabledTreeUris,
+      'limit': limit,
+    });
+    if (raw == null || raw.isEmpty) {
+      return const <AndroidGrantedMediaReference>[];
+    }
+    final result = <AndroidGrantedMediaReference>[];
+    for (final entry in raw) {
+      if (entry is! Map) {
+        continue;
+      }
+      final uri = entry['uri']?.toString() ?? '';
+      final relativePath = entry['relativePath']?.toString() ?? '';
+      final mimeType = entry['mimeType']?.toString() ?? '';
+      if (uri.isEmpty || relativePath.isEmpty || mimeType.isEmpty) {
+        continue;
+      }
+      if (_isExcludedMediaType(mimeType, snapshot.excludedMediaTypes)) {
+        continue;
+      }
+      if (_matchesAnySubpath(relativePath, snapshot.excludedSubpathsBySource)) {
+        continue;
+      }
+      if (!_matchesIncludedSubpaths(
+        relativePath,
+        snapshot.includedSubpathsBySource,
+      )) {
+        continue;
+      }
+      result.add(
+        AndroidGrantedMediaReference(
+          uri: uri,
+          displayName: entry['displayName']?.toString() ?? relativePath,
+          relativePath: relativePath,
+          mimeType: mimeType,
+          modifiedMs: _asInt(entry['modifiedMs']),
+          size: _asInt(entry['size']),
+          width: _asInt(entry['width']),
+          height: _asInt(entry['height']),
+        ),
+      );
+    }
+    return result;
+  }
+
+  Future<Uint8List?> readContentUriBytes(String uri) async {
+    if (!Platform.isAndroid || !uri.startsWith('content://')) {
+      return null;
+    }
+    return _channel.invokeMethod<Uint8List>('readContentUriBytes', uri);
+  }
+
   Future<bool> requestIgnoreBatteryOptimizations() async {
     if (!Platform.isAndroid) {
       return false;
@@ -371,6 +462,71 @@ class MediaAccessGrantService {
       return;
     }
     await _channel.invokeMethod<void>('openBatteryOptimizationSettings');
+  }
+
+  bool _isExcludedMediaType(String mimeType, List<String> excludedTypes) {
+    final normalized = mimeType.toLowerCase();
+    if (excludedTypes.contains('video') && normalized.startsWith('video/')) {
+      return true;
+    }
+    if (excludedTypes.contains('gif') && normalized == 'image/gif') {
+      return true;
+    }
+    return false;
+  }
+
+  bool _matchesAnySubpath(
+    String relativePath,
+    Map<String, List<String>> excludedSubpathsBySource,
+  ) {
+    final normalized = _normalizeRelativePath(relativePath);
+    for (final subpaths in excludedSubpathsBySource.values) {
+      for (final subpath in subpaths) {
+        final rule = _normalizeRelativePath(subpath);
+        if (rule.isNotEmpty &&
+            (normalized == rule || normalized.startsWith('$rule/'))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool _matchesIncludedSubpaths(
+    String relativePath,
+    Map<String, List<String>> includedSubpathsBySource,
+  ) {
+    final allRules = includedSubpathsBySource.values
+        .expand((rules) => rules)
+        .map(_normalizeRelativePath)
+        .where((rule) => rule.isNotEmpty)
+        .toList(growable: false);
+    if (allRules.isEmpty) {
+      return true;
+    }
+    final normalized = _normalizeRelativePath(relativePath);
+    return allRules.any(
+      (rule) => normalized == rule || normalized.startsWith('$rule/'),
+    );
+  }
+
+  String _normalizeRelativePath(String value) {
+    return value
+        .trim()
+        .replaceAll('\\', '/')
+        .split('/')
+        .where((segment) => segment.isNotEmpty && segment != '.')
+        .join('/');
+  }
+
+  int _asInt(Object? value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
   Future<void> _removeFromStringListPref(

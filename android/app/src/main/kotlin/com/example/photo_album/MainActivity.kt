@@ -2,6 +2,7 @@ package com.example.photo_album
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -39,6 +40,20 @@ class MainActivity : FlutterActivity() {
 					result.success(null)
 				}
 				"requestIgnoreBatteryOptimizations" -> requestIgnoreBatteryOptimizations(result)
+				"listGrantedMedia" -> {
+					val args = call.arguments as? Map<*, *>
+					val treeUris = args?.get("treeUris") as? List<*>
+					val limit = (args?.get("limit") as? Number)?.toInt() ?: 500
+					result.success(listGrantedMedia(treeUris, limit))
+				}
+				"readContentUriBytes" -> {
+					val uriString = call.arguments as? String
+					if (uriString == null) {
+						result.error("invalid_uri", "Missing content uri.", null)
+					} else {
+						result.success(readContentUriBytes(uriString))
+					}
+				}
 				else -> result.notImplemented()
 			}
 		}
@@ -126,6 +141,89 @@ class MainActivity : FlutterActivity() {
 				Intent.FLAG_GRANT_READ_URI_PERMISSION,
 			)
 		} catch (_: SecurityException) {
+		}
+	}
+
+	private fun listGrantedMedia(treeUriValues: List<*>?, limit: Int): List<Map<String, Any?>> {
+		if (treeUriValues.isNullOrEmpty()) {
+			return emptyList()
+		}
+		val media = mutableListOf<Map<String, Any?>>()
+		for (value in treeUriValues) {
+			val treeUri = Uri.parse(value as? String ?: continue)
+			val root = DocumentFile.fromTreeUri(this, treeUri) ?: continue
+			collectDocumentMedia(root, "", media)
+		}
+		return media
+			.sortedByDescending { it["modifiedMs"] as? Long ?: 0L }
+			.take(limit.coerceAtLeast(1))
+	}
+
+	private fun collectDocumentMedia(
+		document: DocumentFile,
+		relativePath: String,
+		out: MutableList<Map<String, Any?>>,
+	) {
+		if (document.isDirectory) {
+			for (child in document.listFiles()) {
+				val childName = child.name ?: continue
+				val childPath = if (relativePath.isEmpty()) childName else "$relativePath/$childName"
+				collectDocumentMedia(child, childPath, out)
+			}
+			return
+		}
+		val mimeType = document.type ?: return
+		if (!mimeType.startsWith("image/") && !mimeType.startsWith("video/")) {
+			return
+		}
+		val dimensions = if (mimeType.startsWith("image/")) {
+			readImageBounds(document.uri)
+		} else {
+			null
+		}
+		out.add(
+			mapOf(
+				"uri" to document.uri.toString(),
+				"displayName" to (document.name ?: relativePath),
+				"relativePath" to relativePath,
+				"mimeType" to mimeType,
+				"modifiedMs" to document.lastModified(),
+				"size" to document.length(),
+				"width" to (dimensions?.first ?: 0),
+				"height" to (dimensions?.second ?: 0),
+			),
+		)
+	}
+
+	private fun readImageBounds(uri: Uri): Pair<Int, Int>? {
+		return try {
+			contentResolver.openInputStream(uri).use { input ->
+				if (input == null) {
+					null
+				} else {
+					val options = BitmapFactory.Options().apply {
+						inJustDecodeBounds = true
+					}
+					BitmapFactory.decodeStream(input, null, options)
+					if (options.outWidth > 0 && options.outHeight > 0) {
+						Pair(options.outWidth, options.outHeight)
+					} else {
+						null
+					}
+				}
+			}
+		} catch (_: Exception) {
+			null
+		}
+	}
+
+	private fun readContentUriBytes(uriString: String): ByteArray? {
+		return try {
+			contentResolver.openInputStream(Uri.parse(uriString)).use { input ->
+				input?.readBytes()
+			}
+		} catch (_: Exception) {
+			null
 		}
 	}
 

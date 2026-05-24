@@ -18,6 +18,10 @@ extension PhotoServiceAccess on PhotoService {
         continue;
       }
 
+      if (photo.path.startsWith('content://')) {
+        continue;
+      }
+
       final currentFile = photo.path.trim().isEmpty ? null : File(photo.path);
       if (currentFile != null && await currentFile.exists()) {
         continue;
@@ -79,6 +83,9 @@ extension PhotoServiceAccess on PhotoService {
         }
 
         final photo = localPhotos[index];
+        if (photo.path.startsWith('content://')) {
+          continue;
+        }
         final asset = await AssetEntity.fromId(photo.assetId);
         if (asset == null) {
           removedIds.add(photo.id);
@@ -159,6 +166,15 @@ extension PhotoServiceAccess on PhotoService {
         }
 
         final photo = candidates[index];
+        if (photo.path.startsWith('content://')) {
+          _photoAccessCache[_photoAccessCacheKey(
+            photo,
+          )] = _PhotoAccessCacheEntry(
+            checkedAtMs: nowMs,
+            resolvedPath: photo.path,
+          );
+          continue;
+        }
         final cacheKey = _photoAccessCacheKey(photo);
         final cacheEntry = _photoAccessCache[cacheKey];
         if (cacheEntry != null &&
@@ -268,9 +284,10 @@ extension PhotoServiceAccess on PhotoService {
       return;
     }
 
-    final removedPhotos = _photoBox.getMany(ids).whereType<PhotoEntity>().toList(
-      growable: false,
-    );
+    final removedPhotos = _photoBox
+        .getMany(ids)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
     final removedPhotoIdSet = ids.toSet();
 
     final staleFaceIds = <int>[];

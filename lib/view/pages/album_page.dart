@@ -71,6 +71,7 @@ class _AlbumPageState extends State<AlbumPage> {
   static const double _contentBottomInset = 118;
   static const int _tagBrowserYieldChunk = 120;
   bool _isClearingCache = false;
+  bool _isStartingImport = false;
   bool _tagBrowserAiRecoveryTriggered = false;
   String? _lastPromptedJunkCleanupReportId;
   final TextEditingController _semanticSearchController =
@@ -95,6 +96,7 @@ class _AlbumPageState extends State<AlbumPage> {
     if (_isClearingCache) {
       return;
     }
+    setState(() => _isStartingImport = true);
 
     final scopeLabel =
         recentPhotoLimit == null || recentPhotoLimit == _importAllNewMediaLimit
@@ -107,58 +109,61 @@ class _AlbumPageState extends State<AlbumPage> {
       ),
     );
 
+    final refreshFuture = AlbumRefreshService()
+        .startRefresh(
+          clearCacheFirst: clearCacheFirst,
+          recentPhotoLimit: recentPhotoLimit,
+        )
+        .then((result) {
+          if (result == null || !mounted) {
+            return;
+          }
+          final scan = result.scanSummary;
+          final handoffText = result.aiAlreadyRunning
+              ? '后台 AI 已在运行，新照片已并入当前队列。'
+              : 'AI 已转入后台继续打标。';
+
+          final String message;
+          if (result.clearCacheFirst) {
+            message = result.recentPhotoLimit == null
+                ? '已安全重建缓存，恢复 ${scan.totalAfter} 张照片。$handoffText'
+                : '已安全重建最近 ${result.recentPhotoLimit} 张照片缓存。$handoffText';
+          } else if (result.requeuedCount > 0) {
+            message = '新增 ${result.requeuedCount} 张可入库照片，已加入打标队列。$handoffText';
+          } else {
+            message = '从最新往前检查了 ${scan.scannedCount} 张，本轮没有可入库新照片。$handoffText';
+          }
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              content: Text(message),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        })
+        .catchError((error) async {
+          if (!mounted) {
+            return;
+          }
+          if (error is PhotoScanException &&
+              error.code == PhotoScanError.permissionDenied) {
+            await _showPhotoPermissionGuide(error.message);
+            return;
+          }
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              content: Text('更新失败: $error'),
+            ),
+          );
+        });
     unawaited(
-      AlbumRefreshService()
-          .startRefresh(
-            clearCacheFirst: clearCacheFirst,
-            recentPhotoLimit: recentPhotoLimit,
-          )
-          .then((result) {
-            if (result == null || !mounted) {
-              return;
-            }
-            final scan = result.scanSummary;
-            final handoffText = result.aiAlreadyRunning
-                ? '后台 AI 已在运行，新照片已并入当前队列。'
-                : 'AI 已转入后台继续打标。';
-
-            final String message;
-            if (result.clearCacheFirst) {
-              message = result.recentPhotoLimit == null
-                  ? '已安全重建缓存，恢复 ${scan.totalAfter} 张照片。$handoffText'
-                  : '已安全重建最近 ${result.recentPhotoLimit} 张照片缓存。$handoffText';
-            } else if (result.requeuedCount > 0) {
-              message =
-                  '新增 ${result.requeuedCount} 张可入库照片，已加入打标队列。$handoffText';
-            } else {
-              message =
-                  '从最新往前检查了 ${scan.scannedCount} 张，本轮没有可入库新照片。$handoffText';
-            }
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                behavior: SnackBarBehavior.floating,
-                content: Text(message),
-                duration: const Duration(seconds: 3),
-              ),
-            );
-          })
-          .catchError((error) async {
-            if (!mounted) {
-              return;
-            }
-            if (error is PhotoScanException &&
-                error.code == PhotoScanError.permissionDenied) {
-              await _showPhotoPermissionGuide(error.message);
-              return;
-            }
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                behavior: SnackBarBehavior.floating,
-                content: Text('更新失败: $error'),
-              ),
-            );
-          }),
+      refreshFuture.whenComplete(() {
+        if (mounted) {
+          setState(() => _isStartingImport = false);
+        }
+      }),
     );
   }
 
@@ -626,7 +631,10 @@ class _AlbumPageState extends State<AlbumPage> {
           ValueListenableBuilder<AlbumRefreshProgress>(
             valueListenable: AlbumRefreshService().progressListenable,
             builder: (context, refreshProgress, _) {
-              final isBusy = _isClearingCache;
+              final isBusy =
+                  _isClearingCache ||
+                  _isStartingImport ||
+                  refreshProgress.isRunning;
               return Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -638,7 +646,12 @@ class _AlbumPageState extends State<AlbumPage> {
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: IconButton.filledTonal(
-                      icon: const Icon(Icons.add, size: 22),
+                      icon: isBusy
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.add, size: 22),
                       onPressed: isBusy ? null : _showRefreshOptions,
                       tooltip: '选择刷新范围',
                     ),

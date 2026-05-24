@@ -113,6 +113,15 @@ class PhotoService {
     ).buildSingleFilePhoto(file, filterProfile: filterProfile);
   }
 
+  Future<_SingleAssetBuildResult> _buildSingleGrantedMediaPhoto(
+    AndroidGrantedMediaReference media, {
+    PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
+  }) {
+    return _PhotoAssetBuilder(
+      this,
+    ).buildSingleGrantedMediaPhoto(media, filterProfile: filterProfile);
+  }
+
   Future<File?> _resolveReadableFile(AssetEntity asset) {
     return _PhotoAssetBuilder(this).resolveReadableFile(asset);
   }

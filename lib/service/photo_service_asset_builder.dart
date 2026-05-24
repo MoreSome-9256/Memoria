@@ -138,7 +138,10 @@ class _PhotoAssetBuilder {
     final width = asset.width;
     final height = asset.height;
     if (filterProfile.requireValidDimensions && (width <= 0 || height <= 0)) {
-      return const _SingleAssetBuildResult(skippedNonCamera: 1);
+      return const _SingleAssetBuildResult(
+        skippedNonCamera: 1,
+        skippedScreenshot: 0,
+      );
     }
 
     // 并行发起 file 解析 与 GPS 查询
@@ -272,6 +275,54 @@ class _PhotoAssetBuilder {
     return _SingleAssetBuildResult(photo: photo, insertedNoGps: 1);
   }
 
+  Future<_SingleAssetBuildResult> buildSingleGrantedMediaPhoto(
+    AndroidGrantedMediaReference media, {
+    PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
+  }) async {
+    if (!media.isImage) {
+      return const _SingleAssetBuildResult(skippedNonCamera: 1);
+    }
+    final width = media.width;
+    final height = media.height;
+    if (filterProfile.requireValidDimensions && (width <= 0 || height <= 0)) {
+      return const _SingleAssetBuildResult(skippedNonCamera: 1);
+    }
+    final timestamp = PhotoFilterHelper.hasValidTimestamp(media.modifiedMs)
+        ? media.modifiedMs
+        : DateTime.now().millisecondsSinceEpoch;
+    final photo = PhotoEntity()
+      ..assetId = 'document:${media.uri}'
+      ..timestamp = timestamp
+      ..path = media.uri
+      ..width = width
+      ..height = height
+      ..isLocationProcessed = false
+      ..faceCount = 0
+      ..smileProb = 0.0;
+
+    if (filterProfile.minTimestampMs != null &&
+        photo.timestamp < filterProfile.minTimestampMs!) {
+      return const _SingleAssetBuildResult(skippedInvalidTime: 1);
+    }
+    if (filterProfile.minWidth != null && filterProfile.minHeight != null) {
+      final selMax = math.max(
+        filterProfile.minWidth!,
+        filterProfile.minHeight!,
+      );
+      final selMin = math.min(
+        filterProfile.minWidth!,
+        filterProfile.minHeight!,
+      );
+      final pMax = math.max(photo.width, photo.height);
+      final pMin = math.min(photo.width, photo.height);
+      if (pMax < selMax || pMin < selMin) {
+        return const _SingleAssetBuildResult(skippedInvalidTime: 1);
+      }
+    }
+
+    return _SingleAssetBuildResult(photo: photo, insertedNoGps: 1);
+  }
+
   // ── File 解析：Android 跳过 originFile（快 2×）──────────────────
   Future<File?> resolveReadableFile(AssetEntity asset) async {
     final directFile = await asset.file;
@@ -295,8 +346,9 @@ class _PhotoAssetBuilder {
     final createMs = asset.createDateTime.millisecondsSinceEpoch;
     if (PhotoFilterHelper.hasValidTimestamp(createMs)) candidates.add(createMs);
     final modifiedMs = asset.modifiedDateTime.millisecondsSinceEpoch;
-    if (PhotoFilterHelper.hasValidTimestamp(modifiedMs))
+    if (PhotoFilterHelper.hasValidTimestamp(modifiedMs)) {
       candidates.add(modifiedMs);
+    }
     return candidates.isEmpty ? 0 : candidates.reduce(math.min);
   }
 

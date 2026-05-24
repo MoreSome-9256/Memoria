@@ -103,6 +103,8 @@ class AIService {
   final Set<int> _junkFilterBypassPhotoIds = <int>{};
   final ListQueue<_AsyncCaptionTask> _pendingCaptionTasks =
       ListQueue<_AsyncCaptionTask>();
+  final ListQueue<PhotoEntity> _analysisQueue = ListQueue<PhotoEntity>();
+  final Set<int> _analysisQueuedPhotoIds = <int>{};
   static final _AnalysisInputConfig _analysisInputConfig =
       _AnalysisInputConfig.resolve(
         strategyLabel: _analysisInputStrategyOverride,

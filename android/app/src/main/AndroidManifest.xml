@@ -22,7 +22,7 @@
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="dataSync"
             android:exported="false"
-            android:stopWithTask="true" />
+            android:stopWithTask="false" />
 
         <activity
             android:name=".MainActivity"

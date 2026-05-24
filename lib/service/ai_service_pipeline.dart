@@ -84,6 +84,18 @@ extension AIServicePipeline on AIService {
     debugPrint('🛑 已清空待生成 caption 队列: $skipped 个任务');
   }
 
+  void _clearAnalysisQueue() {
+    if (_analysisQueue.isEmpty) {
+      return;
+    }
+    final dropped = _analysisQueue.length;
+    for (final photo in _analysisQueue) {
+      _analysisQueuedPhotoIds.remove(photo.id);
+    }
+    _analysisQueue.clear();
+    debugPrint('🛑 已清空 AI 打标任务队列: $dropped 个任务');
+  }
+
   void _disposeSkippedCaptionTask(_AsyncCaptionTask task) {
     if (!task.deleteImageFileAfterUse) {
       return;

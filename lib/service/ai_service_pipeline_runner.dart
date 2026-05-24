@@ -158,8 +158,6 @@ class _AiPipelineRunner {
     var scheduledCount = 0;
     final junkCandidates = <JunkPhotoCleanupCandidate>[];
     final attemptedPhotoIds = <int>{};
-    final queuedPhotoIds = <int>{};
-    final queue = ListQueue<PhotoEntity>();
     final recentDurationsMs = ListQueue<int>();
     final pipelineProfiler = _AiPipelineRunProfiler(
       summaryEvery: math.max(4, math.min(batchSize, 8)),
@@ -283,7 +281,7 @@ class _AiPipelineRunner {
               maxWorkerCount * 2,
               currentBatchSize * 2,
             );
-            if (queue.length >= maxBuffered) {
+            if (_service._analysisQueue.length >= maxBuffered) {
               await Future<void>.delayed(const Duration(milliseconds: 35));
               continue;
             }
@@ -314,7 +312,7 @@ class _AiPipelineRunner {
                       .where(
                         (photo) =>
                             !attemptedPhotoIds.contains(photo.id) &&
-                            !queuedPhotoIds.contains(photo.id),
+                            !_service._analysisQueuedPhotoIds.contains(photo.id),
                       )
                       .take(currentBatchSize),
                 );
@@ -338,8 +336,8 @@ class _AiPipelineRunner {
             }
 
             for (final photo in photosToAnalyze) {
-              queue.addLast(photo);
-              queuedPhotoIds.add(photo.id);
+              _service._analysisQueue.addLast(photo);
+              _service._analysisQueuedPhotoIds.add(photo.id);
             }
             scheduledCount += photosToAnalyze.length;
 
@@ -365,7 +363,7 @@ class _AiPipelineRunner {
             break;
           }
 
-          if (producerDone && queue.isEmpty && inflightCount <= 0) {
+          if (producerDone && _service._analysisQueue.isEmpty && inflightCount <= 0) {
             break;
           }
 
@@ -376,7 +374,7 @@ class _AiPipelineRunner {
             continue;
           }
 
-          final backlog = queue.length;
+          final backlog = _service._analysisQueue.length;
           final currentActive = activeWorkerCount;
           final averageDurationMs = recentDurationsMs.isEmpty
               ? null
@@ -434,7 +432,7 @@ class _AiPipelineRunner {
             }
 
             if (workerIndex >= activeWorkerCount) {
-              if (producerDone && queue.isEmpty && inflightCount <= 0) {
+              if (producerDone && _service._analysisQueue.isEmpty && inflightCount <= 0) {
                 break;
               }
               await Future<void>.delayed(const Duration(milliseconds: 45));
@@ -442,9 +440,9 @@ class _AiPipelineRunner {
             }
 
             PhotoEntity? photo;
-            if (queue.isNotEmpty) {
-              photo = queue.removeFirst();
-              queuedPhotoIds.remove(photo.id);
+            if (_service._analysisQueue.isNotEmpty) {
+              photo = _service._analysisQueue.removeFirst();
+              _service._analysisQueuedPhotoIds.remove(photo.id);
               attemptedPhotoIds.add(photo.id);
             }
 

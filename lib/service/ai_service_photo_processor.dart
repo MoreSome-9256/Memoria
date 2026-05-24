@@ -606,9 +606,22 @@ class _AiPhotoProcessor {
   Future<_PreparedAnalysisInput?> _prepareAnalysisInput(
     PhotoEntity photo,
   ) async {
-    final file = File(photo.path);
-    if (!await file.exists()) {
-      return null;
+    final path = photo.path;
+    if (path.isEmpty) return null;
+
+    File file;
+    if (path.startsWith('content://')) {
+      final bytes = await MediaAccessGrantService.instance.readContentUriBytes(
+        path,
+      );
+      if (bytes == null || bytes.isEmpty) return null;
+      final ext = _inferExtension(path);
+      final tempDir = await getTemporaryDirectory();
+      file = File('${tempDir.path}/memoria_input_${photo.id}.$ext');
+      await file.writeAsBytes(bytes);
+    } else {
+      file = File(path);
+      if (!await file.exists()) return null;
     }
 
     final loadWatch = Stopwatch()..start();
@@ -663,6 +676,14 @@ class _AiPhotoProcessor {
       thumbnailReadMs: thumbnailReadMs,
       fileReadMs: fileReadMs,
     );
+  }
+
+  /// 从文件路径推断扩展名
+  String _inferExtension(String? path) {
+    if (path == null) return 'jpg';
+    final dot = path.lastIndexOf('.');
+    if (dot == -1 || dot >= path.length - 1) return 'jpg';
+    return path.substring(dot + 1);
   }
 
   Future<_CreatedAnalysisFile> _createAuxiliaryAnalysisFile(

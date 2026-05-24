@@ -147,6 +147,7 @@ extension AIServiceLifecycle on AIService {
   void stopAnalysis() {
     final current = _progressNotifier.value;
     _clearPendingCaptionTasks();
+    _clearAnalysisQueue();
     if (!_isAnalyzing) {
       if (current.isPaused && current.total > 0) {
         _pauseRequested = false;

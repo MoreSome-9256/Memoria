@@ -218,12 +218,21 @@ extension AIServiceLifecycle on AIService {
     }
 
     final runtimeSnapshot = await _readRuntimeSnapshot();
-    final runtimeActive = runtimeSnapshot.isActive;
     final restoredCompleted = runtimeSnapshot.completed.clamp(0, pending);
     final manuallyStopped = await _readManualStopPending();
 
-    if (manuallyStopped) {
-      _progressNotifier.value = AIAnalysisProgress.idle();
+    // 检查自动续跑设置
+    final settings = await AppAiSettingsService.instance.load();
+    if (settings.autoResumeAnalysis && !manuallyStopped) {
+      debugPrint('自动续跑 AI 分析，剩余 $pending 张');
+      _progressNotifier.value = AIAnalysisProgress.running(
+        total: pending,
+        completed: restoredCompleted,
+        failed: runtimeSnapshot.failed,
+        currentStep: '自动恢复上次分析任务…',
+        elapsedMs: 0,
+      );
+      unawaited(analyzePhotosInBackground());
       return;
     }
 
@@ -232,7 +241,9 @@ extension AIServiceLifecycle on AIService {
       total: pending,
       completed: restoredCompleted,
       failed: runtimeSnapshot.failed,
-      currentStep: runtimeActive ? '检测到上次任务，点击继续后恢复' : '有未完成任务，点击继续开始',
+      currentStep: manuallyStopped
+          ? '有未完成任务，点击继续开始'
+          : '检测到上次任务，点击继续后恢复',
       elapsedMs: 0,
     );
   }

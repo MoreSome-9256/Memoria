@@ -14,6 +14,8 @@ class AppAiSettings {
     required this.requestUnrestrictedBatteryEnabled,
     required this.iosContinuedProcessingEnabled,
     required this.inferenceAccelerator,
+    required this.autoResumeAnalysis,
+    required this.autoAnalyzeNewPhotos,
   });
 
   static const defaults = AppAiSettings(
@@ -26,6 +28,8 @@ class AppAiSettings {
     requestUnrestrictedBatteryEnabled: false,
     iosContinuedProcessingEnabled: false,
     inferenceAccelerator: LocalInferenceAccelerator.gpu,
+    autoResumeAnalysis: false,
+    autoAnalyzeNewPhotos: false,
   );
 
   final bool ocrEnabled;
@@ -37,6 +41,8 @@ class AppAiSettings {
   final bool requestUnrestrictedBatteryEnabled;
   final bool iosContinuedProcessingEnabled;
   final LocalInferenceAccelerator inferenceAccelerator;
+  final bool autoResumeAnalysis;
+  final bool autoAnalyzeNewPhotos;
 
   AppAiSettings copyWith({
     bool? ocrEnabled,
@@ -48,6 +54,8 @@ class AppAiSettings {
     bool? requestUnrestrictedBatteryEnabled,
     bool? iosContinuedProcessingEnabled,
     LocalInferenceAccelerator? inferenceAccelerator,
+    bool? autoResumeAnalysis,
+    bool? autoAnalyzeNewPhotos,
   }) {
     return AppAiSettings(
       ocrEnabled: ocrEnabled ?? this.ocrEnabled,
@@ -65,6 +73,8 @@ class AppAiSettings {
       iosContinuedProcessingEnabled:
           iosContinuedProcessingEnabled ?? this.iosContinuedProcessingEnabled,
       inferenceAccelerator: inferenceAccelerator ?? this.inferenceAccelerator,
+      autoResumeAnalysis: autoResumeAnalysis ?? this.autoResumeAnalysis,
+      autoAnalyzeNewPhotos: autoAnalyzeNewPhotos ?? this.autoAnalyzeNewPhotos,
     );
   }
 }
@@ -86,6 +96,8 @@ class AppAiSettingsService {
   static const _iosContinuedProcessingKey =
       'ai_settings_ios_continued_processing_enabled';
   static const _inferenceAcceleratorKey = 'ai_settings_inference_accelerator';
+  static const _autoResumeKey = 'ai_settings_auto_resume';
+  static const _autoAnalyzeNewKey = 'ai_settings_auto_analyze_new';
 
   final ValueNotifier<AppAiSettings> notifier = ValueNotifier<AppAiSettings>(
     AppAiSettings.defaults,
@@ -133,6 +145,8 @@ class AppAiSettingsService {
       _inferenceAcceleratorKey,
       settings.inferenceAccelerator.storageValue,
     );
+    await prefs.setBool(_autoResumeKey, settings.autoResumeAnalysis);
+    await prefs.setBool(_autoAnalyzeNewKey, settings.autoAnalyzeNewPhotos);
     notifier.value = settings;
   }
 
@@ -163,6 +177,12 @@ class AppAiSettingsService {
       inferenceAccelerator: LocalInferenceAcceleratorX.fromStorageValue(
         prefs.getString(_inferenceAcceleratorKey),
       ),
+      autoResumeAnalysis:
+          prefs.getBool(_autoResumeKey) ??
+          AppAiSettings.defaults.autoResumeAnalysis,
+      autoAnalyzeNewPhotos:
+          prefs.getBool(_autoAnalyzeNewKey) ??
+          AppAiSettings.defaults.autoAnalyzeNewPhotos,
     );
   }
 }

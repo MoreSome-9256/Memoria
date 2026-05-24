@@ -415,6 +415,32 @@ class _ProfilePageState extends State<ProfilePage> {
                                 });
                               },
                       ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('检测到未完成的任务自动继续'),
+                        subtitle: const Text('下次打开 App 时，如果有中断的分析任务则自动恢复'),
+                        value: aiSettings.autoResumeAnalysis,
+                        onChanged: (value) {
+                          setSheetState(() {
+                            aiSettings = aiSettings.copyWith(
+                              autoResumeAnalysis: value,
+                            );
+                          });
+                        },
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('自动分析最新的全部图片'),
+                        subtitle: const Text('新图片出现后自动开始分析，无需手动触发'),
+                        value: aiSettings.autoAnalyzeNewPhotos,
+                        onChanged: (value) {
+                          setSheetState(() {
+                            aiSettings = aiSettings.copyWith(
+                              autoAnalyzeNewPhotos: value,
+                            );
+                          });
+                        },
+                      ),
                       if (Platform.isAndroid)
                         ListTile(
                           contentPadding: EdgeInsets.zero,

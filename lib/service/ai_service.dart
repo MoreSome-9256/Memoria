@@ -53,6 +53,7 @@ class AIService {
   AIService._internal() {
     _progressNotifier.addListener(_syncProgressNotification);
     AIProgressNotificationService().bindActionHandler(_handleForegroundAction);
+    unawaited(resumePendingAnalysisIfNeeded());
   }
 
   static const Set<String> _blockedVisualTags = <String>{

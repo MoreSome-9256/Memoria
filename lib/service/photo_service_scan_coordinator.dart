@@ -1,7 +1,7 @@
 /// 照片扫描协调器 — 高效批量发现系统相册中的新照片。
 ///
 /// 核心策略：
-///   1. 缓存系统相册引用，session 内只获取一次
+///   1. 缓存系统相册清单，session 内只获取一次
 ///   2. 小批量分页（50张/页），从最新开始遍历
 ///   3. 每页查询 ObjectBox 批量过滤已存在的 assetId
 ///   4. 对真正新增的照片并行构建实体
@@ -9,7 +9,7 @@
 ///   6. 增量路径跳过 `_removeUnavailablePhotos`（全量旧照片校验）
 ///
 /// 消除的问题：
-/// - 不再全量扫描系统相册
+/// - 增量构建只处理未入库的新资源
 /// - 不再每次请求权限
 /// - 不再重复查询 album/assetCountAsync
 /// - 不再 in-Dart 排序（系统已按时间返回）
@@ -318,89 +318,63 @@ class _PhotoScanCoordinator {
     bool runCleanupOnce = false,
     bool forceRefresh = false,
   }) async {
-    final snapshot = await MediaAccessGrantService.instance.loadSnapshot();
-    final selectionSignature = _signatureForSnapshot(snapshot);
-    if (!forceRefresh &&
-        (_cachedAssets.isNotEmpty ||
-            _cachedFiles.isNotEmpty ||
-            _cachedGrantedMedia.isNotEmpty) &&
-        _cachedTotalCount >= 0 &&
-        _cachedSelectionSignature == selectionSignature) {
-      _cachedTotalCount =
-          _cachedAssets.length +
-          _cachedFiles.length +
-          _cachedGrantedMedia.length;
-      return _AlbumBundle(
-        assets: _cachedAssets,
-        files: _cachedFiles,
-        grantedMedia: _cachedGrantedMedia,
-        isUserSelection: true,
+    final settings = await AppAiSettingsService().loadSettings();
+    final requestType = settings.includeVideos
+        ? RequestType.common
+        : RequestType.image;
+    final state = await PhotoManager.requestPermissionExtend();
+    if (!state.hasAccess) {
+      throw const PhotoScanException(
+        PhotoScanError.permissionDenied,
+        '没有相册权限，无法扫描系统相册。',
       );
     }
 
-    if (snapshot.selectedAssetIds.isEmpty &&
-        snapshot.selectedFilePaths.isEmpty &&
-        snapshot.androidTreeUris.isEmpty) {
+    final albums = await PhotoManager.getAssetPathList(
+      onlyAll: true,
+      type: requestType,
+    );
+    if (albums.isEmpty) {
+      _cachedAssets = const <AssetEntity>[];
+      _cachedFiles = const <File>[];
+      _cachedGrantedMedia = const <AndroidGrantedMediaReference>[];
+      _cachedTotalCount = 0;
+      _cachedSelectionSignature = 'system-album:${requestType.name}:empty';
       return const _AlbumBundle(
         assets: <AssetEntity>[],
         files: <File>[],
         grantedMedia: <AndroidGrantedMediaReference>[],
-        isUserSelection: true,
+        isUserSelection: false,
       );
     }
 
-    // ★ BATCH 方式：用 getAssetListRange 批量获取照片，避免 N 次 ContentResolver 查询
+    final allAlbum = albums.first;
+    final total = await allAlbum.assetCountAsync;
+    final selectionSignature = 'system-album:${requestType.name}:$total';
+    if (!forceRefresh &&
+        _cachedTotalCount >= 0 &&
+        _cachedSelectionSignature == selectionSignature) {
+      return _AlbumBundle(
+        assets: _cachedAssets,
+        files: const <File>[],
+        grantedMedia: const <AndroidGrantedMediaReference>[],
+        isUserSelection: false,
+      );
+    }
+
     final assets = <AssetEntity>[];
-    final selectedIds = snapshot.selectedAssetIds;
-    if (selectedIds.isNotEmpty) {
-      try {
-        final albums = await PhotoManager.getAssetPathList(
-          onlyAll: true,
-          type: RequestType.common,
-        );
-        if (albums.isNotEmpty) {
-          final allAlbum = albums.first;
-          final total = await allAlbum.assetCountAsync;
-          const batchPageSize = 1000;
-          final idSet = selectedIds.toSet();
-          for (var offset = 0; offset < total; offset += batchPageSize) {
-            final end = offset + batchPageSize > total
-                ? total
-                : offset + batchPageSize;
-            final page = await allAlbum.getAssetListRange(
-              start: offset,
-              end: end,
-            );
-            for (final asset in page) {
-              if (idSet.contains(asset.id)) {
-                assets.add(asset);
-              }
-            }
-          }
-        }
-      } catch (e) {
-        debugPrint('批量解析失败，回退到逐张解析: $e');
-        for (final assetId in selectedIds) {
-          final asset = await AssetEntity.fromId(assetId);
-          if (asset != null) assets.add(asset);
-        }
-      }
+    const batchPageSize = 1000;
+    for (var offset = 0; offset < total; offset += batchPageSize) {
+      final end = math.min(total, offset + batchPageSize);
+      final page = await allAlbum.getAssetListRange(start: offset, end: end);
+      assets.addAll(page);
     }
     assets.sort((a, b) => b.createDateTime.compareTo(a.createDateTime));
-    final files = <File>[];
-    for (final path in snapshot.selectedFilePaths) {
-      final file = File(path);
-      if (await file.exists()) {
-        files.add(file);
-      }
-    }
-    final grantedMedia = await MediaAccessGrantService.instance
-        .listAndroidGrantedMedia(snapshot: snapshot, limit: 2000);
 
     _cachedAssets = assets;
-    _cachedFiles = files;
-    _cachedGrantedMedia = grantedMedia;
-    _cachedTotalCount = assets.length + files.length + grantedMedia.length;
+    _cachedFiles = const <File>[];
+    _cachedGrantedMedia = const <AndroidGrantedMediaReference>[];
+    _cachedTotalCount = assets.length;
     _cachedSelectionSignature = selectionSignature;
 
     if (runCleanupOnce) {
@@ -410,9 +384,9 @@ class _PhotoScanCoordinator {
 
     return _AlbumBundle(
       assets: assets,
-      files: files,
-      grantedMedia: grantedMedia,
-      isUserSelection: true,
+      files: const <File>[],
+      grantedMedia: const <AndroidGrantedMediaReference>[],
+      isUserSelection: false,
     );
   }
 
@@ -505,52 +479,18 @@ class _PhotoScanCoordinator {
 
   Future<PhotoScanFilterProfile> _resolveFilterProfile() async {
     final prefs = await AlbumSelectionPreferenceService().loadScanPreferences();
-    final accessSnapshot = await MediaAccessGrantService.instance
-        .loadSnapshot();
     int? minTs;
     if (prefs['minYear'] != null) {
       final y = prefs['minYear']!;
       minTs = DateTime(y, 1, 1).millisecondsSinceEpoch;
     }
-    final minW =
-        prefs['minWidth'] ?? (accessSnapshot.excludeSmallMedia ? 512 : null);
-    final minH =
-        prefs['minHeight'] ?? (accessSnapshot.excludeSmallMedia ? 512 : null);
     const base = PhotoScanFilterProfile.userSelectedAlbums;
     return PhotoScanFilterProfile(
       requireValidDimensions: base.requireValidDimensions,
       minTimestampMs: minTs,
-      minWidth: minW,
-      minHeight: minH,
+      minWidth: prefs['minWidth'],
+      minHeight: prefs['minHeight'],
     );
-  }
-
-  String _signatureForSnapshot(MediaAccessGrantSnapshot snapshot) {
-    final sortedAssetIds = snapshot.selectedAssetIds.toList()..sort();
-    final sortedFilePaths = snapshot.selectedFilePaths.toList()..sort();
-    final sortedTreeUris = snapshot.androidTreeUris.toList()..sort();
-    final disabled = snapshot.disabledAutoSourceIds.toList()..sort();
-    final withoutChildren = snapshot.sourcesWithoutChildren.toList()..sort();
-    final mediaTypes = snapshot.excludedMediaTypes.toList()..sort();
-    return 'assets:${sortedAssetIds.join(',')}'
-        '|files:${sortedFilePaths.join(',')}'
-        '|trees:${sortedTreeUris.join(',')}'
-        '|included:${_encodePathRules(snapshot.includedSubpathsBySource)}'
-        '|excluded:${_encodePathRules(snapshot.excludedSubpathsBySource)}'
-        '|disabled:${disabled.join(',')}'
-        '|flat:${withoutChildren.join(',')}'
-        '|rules:${snapshot.excludeScreenshots},${snapshot.excludeScreenRecordings},${snapshot.excludeSmallMedia},${snapshot.excludeDuplicates},${mediaTypes.join(',')}';
-  }
-
-  String _encodePathRules(Map<String, List<String>> rules) {
-    final sourceIds = rules.keys.toList()..sort();
-    return sourceIds
-        .map((sourceId) {
-          final subpaths = (rules[sourceId] ?? const <String>[]).toList();
-          subpaths.sort();
-          return '$sourceId=${subpaths.join(';')}';
-        })
-        .join('|');
   }
 
   _PhotoSyncPlan _emptyPlan(int totalBefore) {

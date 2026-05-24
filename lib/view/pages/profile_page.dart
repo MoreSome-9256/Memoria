@@ -947,8 +947,8 @@ class _ProfilePageState extends State<ProfilePage> {
           _buildSettingsTile(
             context,
             Icons.folder_copy_outlined,
-            '授权媒体来源',
-            _albumSelectionSummary,
+            '相册访问权限',
+            '导入使用系统相册；手动来源仅用于少量额外项目',
             onTap: _showAlbumSelectionSettings,
           ),
           _buildSettingsTile(

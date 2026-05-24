@@ -152,7 +152,9 @@ class AIProgressNotificationService {
     required double fraction,
   }) async {
     await initialize();
-    await ensurePermission();
+    // Do not request notification permission from this hot path. It can run
+    // from lifecycle/background contexts where Android plugins have no Activity
+    // context, which makes flutter_local_notifications throw a native NPE.
 
     final title = isStopping
         ? 'AI 打标正在结束'

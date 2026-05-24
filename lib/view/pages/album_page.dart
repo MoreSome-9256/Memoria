@@ -15,7 +15,6 @@ import '../../service/album_tag_browser_service.dart';
 import '../../service/event_service.dart';
 import '../../service/junk_photo_cleanup_service.dart';
 import '../../service/junk_photo_filter_service.dart';
-import '../../service/media_access_grant_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_queue_service.dart';
 import '../../storage/objectbox/objectbox_service.dart';
@@ -25,7 +24,6 @@ import '../widgets/junk_photo_cleanup_banner.dart';
 import '../widgets/junk_photo_cleanup_dialog.dart';
 import '../widgets/path_image.dart';
 import 'album_search_page.dart';
-import 'media_access_range_page.dart';
 import 'story_queue_page.dart';
 
 part 'album_page_tag_browser.dart';
@@ -37,9 +35,7 @@ const int _importAllNewMediaLimit = 0x7fffffff;
 enum _ImportAction {
   importAllNew,
   importLatest100,
-  manualPick,
   rebuildAll,
-  manageRange,
 }
 
 // Keep the tag overview and detail sheet on the same snapshot window so a
@@ -273,12 +269,12 @@ class _AlbumPageState extends State<AlbumPage> {
               children: [
                 const ListTile(
                   title: Text('导入/更新'),
-                  subtitle: Text('只从当前可分析范围中查找未分析的图片和视频'),
+                  subtitle: Text('从系统相册中查找未分析的图片和视频'),
                 ),
                 ListTile(
                   leading: const Icon(Icons.done_all_outlined),
                   title: const Text('导入全部新的图片和视频'),
-                  subtitle: const Text('从已授权且未被排除的来源中加入所有未分析项目'),
+                  subtitle: const Text('按相册时间倒序加入全部未分析项目'),
                   onTap: () =>
                       Navigator.pop(context, _ImportAction.importAllNew),
                 ),
@@ -290,23 +286,10 @@ class _AlbumPageState extends State<AlbumPage> {
                       Navigator.pop(context, _ImportAction.importLatest100),
                 ),
                 ListTile(
-                  leading: const Icon(Icons.add_photo_alternate_outlined),
-                  title: const Text('手动选择照片/视频加入分析'),
-                  subtitle: const Text('适合微信、QQ、下载图等少量内容'),
-                  onTap: () => Navigator.pop(context, _ImportAction.manualPick),
-                ),
-                ListTile(
                   leading: const Icon(Icons.restart_alt_outlined),
                   title: const Text('重新分析全部'),
-                  subtitle: const Text('删除缓存和分析结果后按当前可分析范围重建'),
+                  subtitle: const Text('删除缓存和分析结果后按系统相册重建'),
                   onTap: () => Navigator.pop(context, _ImportAction.rebuildAll),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.tune_outlined),
-                  title: const Text('管理可分析范围'),
-                  subtitle: const Text('管理自动来源、手动加入、排除规则和系统权限'),
-                  onTap: () =>
-                      Navigator.pop(context, _ImportAction.manageRange),
                 ),
                 const SizedBox(height: 24),
               ],
@@ -325,34 +308,8 @@ class _AlbumPageState extends State<AlbumPage> {
         _startRefresh(recentPhotoLimit: _importAllNewMediaLimit);
       case _ImportAction.importLatest100:
         _startRefresh(recentPhotoLimit: 100);
-      case _ImportAction.manualPick:
-        await _manualPickMediaForAnalysis();
       case _ImportAction.rebuildAll:
         await _confirmAndRebuildAnalysis();
-      case _ImportAction.manageRange:
-        await Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(builder: (_) => const MediaAccessRangePage()),
-        );
-    }
-  }
-
-  Future<void> _manualPickMediaForAnalysis() async {
-    final result = await MediaAccessGrantService.instance.pickMedia();
-    if (!mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        content: Text(
-          result.addedAssetIds > 0
-              ? '已手动加入 ${result.addedAssetIds} 个项目，正在加入分析队列。'
-              : '没有新增项目。',
-        ),
-      ),
-    );
-    if (result.addedAssetIds > 0) {
-      _startRefresh(recentPhotoLimit: result.addedAssetIds);
     }
   }
 
@@ -362,7 +319,7 @@ class _AlbumPageState extends State<AlbumPage> {
       builder: (context) {
         return AlertDialog(
           title: const Text('重新分析全部'),
-          content: const Text('这会删除当前缓存和分析结果，并从当前可分析范围重新开始分析。原始图片和视频不会被删除。'),
+          content: const Text('这会删除当前缓存和分析结果，并从系统相册重新开始分析。原始图片和视频不会被删除。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),

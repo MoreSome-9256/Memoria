@@ -94,27 +94,43 @@ class AlbumRefreshService {
     bool clearCacheFirst = false,
     int? recentPhotoLimit,
   }) async {
-    if (_isRunning) return null;
+    if (_isRunning) {
+      debugPrint('[scan] ⛔ 扫描已在运行，忽略重复请求');
+      return null;
+    }
     _isRunning = true;
     _progressRunId++;
+    final runId = _progressRunId;
+
+    debugPrint('[scan] ======== AlbumRefreshService 开始 ========');
+    debugPrint('[scan] runId=$runId clearCacheFirst=$clearCacheFirst recentPhotoLimit=$recentPhotoLimit');
 
     try {
       if (clearCacheFirst) {
-        return _runFullRebuild(recentPhotoLimit);
+        final result = await _runFullRebuild(recentPhotoLimit);
+        debugPrint('[scan] ✅ 全量重建完成: totalAfter=${result.scanSummary.totalAfter}');
+        return result;
       }
-      return _runIncrementalScan(recentPhotoLimit);
+      final result = await _runIncrementalScan(recentPhotoLimit);
+      debugPrint('[scan] ✅ 增量扫描完成: inserted=${result.requeuedCount} aiAlreadyRunning=${result.aiAlreadyRunning}');
+      return result;
     } catch (error) {
+      debugPrint('[scan] ❌ 扫描失败: $error');
+      debugPrint('[scan] ❌ 堆栈: ${StackTrace.current}');
       _progressNotifier.value = AlbumRefreshProgress.running(
         stage: AlbumRefreshStage.failed,
         progress: 1,
         title: '刷新失败',
         message: error.toString(),
-        runId: _progressRunId,
+        runId: runId,
       );
       rethrow;
     } finally {
+      // 短暂停留让用户看到 handoff 完成消息，再回到 idle
+      await Future<void>.delayed(const Duration(milliseconds: 1800));
       _progressNotifier.value = AlbumRefreshProgress.idle();
       _isRunning = false;
+      debugPrint('[scan] ======== AlbumRefreshService 结束 (runId=$runId) ========');
     }
   }
 
@@ -124,15 +140,20 @@ class AlbumRefreshService {
     final isRemainingScan = batchSize >= 0x7fffffff;
     final scopeLabel = isRemainingScan ? '剩余所有照片' : '$batchSize 张新照片';
 
+    debugPrint('[scan] _runIncrementalScan: batchSize=$batchSize isRemainingScan=$isRemainingScan');
+
     _setProgress(
       AlbumRefreshStage.scanning,
       0.04,
       '正在读取图片',
       '从最新项目开始读取，目标：$scopeLabel；读到目标数量或没有更多新项目后交给 AI。',
     );
+    debugPrint('[scan] ▶ stage=scanning progress=0.04');
 
     // step 1: stop-early 扫描，只找新照片
     var lastProgressUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+    final scanStart = DateTime.now();
+    debugPrint('[scan] 开始调用 scanBatchPhotos…');
     final scanResult = await PhotoService().scanBatchPhotos(
       batchSize: batchSize,
       onProgress: (scanProgress) {
@@ -155,8 +176,11 @@ class AlbumRefreshService {
           '正在读取图片',
           '已读取 ${scanProgress.scannedCount}/${scanProgress.totalCount} 项，找到 ${scanProgress.acceptedCount}/${scanProgress.targetNew} 个可加入 AI 的新项目。',
         );
+        debugPrint('[scan]   扫描进度: scanned=${scanProgress.scannedCount}/${scanProgress.totalCount} accepted=${scanProgress.acceptedCount}/${scanProgress.targetNew} progress=${progress.toStringAsFixed(3)}');
       },
     );
+    final scanMs = DateTime.now().difference(scanStart).inMilliseconds;
+    debugPrint('[scan] scanBatchPhotos 完成: scannedCount=${scanResult.scannedCount} insertedCount=${scanResult.insertedCount} totalAfter=${scanResult.totalAfter} 耗时=${scanMs}ms');
 
     _setProgress(
       AlbumRefreshStage.queueing,
@@ -180,7 +204,7 @@ class AlbumRefreshService {
     );
 
     if (!scanResult.hasNewPhotos) {
-      // 没有新照片 → 直接触发 AI 处理未分析的照片
+      debugPrint('[scan] 没有新照片，直接触发 AI (aiRunning=${AIService().isAnalyzing})');
       final aiRunning = AIService().isAnalyzing;
       if (!aiRunning) {
         unawaited(_runAiPipeline(maxPhotos: batchSize));
@@ -191,6 +215,7 @@ class AlbumRefreshService {
         '本轮没有可入库新照片',
         aiRunning ? 'AI 队列正在运行' : '已转去检查未完成的后台 AI 队列',
       );
+      debugPrint('[scan] ▶ stage=handoff (无新照片) aiRunning=$aiRunning');
       return AlbumRefreshResult(
         scanSummary: summary,
         requeuedCount: 0,
@@ -200,9 +225,11 @@ class AlbumRefreshService {
       );
     }
 
+    debugPrint('[scan] 有新照片 ${scanResult.insertedCount} 张，开始 requeue');
     // step 2: 有新照片 → requeue（标记为未分析）
     await PhotoService().requeuePhotosForAiByIds(scanResult.insertedPhotoIds);
     _scheduleMediaIndexRefresh(batchSize: batchSize);
+    debugPrint('[scan] requeue 完成');
 
     _setProgress(
       AlbumRefreshStage.clustering,
@@ -210,12 +237,17 @@ class AlbumRefreshService {
       '正在更新相册索引',
       '已加入 ${scanResult.insertedCount} 个项目，正在更新事件、时间和索引信息。',
     );
+    debugPrint('[scan] ▶ stage=clustering progress=0.72');
 
     // step 3: 事件聚类
+    final clusterStart = DateTime.now();
     await EventService().runClustering();
+    final clusterMs = DateTime.now().difference(clusterStart).inMilliseconds;
+    debugPrint('[scan] 事件聚类完成 耗时=${clusterMs}ms');
 
     // step 4: 触发 AI 打标
     final aiRunning = AIService().isAnalyzing;
+    debugPrint('[scan] AI 状态: isAnalyzing=$aiRunning');
     if (!aiRunning) {
       unawaited(
         _runAiPipeline(
@@ -223,6 +255,7 @@ class AlbumRefreshService {
           photoIds: scanResult.insertedPhotoIds,
         ),
       );
+      debugPrint('[scan] _runAiPipeline 已触发 (unawaited)');
     }
     _setProgress(
       AlbumRefreshStage.handoff,
@@ -232,6 +265,7 @@ class AlbumRefreshService {
           ? 'AI 队列正在继续处理；这批图片已经写入待处理列表。'
           : '图片列表已交给后台 AI 服务，接下来会调度标签、OCR、人脸和地理位置处理。',
     );
+    debugPrint('[scan] ▶ stage=handoff progress=0.95 aiRunning=$aiRunning');
 
     return AlbumRefreshResult(
       scanSummary: summary,
@@ -244,6 +278,7 @@ class AlbumRefreshService {
 
   // ── 全量重建（"安全重建" 路径）───────────────────────────────────
   Future<AlbumRefreshResult> _runFullRebuild(int? recentPhotoLimit) async {
+    debugPrint('[scan] _runFullRebuild: recentPhotoLimit=$recentPhotoLimit');
     _setProgress(
       AlbumRefreshStage.scanning,
       0.04,
@@ -252,6 +287,7 @@ class AlbumRefreshService {
     );
 
     await AIService().stopAnalysisAndWait();
+    debugPrint('[scan] AI 已停止');
 
     _setProgress(
       AlbumRefreshStage.scanning,
@@ -259,10 +295,14 @@ class AlbumRefreshService {
       '正在读取系统相册',
       recentPhotoLimit == null ? '范围：全部照片' : '范围：最近 $recentPhotoLimit 张',
     );
+    debugPrint('[scan] ▶ stage=scanning (全量) progress=0.12');
 
+    final rebuildStart = DateTime.now();
     final scanSummary = await PhotoService().rebuildAllCachedData(
       maxAssets: recentPhotoLimit,
     );
+    final rebuildMs = DateTime.now().difference(rebuildStart).inMilliseconds;
+    debugPrint('[scan] 全量重建完成: totalAfter=${scanSummary.totalAfter} 耗时=${rebuildMs}ms');
 
     _setProgress(
       AlbumRefreshStage.clustering,
@@ -270,11 +310,15 @@ class AlbumRefreshService {
       '正在重建事件分类',
       '照片 ${scanSummary.totalAfter} 张',
     );
+    debugPrint('[scan] ▶ stage=clustering (全量) progress=0.68');
 
+    final clusterStart = DateTime.now();
     await EventService().runClustering();
+    debugPrint('[scan] 聚类完成 耗时=${DateTime.now().difference(clusterStart).inMilliseconds}ms');
     _scheduleMediaIndexRefresh(batchSize: recentPhotoLimit ?? 300);
 
     final aiRunning = AIService().isAnalyzing;
+    debugPrint('[scan] AI 状态: isAnalyzing=$aiRunning');
     if (!aiRunning) {
       unawaited(_runAiPipeline(maxPhotos: recentPhotoLimit));
     }
@@ -284,11 +328,7 @@ class AlbumRefreshService {
       '安全重建完成',
       aiRunning ? 'AI 队列正在继续处理' : '已交给后台 AI 队列',
     );
-
-    // 延迟一小段时间后重置进度状态，让用户看到完成消息
-    Future.delayed(const Duration(milliseconds: 1500), () {
-      _progressNotifier.value = AlbumRefreshProgress.idle();
-    });
+    debugPrint('[scan] ▶ stage=handoff (全量) progress=0.95 aiRunning=$aiRunning');
 
     return AlbumRefreshResult(
       scanSummary: scanSummary,
@@ -316,14 +356,17 @@ class AlbumRefreshService {
   }
 
   Future<void> _runAiPipeline({int? maxPhotos, List<int>? photoIds}) async {
+    debugPrint('[scan] _runAiPipeline: maxPhotos=$maxPhotos photoIds=${photoIds?.length}');
     try {
       await Future.delayed(const Duration(milliseconds: 300));
       await AIService().analyzePhotosInBackground(
         maxPhotos: maxPhotos,
         photoIds: photoIds,
       );
-    } catch (error) {
-      debugPrint('❌ 后台 AI 管线执行失败: $error');
+      debugPrint('[scan] ✅ _runAiPipeline 完成');
+    } catch (error, stackTrace) {
+      debugPrint('[scan] ❌ 后台 AI 管线执行失败: $error');
+      debugPrint('[scan] ❌ 堆栈: $stackTrace');
     }
   }
 

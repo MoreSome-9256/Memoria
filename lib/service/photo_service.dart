@@ -20,6 +20,7 @@ import '../storage/vector_index/face_embedding_index_repository.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../utils/photo_filter_helper.dart';
 import 'album_selection_preference_service.dart';
+import 'app_ai_settings_service.dart';
 import 'junk_photo_filter_service.dart';
 import 'media_access_grant_service.dart';
 

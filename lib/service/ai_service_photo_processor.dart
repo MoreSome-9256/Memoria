@@ -144,16 +144,27 @@ class _AiPhotoProcessor {
             ? 'unknown'
             : '${analysisDimensions.$1}x${analysisDimensions.$2}';
         debugPrint(
-          '鈴笍 璺宠繃浜鸿劯妫€娴?photoId=${request.photo.id} '
+          '⏭️ 跳过人脸检测 photoId=${request.photo.id} '
           'dbSize=${request.photo.width}x${request.photo.height} '
           'analysisSize=$sizeLabel path=${analysisFile.path}',
         );
       }
 
       final faceDetectionWatch = Stopwatch()..start();
-      final faces = canRunFaceDetection
-          ? await request.faceDetector.processImage(inputImage)
-          : const <Face>[];
+      List<Face> faces;
+      if (canRunFaceDetection && request.faceDetector != null) {
+        final lock = request.faceDetectorLock;
+        if (lock != null) {
+          await lock.acquire();
+        }
+        try {
+          faces = await request.faceDetector!.processImage(inputImage);
+        } finally {
+          lock?.release();
+        }
+      } else {
+        faces = const <Face>[];
+      }
       faceDetectionWatch.stop();
       profile.faceDetectionMs = faceDetectionWatch.elapsedMicroseconds / 1000.0;
       final faceCount = faces.length;

@@ -8,9 +8,7 @@ import 'package:image/image.dart' as img;
 import 'litert_inference_service.dart';
 
 class MobileClipLiteRtService {
-  MobileClipLiteRtService._internal({
-    LocalInferenceAccelerator accelerator = LocalInferenceAccelerator.gpu,
-  }) : _accelerator = accelerator;
+  MobileClipLiteRtService._internal();
 
   static final MobileClipLiteRtService _instance =
       MobileClipLiteRtService._internal();
@@ -18,7 +16,16 @@ class MobileClipLiteRtService {
   factory MobileClipLiteRtService() => _instance;
   factory MobileClipLiteRtService.withAccelerator(
     LocalInferenceAccelerator accelerator,
-  ) => MobileClipLiteRtService._internal(accelerator: accelerator);
+  ) {
+    final prevAccelerator = _instance._accelerator;
+    _instance._accelerator = accelerator;
+    if (_instance._session != null && prevAccelerator != accelerator) {
+      _instance._session!.close();
+      _instance._session = null;
+      _instance._providerLabel = null;
+    }
+    return _instance;
+  }
 
   static const int inputImageSize = 256;
   static const int tokenLength = 77;
@@ -27,7 +34,7 @@ class MobileClipLiteRtService {
   static const String _modelAssetPath =
       'assets/mobileclip2/s2/mobileclip_s2_datacompdr_last.tflite';
 
-  final LocalInferenceAccelerator _accelerator;
+  LocalInferenceAccelerator _accelerator = LocalInferenceAccelerator.gpu;
   final LiteRtInferenceService _runtime = const LiteRtInferenceService();
 
   LiteRtSession? _session;

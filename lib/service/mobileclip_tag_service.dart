@@ -1,9 +1,12 @@
 /// MobileCLIP 标签服务，把图像向量映射到可读的视觉标签。
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../data/tag_taxonomy_v2.dart';
 import '../utils/tag_sanitizer.dart';
@@ -50,6 +53,8 @@ class MobileClipTagService {
   Future<void>? _warmUpFuture;
   int _workflowLeaseCount = 0;
   Timer? _idleDisposeTimer;
+  static const String _prototypeCacheFilename = 'tag_prototype_cache.json';
+  String? _prototypeCacheKey;
 
   Future<void> beginWorkflowSession() async {
     _workflowLeaseCount++;
@@ -115,9 +120,14 @@ class MobileClipTagService {
       return;
     }
     _warmUpFuture = Future<void>(() async {
+      _prototypeCacheKey = _computePrototypeCacheKey();
+      if (await _tryLoadPrototypesFromCache()) {
+        _warmedUp = true;
+        return;
+      }
+
       await _semanticService.warmUp();
       for (final definition in memoriaMasterTagDefinitions) {
-        debugPrint('🧠 正在预热 Master 标签: ${definition.label}'); // 加上这行
         final promptVectors = await _embedPromptsSequentially(
           definition.prompts,
         );
@@ -132,6 +142,7 @@ class MobileClipTagService {
         _coarsePrototypeById[coarse.id] = _meanAndNormalize(promptVectors);
         await Future<void>.delayed(Duration.zero);
       }
+      unawaited(_savePrototypesToCache());
       _warmedUp = true;
     });
     try {
@@ -139,6 +150,97 @@ class MobileClipTagService {
     } finally {
       _warmUpFuture = null;
     }
+  }
+
+  /// 生成标签定义的缓存键——拼接所有标签+prompts 然后做 base64
+  String _computePrototypeCacheKey() {
+    final buffer = StringBuffer();
+    for (final def in memoriaMasterTagDefinitions) {
+      buffer.write(def.label);
+      for (final p in def.prompts) {
+        buffer.write(p);
+      }
+    }
+    for (final def in memoriaCoarseTagDefinitions) {
+      buffer.write(def.id);
+      buffer.write(def.label);
+      for (final p in def.prompts) {
+        buffer.write(p);
+      }
+    }
+    final bytes = utf8.encode(buffer.toString());
+    return base64Encode(bytes);
+  }
+
+  /// 从本地缓存加载原型向量，返回 true 表示加载成功
+  Future<bool> _tryLoadPrototypesFromCache() async {
+    try {
+      final file = await _prototypeCacheFile();
+      if (!await file.exists()) {
+        return false;
+      }
+      final json =
+          jsonDecode(await file.readAsString()) as Map<String, Object?>;
+      if ((json['key'] as String?) != _prototypeCacheKey) {
+        return false;
+      }
+      final fineRaw = json['fine'] as List<Object?>;
+      for (final entry in fineRaw) {
+        final pair = entry as List<Object?>;
+        final label = pair[0] as String;
+        final vec = (pair[1] as List<Object?>)
+            .cast<num>()
+            .map((n) => n.toDouble())
+            .toList();
+        _prototypeByLabel[label] = vec;
+      }
+      final coarseRaw = json['coarse'] as List<Object?>;
+      for (final entry in coarseRaw) {
+        final pair = entry as List<Object?>;
+        final id = pair[0] as String;
+        final vec = (pair[1] as List<Object?>)
+            .cast<num>()
+            .map((n) => n.toDouble())
+            .toList();
+        _coarsePrototypeById[id] = vec;
+      }
+      debugPrint(
+        '✅ 从缓存加载标签原型向量成功 fine=${_prototypeByLabel.length} coarse=${_coarsePrototypeById.length}',
+      );
+      return true;
+    } catch (e) {
+      debugPrint('⚠️ 标签原型缓存加载失败: $e');
+      return false;
+    }
+  }
+
+  /// 将原型向量保存到本地缓存
+  Future<void> _savePrototypesToCache() async {
+    try {
+      final fineList = _prototypeByLabel.entries
+          .map((e) => <Object?>[e.key, e.value])
+          .toList();
+      final coarseList = _coarsePrototypeById.entries
+          .map((e) => <Object?>[e.key, e.value])
+          .toList();
+      final json = <String, Object?>{
+        'key': _prototypeCacheKey,
+        'fine': fineList,
+        'coarse': coarseList,
+      };
+      final file = await _prototypeCacheFile();
+      await file.writeAsString(jsonEncode(json), flush: true);
+      debugPrint(
+        '✅ 已缓存标签原型向量 fine=${fineList.length} coarse=${coarseList.length}',
+      );
+    } catch (e) {
+      debugPrint('⚠️ 标签原型缓存写入失败: $e');
+    }
+  }
+
+  Future<File> _prototypeCacheFile() async {
+    final dir = await getTemporaryDirectory();
+    return File('${dir.path}/$_prototypeCacheFilename');
   }
 
   Future<void> _runScheduledWarmUp({required Duration initialDelay}) async {

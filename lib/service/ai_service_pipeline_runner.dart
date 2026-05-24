@@ -227,10 +227,7 @@ class _AiPipelineRunner {
           await Future<void>.delayed(const Duration(milliseconds: 60));
         }
 
-        activeWorkerCount = math.min(
-          math.max(1, maxWorkerCount ~/ 2),
-          maxWorkerCount,
-        );
+        activeWorkerCount = 1;
 
         _progressNotifier.value = AIAnalysisProgress.running(
           total: targetTotal,
@@ -398,10 +395,14 @@ class _AiPipelineRunner {
         }
       }
 
+      final sharedFaceDetector = appAiSettings.faceAnalysisEnabled
+          ? FaceDetector(options: faceOptions)
+          : null;
+      final faceDetectorLock = _SimpleMutex();
+
       final workers = List<Future<void>>.generate(maxWorkerCount, (
         workerIndex,
       ) async {
-        final faceDetector = FaceDetector(options: faceOptions);
         try {
           while (true) {
             final shouldContinue = await _waitIfPaused();
@@ -458,12 +459,13 @@ class _AiPipelineRunner {
                     photoCaptionService: photoCaptionService,
                     facePipelineService: facePipelineService,
                     ocrService: ocrService,
-                    faceDetector: faceDetector,
+                    faceDetector: sharedFaceDetector,
                     junkPhotoFilterService: _junkPhotoFilterService,
                     skipJunkFilter: skipJunkFilter,
                     stopRequested: _stopRequested,
                     ocrEnabled: appAiSettings.ocrEnabled,
                     faceAnalysisEnabled: appAiSettings.faceAnalysisEnabled,
+                    faceDetectorLock: faceDetectorLock,
                   ),
                 ),
                 selectedBackend: selectedBackend,
@@ -529,7 +531,7 @@ class _AiPipelineRunner {
             }
           }
         } finally {
-          await faceDetector.close();
+          // FaceDetector is shared; closed after all workers complete
         }
       });
 
@@ -538,6 +540,7 @@ class _AiPipelineRunner {
         tuneActiveWorkerCount(),
         ...workers,
       ]);
+      await sharedFaceDetector?.close();
 
       publishJunkReportIfNeeded();
 

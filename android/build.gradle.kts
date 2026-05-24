@@ -23,7 +23,7 @@ subprojects {
                 if (namespace == null) {
                     namespace = project.group.toString()
                 }
-                compileSdkVersion(34)
+                compileSdkVersion(36)
                 compileOptions.sourceCompatibility = JavaVersion.VERSION_17
                 compileOptions.targetCompatibility = JavaVersion.VERSION_17
             }
@@ -40,7 +40,6 @@ subprojects {
 subprojects {
     configurations.all {
         resolutionStrategy {
-            force("androidx.browser:browser:1.8.0")
             force("androidx.activity:activity:1.9.3")
             force("androidx.activity:activity-ktx:1.9.3")
             force("androidx.core:core:1.13.1")

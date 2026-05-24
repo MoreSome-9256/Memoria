@@ -3,14 +3,14 @@
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:isar/isar.dart';
 
 import '../models/entity/face_entity.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/face_cluster_models.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/face_embedding_index_repository.dart';
 import '../utils/tag_sanitizer.dart';
-import 'photo_service.dart';
 
 typedef FaceEntitiesLoader = Future<List<FaceEntity>> Function();
 typedef PhotoEntitiesLoader = Future<List<PhotoEntity>> Function();
@@ -335,7 +335,7 @@ class FaceClusterService {
     if (_facesLoader != null) {
       return _facesLoader();
     }
-    return PhotoService().isar.collection<FaceEntity>().where().findAll();
+    return ObjectBoxService().store.box<FaceEntity>().getAll();
   }
 
   Future<List<PhotoEntity>> _loadPhotosForFaces(List<FaceEntity> faces) async {
@@ -352,11 +352,8 @@ class FaceClusterService {
     if (photoIds.isEmpty) {
       return const <PhotoEntity>[];
     }
-    return PhotoService().isar
-        .collection<PhotoEntity>()
-        .filter()
-        .anyOf(photoIds, (query, photoId) => query.idEqualTo(photoId))
-        .findAll();
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    return photoBox.getMany(photoIds).whereType<PhotoEntity>().toList(growable: false);
   }
 
   bool _isAttachCandidateFace(
@@ -845,8 +842,9 @@ class FaceClusterService {
       face.updatedAt = DateTime.now().millisecondsSinceEpoch;
     }
 
-    await PhotoService().isar.writeTxn(() async {
-      await PhotoService().isar.collection<FaceEntity>().putAll(allFaces);
+    final store = ObjectBoxService().store;
+    store.runInTransaction(TxMode.write, () {
+      store.box<FaceEntity>().putMany(allFaces);
     });
   }
 

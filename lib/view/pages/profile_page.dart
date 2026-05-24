@@ -9,10 +9,15 @@ import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/travel_memory_detector.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
+import 'package:photo_manager/photo_manager.dart';
+
+import 'package:photo_album/service/album_selection_preference_service.dart';
 
 import 'face_cluster_debug_page.dart';
+import 'junk_photo_trash_page.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
+import '../../service/video_cache_service.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -24,8 +29,10 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   final _auth = const CognitoAuthService();
   final _backendPreferenceService = MobileClipBackendPreferenceService();
+  final _albumSelectionPreferenceService = AlbumSelectionPreferenceService();
 
   late bool _autoResumeEnabled;
+  String _albumSelectionSummary = '使用全部相册';
 
   Future<AuthUser?> _loadUser() async {
     try {
@@ -56,6 +63,260 @@ class _ProfilePageState extends State<ProfilePage> {
       MaterialPageRoute<void>(builder: (_) => const WelcomePage()),
       (_) => false,
     );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshAlbumSelectionSummary();
+  }
+
+  Future<void> _showScanPreferences() async {
+    final prefs = await _albumSelectionPreferenceService.loadScanPreferences();
+    int? selectedYear = prefs['minYear'];
+    List<int>? selectedPair = prefs['minWidth'] != null && prefs['minHeight'] != null
+      ? [prefs['minWidth']!, prefs['minHeight']!]
+      : null;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(builder: (context, setSheetState) {
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('扫描筛选', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  const Text('可选：按时间范围和最小分辨率过滤。默认不开启。'),
+                  const SizedBox(height: 12),
+                  Text('最早年份（含）', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  DropdownButton<int?>(
+                    value: selectedYear,
+                    items: <int?>[null, 2000, 2010, 2015, 2020, 2022]
+                        .map((y) => DropdownMenuItem<int?>(value: y, child: Text(y == null ? '不限制' : y.toString())))
+                        .toList(growable: false),
+                    onChanged: (v) => setSheetState(() => selectedYear = v),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('最小分辨率（宽 x 高）', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  DropdownButton<List<int>?>(
+                    value: selectedPair,
+                    items: <List<int>?>[null, [640, 480], [1280, 720], [1920, 1080]]
+                        .map((pair) {
+                      final label = pair == null ? '不限制' : '${pair[0]} x ${pair[1]}';
+                      return DropdownMenuItem<List<int>?>(value: pair, child: Text(label));
+                    }).toList(growable: false),
+                    onChanged: (pair) => setSheetState(() {
+                      selectedPair = pair;
+                    }),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(children: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+                    const Spacer(),
+                    FilledButton(onPressed: () async {
+                      await _albumSelectionPreferenceService.saveScanPreferences(
+                          minYear: selectedYear,
+                          minWidth: selectedPair?.first,
+                          minHeight: selectedPair?.last,
+                        );
+                      if (!mounted) return;
+                      Navigator.pop(context);
+                    }, child: const Text('保存')),
+                  ])
+                ],
+              ),
+            ),
+          );
+        });
+      },
+    );
+  }
+
+  Future<void> _refreshAlbumSelectionSummary() async {
+    final snapshot = await _albumSelectionPreferenceService.loadSelection();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (snapshot.useAllAlbums) {
+        _albumSelectionSummary = '使用全部相册';
+      } else {
+        _albumSelectionSummary = '已选择 ${snapshot.selectedAlbumIds.length} 个相册';
+      }
+    });
+  }
+
+  Future<void> _showAlbumSelectionSettings() async {
+    final permission = await PhotoManager.requestPermissionExtend();
+    if (!permission.isAuth && !permission.hasAccess) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('没有相册权限，无法选择相册范围。'),
+        ),
+      );
+      return;
+    }
+
+    final filter = FilterOptionGroup(
+      orders: [OrderOption(type: OrderOptionType.createDate, asc: false)],
+    );
+    final albums = await PhotoManager.getAssetPathList(
+      type: RequestType.image,
+      onlyAll: false,
+      filterOption: filter,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (albums.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('未检测到可用相册。'),
+        ),
+      );
+      return;
+    }
+
+    final albumSummaries = <_AlbumSelectionItem>[];
+    for (final album in albums) {
+      // 🌟 排除本应用的内部输出目录，不让用户扫描它们
+      if (album.name.contains('StoryExports') ||
+          album.name.contains('故事导出') ||
+          album.id.contains('StoryExports')) {
+        debugPrint('📁 已过滤输出目录: ${album.name}');
+        continue;
+      }
+      albumSummaries.add(
+        _AlbumSelectionItem(
+          id: album.id,
+          name: album.name,
+          album: album,
+          assetCount: await album.assetCountAsync,
+        ),
+      );
+    }
+
+    final snapshot = await _albumSelectionPreferenceService.loadSelection();
+    var useAllAlbums = snapshot.useAllAlbums;
+    final selectedIds = snapshot.selectedAlbumIds.toSet();
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '扫描相册范围',
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      '只扫描你选定的相册。开启“全部相册”将恢复默认扫描策略。',
+                    ),
+                    const SizedBox(height: 16),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('使用全部相册'),
+                      subtitle: const Text('关闭后仅扫描勾选的相册'),
+                      value: useAllAlbums,
+                      onChanged: (value) {
+                        setSheetState(() {
+                          useAllAlbums = value;
+                        });
+                      },
+                    ),
+                    const Divider(height: 24),
+                    Flexible(
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: albumSummaries.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          final album = albumSummaries[index];
+                          final isSelected = selectedIds.contains(album.id);
+                          return CheckboxListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(album.name),
+                            subtitle: Text('${album.assetCount} 张'),
+                            value: useAllAlbums ? true : isSelected,
+                            onChanged: useAllAlbums
+                                ? null
+                                : (checked) {
+                                    setSheetState(() {
+                                      if (checked == true) {
+                                        selectedIds.add(album.id);
+                                      } else {
+                                        selectedIds.remove(album.id);
+                                      }
+                                    });
+                                  },
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('取消'),
+                        ),
+                        const Spacer(),
+                        FilledButton(
+                          onPressed: () async {
+                            await _albumSelectionPreferenceService.saveSelection(
+                              useAllAlbums: useAllAlbums,
+                              selectedAlbumIds:
+                                  selectedIds.toList(growable: false),
+                            );
+                            if (!context.mounted) {
+                              return;
+                            }
+                            Navigator.pop(context);
+                          },
+                          child: const Text('保存'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    await _refreshAlbumSelectionSummary();
   }
 
   Future<void> _showModelTypeSettings() async {
@@ -202,6 +463,185 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
       ),
     );
+  }
+
+  /// 显示缓存管理界面
+  Future<void> _showCacheManagement() async {
+    // 获取缓存统计信息
+    final cacheStats = await VideoCacheService.instance.getCacheStats();
+    
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('📁 视频缓存管理'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('缓存统计信息:'),
+                const SizedBox(height: 12),
+                _buildStatItem('缓存文件数量', '${cacheStats['cacheFileCount']} 个'),
+                _buildStatItem('缓存总大小', cacheStats['cacheSizeFormatted']),
+                _buildStatItem('导出文件数量', '${cacheStats['exportFileCount']} 个'),
+                _buildStatItem('导出总大小', cacheStats['exportSizeFormatted']),
+                _buildStatItem('内存缓存数量', '${cacheStats['memoryCacheCount']} 个'),
+                const SizedBox(height: 16),
+                const Text(
+                  '注意:',
+                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange),
+                ),
+                const Text(
+                  '• 清理缓存会删除所有缓存的视频文件\n'
+                  '• 清理导出文件会删除所有导出的视频\n'
+                  '• 这些操作不可恢复，请谨慎操作',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            OutlinedButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _clearCacheOnly();
+              },
+              child: const Text('仅清理缓存'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _clearAllCacheAndExports();
+              },
+              child: const Text('清理全部'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildStatItem(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 14)),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  /// 仅清理缓存文件
+  Future<void> _clearCacheOnly() async {
+    final confirmed = await _showConfirmationDialog(
+      '清理缓存',
+      '确定要清理所有缓存文件吗？\n\n'
+      '这将删除所有缓存的视频文件，但不会影响已导出的视频。\n'
+      '下次导出相同内容时需要重新生成视频。',
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+      await VideoCacheService.instance.clearAllCache();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ 缓存已清理'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ 清理失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// 清理所有缓存和导出文件
+  Future<void> _clearAllCacheAndExports() async {
+    final confirmed = await _showConfirmationDialog(
+      '清理全部',
+      '确定要清理所有缓存和导出文件吗？\n\n'
+      '这将删除：\n'
+      '• 所有缓存的视频文件\n'
+      '• 所有已导出的视频文件\n\n'
+      '这个操作不可恢复！',
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+      // 清理缓存
+      await VideoCacheService.instance.clearAllCache();
+      
+      // 清理导出目录
+      final exportsDir = await VideoCacheService.instance.getExportsDirectory();
+      if (await exportsDir.exists()) {
+        await exportsDir.delete(recursive: true);
+        // 重新创建空目录
+        await exportsDir.create(recursive: true);
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ 所有文件已清理'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ 清理失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// 显示确认对话框
+  Future<bool> _showConfirmationDialog(String title, String message) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('确定清理'),
+            ),
+          ],
+        );
+      },
+    );
+    
+    return result ?? false;
   }
 
   Future<void> _showTravelMemoryDebug() async {
@@ -387,6 +827,33 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           _buildSettingsTile(
             context,
+            Icons.folder_copy_outlined,
+            '扫描相册范围',
+            _albumSelectionSummary,
+            onTap: _showAlbumSelectionSettings,
+          ),
+          _buildSettingsTile(
+            context,
+            Icons.filter_alt_outlined,
+            '扫描时间与分辨率',
+            '按时间范围和最小分辨率过滤扫描（可选）',
+            onTap: _showScanPreferences,
+          ),
+          _buildSettingsTile(
+            context,
+            Icons.recycling,
+            '低价值照片回收站',
+            '查看已标记的低质量图片，并恢复为普通照片',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const JunkPhotoTrashPage(),
+                ),
+              );
+            },
+          ),
+          _buildSettingsTile(
+            context,
             Icons.developer_mode,
             "开发者设置",
             "谨慎调整内部设置，除非你很清楚自己在做什么！",
@@ -524,6 +991,13 @@ class _ProfilePageState extends State<ProfilePage> {
           //     );
           //   },
           // ),
+          _buildSettingsTile(
+            context,
+            Icons.storage,
+            '视频缓存管理',
+            '清理导出的视频和缓存文件',
+            onTap: _showCacheManagement,
+          ),
           _buildSettingsTile(context, Icons.info_outline, '关于', '版本 1.0.0'),
           const Divider(height: 32),
           ListTile(
@@ -556,4 +1030,18 @@ class _ProfilePageState extends State<ProfilePage> {
       onTap: onTap,
     );
   }
+}
+
+class _AlbumSelectionItem {
+  const _AlbumSelectionItem({
+    required this.id,
+    required this.name,
+    required this.album,
+    required this.assetCount,
+  });
+
+  final String id;
+  final String name;
+  final AssetPathEntity album;
+  final int assetCount;
 }

@@ -29,6 +29,11 @@ if (-not $DeviceId) {
 
 Write-Host "Using profile: $Profile"
 Write-Host "Using device : $DeviceId"
-
+# Use the Flutter China mirror for engine Maven artifacts. Some university
+# mirrors can lag new engine hashes and fail resolving flutter_embedding_debug.
+$env:FLUTTER_STORAGE_BASE_URL = "https://storage.flutter-io.cn"
+$env:PUB_HOSTED_URL="https://pub.flutter-io.cn"
+flutter pub get
+dart run build_runner build
 # launch the app on the device
 flutter run -d $DeviceId --dart-define-from-file=$profileFile

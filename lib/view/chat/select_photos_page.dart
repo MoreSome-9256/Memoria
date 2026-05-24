@@ -6,7 +6,7 @@ import '../../models/ai_theme.dart';
 import '../../utils/tag_sanitizer.dart';
 import '../../utils/ocr_policy.dart';
 import '../widgets/path_image.dart';
-import '../pages/config_page.dart'; // 请确认这个路径匹配你的项目目录结构
+import '../pages/story_config_page.dart'; // 请确认这个路径匹配你的项目目录结构
 
 class SelectPhotosPage extends StatefulWidget {
   final List<PhotoEntity> photos;

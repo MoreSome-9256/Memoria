@@ -1,14 +1,15 @@
-import 'package:isar/isar.dart';
+import 'dart:typed_data';
+
+import 'package:objectbox/objectbox.dart';
 import 'photo_entity.dart';
 import '../vo/photo.dart';
 import '../../utils/ocr_policy.dart';
 
-part 'story_entity.g.dart';
-
 /// 故事实体 - 存储用户生成的故事文章
-@Collection()
+@Entity()
 class StoryEntity {
-  Id id = Isar.autoIncrement;
+  @Id()
+  int id = 0;
 
   // 📝 故事基本信息
   late String title; // 故事主题/标题
@@ -20,12 +21,22 @@ class StoryEntity {
   String? targetPlatform;
 
   // 🔗 关联信息
+  @Index()
   late int eventId; // 来源事件 ID
   List<int> photoIds = []; // 选中的照片 ID 列表（按时间顺序）
 
   // 🎨 元数据
   int photoCount = 0; // 照片数量（冗余字段）
   bool isLlmGenerated = true; // 是否由 LLM 生成
+  bool isManuallySaved = false; // 是否用户手动保存（false表示自动保存/草稿）
+  String? cachedVideoPath; // 已生成视频的文件路径，避免重复渲染
+  String? cachedVideoKey; // 视频缓存指纹，用于 VideoCacheService 查找
+  String? customMusicPath; // 自定义音乐文件路径（备用，不依赖其持久性）
+  @Property(type: PropertyType.byteVector)
+  Uint8List? customMusicBytes; // 音乐文件二进制（zstd 压缩后），固化在数据库避免被清理
+  String? originalMusicHash; // 压缩前原始二进制的 SHA256，用于缓存文件去重
+  String? dynamicBeatDataJson; // 音乐节拍数据（JSON）
+  String? videoParamsJson; // 视频渲染参数（JSON，含文字样式、特效等）
 
   // 📅 格式化创建时间
   String get createdAtText {
@@ -40,6 +51,7 @@ class StoryEntity {
     required String content,
     required int eventId,
     required List<int> photoIds,
+    bool isManuallySaved = false,
   }) {
     final now = DateTime.now().millisecondsSinceEpoch;
     return StoryEntity()
@@ -51,7 +63,8 @@ class StoryEntity {
       ..eventId = eventId
       ..photoIds = photoIds
       ..photoCount = photoIds.length
-      ..isLlmGenerated = true;
+      ..isLlmGenerated = true
+      ..isManuallySaved = isManuallySaved;
   }
 
   // 🔄 解析 Markdown 为 StorySection 列表（用于 UI 展示）

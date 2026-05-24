@@ -1,14 +1,13 @@
-import 'package:isar/isar.dart';
+import 'package:objectbox/objectbox.dart';
 
 /// 推荐生成记录的 ObjectBox 实体，保存预设类型和生成元数据。
 
-part 'create_recommendation_entity.g.dart';
-
-@Collection()
+@Entity()
 class CreateRecommendationEntity {
-  Id id = Isar.autoIncrement;
+  @Id()
+  int id = 0;
 
-  @Index(unique: true, replace: true)
+  @Unique(onConflict: ConflictStrategy.replace)
   late String recommendationKey;
 
   @Index()

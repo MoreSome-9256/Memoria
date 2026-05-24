@@ -2,30 +2,24 @@
 
 import 'dart:convert';
 
-import 'package:isar/isar.dart';
-
 import '../models/entity/digital_album_book_entity.dart';
 import '../models/vo/album_book_models.dart';
-import 'photo_service.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 
 class DigitalAlbumBookService {
   const DigitalAlbumBookService();
 
-  Isar get _isar => PhotoService().isar;
+  Box<DigitalAlbumBookEntity> get _box =>
+      ObjectBoxService().store.box<DigitalAlbumBookEntity>();
 
   Future<AlbumBookDocument?> loadByStoryId(int storyId) async {
-    final entity = await _isar
-        .collection<DigitalAlbumBookEntity>()
-        .filter()
-        .storyIdEqualTo(storyId)
-        .findFirst();
-    if (entity == null || entity.contentJson.trim().isEmpty) {
-      return null;
-    }
+    final q = _box.query(DigitalAlbumBookEntity_.storyId.equals(storyId)).build();
+    final entity = q.findFirst();
+    q.close();
+    if (entity == null || entity.contentJson.trim().isEmpty) return null;
     final decoded = jsonDecode(entity.contentJson);
-    if (decoded is! Map<String, dynamic>) {
-      return null;
-    }
+    if (decoded is! Map<String, dynamic>) return null;
     return AlbumBookDocument.fromJson(decoded);
   }
 
@@ -34,11 +28,9 @@ class DigitalAlbumBookService {
     required AlbumBookDocument document,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final existing = await _isar
-        .collection<DigitalAlbumBookEntity>()
-        .filter()
-        .storyIdEqualTo(storyId)
-        .findFirst();
+    final q = _box.query(DigitalAlbumBookEntity_.storyId.equals(storyId)).build();
+    final existing = q.findFirst();
+    q.close();
 
     final entity = existing ?? DigitalAlbumBookEntity();
     entity.storyId = storyId;
@@ -53,22 +45,16 @@ class DigitalAlbumBookService {
     entity.updatedAt = now;
     entity.createdAt = existing?.createdAt ?? now;
 
-    await _isar.writeTxn(() async {
-      await _isar.collection<DigitalAlbumBookEntity>().put(entity);
-    });
+    final store = ObjectBoxService().store;
+    store.runInTransaction(TxMode.write, () => _box.put(entity));
   }
 
   Future<void> deleteByStoryId(int storyId) async {
-    final existing = await _isar
-        .collection<DigitalAlbumBookEntity>()
-        .filter()
-        .storyIdEqualTo(storyId)
-        .findFirst();
-    if (existing == null) {
-      return;
-    }
-    await _isar.writeTxn(() async {
-      await _isar.collection<DigitalAlbumBookEntity>().delete(existing.id);
-    });
+    final q = _box.query(DigitalAlbumBookEntity_.storyId.equals(storyId)).build();
+    final existing = q.findFirst();
+    q.close();
+    if (existing == null) return;
+    final store = ObjectBoxService().store;
+    store.runInTransaction(TxMode.write, () => _box.remove(existing.id));
   }
 }

@@ -11,7 +11,6 @@ extension AIServicePhotoProcessing on AIService {
 
   Future<_PhotoProcessResult> _applyPhotoProcessResult(
     _PhotoProcessResult result, {
-    required Isar isar,
     required MobileClipBackend selectedBackend,
   }) async {
     final writeRequest = result.persistenceRequest;
@@ -27,7 +26,6 @@ extension AIServicePhotoProcessing on AIService {
           writeRequest.faceCount,
           writeRequest.smileProb,
           writeRequest.joyScore,
-          isar,
           selectedBackend,
           skipVectorIndexWrite: writeRequest.skipVectorIndexWrite,
         );
@@ -49,7 +47,7 @@ extension AIServicePhotoProcessing on AIService {
   }
 
   Future<_AiPersistenceProfile> _markAsAnalyzed(
-    Id id,
+    int id,
     List<String> tags,
     List<double> imageEmbedding,
     String aiCaption,
@@ -58,13 +56,14 @@ extension AIServicePhotoProcessing on AIService {
     int faceCount,
     double smileProb,
     double joyScore,
-    Isar isar,
     MobileClipBackend selectedBackend, {
     bool skipVectorIndexWrite = false,
   }) async {
     final isarWriteWatch = Stopwatch()..start();
-    await isar.writeTxn(() async {
-      final p = await isar.collection<PhotoEntity>().get(id);
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
+    store.runInTransaction(TxMode.write, () {
+      final p = photoBox.get(id);
       if (p != null) {
         p.aiTags = tags;
         p.isAiAnalyzed = true;
@@ -75,7 +74,7 @@ extension AIServicePhotoProcessing on AIService {
         p.faceCount = faceCount;
         p.smileProb = smileProb;
         p.joyScore = joyScore;
-        await isar.collection<PhotoEntity>().put(p);
+        photoBox.put(p);
       }
     });
     isarWriteWatch.stop();
@@ -103,14 +102,11 @@ extension AIServicePhotoProcessing on AIService {
   }
 
   Future<Map<String, int>> getAnalysisProgress() async {
-    final isar = PhotoService().isar;
-
-    final total = await isar.collection<PhotoEntity>().count();
-    final analyzed = await isar
-        .collection<PhotoEntity>()
-        .filter()
-        .isAiAnalyzedEqualTo(true)
-        .count();
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final total = photoBox.count();
+    final q = photoBox.query(PhotoEntity_.isAiAnalyzed.equals(true)).build();
+    final analyzed = q.count();
+    q.close();
 
     return {'total': total, 'analyzed': analyzed, 'pending': total - analyzed};
   }

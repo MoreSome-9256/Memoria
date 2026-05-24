@@ -37,7 +37,6 @@ class _PreparedAnalysisInput {
 class _AiPhotoProcessingRequest {
   const _AiPhotoProcessingRequest({
     required this.photo,
-    required this.isar,
     required this.selectedBackend,
     required this.mobileClipEmbeddingService,
     required this.mobileClipTagService,
@@ -51,7 +50,6 @@ class _AiPhotoProcessingRequest {
   });
 
   final PhotoEntity photo;
-  final Isar isar;
   final MobileClipBackend selectedBackend;
   final MobileClipEmbeddingService mobileClipEmbeddingService;
   final MobileClipTagService mobileClipTagService;
@@ -78,7 +76,7 @@ class _AiPhotoWriteRequest {
     required this.skipVectorIndexWrite,
   });
 
-  final Id photoId;
+  final int photoId;
   final List<String> tags;
   final List<double> imageEmbedding;
   final String aiCaption;
@@ -158,7 +156,7 @@ class _AsyncCaptionTask {
     required this.faceCount,
   });
 
-  final Id photoId;
+  final int photoId;
   final File imageFile;
   final bool deleteImageFileAfterUse;
   final PhotoCaptionService captionService;

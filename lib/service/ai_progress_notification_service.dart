@@ -44,7 +44,7 @@ class AIProgressNotificationService {
     );
 
     await _plugin.initialize(
-      settings,
+      settings: settings,
       onDidReceiveNotificationResponse: _onForegroundResponse,
       onDidReceiveBackgroundNotificationResponse: _onBackgroundResponse,
     );
@@ -134,7 +134,7 @@ class AIProgressNotificationService {
 
   Future<void> clearProgressNotificationSurfaces() async {
     await initialize();
-    await _plugin.cancel(_notificationId);
+    await _plugin.cancel(id: _notificationId);
   }
 
   Future<void> syncProgress({
@@ -290,7 +290,7 @@ class AIProgressNotificationService {
     required String body,
   }) async {
     if (!isVisible) {
-      await _plugin.cancel(_notificationId);
+      await _plugin.cancel(id: _notificationId);
       return;
     }
 
@@ -329,10 +329,13 @@ class AIProgressNotificationService {
     );
 
     await _plugin.show(
-      _notificationId,
-      title,
-      body,
-      NotificationDetails(android: androidDetails, iOS: iosDetails),
+      id: _notificationId,
+      title: title,
+      body: body,
+      notificationDetails: NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      ),
       payload: navigationAlbum,
     );
   }

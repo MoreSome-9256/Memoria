@@ -1,14 +1,13 @@
 /// 数字相册书的 ObjectBox 实体，保存版式、内容和设计相关配置。
 
-import 'package:isar/isar.dart';
+import 'package:objectbox/objectbox.dart';
 
-part 'digital_album_book_entity.g.dart';
-
-@Collection()
+@Entity()
 class DigitalAlbumBookEntity {
-  Id id = Isar.autoIncrement;
+  @Id()
+  int id = 0;
 
-  @Index(unique: true, replace: true)
+  @Unique(onConflict: ConflictStrategy.replace)
   late int storyId;
 
   late String title;

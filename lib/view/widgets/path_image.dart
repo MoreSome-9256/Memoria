@@ -84,9 +84,6 @@ class _PathImageState extends State<PathImage> {
         }
 
         final file = _resolveLocalFile(uri);
-        if (!file.existsSync()) {
-          return _fallback();
-        }
         return Image.file(
           file,
           fit: widget.fit,

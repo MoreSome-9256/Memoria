@@ -49,18 +49,15 @@ app.*.map.json
 CLAUDE.md
 
 # Ignore generated files
-*.g.dart
-*.freezed.dart
-*.config.dart
-!lib/objectbox.g.dart
+**.g.dart
+**.freezed.dart
+**.config.dart
 !lib/objectbox-model.json
-!lib/models/entity/*.g.dart
 
 # OpenCode
 /doc/
 AGENTS.md
 opencode.json
-CLAUDE.md
 
 # Test and local run outputs
 /imgs/

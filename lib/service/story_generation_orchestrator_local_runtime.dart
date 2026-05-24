@@ -143,6 +143,7 @@ extension _StoryGenerationOrchestratorLocalRuntime
     required List<PhotoEntity> photos,
     required List<_StoryPhotoMaterial> materials,
     required Map<int, _CaptionResult> localCaptionMap,
+    Map<String, dynamic>? musicWorkflowAnalysis,
   }) async {
     final payload = <Map<String, dynamic>>[
       for (var index = 0; index < materials.length; index++)
@@ -154,6 +155,7 @@ extension _StoryGenerationOrchestratorLocalRuntime
     final prompt = _buildDeepSeekStoryPrompt(
       request: request,
       photoPayload: payload,
+      musicWorkflowAnalysis: musicWorkflowAnalysis,
     );
 
     final response = await LLMService().completeText(
@@ -202,6 +204,7 @@ extension _StoryGenerationOrchestratorLocalRuntime
   String _buildDeepSeekStoryPrompt({
     required StoryGenerationRequest request,
     required List<Map<String, dynamic>> photoPayload,
+    Map<String, dynamic>? musicWorkflowAnalysis,
   }) {
     final semanticSearchQuery = request.semanticSearchQuery?.trim();
     final orderingHint = request.preserveSelectionOrder
@@ -223,6 +226,23 @@ extension _StoryGenerationOrchestratorLocalRuntime
               '\nTemplate preview: ${selectedTemplate.preview}'
               '\nTemplate instruction: ${selectedTemplate.instruction}'
               '${selectedTemplateExample.isEmpty ? '' : '\nTemplate example for style reference only:\n$selectedTemplateExample'}';
+    final musicWorkflow = musicWorkflowAnalysis?['llm_workflow'];
+    final musicPromptSummary = musicWorkflow is Map
+        ? musicWorkflow['prompt_summary']?.toString().trim()
+        : null;
+    final musicEditingHints =
+        musicWorkflow is Map && musicWorkflow['editing_hints'] is List
+        ? (musicWorkflow['editing_hints'] as List)
+              .map((item) => item.toString().trim())
+              .where((item) => item.isNotEmpty)
+              .toList(growable: false)
+        : const <String>[];
+    final musicHint = musicPromptSummary == null || musicPromptSummary.isEmpty
+        ? ''
+        : '\n\n端侧音乐分析结果（已在本地完成，不来自云端）：'
+              '\n- $musicPromptSummary'
+              '${musicEditingHints.isEmpty ? '' : '\n- 剪辑提示：${musicEditingHints.join('；')}'}'
+              '\n请把这些音乐节奏与情绪变化用于 story、sections 和 highlights：快节奏处更适合短句与卡点，舒缓段更适合留白和情绪铺垫，但仍然必须以图片事实为准。';
 
     return '''
 请基于下面这组$orderingHint的图片素材，生成一份适合相册故事页展示的结构化 JSON。
@@ -240,7 +260,7 @@ extension _StoryGenerationOrchestratorLocalRuntime
 10. 如果 preferred_caption_source 是 "local_vlm"，不要让 tags 或 existing_caption 覆盖这条本地视觉描述。
 11. existing_caption 只是本地 caption 不可用时的回退线索。
 12. tags、ocr_tags 和 ocr_summary 都只是辅助线索，不能替代图片主体描述。
-$semanticHint$templateHint
+$semanticHint$templateHint$musicHint
 
 输出 JSON 格式：
 {

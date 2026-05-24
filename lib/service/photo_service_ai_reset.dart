@@ -3,13 +3,35 @@
 part of 'photo_service.dart';
 
 extension PhotoServiceAiReset on PhotoService {
-  Future<int> requeueLatestPhotosForAi({int? maxPhotos}) async {
-    final query = _isar.collection<PhotoEntity>().where().sortByTimestampDesc();
-    final photos = maxPhotos == null
-        ? await query.findAll()
-        : await query.limit(maxPhotos).findAll();
+  Future<List<PhotoEntity>> loadJunkCandidatePhotos() async {
+    final query = _photoBox
+        .query(PhotoEntity_.isAiAnalyzed.equals(true))
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    final photos = query.find();
+    query.close();
+    final junkPhotos = photos
+        .where(
+          (photo) =>
+              photo.aiTags?.contains(JunkPhotoFilterService.junkCandidateTag) ??
+              false,
+        )
+        .toList(growable: false);
+    return reconcileAccessiblePhotos(junkPhotos);
+  }
 
-    if (photos.isEmpty) {
+  Future<int> requeueLatestPhotosForAi({int? maxPhotos}) async {
+    final query = _photoBox
+        .query()
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    final photos = query.find();
+    query.close();
+    final scopedPhotos = maxPhotos == null
+        ? photos
+        : photos.take(maxPhotos).toList(growable: false);
+
+    if (scopedPhotos.isEmpty) {
       return 0;
     }
 
@@ -23,7 +45,7 @@ extension PhotoServiceAiReset on PhotoService {
     var updatedCount = 0;
     final updatedPhotos = <PhotoEntity>[];
     final updatedPhotoIds = <int>[];
-    for (final photo in photos) {
+    for (final photo in scopedPhotos) {
       final aiTags = photo.aiTags ?? const <String>[];
       final isJunkCandidate = aiTags.contains(
         JunkPhotoFilterService.junkCandidateTag,
@@ -67,28 +89,30 @@ extension PhotoServiceAiReset on PhotoService {
     final resetPhotoIds = updatedPhotoIds.toSet().toList(growable: false);
     final staleFaces = resetPhotoIds.isEmpty
         ? const <FaceEntity>[]
-        : await _isar
-              .collection<FaceEntity>()
-              .filter()
-              .anyOf(
-                resetPhotoIds,
-                (query, photoId) => query.photoIdEqualTo(photoId),
-              )
-              .findAll();
+        : () {
+            final q = _faceBox
+                .query(FaceEntity_.photoId.oneOf(resetPhotoIds))
+                .build();
+            try {
+              return q.find();
+            } finally {
+              q.close();
+            }
+          }();
 
-    await _isar.writeTxn(() async {
+    _store.runInTransaction(TxMode.write, () {
       if (staleFaces.isNotEmpty) {
-        await _isar.collection<FaceEntity>().deleteAll(
+        _faceBox.removeMany(
           staleFaces.map((item) => item.id).toList(growable: false),
         );
       }
-      await _isar.collection<PhotoEntity>().putAll(updatedPhotos);
+      _photoBox.putMany(updatedPhotos);
     });
     _photoEmbeddingIndexRepository.deleteByPhotoIds(resetPhotoIds);
     _faceEmbeddingIndexRepository.deleteByPhotoIds(resetPhotoIds);
 
     final scopeText = maxPhotos == null
-        ? '${photos.length} 张照片'
+        ? '${scopedPhotos.length} 张照片'
         : '最近 $maxPhotos 张照片';
     debugPrint('🔁 已将 $scopeText 中的 $updatedCount 张重新加入 AI 打标队列');
     return updatedCount;
@@ -100,9 +124,10 @@ extension PhotoServiceAiReset on PhotoService {
       return 0;
     }
 
-    final photos = (await _isar.collection<PhotoEntity>().getAll(
-      normalizedIds,
-    )).whereType<PhotoEntity>().toList(growable: false);
+    final photos = _photoBox
+        .getMany(normalizedIds)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
     if (photos.isEmpty) {
       return 0;
     }
@@ -121,10 +146,9 @@ extension PhotoServiceAiReset on PhotoService {
       updatedCount++;
     }
 
-    await _isar.writeTxn(() async {
-      await _isar.collection<PhotoEntity>().putAll(photos);
-    });
+    _store.runInTransaction(TxMode.write, () => _photoBox.putMany(photos));
     _photoEmbeddingIndexRepository.deleteByPhotoIds(normalizedIds);
+    _faceEmbeddingIndexRepository.deleteByPhotoIds(normalizedIds);
 
     debugPrint('🔁 已将 $updatedCount 张低质量候选重新加入正常 AI 打标队列');
     return updatedCount;
@@ -135,11 +159,9 @@ extension PhotoServiceAiReset on PhotoService {
 
     // 1. 查出所有已经用旧模型（ML Kit）分析过的照片
 
-    final oldPhotos = await _isar
-        .collection<PhotoEntity>()
-        .filter()
-        .isAiAnalyzedEqualTo(true)
-        .findAll();
+    final q = _photoBox.query(PhotoEntity_.isAiAnalyzed.equals(true)).build();
+    final oldPhotos = q.find();
+    q.close();
 
     if (oldPhotos.isEmpty) {
       debugPrint("✅ 没有需要迁移的旧照片。");
@@ -160,9 +182,9 @@ extension PhotoServiceAiReset on PhotoService {
 
     // 3. 批量写回数据库
 
-    await _isar.writeTxn(() async {
-      await _isar.collection<FaceEntity>().clear();
-      await _isar.collection<PhotoEntity>().putAll(oldPhotos);
+    _store.runInTransaction(TxMode.write, () {
+      _faceBox.removeAll();
+      _photoBox.putMany(oldPhotos);
     });
     _photoEmbeddingIndexRepository.deleteAll();
     _faceEmbeddingIndexRepository.deleteAll();

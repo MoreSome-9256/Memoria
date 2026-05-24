@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'dart:convert';
-import 'package:isar/isar.dart';
+import 'package:objectbox/objectbox.dart';
 
 import '../../models/chat_message.dart';
 import '../../service/chat_service.dart';
 import '../../service/photo_service.dart';
 import '../../models/entity/photo_entity.dart';
+import '../../objectbox.g.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 import '../widgets/path_image.dart';
 import 'select_photos_page.dart'; // 我们马上要建的选图页面
 
@@ -32,21 +34,28 @@ class _ChatPageState extends State<ChatPage> {
 
   // 🌟 1. 从数据库读取历史记录
   Future<void> _loadHistory() async {
-    final isar = PhotoService().isar;
-    final history = await isar.chatMessages.where().sortByTimestamp().findAll();
+    final store = ObjectBoxService().store;
+    final chatBox = store.box<ChatMessage>();
+    final query = chatBox.query()
+        .order(ChatMessage_.timestampMs)
+        .build();
+    query.limit = 200;
+    final history = query.find();
+    query.close();
+
+    if (history.isEmpty) {
+      await _addAndSaveMessage(
+        ChatMessage.create(
+          text: "你好！我是 Memoria 助手。我可以帮你找照片，或者聊聊你的美好回忆。你想看哪方面的瞬间？",
+          sender: MessageSender.ai,
+          timestamp: DateTime.now(),
+        ),
+      );
+      return;
+    }
 
     setState(() {
-      if (history.isEmpty) {
-        _addAndSaveMessage(
-          ChatMessage(
-            text: "你好！我是 Memoria 助手。我可以帮你找照片，或者聊聊你的美好回忆。你想看哪方面的瞬间？",
-            sender: MessageSender.ai,
-            timestamp: DateTime.now(),
-          ),
-        );
-      } else {
-        _messages = history;
-      }
+      _messages = history;
     });
     _scrollToBottom();
   }
@@ -58,9 +67,10 @@ class _ChatPageState extends State<ChatPage> {
     });
 
     try {
-      final isar = PhotoService().isar;
-      await isar.writeTxn(() async {
-        await isar.chatMessages.put(message);
+      final store = ObjectBoxService().store;
+      final chatBox = store.box<ChatMessage>();
+      store.runInTransaction(TxMode.write, () {
+        chatBox.put(message);
       });
     } catch (e) {
       debugPrint('❌ 聊天记录保存到数据库失败: $e');
@@ -84,30 +94,40 @@ class _ChatPageState extends State<ChatPage> {
       final List<dynamic> tags = queryParams['tags'] ?? [];
       final int? year = queryParams['year'];
 
-      final isar = PhotoService().isar;
-      var queryBuilder = isar.photoEntitys.where().sortByTimestampDesc();
-      var candidates = await queryBuilder.findAll();
+      final store = ObjectBoxService().store;
+      final photoBox = store.box<PhotoEntity>();
+      final normalizedTags = tags
+          .map((t) => t.toString().toLowerCase().trim())
+          .where((t) => t.isNotEmpty)
+          .toList(growable: false);
+      final queryBuilder = year != null
+          ? photoBox.query(
+              PhotoEntity_.timestamp.between(
+                DateTime(year, 1, 1).millisecondsSinceEpoch,
+                DateTime(year, 12, 31, 23, 59, 59, 999).millisecondsSinceEpoch,
+              ),
+            )
+          : photoBox.query();
+      queryBuilder.order(PhotoEntity_.timestamp, flags: Order.descending);
+      final query = queryBuilder.build();
+      query.limit = 500;
+      final candidates = query.find();
+      query.close();
 
-      var filtered = candidates.where((p) {
-        if (year != null) {
-          final pYear = DateTime.fromMillisecondsSinceEpoch(p.timestamp).year;
-          if (pYear != year) return false;
-        }
-
-        if (tags.isNotEmpty) {
+      final filtered = candidates.where((p) {
+        if (normalizedTags.isNotEmpty) {
           if (p.aiTags == null || p.aiTags!.isEmpty) return false;
-          final pTagsLower = p.aiTags!.map((t) => t.toLowerCase()).toSet();
-          bool tagMatched = tags.any(
-            (t) => pTagsLower.contains(t.toString().toLowerCase()),
-          );
+          final pTagsLower = p.aiTags!
+              .map((t) => t.toLowerCase())
+              .toSet();
+          final tagMatched = normalizedTags.any(pTagsLower.contains);
           if (!tagMatched) return false;
         }
         return true;
       }).toList();
 
-      return await PhotoService().reconcileAccessiblePhotos(
-        filtered.take(15).toList(), // 横向列表可以多给几张
-      );
+      final output = filtered.take(15).toList(growable: false);
+      return await PhotoService().reconcileAccessiblePhotos(output);
     } catch (e) {
       debugPrint("本地解析或搜索失败: $e");
       return null;
@@ -119,7 +139,7 @@ class _ChatPageState extends State<ChatPage> {
     final text = _controller.text.trim();
     if (text.isEmpty || _isLoading) return;
 
-    final userMsg = ChatMessage(
+    final userMsg = ChatMessage.create(
       text: text,
       sender: MessageSender.user,
       timestamp: DateTime.now(),
@@ -137,7 +157,7 @@ class _ChatPageState extends State<ChatPage> {
         .trim();
 
     if (mounted) {
-      final aiMsg = ChatMessage(
+      final aiMsg = ChatMessage.create(
         text: cleanText,
         sender: MessageSender.ai,
         timestamp: DateTime.now(),
@@ -166,10 +186,14 @@ class _ChatPageState extends State<ChatPage> {
   // 🌟 5. 跳转到二次确认页的逻辑
   void _navigateToCreateAndGenerate(List<String> photoPaths, String topic) async {
     // 根据路径反向查出实体（因为传给下一页需要实体）
-    final isar = PhotoService().isar;
-    final photos = await isar.photoEntitys.filter()
-        .anyOf(photoPaths, (q, path) => q.pathEqualTo(path))
-        .findAll();
+    if (photoPaths.isEmpty) return;
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
+    final query = photoBox.query(
+      PhotoEntity_.path.oneOf(photoPaths),
+    ).build();
+    final photos = query.find();
+    query.close();
 
     if (!mounted) return;
     Navigator.push(

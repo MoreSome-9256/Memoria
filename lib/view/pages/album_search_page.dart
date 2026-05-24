@@ -8,13 +8,14 @@ import '../../service/album_tag_browser_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/semantic_photo_search_service.dart';
 import '../../service/story_queue_service.dart';
+import '../widgets/deferred_path_image.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
-import '../widgets/path_image.dart';
 import 'story_queue_page.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 
 enum _SearchSortMode { score, time }
 
-enum _SelectionMenuAction { selectAll, clear, cancel }
+// enum _SelectionMenuAction { selectAll, clear, cancel }
 
 class AlbumSearchPage extends StatefulWidget {
   const AlbumSearchPage({
@@ -134,9 +135,8 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     });
 
     try {
-      final photos = (await PhotoService().isar.photoEntitys.getAll(ids))
-          .whereType<PhotoEntity>()
-          .toList(growable: false);
+      final photos = ObjectBoxService().store.box<PhotoEntity>()
+          .getMany(ids).whereType<PhotoEntity>().toList(growable: false);
       final reconciled = await PhotoService().reconcileAccessiblePhotos(photos);
       final photoById = <int, PhotoEntity>{
         for (final photo in reconciled) photo.id: photo,
@@ -349,7 +349,9 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
       onPressed: () {
         setState(() {
           _selectionMode = true;
-          _selectedPhotoIds.clear();
+          _selectedPhotoIds
+            ..clear()
+            ..addAll(photos.map((photo) => photo.id));
         });
       },
       icon: const Icon(Icons.auto_stories_rounded),
@@ -359,32 +361,42 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
 
   Widget? _buildFloatingStoryActions(List<PhotoEntity> currentPhotos) {
     final visiblePhotos = _visiblePhotos(currentPhotos, _result);
+    final hasVisibleSelection = visiblePhotos
+        .any((photo) => _selectedPhotoIds.contains(photo.id));
+    final allVisibleSelected = visiblePhotos.isNotEmpty &&
+        visiblePhotos.every((photo) => _selectedPhotoIds.contains(photo.id));
     final storyFab = _selectionMode
-        ? Row(
+        ? Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              _buildSelectionMenuButton(
-                onSelected: (action) {
-                  switch (action) {
-                    case _SelectionMenuAction.selectAll:
-                      _selectAllVisible(visiblePhotos);
-                      break;
-                    case _SelectionMenuAction.clear:
-                      setState(() {
-                        _selectedPhotoIds.clear();
-                      });
-                      break;
-                    case _SelectionMenuAction.cancel:
-                      setState(() {
-                        _selectionMode = false;
-                        _selectedPhotoIds.clear();
-                      });
-                      break;
-                  }
-                },
-                enableSelectAll: visiblePhotos.isNotEmpty,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FilledButton.tonalIcon(
+                    onPressed: visiblePhotos.isEmpty
+                        ? null
+                        : () {
+                            if (allVisibleSelected || hasVisibleSelection) {
+                              setState(() {
+                                _selectedPhotoIds.clear();
+                              });
+                            } else {
+                              _selectAllVisible(visiblePhotos);
+                            }
+                          },
+                    icon: Icon(
+                      allVisibleSelected || hasVisibleSelection
+                          ? Icons.deselect_rounded
+                          : Icons.select_all_rounded,
+                    ),
+                    label: Text(
+                      allVisibleSelected || hasVisibleSelection ? '取消全选' : '全选',
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 10),
+              const SizedBox(height: 10),
               FloatingActionButton.extended(
                 heroTag: 'semantic-search-add-queue',
                 onPressed: _addSelectionToQueue,
@@ -787,7 +799,21 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         ),
         child: SafeArea(
           child: CustomScrollView(
+            cacheExtent: 700,
             slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: IconButton(
+                      onPressed: () => Navigator.of(context).maybePop(),
+                      icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                      tooltip: '返回',
+                    ),
+                  ),
+                ),
+              ),
               if (_isLockedResultMode)
                 SliverToBoxAdapter(
                   child: Padding(
@@ -880,41 +906,41 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     );
   }
 
-  Widget _buildSelectionMenuButton({
-    required ValueChanged<_SelectionMenuAction> onSelected,
-    required bool enableSelectAll,
-  }) {
-    return Material(
-      color: Theme.of(context).colorScheme.surface,
-      elevation: 4,
-      shadowColor: Colors.black.withValues(alpha: 0.15),
-      shape: const CircleBorder(),
-      child: PopupMenuButton<_SelectionMenuAction>(
-        tooltip: '选图操作',
-        onSelected: onSelected,
-        itemBuilder: (context) => <PopupMenuEntry<_SelectionMenuAction>>[
-          PopupMenuItem<_SelectionMenuAction>(
-            value: _SelectionMenuAction.selectAll,
-            enabled: enableSelectAll,
-            child: const Text('全选'),
-          ),
-          const PopupMenuItem<_SelectionMenuAction>(
-            value: _SelectionMenuAction.clear,
-            child: Text('清空'),
-          ),
-          const PopupMenuItem<_SelectionMenuAction>(
-            value: _SelectionMenuAction.cancel,
-            child: Text('取消'),
-          ),
-        ],
-        child: const SizedBox(
-          width: 48,
-          height: 48,
-          child: Icon(Icons.more_horiz_rounded),
-        ),
-      ),
-    );
-  }
+// Widget _buildSelectionMenuButton({
+//   required ValueChanged<_SelectionMenuAction> onSelected,
+//   required bool enableSelectAll,
+// }) {
+//   return Material(
+//     color: Theme.of(context).colorScheme.surface,
+//     elevation: 4,
+//     shadowColor: Colors.black.withValues(alpha: 0.15),
+//     shape: const CircleBorder(),
+//     child: PopupMenuButton<_SelectionMenuAction>(
+//       tooltip: '选图操作',
+//       onSelected: onSelected,
+//       itemBuilder: (context) => <PopupMenuEntry<_SelectionMenuAction>>[
+//         PopupMenuItem<_SelectionMenuAction>(
+//           value: _SelectionMenuAction.selectAll,
+//           enabled: enableSelectAll,
+//           child: const Text('全选'),
+//         ),
+//         const PopupMenuItem<_SelectionMenuAction>(
+//           value: _SelectionMenuAction.clear,
+//           child: Text('清空'),
+//         ),
+//         const PopupMenuItem<_SelectionMenuAction>(
+//           value: _SelectionMenuAction.cancel,
+//           child: Text('取消'),
+//         ),
+//       ],
+//       child: const SizedBox(
+//         width: 48,
+//         height: 48,
+//         child: Icon(Icons.more_horiz_rounded),
+//       ),
+//     ),
+//   );
+// }
 }
 
 class _SearchPhotoTile extends StatelessWidget {
@@ -942,7 +968,7 @@ class _SearchPhotoTile extends StatelessWidget {
           children: [
             Hero(
               tag: 'search-photo-${photo.id}',
-              child: PathImage(path: photo.path, fit: BoxFit.cover),
+              child: DeferredPathImage(path: photo.path, fit: BoxFit.cover),
             ),
             if (selectionMode)
               if (!selected)

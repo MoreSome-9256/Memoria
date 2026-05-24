@@ -1,14 +1,14 @@
-/// 相册页面，负责照片浏览、事件查看和标签筛选。
+// 相册页面，负责照片浏览、事件查看和标签筛选。
 
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'dart:collection';
-import 'package:isar/isar.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/event_entity.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/event.dart';
+import '../../objectbox.g.dart';
 import '../../service/ai_service.dart';
 import '../../service/album_refresh_service.dart';
 import '../../service/album_tag_browser_service.dart';
@@ -17,6 +17,7 @@ import '../../service/junk_photo_cleanup_service.dart';
 import '../../service/junk_photo_filter_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_queue_service.dart';
+import '../../storage/objectbox/objectbox_service.dart';
 import '../widgets/event_card.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/junk_photo_cleanup_banner.dart';
@@ -32,13 +33,17 @@ const int _albumTagBrowserPhotoSoftLimit = 1200;
 
 // Keep the tag overview and detail sheet on the same snapshot window so a
 // fireImmediately refresh cannot overwrite a non-empty cluster with a narrower query.
-Future<List<PhotoEntity>> _loadAlbumTagBrowserSourcePhotos() {
-  return PhotoService().isar.photoEntitys
-      .where()
-      .sortByTimestampDesc()
-      .limit(_albumTagBrowserPhotoSoftLimit)
-      .findAll()
-      .then(PhotoService().reconcileAccessiblePhotos);
+Future<List<PhotoEntity>> _loadAlbumTagBrowserSourcePhotos() async {
+  final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+  final q = photoBox.query()
+      .order(PhotoEntity_.timestamp, flags: Order.descending)
+      .build();
+  final photos = q
+      .find()
+      .take(_albumTagBrowserPhotoSoftLimit)
+      .toList(growable: false);
+  q.close();
+  return PhotoService().reconcileAccessiblePhotos(photos);
 }
 
 class AlbumPage extends StatefulWidget {
@@ -74,21 +79,23 @@ class _AlbumPageState extends State<AlbumPage> {
   late Stream<Map<String, List<Event>>> _uiEventsStream;
   late Stream<_AlbumTagBrowserData> _albumTagBrowserStream;
 
-  // Keep this in sync with _fullRefreshOption.
+  static const int _fullRefreshOption = -1;
+  static const int _scanRemainingOption = 0x7fffffff;
   static const List<int> _refreshPhotoOptions = <int>[
     100,
-    300,
-    500,
-    // Keep this in sync with _fullRefreshOption.
+    _scanRemainingOption,
+    _fullRefreshOption,
   ];
 
   void _startRefresh({bool clearCacheFirst = false, int? recentPhotoLimit}) {
-    if (_isClearingCache || AlbumRefreshService().isRunning) {
+    if (_isClearingCache) {
       return;
     }
 
     final scopeLabel = recentPhotoLimit == null
         ? '全部照片'
+        : recentPhotoLimit == _scanRemainingOption
+        ? '剩余所有照片'
         : '下一批 $recentPhotoLimit 张';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -107,28 +114,22 @@ class _AlbumPageState extends State<AlbumPage> {
             if (result == null || !mounted) {
               return;
             }
-            final scanSummary = result.scanSummary;
-            final scannedCount = scanSummary.scannedCount;
-            final insertedCount = scanSummary.insertedCount;
-            final nonInsertedCount = scannedCount > insertedCount
-                ? (scannedCount - insertedCount)
-                : 0;
+            final scan = result.scanSummary;
             final handoffText = result.aiAlreadyRunning
                 ? '后台 AI 已在运行，新照片已并入当前队列。'
                 : 'AI 已转入后台继续打标。';
-            final message = result.clearCacheFirst
-                ? result.recentPhotoLimit == null
-                      ? '已安全重建缓存，恢复 ${scanSummary.totalAfter} 张照片。$handoffText'
-                      : '已安全重建最近 ${result.recentPhotoLimit} 张照片缓存，恢复 ${scanSummary.totalAfter} 张照片。$handoffText'
-                : result.requeuedCount > 0
-                ? result.recentPhotoLimit == null
-                      ? '相册已更新，并将 ${result.requeuedCount} 张旧照片重新加入中文打标队列。'
-                      : nonInsertedCount > 0
-                      ? '已扫描下一批 ${result.recentPhotoLimit} 张照片，实际新增入库 $insertedCount 张，并将其中 ${result.requeuedCount} 张加入中文打标队列；其余 $nonInsertedCount 张未入库。'
-                      : '已扫描下一批 ${result.recentPhotoLimit} 张照片，并将新增入库的 ${result.requeuedCount} 张加入中文打标队列。'
-                : result.recentPhotoLimit == null
-                ? '相册已更新。$handoffText'
-                : '下一批 ${result.recentPhotoLimit} 张照片已刷新。$handoffText';
+
+            final String message;
+            if (result.clearCacheFirst) {
+              message = result.recentPhotoLimit == null
+                  ? '已安全重建缓存，恢复 ${scan.totalAfter} 张照片。$handoffText'
+                  : '已安全重建最近 ${result.recentPhotoLimit} 张照片缓存。$handoffText';
+            } else if (result.requeuedCount > 0) {
+              message = '新增 ${result.requeuedCount} 张可入库照片，已加入打标队列。$handoffText';
+            } else {
+              message = '从最新往前检查了 ${scan.scannedCount} 张，本轮没有可入库新照片。$handoffText';
+            }
+
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 behavior: SnackBarBehavior.floating,
@@ -192,7 +193,7 @@ class _AlbumPageState extends State<AlbumPage> {
         return AlertDialog(
           title: const Text('清空本地缓存'),
           content: const Text(
-            '将清空本 app 的本地数据库缓存（Isar + ObjectBox，包括照片、事件、故事、已扫描结果与向量索引），'
+            '将清空本 app 的本地数据库缓存（ObjectBox，包括照片、事件、故事、已扫描结果与向量索引），'
             '不会删除或修改手机系统相册中的任何图片。是否继续？',
           ),
           actions: [
@@ -216,7 +217,6 @@ class _AlbumPageState extends State<AlbumPage> {
     setState(() => _isClearingCache = true);
     try {
       await AIService().stopAnalysisAndWait();
-      AlbumRefreshService().resetScanOffsets();
       await PhotoService().clearAllCachedData();
       AIService().clearPendingJunkCleanupReport();
       _lastPromptedJunkCleanupReportId = null;
@@ -247,7 +247,7 @@ class _AlbumPageState extends State<AlbumPage> {
   }
 
   Future<void> _showRefreshOptions() async {
-    if (_isClearingCache || AlbumRefreshService().isRunning) {
+    if (_isClearingCache) {
       return;
     }
 
@@ -266,15 +266,25 @@ class _AlbumPageState extends State<AlbumPage> {
                   subtitle: Text('先只跑最近一部分照片，或者全量运行'),
                 ),
                 ..._refreshPhotoOptions.map((option) {
-                  // Keep this in sync with _fullRefreshOption.
-                  final isFull = option == -1;
-                  final label = isFull ? '全部运行' : '跑下一批 $option 张';
+                  final isFull = option == _fullRefreshOption;
+                  final isRemaining = option == _scanRemainingOption;
+                  final label = isFull
+                      ? '全量安全重建'
+                      : isRemaining
+                      ? '跑剩余所有'
+                      : '跑下一批 $option 张';
                   final subtitle = isFull
-                      ? '扫描全部照片并对全部待处理照片后台打标'
-                      : '按窗口滚动扫描下一批，并仅重排本批新增照片的 AI 打标';
+                      ? '清空本地缓存后重新扫描全部照片，并在后台补齐待处理标签'
+                      : isRemaining
+                      ? '从最新照片开始持续扫描，直到遍历完整个系统相册'
+                      : '从最新照片开始收集 $option 张新照片，并把它们加入 AI 打标队列';
                   return ListTile(
                     leading: Icon(
-                      isFull ? Icons.all_inclusive : Icons.flash_on,
+                      isFull
+                          ? Icons.all_inclusive
+                          : isRemaining
+                          ? Icons.done_all
+                          : Icons.flash_on,
                     ),
                     title: Text(label),
                     subtitle: Text(subtitle),
@@ -295,7 +305,8 @@ class _AlbumPageState extends State<AlbumPage> {
     }
 
     _startRefresh(
-      // Keep this in sync with _fullRefreshOption.
+      clearCacheFirst: selected == _fullRefreshOption,
+      recentPhotoLimit: selected == _fullRefreshOption ? null : selected,
     );
   }
 
@@ -394,9 +405,7 @@ class _AlbumPageState extends State<AlbumPage> {
 
     _albumTagBrowserStream =
         _debounceStream<void>(
-              PhotoService().isar.collection<PhotoEntity>().watchLazy(
-                fireImmediately: true,
-              ),
+              ObjectBoxService().store.box<PhotoEntity>().query().watch(triggerImmediately: true).map((_) {}),
               const Duration(milliseconds: 700),
             )
             .asyncMap((_) => _loadAllPhotosForTagBrowser())
@@ -547,8 +556,7 @@ class _AlbumPageState extends State<AlbumPage> {
           ValueListenableBuilder<AlbumRefreshProgress>(
             valueListenable: AlbumRefreshService().progressListenable,
             builder: (context, refreshProgress, _) {
-              final isRefreshRunning = refreshProgress.isRunning;
-              final isBusy = _isClearingCache || isRefreshRunning;
+              final isBusy = _isClearingCache;
               return Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -560,13 +568,7 @@ class _AlbumPageState extends State<AlbumPage> {
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: IconButton.filledTonal(
-                      icon: isRefreshRunning
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.add, size: 22),
+                      icon: const Icon(Icons.add, size: 22),
                       onPressed: isBusy ? null : _showRefreshOptions,
                       tooltip: '选择刷新范围',
                     ),
@@ -784,7 +786,9 @@ class _AlbumPageState extends State<AlbumPage> {
                 label: Text(progress.isPaused ? '继续' : '暂停'),
               ),
               TextButton.icon(
-                onPressed: progress.isStopping ? null : aiService.stopAnalysis,
+                onPressed: progress.isStopping
+                    ? null
+                    : () => unawaited(_endCurrentAnalysisRound()),
                 icon: const Icon(Icons.stop_circle_outlined),
                 label: const Text('结束本轮'),
               ),
@@ -793,6 +797,31 @@ class _AlbumPageState extends State<AlbumPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _endCurrentAnalysisRound() async {
+    try {
+      await AIService().endCurrentRoundSafely();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('已安全结束当前 AI 任务队列。'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('结束当前任务失败: $error'),
+        ),
+      );
+    }
   }
 
   String _formatDurationCompact(Duration duration) {
@@ -866,6 +895,7 @@ class _AlbumPageState extends State<AlbumPage> {
         }
 
         return CustomScrollView(
+          cacheExtent: 700,
           slivers: [
             SliverPadding(
               padding: EdgeInsets.fromLTRB(
@@ -1217,17 +1247,32 @@ class _AlbumPageState extends State<AlbumPage> {
     );
   }
 
-  // 灏?EventEntity 鍒楄〃杞崲涓哄垎缁勭殑 Event 鍒楄〃
   Future<Map<String, List<Event>>> _groupEvents(
     List<EventEntity> eventEntities,
   ) async {
     final grouped = <String, List<Event>>{};
-    final isar = PhotoService().isar;
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final coverIds = eventEntities
+        .expand((event) => event.photoIds.take(3))
+        .toSet()
+        .toList(growable: false);
+    final coverEntities = photoBox
+        .getMany(coverIds)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
+    final coverById = {
+      for (final photo in coverEntities) photo.id: photo,
+    };
+    Future<List<PhotoEntity>> loadPhotos(List<int> ids) async =>
+        ids
+            .map((id) => coverById[id])
+            .whereType<PhotoEntity>()
+            .toList(growable: false);
 
-    // 閫愭潯寮傛杞崲锛岄伩鍏嶅ぇ鎵归噺骞跺彂瀵艰嚧涓荤嚎绋嬬灛鏃跺帇鍔涜繃楂樸€?
+    // 封面照片已批量加载，这里只做轻量模型转换并定期让出 UI 线程。
     final allEvents = <Event>[];
     for (var i = 0; i < eventEntities.length; i++) {
-      final event = await eventEntities[i].toPreviewModel(isar);
+      final event = await eventEntities[i].toPreviewModel(loadPhotoEntities: loadPhotos);
       allEvents.add(event);
       if (i % 8 == 0) {
         await Future<void>.delayed(Duration.zero);

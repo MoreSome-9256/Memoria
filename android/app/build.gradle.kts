@@ -9,7 +9,7 @@ import org.gradle.api.tasks.Sync
 
 android {
     namespace = "com.example.photo_album"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     externalNativeBuild {

@@ -7,10 +7,11 @@ class OcrPolicy {
 
   // Disabled by default because noisy OCR fragments were polluting tags,
   // prompts and summaries more than helping them.
-  static const bool mlKitEnabled = bool.fromEnvironment(
-    'ENABLE_ML_KIT_OCR',
-    defaultValue: false,
-  );
+  // Uses String.fromEnvironment to match --dart-define-from-file JSON string values.
+  static bool get mlKitEnabled {
+    const value = String.fromEnvironment('ENABLE_ML_KIT_OCR', defaultValue: 'false');
+    return value == 'true' || value == '1';
+  }
 
   static List<String> effectiveTags(
     Iterable<String>? values, {

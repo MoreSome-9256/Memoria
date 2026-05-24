@@ -4,15 +4,14 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:isar/isar.dart';
-
 import '../models/entity/photo_entity.dart';
 import '../models/mobileclip_benchmark.dart';
+import '../objectbox.g.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'mobileclip_vision_service.dart';
 import 'ncnn_mobileclip_native_service.dart';
 import 'onnx_session_provider_service.dart';
-import 'photo_service.dart';
 
 abstract class MobileClipBenchmarkAdapter {
   const MobileClipBenchmarkAdapter();
@@ -248,10 +247,8 @@ class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
 class MobileClipBenchmarkService {
   MobileClipBenchmarkService({
     List<MobileClipBenchmarkAdapter>? adapters,
-    PhotoService? photoService,
     MobileClipVisionService? sharedPreprocessingVisionService,
   }) : _adapters = adapters ?? _buildDefaultAdapters(),
-       _photoService = photoService ?? PhotoService(),
        _sharedPreprocessingVisionService =
            sharedPreprocessingVisionService ??
            MobileClipVisionService.withProviderPreference(
@@ -259,7 +256,6 @@ class MobileClipBenchmarkService {
            );
 
   final List<MobileClipBenchmarkAdapter> _adapters;
-  final PhotoService _photoService;
   final MobileClipVisionService _sharedPreprocessingVisionService;
 
   static List<MobileClipBenchmarkAdapter> _buildDefaultAdapters() {
@@ -417,12 +413,13 @@ class MobileClipBenchmarkService {
   }
 
   Future<List<MobileClipBenchmarkSample>> _loadSamples(int sampleCount) async {
-    final candidates = await _photoService.isar
-        .collection<PhotoEntity>()
-        .where()
-        .sortByTimestampDesc()
-        .limit(math.max(sampleCount * 4, sampleCount))
-        .findAll();
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final q = photoBox.query()
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    q.limit = math.max(sampleCount * 4, sampleCount);
+    final candidates = q.find();
+    q.close();
 
     final samples = <MobileClipBenchmarkSample>[];
     for (final photo in candidates) {

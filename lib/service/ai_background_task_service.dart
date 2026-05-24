@@ -38,6 +38,20 @@ class _MemoriaTaskHandler extends TaskHandler {
       var listenerAttached = false;
       void syncForegroundProgress() {
         final progress = aiService.progressListenable.value;
+        unawaited(
+          aiService._persistRuntimeState(
+            isActive: progress.isVisible,
+            total: progress.total,
+            completed: progress.completed,
+            failed: progress.failed,
+            currentStep: progress.currentStep,
+            elapsedMs: progress.elapsedMs,
+            warmUpCompleted: progress.warmUpCompleted,
+            warmUpTotal: progress.warmUpTotal,
+            isPaused: progress.isPaused,
+            isStopping: progress.isStopping,
+          ),
+        );
         if (!progress.isVisible) {
           return;
         }

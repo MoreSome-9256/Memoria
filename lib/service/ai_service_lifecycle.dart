@@ -56,6 +56,12 @@ extension AIServiceLifecycle on AIService {
             total: progress.total,
             completed: progress.completed,
             failed: progress.failed,
+            currentStep: progress.currentStep,
+            elapsedMs: progress.elapsedMs,
+            warmUpCompleted: progress.warmUpCompleted,
+            warmUpTotal: progress.warmUpTotal,
+            isPaused: progress.isPaused,
+            isStopping: progress.isStopping,
           ),
         );
       }
@@ -77,6 +83,39 @@ extension AIServiceLifecycle on AIService {
     if (action == AIProgressNotificationService.actionResume) {
       resumeAnalysis();
     }
+  }
+
+  void _startRuntimeProgressPolling() {
+    _runtimeProgressPoller ??= Timer.periodic(
+      const Duration(milliseconds: 900),
+      (_) => unawaited(_refreshProgressFromRuntimeState()),
+    );
+    unawaited(_refreshProgressFromRuntimeState());
+  }
+
+  Future<void> _refreshProgressFromRuntimeState() async {
+    if (_isAnalyzing) {
+      return;
+    }
+    final snapshot = await _readRuntimeSnapshot();
+    if (!snapshot.isActive || snapshot.total <= 0) {
+      if (_progressNotifier.value.isVisible) {
+        _progressNotifier.value = AIAnalysisProgress.idle();
+      }
+      return;
+    }
+    _progressNotifier.value = AIAnalysisProgress(
+      isRunning: !snapshot.isPaused && !snapshot.isStopping,
+      isPaused: snapshot.isPaused,
+      isStopping: snapshot.isStopping,
+      total: snapshot.total,
+      completed: snapshot.completed,
+      failed: snapshot.failed,
+      currentStep: snapshot.currentStep,
+      elapsedMs: snapshot.elapsedMs,
+      warmUpCompleted: snapshot.warmUpCompleted,
+      warmUpTotal: snapshot.warmUpTotal,
+    );
   }
 
   Future<bool> getAutoResumePreference() async {
@@ -294,6 +333,12 @@ extension AIServiceLifecycle on AIService {
     int? total,
     int? completed,
     int? failed,
+    String? currentStep,
+    int? elapsedMs,
+    int? warmUpCompleted,
+    int? warmUpTotal,
+    bool? isPaused,
+    bool? isStopping,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(AIService._runtimeActiveKey, isActive);
@@ -302,6 +347,12 @@ extension AIServiceLifecycle on AIService {
       await prefs.remove(AIService._runtimeTotalKey);
       await prefs.remove(AIService._runtimeCompletedKey);
       await prefs.remove(AIService._runtimeFailedKey);
+      await prefs.remove(AIService._runtimeStepKey);
+      await prefs.remove(AIService._runtimeElapsedMsKey);
+      await prefs.remove(AIService._runtimeWarmUpCompletedKey);
+      await prefs.remove(AIService._runtimeWarmUpTotalKey);
+      await prefs.remove(AIService._runtimePausedKey);
+      await prefs.remove(AIService._runtimeStoppingKey);
       return;
     }
 
@@ -318,6 +369,27 @@ extension AIServiceLifecycle on AIService {
     if (failed != null) {
       await prefs.setInt(AIService._runtimeFailedKey, failed);
     }
+    if (currentStep != null) {
+      await prefs.setString(AIService._runtimeStepKey, currentStep);
+    }
+    if (elapsedMs != null) {
+      await prefs.setInt(AIService._runtimeElapsedMsKey, elapsedMs);
+    }
+    if (warmUpCompleted != null) {
+      await prefs.setInt(
+        AIService._runtimeWarmUpCompletedKey,
+        warmUpCompleted,
+      );
+    }
+    if (warmUpTotal != null) {
+      await prefs.setInt(AIService._runtimeWarmUpTotalKey, warmUpTotal);
+    }
+    if (isPaused != null) {
+      await prefs.setBool(AIService._runtimePausedKey, isPaused);
+    }
+    if (isStopping != null) {
+      await prefs.setBool(AIService._runtimeStoppingKey, isStopping);
+    }
   }
 
   Future<_RuntimeSnapshot> _readRuntimeSnapshot() async {
@@ -332,6 +404,14 @@ extension AIServiceLifecycle on AIService {
       total: prefs.getInt(AIService._runtimeTotalKey) ?? 0,
       completed: prefs.getInt(AIService._runtimeCompletedKey) ?? 0,
       failed: prefs.getInt(AIService._runtimeFailedKey) ?? 0,
+      currentStep:
+          prefs.getString(AIService._runtimeStepKey) ?? '后台 AI 正在处理',
+      elapsedMs: prefs.getInt(AIService._runtimeElapsedMsKey) ?? 0,
+      warmUpCompleted:
+          prefs.getInt(AIService._runtimeWarmUpCompletedKey) ?? 0,
+      warmUpTotal: prefs.getInt(AIService._runtimeWarmUpTotalKey) ?? 0,
+      isPaused: prefs.getBool(AIService._runtimePausedKey) ?? false,
+      isStopping: prefs.getBool(AIService._runtimeStoppingKey) ?? false,
     );
   }
 

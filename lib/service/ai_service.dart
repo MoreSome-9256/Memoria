@@ -56,6 +56,7 @@ class AIService {
     if (uiIntegrationEnabled) {
       _progressNotifier.addListener(_syncProgressNotification);
       AIProgressNotificationService().bindActionHandler(_handleForegroundAction);
+      _startRuntimeProgressPolling();
     }
   }
 
@@ -96,6 +97,13 @@ class AIService {
   static const String _runtimeTotalKey = 'ai_runtime_total';
   static const String _runtimeCompletedKey = 'ai_runtime_completed';
   static const String _runtimeFailedKey = 'ai_runtime_failed';
+  static const String _runtimeStepKey = 'ai_runtime_step';
+  static const String _runtimeElapsedMsKey = 'ai_runtime_elapsed_ms';
+  static const String _runtimeWarmUpCompletedKey =
+      'ai_runtime_warmup_completed';
+  static const String _runtimeWarmUpTotalKey = 'ai_runtime_warmup_total';
+  static const String _runtimePausedKey = 'ai_runtime_paused';
+  static const String _runtimeStoppingKey = 'ai_runtime_stopping';
   static const String _manualStopPendingKey = 'ai_manual_stop_pending';
 
   final ValueNotifier<AIAnalysisProgress> _progressNotifier =
@@ -128,6 +136,7 @@ class AIService {
   int _activeCaptionTasks = 0;
   Completer<void>? _analysisCompleter;
   int _lastRuntimeHeartbeatPersistAtMs = 0;
+  Timer? _runtimeProgressPoller;
 
   ValueListenable<AIAnalysisProgress> get progressListenable =>
       _progressNotifier;

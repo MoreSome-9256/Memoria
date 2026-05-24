@@ -205,10 +205,22 @@ class _RuntimeSnapshot {
     required this.total,
     required this.completed,
     required this.failed,
+    required this.currentStep,
+    required this.elapsedMs,
+    required this.warmUpCompleted,
+    required this.warmUpTotal,
+    required this.isPaused,
+    required this.isStopping,
   });
 
   final bool isActive;
   final int total;
   final int completed;
   final int failed;
+  final String currentStep;
+  final int elapsedMs;
+  final int warmUpCompleted;
+  final int warmUpTotal;
+  final bool isPaused;
+  final bool isStopping;
 }

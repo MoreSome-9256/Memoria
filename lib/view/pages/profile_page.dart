@@ -17,6 +17,7 @@ import 'package:photo_album/service/album_selection_preference_service.dart';
 
 import 'face_cluster_debug_page.dart';
 import 'junk_photo_trash_page.dart';
+import 'media_access_range_page.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
 import '../../service/video_cache_service.dart';
@@ -190,151 +191,18 @@ class _ProfilePageState extends State<ProfilePage> {
     }
     setState(() {
       if (!snapshot.hasAnyGrant) {
-        _albumSelectionSummary = '未授权任何媒体';
+        _albumSelectionSummary = '未设置可分析范围';
       } else {
-        final mediaCount =
-            snapshot.selectedAssetIds.length +
-            snapshot.selectedFilePaths.length;
         _albumSelectionSummary =
-            '已选择 $mediaCount 个媒体，${snapshot.androidTreeUris.length} 个目录';
+            '自动来源 ${snapshot.androidTreeUris.length} 个，手动加入 ${snapshot.manualMediaCount} 项';
       }
     });
   }
 
   Future<void> _showAlbumSelectionSettings() async {
-    var snapshot = await MediaAccessGrantService.instance.loadSnapshot();
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '授权媒体来源',
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text('默认不访问系统相册。只有你在系统界面选择的照片、视频或目录会进入扫描队列。'),
-                    const SizedBox(height: 16),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.add_photo_alternate_outlined),
-                      title: const Text('选择照片/视频'),
-                      subtitle: Text(
-                        '已授权 ${snapshot.selectedAssetIds.length + snapshot.selectedFilePaths.length} 个媒体',
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () async {
-                        final result = await MediaAccessGrantService.instance
-                            .pickMedia();
-                        snapshot = await MediaAccessGrantService.instance
-                            .loadSnapshot();
-                        setSheetState(() {});
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            behavior: SnackBarBehavior.floating,
-                            content: Text(
-                              '新增 ${result.addedAssetIds} 个媒体，当前共 ${result.totalSelectedAssetIds} 个',
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.photo_library_outlined),
-                      title: const Text('重新管理部分照片访问'),
-                      subtitle: const Text('调用系统受限相册管理界面'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () async {
-                        await MediaAccessGrantService.instance
-                            .presentLimitedLibraryPicker();
-                        snapshot = await MediaAccessGrantService.instance
-                            .loadSnapshot();
-                        setSheetState(() {});
-                      },
-                    ),
-                    if (Platform.isAndroid)
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.create_new_folder_outlined),
-                        title: const Text('添加授权文件夹'),
-                        subtitle: Text(
-                          '已授权 ${snapshot.androidTreeUris.length} 个目录',
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () async {
-                          await MediaAccessGrantService.instance
-                              .requestAndroidDirectoryGrant();
-                          snapshot = await MediaAccessGrantService.instance
-                              .loadSnapshot();
-                          setSheetState(() {});
-                        },
-                      ),
-                    if (snapshot.androidTreeUris.isNotEmpty)
-                      const Divider(height: 24),
-                    for (final uri in snapshot.androidTreeUris)
-                      ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.folder_open_outlined),
-                        title: Text(
-                          uri,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: () async {
-                            await MediaAccessGrantService.instance
-                                .removeAndroidDirectoryGrant(uri);
-                            snapshot = await MediaAccessGrantService.instance
-                                .loadSnapshot();
-                            setSheetState(() {});
-                          },
-                        ),
-                      ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('取消'),
-                        ),
-                        const Spacer(),
-                        FilledButton(
-                          onPressed: () async {
-                            if (!context.mounted) {
-                              return;
-                            }
-                            Navigator.pop(context);
-                          },
-                          child: const Text('保存'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const MediaAccessRangePage()),
     );
-
     await _refreshAlbumSelectionSummary();
   }
 

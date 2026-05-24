@@ -15,6 +15,7 @@ import '../../service/album_tag_browser_service.dart';
 import '../../service/event_service.dart';
 import '../../service/junk_photo_cleanup_service.dart';
 import '../../service/junk_photo_filter_service.dart';
+import '../../service/media_access_grant_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_queue_service.dart';
 import '../../storage/objectbox/objectbox_service.dart';
@@ -24,18 +25,29 @@ import '../widgets/junk_photo_cleanup_banner.dart';
 import '../widgets/junk_photo_cleanup_dialog.dart';
 import '../widgets/path_image.dart';
 import 'album_search_page.dart';
+import 'media_access_range_page.dart';
 import 'story_queue_page.dart';
 
 part 'album_page_tag_browser.dart';
 part 'album_page_deferred_image.dart';
 
 const int _albumTagBrowserPhotoSoftLimit = 1200;
+const int _importAllNewMediaLimit = 0x7fffffff;
+
+enum _ImportAction {
+  importAllNew,
+  importLatest100,
+  manualPick,
+  rebuildAll,
+  manageRange,
+}
 
 // Keep the tag overview and detail sheet on the same snapshot window so a
 // fireImmediately refresh cannot overwrite a non-empty cluster with a narrower query.
 Future<List<PhotoEntity>> _loadAlbumTagBrowserSourcePhotos() async {
   final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-  final q = photoBox.query()
+  final q = photoBox
+      .query()
       .order(PhotoEntity_.timestamp, flags: Order.descending)
       .build();
   final photos = q
@@ -79,24 +91,15 @@ class _AlbumPageState extends State<AlbumPage> {
   late Stream<Map<String, List<Event>>> _uiEventsStream;
   late Stream<_AlbumTagBrowserData> _albumTagBrowserStream;
 
-  static const int _fullRefreshOption = -1;
-  static const int _scanRemainingOption = 0x7fffffff;
-  static const List<int> _refreshPhotoOptions = <int>[
-    100,
-    _scanRemainingOption,
-    _fullRefreshOption,
-  ];
-
   void _startRefresh({bool clearCacheFirst = false, int? recentPhotoLimit}) {
     if (_isClearingCache) {
       return;
     }
 
-    final scopeLabel = recentPhotoLimit == null
-        ? '全部照片'
-        : recentPhotoLimit == _scanRemainingOption
-        ? '剩余所有照片'
-        : '下一批 $recentPhotoLimit 张';
+    final scopeLabel =
+        recentPhotoLimit == null || recentPhotoLimit == _importAllNewMediaLimit
+        ? '全部新的图片和视频'
+        : '最新的 $recentPhotoLimit 个未分析项目';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
@@ -125,9 +128,11 @@ class _AlbumPageState extends State<AlbumPage> {
                   ? '已安全重建缓存，恢复 ${scan.totalAfter} 张照片。$handoffText'
                   : '已安全重建最近 ${result.recentPhotoLimit} 张照片缓存。$handoffText';
             } else if (result.requeuedCount > 0) {
-              message = '新增 ${result.requeuedCount} 张可入库照片，已加入打标队列。$handoffText';
+              message =
+                  '新增 ${result.requeuedCount} 张可入库照片，已加入打标队列。$handoffText';
             } else {
-              message = '从最新往前检查了 ${scan.scannedCount} 张，本轮没有可入库新照片。$handoffText';
+              message =
+                  '从最新往前检查了 ${scan.scannedCount} 张，本轮没有可入库新照片。$handoffText';
             }
 
             ScaffoldMessenger.of(context).showSnackBar(
@@ -226,7 +231,7 @@ class _AlbumPageState extends State<AlbumPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('已清空本地缓存。系统相册原图未受影响，可点击右上角 + 重新扫描。'),
+          content: Text('已清空本地缓存。系统相册原图未受影响，可点击右上角 + 重新导入。'),
         ),
       );
     } catch (error) {
@@ -251,7 +256,7 @@ class _AlbumPageState extends State<AlbumPage> {
       return;
     }
 
-    final selected = await showModalBottomSheet<int>(
+    final selected = await showModalBottomSheet<_ImportAction>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
@@ -262,36 +267,42 @@ class _AlbumPageState extends State<AlbumPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const ListTile(
-                  title: Text('选择刷新范围'),
-                  subtitle: Text('先只跑最近一部分照片，或者全量运行'),
+                  title: Text('导入/更新'),
+                  subtitle: Text('只从当前可分析范围中查找未分析的图片和视频'),
                 ),
-                ..._refreshPhotoOptions.map((option) {
-                  final isFull = option == _fullRefreshOption;
-                  final isRemaining = option == _scanRemainingOption;
-                  final label = isFull
-                      ? '全量安全重建'
-                      : isRemaining
-                      ? '跑剩余所有'
-                      : '跑下一批 $option 张';
-                  final subtitle = isFull
-                      ? '清空本地缓存后重新扫描全部照片，并在后台补齐待处理标签'
-                      : isRemaining
-                      ? '从最新照片开始持续扫描，直到遍历完整个系统相册'
-                      : '从最新照片开始收集 $option 张新照片，并把它们加入 AI 打标队列';
-                  return ListTile(
-                    leading: Icon(
-                      isFull
-                          ? Icons.all_inclusive
-                          : isRemaining
-                          ? Icons.done_all
-                          : Icons.flash_on,
-                    ),
-                    title: Text(label),
-                    subtitle: Text(subtitle),
-                    onTap: () => Navigator.pop(context, option),
-                  );
-                }),
-                // 鐣欏嚭搴曢儴瀹夊叏璺濈
+                ListTile(
+                  leading: const Icon(Icons.done_all_outlined),
+                  title: const Text('导入全部新的图片和视频'),
+                  subtitle: const Text('从已授权且未被排除的来源中加入所有未分析项目'),
+                  onTap: () =>
+                      Navigator.pop(context, _ImportAction.importAllNew),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.flash_on_outlined),
+                  title: const Text('导入最新的 100 个未分析项目'),
+                  subtitle: const Text('按创建时间或修改时间倒序加入最新一批'),
+                  onTap: () =>
+                      Navigator.pop(context, _ImportAction.importLatest100),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.add_photo_alternate_outlined),
+                  title: const Text('手动选择照片/视频加入分析'),
+                  subtitle: const Text('适合微信、QQ、下载图等少量内容'),
+                  onTap: () => Navigator.pop(context, _ImportAction.manualPick),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.restart_alt_outlined),
+                  title: const Text('重新分析全部'),
+                  subtitle: const Text('删除缓存和分析结果后按当前可分析范围重建'),
+                  onTap: () => Navigator.pop(context, _ImportAction.rebuildAll),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.tune_outlined),
+                  title: const Text('管理可分析范围'),
+                  subtitle: const Text('管理自动来源、手动加入、排除规则和系统权限'),
+                  onTap: () =>
+                      Navigator.pop(context, _ImportAction.manageRange),
+                ),
                 const SizedBox(height: 24),
               ],
             ),
@@ -304,10 +315,65 @@ class _AlbumPageState extends State<AlbumPage> {
       return;
     }
 
-    _startRefresh(
-      clearCacheFirst: selected == _fullRefreshOption,
-      recentPhotoLimit: selected == _fullRefreshOption ? null : selected,
+    switch (selected) {
+      case _ImportAction.importAllNew:
+        _startRefresh(recentPhotoLimit: _importAllNewMediaLimit);
+      case _ImportAction.importLatest100:
+        _startRefresh(recentPhotoLimit: 100);
+      case _ImportAction.manualPick:
+        await _manualPickMediaForAnalysis();
+      case _ImportAction.rebuildAll:
+        await _confirmAndRebuildAnalysis();
+      case _ImportAction.manageRange:
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(builder: (_) => const MediaAccessRangePage()),
+        );
+    }
+  }
+
+  Future<void> _manualPickMediaForAnalysis() async {
+    final result = await MediaAccessGrantService.instance.pickMedia();
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          result.addedAssetIds > 0
+              ? '已手动加入 ${result.addedAssetIds} 个项目，正在加入分析队列。'
+              : '没有新增项目。',
+        ),
+      ),
     );
+    if (result.addedAssetIds > 0) {
+      _startRefresh(recentPhotoLimit: result.addedAssetIds);
+    }
+  }
+
+  Future<void> _confirmAndRebuildAnalysis() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('重新分析全部'),
+          content: const Text('这会删除当前缓存和分析结果，并从当前可分析范围重新开始分析。原始图片和视频不会被删除。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('删除缓存并重新分析'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed == true) {
+      _startRefresh(clearCacheFirst: true);
+    }
   }
 
   Future<void> _handleJunkCleanupReportChanged() async {
@@ -405,7 +471,11 @@ class _AlbumPageState extends State<AlbumPage> {
 
     _albumTagBrowserStream =
         _debounceStream<void>(
-              ObjectBoxService().store.box<PhotoEntity>().query().watch(triggerImmediately: true).map((_) {}),
+              ObjectBoxService().store
+                  .box<PhotoEntity>()
+                  .query()
+                  .watch(triggerImmediately: true)
+                  .map((_) {}),
               const Duration(milliseconds: 700),
             )
             .asyncMap((_) => _loadAllPhotosForTagBrowser())
@@ -1260,19 +1330,18 @@ class _AlbumPageState extends State<AlbumPage> {
         .getMany(coverIds)
         .whereType<PhotoEntity>()
         .toList(growable: false);
-    final coverById = {
-      for (final photo in coverEntities) photo.id: photo,
-    };
-    Future<List<PhotoEntity>> loadPhotos(List<int> ids) async =>
-        ids
-            .map((id) => coverById[id])
-            .whereType<PhotoEntity>()
-            .toList(growable: false);
+    final coverById = {for (final photo in coverEntities) photo.id: photo};
+    Future<List<PhotoEntity>> loadPhotos(List<int> ids) async => ids
+        .map((id) => coverById[id])
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
 
     // 封面照片已批量加载，这里只做轻量模型转换并定期让出 UI 线程。
     final allEvents = <Event>[];
     for (var i = 0; i < eventEntities.length; i++) {
-      final event = await eventEntities[i].toPreviewModel(loadPhotoEntities: loadPhotos);
+      final event = await eventEntities[i].toPreviewModel(
+        loadPhotoEntities: loadPhotos,
+      );
       allEvents.add(event);
       if (i % 8 == 0) {
         await Future<void>.delayed(Duration.zero);

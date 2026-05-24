@@ -368,13 +368,17 @@ class _PhotoScanCoordinator {
 
   Future<PhotoScanFilterProfile> _resolveFilterProfile() async {
     final prefs = await AlbumSelectionPreferenceService().loadScanPreferences();
+    final accessSnapshot = await MediaAccessGrantService.instance
+        .loadSnapshot();
     int? minTs;
     if (prefs['minYear'] != null) {
       final y = prefs['minYear']!;
       minTs = DateTime(y, 1, 1).millisecondsSinceEpoch;
     }
-    final minW = prefs['minWidth'];
-    final minH = prefs['minHeight'];
+    final minW =
+        prefs['minWidth'] ?? (accessSnapshot.excludeSmallMedia ? 512 : null);
+    final minH =
+        prefs['minHeight'] ?? (accessSnapshot.excludeSmallMedia ? 512 : null);
     const base = PhotoScanFilterProfile.userSelectedAlbums;
     return PhotoScanFilterProfile(
       requireValidDimensions: base.requireValidDimensions,
@@ -386,8 +390,30 @@ class _PhotoScanCoordinator {
 
   String _signatureForSnapshot(MediaAccessGrantSnapshot snapshot) {
     final sortedAssetIds = snapshot.selectedAssetIds.toList()..sort();
+    final sortedFilePaths = snapshot.selectedFilePaths.toList()..sort();
     final sortedTreeUris = snapshot.androidTreeUris.toList()..sort();
-    return 'assets:${sortedAssetIds.join(',')}|trees:${sortedTreeUris.join(',')}';
+    final disabled = snapshot.disabledAutoSourceIds.toList()..sort();
+    final withoutChildren = snapshot.sourcesWithoutChildren.toList()..sort();
+    final mediaTypes = snapshot.excludedMediaTypes.toList()..sort();
+    return 'assets:${sortedAssetIds.join(',')}'
+        '|files:${sortedFilePaths.join(',')}'
+        '|trees:${sortedTreeUris.join(',')}'
+        '|included:${_encodePathRules(snapshot.includedSubpathsBySource)}'
+        '|excluded:${_encodePathRules(snapshot.excludedSubpathsBySource)}'
+        '|disabled:${disabled.join(',')}'
+        '|flat:${withoutChildren.join(',')}'
+        '|rules:${snapshot.excludeScreenshots},${snapshot.excludeScreenRecordings},${snapshot.excludeSmallMedia},${snapshot.excludeDuplicates},${mediaTypes.join(',')}';
+  }
+
+  String _encodePathRules(Map<String, List<String>> rules) {
+    final sourceIds = rules.keys.toList()..sort();
+    return sourceIds
+        .map((sourceId) {
+          final subpaths = (rules[sourceId] ?? const <String>[]).toList();
+          subpaths.sort();
+          return '$sourceId=${subpaths.join(';')}';
+        })
+        .join('|');
   }
 
   _PhotoSyncPlan _emptyPlan(int totalBefore) {

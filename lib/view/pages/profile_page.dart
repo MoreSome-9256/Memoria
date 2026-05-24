@@ -416,18 +416,17 @@ class _ProfilePageState extends State<ProfilePage> {
                               },
                       ),
                       if (Platform.isAndroid)
-                        SwitchListTile(
+                        ListTile(
                           contentPadding: EdgeInsets.zero,
-                          title: const Text('请求取消电池优化限制'),
-                          subtitle: const Text('开启后会引导到系统设置，由用户明确授权'),
-                          value: aiSettings.requestUnrestrictedBatteryEnabled,
-                          onChanged: (value) {
-                            setSheetState(() {
-                              aiSettings = aiSettings.copyWith(
-                                requestUnrestrictedBatteryEnabled: value,
-                              );
-                            });
-                          },
+                          leading: const Icon(Icons.battery_saver_outlined),
+                          title: const Text('允许后台分析降低电池优化限制'),
+                          subtitle: const Text(
+                            '点击后先弹出系统授权窗口；如果你关闭了授权窗口，再引导到系统设置手动处理。',
+                          ),
+                          trailing: FilledButton(
+                            onPressed: _requestBatteryOptimizationAccess,
+                            child: const Text('请求允许'),
+                          ),
                         ),
                       const SizedBox(height: 6),
                       ListTile(
@@ -435,7 +434,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         leading: const Icon(Icons.info_outline),
                         title: const Text('后台运行提醒（Android）'),
                         subtitle: const Text(
-                          '如需提高后台继续处理成功率，请不要在最近任务中划掉本应用；建议在系统任务管理里给本应用加锁。',
+                          'Android 会以前台服务和持续通知处理你明确加入的分析任务。电池优化可能中断长时间任务；需要时请用上方按钮向系统申请允许。',
                         ),
                       ),
                       const SizedBox(height: 24),
@@ -454,11 +453,6 @@ class _ProfilePageState extends State<ProfilePage> {
                               await AppAiSettingsService.instance.save(
                                 aiSettings,
                               );
-                              if (aiSettings
-                                  .requestUnrestrictedBatteryEnabled) {
-                                await MediaAccessGrantService.instance
-                                    .requestBatteryOptimizationSettings();
-                              }
                               if (!context.mounted) {
                                 return;
                               }
@@ -488,6 +482,74 @@ class _ProfilePageState extends State<ProfilePage> {
         content: Text('已保存 ${latest.label} 与运行时 AI 设置'),
       ),
     );
+  }
+
+  Future<void> _requestBatteryOptimizationAccess() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('允许后台分析继续运行'),
+          content: const Text('系统会弹出授权窗口。只有你明确允许后，长时间分析任务才更不容易被电池优化中断。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('请求允许'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    var granted = false;
+    try {
+      granted = await MediaAccessGrantService.instance
+          .requestIgnoreBatteryOptimizations();
+    } catch (_) {
+      granted = false;
+    }
+    if (!mounted) {
+      return;
+    }
+    if (granted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('已允许后台分析降低电池优化限制。'),
+        ),
+      );
+      return;
+    }
+
+    final openSettings = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('还没有完成授权'),
+          content: const Text('如果刚才关闭了系统授权窗口，可以进入电池优化设置，手动允许本 App 不受限制。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('稍后处理'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('打开系统设置'),
+            ),
+          ],
+        );
+      },
+    );
+    if (openSettings == true) {
+      await MediaAccessGrantService.instance.openBatteryOptimizationSettings();
+    }
   }
 
   /// 显示缓存管理界面

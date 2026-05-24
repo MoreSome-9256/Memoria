@@ -356,7 +356,17 @@ class MediaAccessGrantService {
     await prefs.setStringList(_excludedMediaTypesKey, excludedMediaTypes);
   }
 
-  Future<void> requestBatteryOptimizationSettings() async {
+  Future<bool> requestIgnoreBatteryOptimizations() async {
+    if (!Platform.isAndroid) {
+      return false;
+    }
+    final result = await _channel.invokeMethod<bool>(
+      'requestIgnoreBatteryOptimizations',
+    );
+    return result ?? false;
+  }
+
+  Future<void> openBatteryOptimizationSettings() async {
     if (!Platform.isAndroid) {
       return;
     }

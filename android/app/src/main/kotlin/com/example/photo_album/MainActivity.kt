@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.documentfile.provider.DocumentFile
 import androidx.core.content.ContextCompat
@@ -13,7 +14,9 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
 	private var pendingDirectoryGrantResult: MethodChannel.Result? = null
+	private var pendingBatteryOptimizationResult: MethodChannel.Result? = null
 	private val directoryRequestCode = 42031
+	private val batteryOptimizationRequestCode = 42032
 
 	override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
 		super.configureFlutterEngine(flutterEngine)
@@ -35,6 +38,7 @@ class MainActivity : FlutterActivity() {
 					openBatteryOptimizationSettings()
 					result.success(null)
 				}
+				"requestIgnoreBatteryOptimizations" -> requestIgnoreBatteryOptimizations(result)
 				else -> result.notImplemented()
 			}
 		}
@@ -77,6 +81,12 @@ class MainActivity : FlutterActivity() {
 
 	override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
 		super.onActivityResult(requestCode, resultCode, data)
+		if (requestCode == batteryOptimizationRequestCode) {
+			val result = pendingBatteryOptimizationResult
+			pendingBatteryOptimizationResult = null
+			result?.success(isIgnoringBatteryOptimizations())
+			return
+		}
 		if (requestCode != directoryRequestCode) {
 			return
 		}
@@ -126,6 +136,39 @@ class MainActivity : FlutterActivity() {
 			Intent(Settings.ACTION_SETTINGS)
 		}
 		startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+	}
+
+	private fun requestIgnoreBatteryOptimizations(result: MethodChannel.Result) {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+			result.success(true)
+			return
+		}
+		if (isIgnoringBatteryOptimizations()) {
+			result.success(true)
+			return
+		}
+		if (pendingBatteryOptimizationResult != null) {
+			result.error("busy", "A battery optimization request is already running.", null)
+			return
+		}
+		pendingBatteryOptimizationResult = result
+		try {
+			val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+				data = Uri.parse("package:$packageName")
+			}
+			startActivityForResult(intent, batteryOptimizationRequestCode)
+		} catch (error: Exception) {
+			pendingBatteryOptimizationResult = null
+			result.error("unavailable", error.message, null)
+		}
+	}
+
+	private fun isIgnoringBatteryOptimizations(): Boolean {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+			return true
+		}
+		val powerManager = getSystemService(PowerManager::class.java)
+		return powerManager?.isIgnoringBatteryOptimizations(packageName) == true
 	}
 
 	private fun startAiForegroundTask(title: String?, text: String?) {

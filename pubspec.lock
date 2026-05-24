@@ -638,14 +638,6 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "6.0.0"
-  flutter_litert:
-    dependency: "direct main"
-    description:
-      name: flutter_litert
-      sha256: "034ccb816743b932eaec5470ecfea246d557a7c991a7a0d326f9b6423f9e8e5e"
-      url: "https://pub.flutter-io.cn"
-    source: hosted
-    version: "2.5.7"
   flutter_local_notifications:
     dependency: "direct main"
     description:
@@ -1751,7 +1743,7 @@ packages:
     source: hosted
     version: "0.6.16"
   tflite_flutter:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: tflite_flutter
       sha256: "0bba9040d8decda0960d7abf8eabf32243bf092bc7d0084e8e19681866b0bdbe"

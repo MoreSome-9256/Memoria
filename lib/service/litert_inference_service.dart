@@ -1,7 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter_litert/flutter_litert.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:tflite_flutter/tflite_flutter.dart' as tfl;
 
 enum LocalInferenceAccelerator { gpu, npu, coreml, metal, xnnpack, cpu }
 
@@ -26,7 +25,7 @@ extension LocalInferenceAcceleratorX on LocalInferenceAccelerator {
 
   String get description => switch (this) {
     LocalInferenceAccelerator.gpu =>
-      'Android 使用 LiteRT GPU delegate；iOS 使用 Metal',
+      'Android 使用 TFLite GPU delegate v2；iOS 使用 Metal',
     LocalInferenceAccelerator.npu =>
       'iOS 使用 Core ML Neural Engine；Android 预留厂商 delegate 接入',
     LocalInferenceAccelerator.coreml => 'iOS/macOS Core ML delegate',
@@ -69,9 +68,9 @@ class LiteRtSession {
     required this.delegates,
   });
 
-  final Interpreter interpreter;
+  final tfl.Interpreter interpreter;
   final String providerLabel;
-  final List<Delegate> delegates;
+  final List<tfl.Delegate> delegates;
 
   void close() {
     interpreter.close();
@@ -90,13 +89,13 @@ class LiteRtInferenceService {
 
     for (final attempt in attempts) {
       try {
-        final options = InterpreterOptions();
+        final options = tfl.InterpreterOptions();
         options.threads = config.threads;
         final delegates = await attempt.createDelegates();
         for (final delegate in delegates) {
           options.addDelegate(delegate);
         }
-        final interpreter = await Interpreter.fromAsset(
+        final interpreter = await tfl.Interpreter.fromAsset(
           config.modelAssetPath,
           options: options,
         );
@@ -123,15 +122,15 @@ class LiteRtInferenceService {
     if (Platform.isAndroid) {
       return switch (config.accelerator) {
         LocalInferenceAccelerator.gpu => <_LiteRtProviderAttempt>[
-          _LiteRtProviderAttempt.androidGpu(config),
+          _LiteRtProviderAttempt.androidGpu(),
           ...fallback,
         ],
         LocalInferenceAccelerator.npu => <_LiteRtProviderAttempt>[
           _LiteRtProviderAttempt.unsupported(
             'Android NPU delegate',
-            '厂商 NPU delegate 尚未接入，等待 LiteRT accelerator 分发后启用',
+            '厂商 NPU delegate 尚未接入，等待 TFLite accelerator 分发后启用',
           ),
-          _LiteRtProviderAttempt.androidGpu(config),
+          _LiteRtProviderAttempt.androidGpu(),
           ...fallback,
         ],
         LocalInferenceAccelerator.xnnpack => fallback,
@@ -139,7 +138,7 @@ class LiteRtInferenceService {
           _LiteRtProviderAttempt.cpu(),
         ],
         _ => <_LiteRtProviderAttempt>[
-          _LiteRtProviderAttempt.androidGpu(config),
+          _LiteRtProviderAttempt.androidGpu(),
           ...fallback,
         ],
       };
@@ -181,35 +180,29 @@ class _LiteRtProviderAttempt {
     required this.createDelegates,
   });
 
-  factory _LiteRtProviderAttempt.androidGpu(LiteRtSessionConfig config) {
+  factory _LiteRtProviderAttempt.androidGpu() {
     return _LiteRtProviderAttempt(
-      label: 'LiteRT GPU',
-      createDelegates: () async {
-        final cacheDir = await getApplicationSupportDirectory();
-        return <Delegate>[
-          GpuDelegateV2(
-            options: GpuDelegateOptionsV2(
-              isPrecisionLossAllowed: true,
-              inferencePriority1: 2,
-              inferencePriority2: 0,
-              inferencePriority3: 0,
-              experimentalFlags: const <int>[1, 8],
-              serializationDir: cacheDir.path,
-              modelToken: config.modelToken,
-              maxDelegatePartitions: 8,
-            ),
+      label: 'TFLite GPU v2',
+      createDelegates: () async => <tfl.Delegate>[
+        tfl.GpuDelegateV2(
+          options: tfl.GpuDelegateOptionsV2(
+            isPrecisionLossAllowed: true,
+            inferencePriority1: 2,
+            inferencePriority2: 0,
+            inferencePriority3: 0,
+            experimentalFlags: const <int>[1],
           ),
-        ];
-      },
+        ),
+      ],
     );
   }
 
   factory _LiteRtProviderAttempt.coreMl() {
     return _LiteRtProviderAttempt(
       label: 'Core ML',
-      createDelegates: () async => <Delegate>[
-        CoreMlDelegate(
-          options: CoreMlDelegateOptions(maxDelegatedPartitions: 0),
+      createDelegates: () async => <tfl.Delegate>[
+        tfl.CoreMlDelegate(
+          options: tfl.CoreMlDelegateOptions(maxDelegatedPartitions: 0),
         ),
       ],
     );
@@ -218,8 +211,8 @@ class _LiteRtProviderAttempt {
   factory _LiteRtProviderAttempt.metal() {
     return _LiteRtProviderAttempt(
       label: 'Metal GPU',
-      createDelegates: () async => <Delegate>[
-        GpuDelegate(options: GpuDelegateOptions(allowPrecisionLoss: true)),
+      createDelegates: () async => <tfl.Delegate>[
+        tfl.GpuDelegate(options: tfl.GpuDelegateOptions(allowPrecisionLoss: true)),
       ],
     );
   }
@@ -227,8 +220,10 @@ class _LiteRtProviderAttempt {
   factory _LiteRtProviderAttempt.xnnpack(int threads) {
     return _LiteRtProviderAttempt(
       label: 'XNNPACK',
-      createDelegates: () async => <Delegate>[
-        XNNPackDelegate(options: XNNPackDelegateOptions(numThreads: threads)),
+      createDelegates: () async => <tfl.Delegate>[
+        tfl.XNNPackDelegate(
+          options: tfl.XNNPackDelegateOptions(numThreads: threads),
+        ),
       ],
     );
   }
@@ -236,7 +231,7 @@ class _LiteRtProviderAttempt {
   factory _LiteRtProviderAttempt.cpu() {
     return _LiteRtProviderAttempt(
       label: 'CPU',
-      createDelegates: () async => const <Delegate>[],
+      createDelegates: () async => const <tfl.Delegate>[],
     );
   }
 
@@ -248,5 +243,5 @@ class _LiteRtProviderAttempt {
   }
 
   final String label;
-  final Future<List<Delegate>> Function() createDelegates;
+  final Future<List<tfl.Delegate>> Function() createDelegates;
 }

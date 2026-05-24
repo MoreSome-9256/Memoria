@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'litert_inference_service.dart';
+
 class AppAiSettings {
   const AppAiSettings({
     required this.ocrEnabled,
@@ -11,6 +13,7 @@ class AppAiSettings {
     required this.androidForegroundServiceEnabled,
     required this.requestUnrestrictedBatteryEnabled,
     required this.iosContinuedProcessingEnabled,
+    required this.inferenceAccelerator,
   });
 
   static const defaults = AppAiSettings(
@@ -22,6 +25,7 @@ class AppAiSettings {
     androidForegroundServiceEnabled: false,
     requestUnrestrictedBatteryEnabled: false,
     iosContinuedProcessingEnabled: false,
+    inferenceAccelerator: LocalInferenceAccelerator.gpu,
   );
 
   final bool ocrEnabled;
@@ -32,6 +36,7 @@ class AppAiSettings {
   final bool androidForegroundServiceEnabled;
   final bool requestUnrestrictedBatteryEnabled;
   final bool iosContinuedProcessingEnabled;
+  final LocalInferenceAccelerator inferenceAccelerator;
 
   AppAiSettings copyWith({
     bool? ocrEnabled,
@@ -42,6 +47,7 @@ class AppAiSettings {
     bool? androidForegroundServiceEnabled,
     bool? requestUnrestrictedBatteryEnabled,
     bool? iosContinuedProcessingEnabled,
+    LocalInferenceAccelerator? inferenceAccelerator,
   }) {
     return AppAiSettings(
       ocrEnabled: ocrEnabled ?? this.ocrEnabled,
@@ -58,6 +64,7 @@ class AppAiSettings {
           this.requestUnrestrictedBatteryEnabled,
       iosContinuedProcessingEnabled:
           iosContinuedProcessingEnabled ?? this.iosContinuedProcessingEnabled,
+      inferenceAccelerator: inferenceAccelerator ?? this.inferenceAccelerator,
     );
   }
 }
@@ -78,6 +85,7 @@ class AppAiSettingsService {
       'ai_settings_request_unrestricted_battery_enabled';
   static const _iosContinuedProcessingKey =
       'ai_settings_ios_continued_processing_enabled';
+  static const _inferenceAcceleratorKey = 'ai_settings_inference_accelerator';
 
   final ValueNotifier<AppAiSettings> notifier = ValueNotifier<AppAiSettings>(
     AppAiSettings.defaults,
@@ -121,6 +129,10 @@ class AppAiSettingsService {
       _iosContinuedProcessingKey,
       settings.iosContinuedProcessingEnabled,
     );
+    await prefs.setString(
+      _inferenceAcceleratorKey,
+      settings.inferenceAccelerator.storageValue,
+    );
     notifier.value = settings;
   }
 
@@ -148,6 +160,9 @@ class AppAiSettingsService {
       iosContinuedProcessingEnabled:
           prefs.getBool(_iosContinuedProcessingKey) ??
           AppAiSettings.defaults.iosContinuedProcessingEnabled,
+      inferenceAccelerator: LocalInferenceAcceleratorX.fromStorageValue(
+        prefs.getString(_inferenceAcceleratorKey),
+      ),
     );
   }
 }

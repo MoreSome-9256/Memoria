@@ -1,5 +1,7 @@
 /// MobileCLIP 基准测试页面，用于测试模型性能和资源占用。
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../../models/mobileclip_benchmark.dart';
@@ -63,8 +65,8 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
             for (final summary in report.adapterSummaries)
               summary.adapterId: summary,
           };
-    final cpuSummary = summariesById['onnx_cpu'];
-    final xnnpackSummary = summariesById['onnx_xnnpack'];
+    final xnnpackSummary = summariesById['litert_xnnpack'];
+    final gpuSummary = summariesById['litert_gpu'];
 
     return Scaffold(
       appBar: AppBar(title: const Text('MobileCLIP Benchmark')),
@@ -72,7 +74,9 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            '在同一批照片上对比同一个 MobileCLIP2 ONNX 模型在手机端 CPU、XNNPACK 与 legacy NNAPI 上的速度。NNAPI 已在 Android 15 废弃，仅作为兼容参考。',
+            Platform.isAndroid
+                ? '在同一批照片上对比 MobileCLIP2 LiteRT 在 GPU、NPU 与 XNNPACK 上的速度。默认主链路使用 GPU。'
+                : 'iOS 使用 Core ML 主链路，本页不运行 Android LiteRT delegate benchmark。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -101,7 +105,9 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
                   ),
                   const SizedBox(height: 12),
                   FilledButton.icon(
-                    onPressed: _isRunning ? null : _runBenchmark,
+                    onPressed: _isRunning || !Platform.isAndroid
+                        ? null
+                        : _runBenchmark,
                     icon: _isRunning
                         ? const SizedBox(
                             width: 16,
@@ -129,10 +135,10 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
             const SizedBox(height: 16),
             _ReportOverviewCard(report: report),
             const SizedBox(height: 16),
-            if (cpuSummary != null && xnnpackSummary != null) ...[
+            if (xnnpackSummary != null && gpuSummary != null) ...[
               _SpeedupCard(
-                cpuSummary: cpuSummary,
-                candidateSummary: xnnpackSummary,
+                baselineSummary: xnnpackSummary,
+                candidateSummary: gpuSummary,
               ),
               const SizedBox(height: 16),
             ],
@@ -256,21 +262,21 @@ class _AdapterSummaryCard extends StatelessWidget {
 
 class _SpeedupCard extends StatelessWidget {
   const _SpeedupCard({
-    required this.cpuSummary,
+    required this.baselineSummary,
     required this.candidateSummary,
   });
 
-  final MobileClipAdapterSummary cpuSummary;
+  final MobileClipAdapterSummary baselineSummary;
   final MobileClipAdapterSummary candidateSummary;
 
   @override
   Widget build(BuildContext context) {
     final inferenceSpeedup = _speedup(
-      baselineMs: cpuSummary.meanInferenceMs,
+      baselineMs: baselineSummary.meanInferenceMs,
       candidateMs: candidateSummary.meanInferenceMs,
     );
     final totalSpeedup = _speedup(
-      baselineMs: cpuSummary.meanTotalMs,
+      baselineMs: baselineSummary.meanTotalMs,
       candidateMs: candidateSummary.meanTotalMs,
     );
 
@@ -282,21 +288,21 @@ class _SpeedupCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'CPU vs XNNPACK 速度对比',
+              'XNNPACK vs GPU 速度对比',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
             Text(
-              '平均推理: CPU ${cpuSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
-              'XNNPACK ${candidateSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
+              '平均推理: XNNPACK ${baselineSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
+              'GPU ${candidateSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
               '加速比 $inferenceSpeedup',
             ),
             Text(
-              '平均总耗时: CPU ${cpuSummary.meanTotalMs.toStringAsFixed(1)} ms, '
-              'XNNPACK ${candidateSummary.meanTotalMs.toStringAsFixed(1)} ms, '
+              '平均总耗时: XNNPACK ${baselineSummary.meanTotalMs.toStringAsFixed(1)} ms, '
+              'GPU ${candidateSummary.meanTotalMs.toStringAsFixed(1)} ms, '
               '加速比 $totalSpeedup',
             ),
-            Text('共享预处理后，这里的差异主要反映 ONNX Runtime 在 CPU 与 XNNPACK 上的执行差异。'),
+            Text('共享预处理后，这里的差异主要反映 LiteRT delegate 的执行差异。'),
           ],
         ),
       ),

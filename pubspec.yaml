@@ -75,6 +75,7 @@ dependencies:
   open_file_manager: ^2.0.1
   music_feature_analyzer: ^1.0.3
   zstandard: ^1.5.0
+  flutter_litert: ^2.5.5
   llama_cpp_dart:
     git:
       url: https://github.com/netdur/llama_cpp_dart.git
@@ -115,6 +116,7 @@ flutter:
     - assets/expanded_tags_taxonomy.json
     - assets/mobileclip2/s2/vision_model.onnx
     - assets/mobileclip2/s2/text_model.onnx
+    - assets/mobileclip2/s2/mobileclip_s2_datacompdr_last.tflite
     - assets/mobileviclip/small/mobileviclip_small.onnx
     - assets/mobileviclip/small/mobileviclip_small_metadata.json
     - assets/face/   

@@ -7,7 +7,7 @@ import 'package:photo_manager/photo_manager.dart';
 
 import '../storage/objectbox/entities/media_asset_entity.dart';
 import '../storage/objectbox/media_asset_repository.dart';
-import 'mobileclip_vision_service.dart';
+import 'mobileclip_litert_service.dart';
 import 'semantic_matching_service.dart';
 
 class MediaIndexProgress {
@@ -42,24 +42,29 @@ class MediaEmbeddingIndexService {
   factory MediaEmbeddingIndexService() => _instance;
 
   final MediaAssetRepository _repository = MediaAssetRepository();
-  final MobileClipVisionService _visionService = MobileClipVisionService();
+  final MobileClipLiteRtService _visionService = MobileClipLiteRtService();
   final SemanticMatchingService _semanticService = SemanticMatchingService();
 
   final ValueNotifier<MediaIndexProgress> progressNotifier =
       ValueNotifier<MediaIndexProgress>(
-        MediaIndexProgress(processed: 0, total: 0, running: false, lastError: null),
+        MediaIndexProgress(
+          processed: 0,
+          total: 0,
+          running: false,
+          lastError: null,
+        ),
       );
 
-  static const String _modelVersion = 'mobileclip2_vision_336_v1';
+  static const String _modelVersion = MobileClipLiteRtService.modelVersion;
 
   bool _running = false;
 
   Future<void> encodePending({
     int maxConcurrency = 2,
     int batchSize = 240,
-    int inputSize = 336,
-    List<double> mean = const <double>[0.48145466, 0.4578275, 0.40821073],
-    List<double> std = const <double>[0.26862954, 0.26130258, 0.27577711],
+    int inputSize = MobileClipLiteRtService.inputImageSize,
+    List<double> mean = const <double>[0.485, 0.456, 0.406],
+    List<double> std = const <double>[0.229, 0.224, 0.225],
   }) async {
     if (_running) {
       return;
@@ -95,12 +100,8 @@ class MediaEmbeddingIndexService {
 
         await Future.wait(
           slice.map(
-            (entity) => _encodeOne(
-              entity,
-              inputSize: inputSize,
-              mean: mean,
-              std: std,
-            ),
+            (entity) =>
+                _encodeOne(entity, inputSize: inputSize, mean: mean, std: std),
           ),
         );
 
@@ -136,7 +137,10 @@ class MediaEmbeddingIndexService {
     }
   }
 
-  Future<List<MediaSearchHit>> searchByText(String query, {int topK = 24}) async {
+  Future<List<MediaSearchHit>> searchByText(
+    String query, {
+    int topK = 24,
+  }) async {
     await _semanticService.warmUp();
     final vector = await _semanticService.embedText(query);
     return _searchByVector(vector, topK);
@@ -145,9 +149,9 @@ class MediaEmbeddingIndexService {
   Future<List<MediaSearchHit>> searchByImageBytes(
     Uint8List imageBytes, {
     int topK = 24,
-    int inputSize = 336,
-    List<double> mean = const <double>[0.48145466, 0.4578275, 0.40821073],
-    List<double> std = const <double>[0.26862954, 0.26130258, 0.27577711],
+    int inputSize = MobileClipLiteRtService.inputImageSize,
+    List<double> mean = const <double>[0.485, 0.456, 0.406],
+    List<double> std = const <double>[0.229, 0.224, 0.225],
   }) async {
     final input = await compute<_ImagePreprocessTask, Float32List>(
       _preprocessToNchwFloat32,
@@ -158,7 +162,7 @@ class MediaEmbeddingIndexService {
         std: std,
       ),
     );
-    final vector = await _visionService.embedPreprocessedInput(input);
+    final vector = await _visionService.embedPreprocessedImageInput(input);
     return _searchByVector(vector, topK);
   }
 
@@ -195,7 +199,7 @@ class MediaEmbeddingIndexService {
           std: std,
         ),
       );
-      final embedding = await _visionService.embedPreprocessedInput(input);
+      final embedding = await _visionService.embedPreprocessedImageInput(input);
       entity.embedding = _l2Normalize(embedding);
       entity.modelVersion = _modelVersion;
       entity.embeddingUpdatedAtMs = DateTime.now().millisecondsSinceEpoch;
@@ -214,10 +218,8 @@ class MediaEmbeddingIndexService {
     final rows = _repository.queryNearest(normalized, k);
     return rows
         .map(
-          (row) => MediaSearchHit(
-            assetId: row.object.assetId,
-            score: row.score,
-          ),
+          (row) =>
+              MediaSearchHit(assetId: row.object.assetId, score: row.score),
         )
         .toList(growable: false);
   }

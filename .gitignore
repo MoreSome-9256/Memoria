@@ -71,6 +71,9 @@ run_output.txt
 
 # ONNX model artifacts and external data files
 *.tflite
+!/assets/mobileclip2/
+!/assets/mobileclip2/**
+!/assets/mobileclip2/**/*.tflite
 
 # Exported model directories
 /ai_tools/exported_models/
@@ -78,6 +81,7 @@ run_output.txt
 /ai_tools/.uv-cache/
 /ai_tools/uv-cache-local/
 /ai_tools/vendor/
+/ai_tools/model_cache/
 
 # Regenerated tag dictionaries and checkpoints
 /ai_tools/expanded_tags_vectors.json

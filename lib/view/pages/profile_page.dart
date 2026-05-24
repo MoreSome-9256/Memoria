@@ -9,6 +9,7 @@ import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/app_ai_settings_service.dart';
 import 'package:photo_album/service/media_access_grant_service.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
+import 'package:photo_album/service/litert_inference_service.dart';
 import 'package:photo_album/service/travel_memory_detector.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 
@@ -387,8 +388,8 @@ class _ProfilePageState extends State<ProfilePage> {
                       SegmentedButton<MobileClipBackend>(
                         segments: const <ButtonSegment<MobileClipBackend>>[
                           ButtonSegment<MobileClipBackend>(
-                            value: MobileClipBackend.mobileclip2Onnx,
-                            label: Text('MobileCLIP2 ONNX'),
+                            value: MobileClipBackend.mobileclip2LiteRt,
+                            label: Text('MobileCLIP2 LiteRT'),
                             icon: Icon(Icons.auto_awesome_outlined),
                           ),
                         ],
@@ -402,6 +403,47 @@ class _ProfilePageState extends State<ProfilePage> {
                       const SizedBox(height: 8),
                       Text(
                         '当前选择: ${selected.label} · ${selected.description}',
+                        style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        '端侧加速器',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 10),
+                      SegmentedButton<LocalInferenceAccelerator>(
+                        segments:
+                            const <ButtonSegment<LocalInferenceAccelerator>>[
+                              ButtonSegment<LocalInferenceAccelerator>(
+                                value: LocalInferenceAccelerator.gpu,
+                                label: Text('GPU'),
+                                icon: Icon(Icons.memory_outlined),
+                              ),
+                              ButtonSegment<LocalInferenceAccelerator>(
+                                value: LocalInferenceAccelerator.npu,
+                                label: Text('NPU'),
+                                icon: Icon(Icons.developer_board_outlined),
+                              ),
+                              ButtonSegment<LocalInferenceAccelerator>(
+                                value: LocalInferenceAccelerator.xnnpack,
+                                label: Text('XNNPACK'),
+                                icon: Icon(Icons.tune_outlined),
+                              ),
+                            ],
+                        selected: <LocalInferenceAccelerator>{
+                          aiSettings.inferenceAccelerator,
+                        },
+                        onSelectionChanged: (selection) {
+                          setSheetState(() {
+                            aiSettings = aiSettings.copyWith(
+                              inferenceAccelerator: selection.first,
+                            );
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${aiSettings.inferenceAccelerator.label} · ${aiSettings.inferenceAccelerator.description}',
                         style: TextStyle(color: Colors.grey[700], fontSize: 12),
                       ),
                       const SizedBox(height: 20),
@@ -992,36 +1034,38 @@ class _ProfilePageState extends State<ProfilePage> {
                                   ?.copyWith(fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(height: 20),
-                            ListTile(
-                              leading: const Icon(Icons.analytics_outlined),
-                              title: const Text('MobileCLIP Benchmark'),
-                              subtitle: const Text(
-                                '对比 ONNX 在 CPU、XNNPACK 与 legacy NNAPI 上的速度',
+                            if (Platform.isAndroid) ...[
+                              ListTile(
+                                leading: const Icon(Icons.analytics_outlined),
+                                title: const Text('MobileCLIP Benchmark'),
+                                subtitle: const Text(
+                                  '对比 LiteRT 在 GPU、NPU 与 XNNPACK 上的速度',
+                                ),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (context) =>
+                                          const MobileClipBenchmarkPage(),
+                                    ),
+                                  );
+                                },
                               ),
-                              trailing: const Icon(Icons.chevron_right),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (context) =>
-                                        const MobileClipBenchmarkPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                            ListTile(
-                              leading: const Icon(Icons.science_outlined),
-                              title: const Text('MobileCLIP Vector Probe'),
-                              subtitle: const Text('检查示例图片在手机端 ONNX 的向量'),
-                              trailing: const Icon(Icons.chevron_right),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (context) =>
-                                        const MobileClipVectorProbePage(),
-                                  ),
-                                );
-                              },
-                            ),
+                              ListTile(
+                                leading: const Icon(Icons.science_outlined),
+                                title: const Text('MobileCLIP Vector Probe'),
+                                subtitle: const Text('检查示例图片在手机端 LiteRT 的向量'),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (context) =>
+                                          const MobileClipVectorProbePage(),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
                             ListTile(
                               leading: const Icon(
                                 Icons.face_retouching_natural_outlined,

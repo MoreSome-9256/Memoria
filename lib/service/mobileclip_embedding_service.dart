@@ -8,7 +8,8 @@ import '../models/entity/photo_entity.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../storage/vector_index/vector_index_constants.dart';
 import 'mobileclip_backend_preference_service.dart';
-import 'mobileclip_vision_service.dart';
+import 'mobileclip_litert_service.dart';
+import 'app_ai_settings_service.dart';
 
 class MobileClipEmbeddingService {
   MobileClipEmbeddingService._internal();
@@ -18,8 +19,7 @@ class MobileClipEmbeddingService {
 
   factory MobileClipEmbeddingService() => _instance;
 
-  final MobileClipVisionService _mobileclip2OnnxService =
-      MobileClipVisionService();
+  MobileClipLiteRtService _mobileclip2LiteRtService = MobileClipLiteRtService();
   final MobileClipBackendPreferenceService _preferenceService =
       MobileClipBackendPreferenceService();
   final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
@@ -140,7 +140,7 @@ class MobileClipEmbeddingService {
         return;
       }
       try {
-        await _mobileclip2OnnxService.dispose();
+        await _mobileclip2LiteRtService.dispose();
       } catch (_) {}
     });
   }
@@ -151,16 +151,17 @@ class MobileClipEmbeddingService {
 
   Future<void> releaseBackend(MobileClipBackend backend) async {
     switch (backend) {
-      case MobileClipBackend.mobileclip2Onnx:
-        await _mobileclip2OnnxService.dispose();
+      case MobileClipBackend.mobileclip2LiteRt:
+        await _mobileclip2LiteRtService.dispose();
     }
   }
 
   Future<String?> validateBackend(MobileClipBackend backend) async {
     _touchUsage();
     switch (backend) {
-      case MobileClipBackend.mobileclip2Onnx:
-        await _mobileclip2OnnxService.warmUp();
+      case MobileClipBackend.mobileclip2LiteRt:
+        _mobileclip2LiteRtService = await _resolveLiteRtService();
+        await _mobileclip2LiteRtService.warmUp();
         return null;
     }
   }
@@ -173,8 +174,9 @@ class MobileClipEmbeddingService {
     }
 
     switch (backend) {
-      case MobileClipBackend.mobileclip2Onnx:
-        await _mobileclip2OnnxService.warmUp();
+      case MobileClipBackend.mobileclip2LiteRt:
+        _mobileclip2LiteRtService = await _resolveLiteRtService();
+        await _mobileclip2LiteRtService.warmUp();
     }
   }
 
@@ -201,8 +203,9 @@ class MobileClipEmbeddingService {
     }
 
     switch (backend) {
-      case MobileClipBackend.mobileclip2Onnx:
-        return _mobileclip2OnnxService.embedImageFile(imageFile);
+      case MobileClipBackend.mobileclip2LiteRt:
+        _mobileclip2LiteRtService = await _resolveLiteRtService();
+        return _mobileclip2LiteRtService.embedImageFile(imageFile);
     }
   }
 
@@ -216,8 +219,9 @@ class MobileClipEmbeddingService {
     }
 
     switch (backend) {
-      case MobileClipBackend.mobileclip2Onnx:
-        return _mobileclip2OnnxService.embedImageBytes(imageBytes);
+      case MobileClipBackend.mobileclip2LiteRt:
+        _mobileclip2LiteRtService = await _resolveLiteRtService();
+        return _mobileclip2LiteRtService.embedImageBytes(imageBytes);
     }
   }
 
@@ -232,20 +236,28 @@ class MobileClipEmbeddingService {
         : await imageFile.readAsBytes();
 
     switch (backend) {
-      case MobileClipBackend.mobileclip2Onnx:
-        final profile = await _mobileclip2OnnxService.profileImageBytes(
+      case MobileClipBackend.mobileclip2LiteRt:
+        _mobileclip2LiteRtService = await _resolveLiteRtService();
+        final profile = await _mobileclip2LiteRtService.profileImageBytes(
           imageBytes,
         );
         return MobileClipEmbeddingProfile(
           embedding: profile.embedding,
           backendLabel: backend.label,
-          providerLabel: _mobileclip2OnnxService.executionProviderLabel,
+          providerLabel: _mobileclip2LiteRtService.executionProviderLabel,
           decodeMs: profile.decodeMs,
           resizeNormalizeMs: profile.resizeNormalizeMs,
           tensorBuildMs: profile.tensorBuildMs,
           inferenceMs: profile.inferenceMs,
         );
     }
+  }
+
+  Future<MobileClipLiteRtService> _resolveLiteRtService() async {
+    final settings = await AppAiSettingsService.instance.load();
+    return MobileClipLiteRtService.withAccelerator(
+      settings.inferenceAccelerator,
+    );
   }
 }
 

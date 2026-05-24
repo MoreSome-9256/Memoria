@@ -8,7 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../data/tag_taxonomy_v2.dart';
-import '../../service/mobileclip_vision_service.dart';
+import '../../service/mobileclip_litert_service.dart';
 import '../../service/semantic_matching_service.dart';
 import '../../service/vector_index_benchmark_service.dart';
 
@@ -21,7 +21,7 @@ class MobileClipVectorProbePage extends StatefulWidget {
 }
 
 class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
-  final MobileClipVisionService _visionService = MobileClipVisionService();
+  final MobileClipLiteRtService _visionService = MobileClipLiteRtService();
   final SemanticMatchingService _semanticService = SemanticMatchingService();
   final VectorIndexStorageBenchmarkService _storageBenchmarkService =
       VectorIndexStorageBenchmarkService();
@@ -59,13 +59,7 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
       } catch (error) {
         zeroShotEnabled = false;
         final message = error.toString();
-        if (message.contains('ArgMax') || message.contains('/ArgMax')) {
-          _zeroShotWarning =
-              '当前设备内置 onnxruntime 不支持 ArgMax 算子，已自动跳过零样本打标，只保留视觉向量探针。\n\n'
-              '建议：升级 onnxruntime Android 运行库后再开启语义打标。';
-        } else {
-          _zeroShotWarning = '零样本打标初始化失败，已自动跳过：$message';
-        }
+        _zeroShotWarning = '零样本打标初始化失败，已自动跳过：$message';
       }
       final output = <_VectorProbeResult>[];
 
@@ -76,17 +70,21 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
         final input = await _visionService.preprocessImageBytesForBenchmark(
           bytes,
         );
-        final onnxVector = await _visionService.embedPreprocessedInput(input);
+        final liteRtVector = await _visionService.embedPreprocessedImageInput(
+          input,
+        );
 
-        output.add(_VectorProbeResult(sample: sample, onnxVector: onnxVector));
+        output.add(
+          _VectorProbeResult(sample: sample, liteRtVector: liteRtVector),
+        );
       }
 
-      // Zero-shot tagging: reuse the onnxVectors already computed above.
+      // Zero-shot tagging: reuse the LiteRT vectors already computed above.
       final zsOutput = <_ZeroShotResult>[];
       if (zeroShotEnabled) {
         for (final probeResult in output) {
           final scored = await _semanticService.scoreTagsForImage(
-            imageVector: probeResult.onnxVector,
+            imageVector: probeResult.liteRtVector,
             tagMap: memoriaMasterTaxonomyPromptToLabel,
             topK: 3,
           );
@@ -159,7 +157,7 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            '固定测试三张图片，ONNX 使用当前 Flutter 预处理。完整 JSON 会输出到 debug log。',
+            '固定测试三张图片，LiteRT 使用当前 Flutter 预处理。完整 JSON 会输出到 debug log。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -191,7 +189,7 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                     SizedBox(width: 12),
-                    Expanded(child: Text('正在提取手机端 ONNX 向量...')),
+                    Expanded(child: Text('正在提取手机端 LiteRT 向量...')),
                   ],
                 ),
               ),
@@ -278,7 +276,7 @@ class _VectorProbeCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             SelectableText(
-              'onnx first16: ${_formatVectorSlice(result.onnxVector, 16)}',
+              'litert first16: ${_formatVectorSlice(result.liteRtVector, 16)}',
             ),
             const SizedBox(height: 8),
             ExpansionTile(
@@ -302,16 +300,16 @@ class _ProbeSample {
 }
 
 class _VectorProbeResult {
-  const _VectorProbeResult({required this.sample, required this.onnxVector});
+  const _VectorProbeResult({required this.sample, required this.liteRtVector});
 
   final _ProbeSample sample;
-  final List<double> onnxVector;
+  final List<double> liteRtVector;
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'label': sample.label,
       'assetPath': sample.assetPath,
-      'onnxVector': onnxVector,
+      'liteRtVector': liteRtVector,
     };
   }
 }

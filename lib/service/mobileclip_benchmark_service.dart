@@ -8,9 +8,9 @@ import '../models/entity/photo_entity.dart';
 import '../models/mobileclip_benchmark.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
+import 'litert_inference_service.dart';
+import 'mobileclip_litert_service.dart';
 import 'mobileclip_tag_service.dart';
-import 'mobileclip_vision_service.dart';
-import 'onnx_session_provider_service.dart';
 
 abstract class MobileClipBenchmarkAdapter {
   const MobileClipBenchmarkAdapter();
@@ -33,21 +33,21 @@ abstract class MobileClipBenchmarkAdapter {
   Future<void> dispose() async {}
 }
 
-class OnnxMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
-  OnnxMobileClipBenchmarkAdapter({
+class LiteRtMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
+  LiteRtMobileClipBenchmarkAdapter({
     required this.adapterId,
     required this.adapterDisplayName,
-    required OnnxSessionProviderPreference providerPreference,
-    MobileClipVisionService? visionService,
+    required LocalInferenceAccelerator accelerator,
+    MobileClipLiteRtService? visionService,
     MobileClipTagService? tagService,
   }) : _visionService =
            visionService ??
-           MobileClipVisionService.withProviderPreference(providerPreference),
+           MobileClipLiteRtService.withAccelerator(accelerator),
        _tagService = tagService ?? MobileClipTagService();
 
   final String adapterId;
   final String adapterDisplayName;
-  final MobileClipVisionService _visionService;
+  final MobileClipLiteRtService _visionService;
   final MobileClipTagService _tagService;
 
   @override
@@ -114,7 +114,7 @@ class OnnxMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
     }
     final rssBefore = ProcessInfo.currentRss;
     final inferenceWatch = Stopwatch()..start();
-    final embedding = await _visionService.embedPreprocessedInput(input);
+    final embedding = await _visionService.embedPreprocessedImageInput(input);
     inferenceWatch.stop();
     final tagWatch = Stopwatch()..start();
     final tags = await _tagService.retrieveTags(embedding);
@@ -148,47 +148,39 @@ class OnnxMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
 class MobileClipBenchmarkService {
   MobileClipBenchmarkService({
     List<MobileClipBenchmarkAdapter>? adapters,
-    MobileClipVisionService? sharedPreprocessingVisionService,
+    MobileClipLiteRtService? sharedPreprocessingVisionService,
   }) : _adapters = adapters ?? _buildDefaultAdapters(),
        _sharedPreprocessingVisionService =
            sharedPreprocessingVisionService ??
-           MobileClipVisionService.withProviderPreference(
-             OnnxSessionProviderPreference.cpu,
+           MobileClipLiteRtService.withAccelerator(
+             LocalInferenceAccelerator.gpu,
            );
 
   final List<MobileClipBenchmarkAdapter> _adapters;
-  final MobileClipVisionService _sharedPreprocessingVisionService;
+  final MobileClipLiteRtService _sharedPreprocessingVisionService;
 
   static List<MobileClipBenchmarkAdapter> _buildDefaultAdapters() {
-    final adapters = <MobileClipBenchmarkAdapter>[
-      OnnxMobileClipBenchmarkAdapter(
-        adapterId: 'onnx_nnapi_legacy',
-        adapterDisplayName: 'ONNX NNAPI legacy',
-        providerPreference: OnnxSessionProviderPreference.nnapiHardwareOnly,
-      ),
-      OnnxMobileClipBenchmarkAdapter(
-        adapterId: 'onnx_xnnpack',
-        adapterDisplayName: 'ONNX XNNPACK',
-        providerPreference: OnnxSessionProviderPreference.xnnpack,
-      ),
-      OnnxMobileClipBenchmarkAdapter(
-        adapterId: 'onnx_cpu',
-        adapterDisplayName: 'ONNX CPU',
-        providerPreference: OnnxSessionProviderPreference.cpu,
-      ),
-    ];
-
     if (!Platform.isAndroid) {
-      return <MobileClipBenchmarkAdapter>[
-        OnnxMobileClipBenchmarkAdapter(
-          adapterId: 'onnx_cpu',
-          adapterDisplayName: 'ONNX CPU',
-          providerPreference: OnnxSessionProviderPreference.cpu,
-        ),
-      ];
+      return const <MobileClipBenchmarkAdapter>[];
     }
 
-    return adapters;
+    return <MobileClipBenchmarkAdapter>[
+      LiteRtMobileClipBenchmarkAdapter(
+        adapterId: 'litert_gpu',
+        adapterDisplayName: 'LiteRT GPU',
+        accelerator: LocalInferenceAccelerator.gpu,
+      ),
+      LiteRtMobileClipBenchmarkAdapter(
+        adapterId: 'litert_npu',
+        adapterDisplayName: 'LiteRT NPU',
+        accelerator: LocalInferenceAccelerator.npu,
+      ),
+      LiteRtMobileClipBenchmarkAdapter(
+        adapterId: 'litert_xnnpack',
+        adapterDisplayName: 'LiteRT XNNPACK',
+        accelerator: LocalInferenceAccelerator.xnnpack,
+      ),
+    ];
   }
 
   Future<MobileClipBenchmarkReport> runBenchmark({int sampleCount = 24}) async {

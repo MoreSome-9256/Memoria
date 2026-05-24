@@ -215,14 +215,9 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _showModelTypeSettings() async {
     await _backendPreferenceService.initialize();
     var aiSettings = await AppAiSettingsService.instance.load();
-    final iosContinuedProcessingSupported =
-        !Platform.isIOS || _iosMajorVersion() >= 26;
     var batteryOptimizationAllowed = Platform.isAndroid
         ? await MediaAccessGrantService.instance.isIgnoringBatteryOptimizations()
         : false;
-    if (Platform.isIOS && !iosContinuedProcessingSupported) {
-      aiSettings = aiSettings.copyWith(iosContinuedProcessingEnabled: false);
-    }
     if (!mounted) {
       return;
     }
@@ -402,27 +397,23 @@ class _ProfilePageState extends State<ProfilePage> {
                         title: const Text('后台常驻分析服务'),
                         subtitle: Text(
                           Platform.isIOS
-                              ? '仅 iOS 26+ 支持，不支持时无法开启'
+                              ? '使用 iOS Background App Refresh 调度；系统可能每隔一段时间给短后台窗口，强制关闭 App 后会停止'
                               : '仅在你允许后以前台服务处理手动添加的任务',
                         ),
                         value: Platform.isIOS
                             ? aiSettings.iosContinuedProcessingEnabled
                             : aiSettings.androidForegroundServiceEnabled,
-                        onChanged:
-                            Platform.isIOS && !iosContinuedProcessingSupported
-                            ? null
-                            : (value) {
-                                setSheetState(() {
-                                  aiSettings = Platform.isIOS
-                                      ? aiSettings.copyWith(
-                                          iosContinuedProcessingEnabled: value,
-                                        )
-                                      : aiSettings.copyWith(
-                                          androidForegroundServiceEnabled:
-                                              value,
-                                        );
-                                });
-                              },
+                        onChanged: (value) {
+                          setSheetState(() {
+                            aiSettings = Platform.isIOS
+                                ? aiSettings.copyWith(
+                                    iosContinuedProcessingEnabled: value,
+                                  )
+                                : aiSettings.copyWith(
+                                    androidForegroundServiceEnabled: value,
+                                  );
+                          });
+                        },
                       ),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
@@ -1157,10 +1148,5 @@ class _ProfilePageState extends State<ProfilePage> {
       trailing: const Icon(Icons.chevron_right),
       onTap: onTap,
     );
-  }
-
-  int _iosMajorVersion() {
-    final match = RegExp(r'(\d+)').firstMatch(Platform.operatingSystemVersion);
-    return int.tryParse(match?.group(1) ?? '') ?? 0;
   }
 }

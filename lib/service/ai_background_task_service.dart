@@ -117,7 +117,21 @@ class AiBackgroundTaskService {
   Future<void> startAnalysisWorker({int? maxPhotos}) async {
     await _writeRequest(maxPhotos: maxPhotos);
     if (!Platform.isAndroid) {
-      debugPrint('AI durable worker is not wired for this platform yet.');
+      if (!Platform.isIOS) {
+        debugPrint('AI durable worker is not wired for this platform yet.');
+        return;
+      }
+      final settings = await AppAiSettingsService.instance.load();
+      if (!settings.iosContinuedProcessingEnabled) {
+        debugPrint(
+          'AI durable worker request saved; iOS continued processing is disabled.',
+        );
+        return;
+      }
+      await startService(
+        title: 'Memoria 正在分析媒体',
+        text: '只处理你加入分析队列的照片和视频',
+      );
       return;
     }
     final settings = await AppAiSettingsService.instance.load();
@@ -127,17 +141,17 @@ class AiBackgroundTaskService {
       );
       return;
     }
-    await startIfAllowed(
+    await startService(
       title: 'Memoria 正在分析媒体',
       text: '只处理你加入分析队列的照片和视频',
     );
   }
 
-  Future<void> startIfAllowed({
+  Future<void> startService({
     required String title,
     required String text,
   }) async {
-    if (!Platform.isAndroid) {
+    if (!Platform.isAndroid && !Platform.isIOS) {
       return;
     }
     await _ensureInitialized();

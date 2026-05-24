@@ -95,12 +95,6 @@ class _AiPipelineRunner {
     final ocrService = OcrService();
     final appAiSettings = await AppAiSettingsService.instance.load();
     OcrPolicy.setRuntimeEnabled(appAiSettings.ocrEnabled);
-    if (manageForegroundService) {
-      await AiBackgroundTaskService.instance.startIfAllowed(
-        title: 'Memoria 正在分析媒体',
-        text: '只处理你手动添加的照片和视频',
-      );
-    }
 
     final pendingQ = photoBox
         .query(PhotoEntity_.isAiAnalyzed.equals(false))

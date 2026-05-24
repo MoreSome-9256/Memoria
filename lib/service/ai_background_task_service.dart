@@ -1,10 +1,7 @@
-/// AI 前台任务处理器 — 保持进程存活。
+/// AI 前台任务处理器 — 独立执行持久 AI 队列。
 ///
-/// 正常情况下 AI 计算由主 isolate 执行；如果主 isolate 心跳停止，
-/// 前台服务 isolate 会接管未完成队列。
-///
-/// 主 isolate 通过 [_syncProgressNotification] 更新前台通知内容和心跳；
-/// 当分析完成或停止时，[AiBackgroundTaskService.stop] 被调用。
+/// App 只负责写入待分析照片和启动服务；实际计算在本服务 isolate 中完成。
+/// 进度通过持久状态和前台服务通知暴露，不依赖界面进程。
 
 part of 'ai_service.dart';
 
@@ -15,34 +12,22 @@ void foregroundTaskCallback() {
 }
 
 class _MemoriaTaskHandler extends TaskHandler {
-  bool _takeoverStarted = false;
+  bool _started = false;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     WidgetsFlutterBinding.ensureInitialized();
+    if (_started) {
+      return;
+    }
+    _started = true;
+    unawaited(_runWorker());
   }
 
   @override
-  void onRepeatEvent(DateTime timestamp) {
-    if (_takeoverStarted) {
-      return;
-    }
-    unawaited(_takeOverIfMainIsolateStopped());
-  }
+  void onRepeatEvent(DateTime timestamp) {}
 
-  Future<void> _takeOverIfMainIsolateStopped() async {
-    final prefs = await SharedPreferences.getInstance();
-    final active = prefs.getBool(AIService._runtimeActiveKey) ?? false;
-    if (!active) {
-      return;
-    }
-    final heartbeatAtMs = prefs.getInt(AIService._runtimeHeartbeatAtKey) ?? 0;
-    final staleMs = DateTime.now().millisecondsSinceEpoch - heartbeatAtMs;
-    if (heartbeatAtMs > 0 && staleMs < const Duration(seconds: 20).inMilliseconds) {
-      return;
-    }
-    _takeoverStarted = true;
-    WidgetsFlutterBinding.ensureInitialized();
+  Future<void> _runWorker() async {
     try {
       await ObjectBoxService().init();
       await PhotoService().init();
@@ -50,6 +35,8 @@ class _MemoriaTaskHandler extends TaskHandler {
       OcrPolicy.setRuntimeEnabled(settings.ocrEnabled);
       AIService.uiIntegrationEnabled = false;
       final aiService = AIService();
+      final maxPhotos = await AiBackgroundTaskService.instance
+          .readRequestedMaxPhotos();
       var listenerAttached = false;
       void syncForegroundProgress() {
         final progress = aiService.progressListenable.value;
@@ -75,6 +62,7 @@ class _MemoriaTaskHandler extends TaskHandler {
       try {
         await aiService.analyzePhotosInBackground(
           manageForegroundService: false,
+          maxPhotos: maxPhotos,
         );
       } finally {
         if (listenerAttached) {
@@ -82,8 +70,10 @@ class _MemoriaTaskHandler extends TaskHandler {
         }
       }
     } catch (error) {
-      debugPrint('❌ 前台服务接管 AI 队列失败: $error');
-      _takeoverStarted = false;
+      debugPrint('❌ AI worker 执行失败: $error');
+    } finally {
+      await AiBackgroundTaskService.instance.clearRequest();
+      await AiBackgroundTaskService.instance.stop();
     }
   }
 
@@ -96,6 +86,8 @@ class AiBackgroundTaskService {
   static final AiBackgroundTaskService instance = AiBackgroundTaskService._();
 
   static bool _initialized = false;
+  static const _requestMaxPhotosKey = 'ai_worker_request_max_photos';
+  static const _requestCreatedAtKey = 'ai_worker_request_created_at';
 
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
@@ -115,10 +107,29 @@ class AiBackgroundTaskService {
         playSound: false,
       ),
       foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.repeat(15000),
+        eventAction: ForegroundTaskEventAction.nothing(),
         autoRunOnBoot: false,
         autoRunOnMyPackageReplaced: false,
       ),
+    );
+  }
+
+  Future<void> startAnalysisWorker({int? maxPhotos}) async {
+    await _writeRequest(maxPhotos: maxPhotos);
+    if (!Platform.isAndroid) {
+      debugPrint('AI durable worker is not wired for this platform yet.');
+      return;
+    }
+    final settings = await AppAiSettingsService.instance.load();
+    if (!settings.androidForegroundServiceEnabled) {
+      debugPrint(
+        'AI durable worker request saved; Android foreground worker is disabled.',
+      );
+      return;
+    }
+    await startIfAllowed(
+      title: 'Memoria 正在分析媒体',
+      text: '只处理你加入分析队列的照片和视频',
     );
   }
 
@@ -126,11 +137,14 @@ class AiBackgroundTaskService {
     required String title,
     required String text,
   }) async {
-    final settings = await AppAiSettingsService.instance.load();
-    if (!Platform.isAndroid || !settings.androidForegroundServiceEnabled) {
+    if (!Platform.isAndroid) {
       return;
     }
     await _ensureInitialized();
+    if (await FlutterForegroundTask.isRunningService) {
+      await updateNotification(title: title, text: text);
+      return;
+    }
     await FlutterForegroundTask.startService(
       serviceId: 43021,
       notificationTitle: title,
@@ -155,5 +169,29 @@ class AiBackgroundTaskService {
   Future<void> stop() async {
     if (!Platform.isAndroid) return;
     await FlutterForegroundTask.stopService();
+  }
+
+  Future<void> _writeRequest({int? maxPhotos}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (maxPhotos == null) {
+      await prefs.remove(_requestMaxPhotosKey);
+    } else {
+      await prefs.setInt(_requestMaxPhotosKey, maxPhotos);
+    }
+    await prefs.setInt(
+      _requestCreatedAtKey,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  Future<int?> readRequestedMaxPhotos() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_requestMaxPhotosKey);
+  }
+
+  Future<void> clearRequest() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_requestMaxPhotosKey);
+    await prefs.remove(_requestCreatedAtKey);
   }
 }

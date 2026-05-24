@@ -8,18 +8,18 @@ extension AIServicePipeline on AIService {
     int? maxPhotos,
     bool manageForegroundService = true,
   }) async {
-    try {
-      await _AiPipelineRunner(
-        service: this,
-        batchSize: batchSize,
+    if (manageForegroundService) {
+      await AiBackgroundTaskService.instance.startAnalysisWorker(
         maxPhotos: maxPhotos,
-        manageForegroundService: manageForegroundService,
-      ).run();
-    } finally {
-      if (manageForegroundService) {
-        unawaited(AiBackgroundTaskService.instance.stop());
-      }
+      );
+      return;
     }
+    await _AiPipelineRunner(
+      service: this,
+      batchSize: batchSize,
+      maxPhotos: maxPhotos,
+      manageForegroundService: manageForegroundService,
+    ).run();
   }
 
   void _enqueueAsyncCaption(_AsyncCaptionTask task) {

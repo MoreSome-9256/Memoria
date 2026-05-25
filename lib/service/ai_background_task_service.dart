@@ -7,13 +7,10 @@ import 'dart:io';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'analysis_spool_service.dart';
-import 'app_ai_settings_service.dart';
 
-import 'photo_service.dart';
 import 'spool_analysis_worker.dart';
 
 /// 前台任务回调入口，在后台 isolate 中运行。

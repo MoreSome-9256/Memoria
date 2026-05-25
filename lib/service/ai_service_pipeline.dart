@@ -31,6 +31,38 @@ extension AIServicePipeline on AIService {
     }
 
     // ── Spool 模式：写 manifest → 启动前台服务 ──
+    final existingJobId = await _pendingSpoolJobId();
+    if (existingJobId != null) {
+      final spool = AnalysisSpoolService.instance;
+      if (await spool.hasDoneMarker(existingJobId)) {
+        await consumeSpoolResults(existingJobId);
+      } else {
+        final manifest = await spool.readManifest(existingJobId);
+        final snapshot = await spool.readProgress(existingJobId);
+        if (manifest != null) {
+          final processed = snapshot?.processed ?? 0;
+          final failed = snapshot?.failed ?? 0;
+          final paused = snapshot?.status == 'paused';
+          _progressNotifier.value = AIAnalysisProgress(
+            isRunning: !paused,
+            isPaused: paused,
+            isStopping: snapshot?.status == 'stopping',
+            total: manifest.totalItems,
+            completed: processed,
+            failed: failed,
+            currentStep: snapshot != null && snapshot.currentStep.isNotEmpty
+                ? snapshot.currentStep
+                : '后台分析中 $processed/${manifest.totalItems}',
+            elapsedMs: 0,
+          );
+          SpoolProgressNotifier.instance.startPolling(existingJobId);
+          await AiBackgroundTaskService.instance.startAnalysisWorker();
+          debugPrint('[spool] 已存在未完成 job=$existingJobId，跳过新建 manifest');
+          return;
+        }
+      }
+    }
+
     final store = ObjectBoxService().store;
     final photoBox = store.box<PhotoEntity>();
 
@@ -73,6 +105,8 @@ extension AIServicePipeline on AIService {
         modifiedAt: photo.timestamp,
         latitude: photo.latitude,
         longitude: photo.longitude,
+        width: photo.width,
+        height: photo.height,
       );
     }).toList(growable: false);
 
@@ -84,14 +118,12 @@ extension AIServicePipeline on AIService {
       items: items,
     );
 
-    await AnalysisSpoolService.instance.writeManifest(manifest);
-    debugPrint(
-      '[spool] manifest 已写入 jobId=$jobId items=${items.length}',
-    );
-
     // 启动前台服务
     await AiBackgroundTaskService.instance.startAnalysisWorker(
       manifest: manifest,
+    );
+    debugPrint(
+      '[spool] manifest 已写入并提交前台服务 jobId=$jobId items=${items.length}',
     );
 
     _progressNotifier.value = AIAnalysisProgress.running(
@@ -101,17 +133,22 @@ extension AIServicePipeline on AIService {
       currentStep: '已提交 ${items.length} 张照片到后台分析服务',
       elapsedMs: 0,
     );
+    SpoolProgressNotifier.instance.startPolling(jobId);
+    unawaited(_persistRuntimeState(isActive: true, total: items.length));
   }
 
   /// 消费 spool 结果：检测 done.marker → 读取所有 pending result → 写入 ObjectBox。
-  Future<SpoolConsumeReport> consumeSpoolResults(String jobId) async {
+  Future<SpoolConsumeReport> consumeSpoolResults(
+    String jobId, {
+    bool requireDoneMarker = true,
+  }) async {
     final spool = AnalysisSpoolService.instance;
     final manifest = await spool.readManifest(jobId);
     if (manifest == null) {
       return SpoolConsumeReport(jobId: jobId, consumedCount: 0);
     }
 
-    if (!await spool.hasDoneMarker(jobId)) {
+    if (requireDoneMarker && !await spool.hasDoneMarker(jobId)) {
       return SpoolConsumeReport(jobId: jobId, consumedCount: 0);
     }
 
@@ -184,6 +221,9 @@ extension AIServicePipeline on AIService {
     await spool.cleanupJob(jobId);
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('spool_pending_manifest_job_id');
+    SpoolProgressNotifier.instance.stopPolling();
+    _progressNotifier.value = AIAnalysisProgress.idle();
+    await _persistRuntimeState(isActive: false);
 
     return SpoolConsumeReport(
       jobId: jobId,
@@ -198,8 +238,9 @@ extension AIServicePipeline on AIService {
     String photoKey,
   ) async {
     final baseDir = await spool.baseDir;
+    final key = Uri.encodeComponent(photoKey);
     final faceFile = File(
-      '${baseDir.path}/jobs/$jobId/results_pending/${photoKey}_faces.json',
+      '${baseDir.path}/jobs/$jobId/results_pending/${key}_faces.json',
     );
     if (!await faceFile.exists()) return const <_SpoolFaceFileResult>[];
     try {
@@ -285,9 +326,17 @@ extension AIServicePipeline on AIService {
     // 加载原图，用于人脸裁剪 -> 嵌入计算
     img.Image? decodedImage;
     try {
-      final imageFile = File(photo.path);
-      if (await imageFile.exists()) {
-        decodedImage = await FaceCropUtil.decodeSourceImage(imageFile);
+      if (photo.path.startsWith('content://')) {
+        final bytes = await MediaAccessGrantService.instance
+            .readContentUriBytes(photo.path);
+        if (bytes != null && bytes.isNotEmpty) {
+          decodedImage = FaceCropUtil.decodeSourceImageBytes(bytes);
+        }
+      } else {
+        final imageFile = File(photo.path);
+        if (await imageFile.exists()) {
+          decodedImage = await FaceCropUtil.decodeSourceImage(imageFile);
+        }
       }
     } catch (_) {}
 
@@ -473,6 +522,13 @@ extension AIServicePipeline on AIService {
         : (cpuCores <= 2 ? 1 : math.max(2, cpuCores - 1));
     final bounded = math.min(AIService._maxParallelWorkers, suggested);
     return math.max(1, math.min(bounded, workItems));
+  }
+
+  Future<String?> _pendingSpoolJobId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jobId = prefs.getString('spool_pending_manifest_job_id');
+    if (jobId == null || jobId.isEmpty) return null;
+    return jobId;
   }
 
   String _formatWorkerWarmupStatus(List<int> readyWorkers, int totalWorkers) {

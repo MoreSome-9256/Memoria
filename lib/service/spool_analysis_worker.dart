@@ -146,6 +146,7 @@ class SpoolAnalysisWorker {
     debugPrint('[spool-worker] ======== 前台 Worker 启动 ========');
     debugPrint('[spool-worker] jobId=$jobId totalItems=$totalItems');
 
+    await spool.baseDir; // 初始化前台 isolate 的 _baseDir
     await spool.ensureJobDirs(jobId);
 
     final settings = await AppAiSettingsService.instance.load();
@@ -178,9 +179,23 @@ class SpoolAnalysisWorker {
     final w0 = DateTime.now();
     await liteRt.warmUp();
     debugPrint('[spool-worker] LiteRT 预热耗时: ${DateTime.now().difference(w0).inMilliseconds}ms');
+    if (!await _waitIfPausedOrStopped(
+      spool, jobId, totalItems, processed, succeeded, failed, skipped,
+    )) {
+      await _finishJob(spool, jobId, totalItems, processed, succeeded, failed,
+          skipped);
+      return;
+    }
     final w1 = DateTime.now();
     await _tagService.warmUp();
     debugPrint('[spool-worker] TagService 预热耗时: ${DateTime.now().difference(w1).inMilliseconds}ms');
+    if (!await _waitIfPausedOrStopped(
+      spool, jobId, totalItems, processed, succeeded, failed, skipped,
+    )) {
+      await _finishJob(spool, jobId, totalItems, processed, succeeded, failed,
+          skipped);
+      return;
+    }
     final w2 = DateTime.now();
     await _warmUpJunkFilter();
     debugPrint('[spool-worker] JunkFilter 预热耗时: ${DateTime.now().difference(w2).inMilliseconds}ms');
@@ -197,6 +212,13 @@ class SpoolAnalysisWorker {
 
     try {
       for (var index = 0; index < manifest.items.length; index++) {
+        if (!await _waitIfPausedOrStopped(
+          spool, jobId, totalItems, processed, succeeded, failed, skipped,
+        )) {
+          debugPrint('[spool-worker] ⛔ 收到控制文件停止请求，中断循环 index=$index/$totalItems');
+          break;
+        }
+
         if (_stopRequested) {
           debugPrint('[spool-worker] ⛔ 收到停止请求，中断循环 index=$index/$totalItems');
           break;
@@ -306,8 +328,6 @@ class SpoolAnalysisWorker {
             formattedAddress: formattedAddress,
             adcode: adcode,
           );
-          await spool.writeResult(jobId, result);
-          debugPrint('[spool-worker] 📝 结果已写入 spool');
 
           if (computeResult.embedding.isNotEmpty) {
             await spool.writeEmbedding(jobId, photoKey, computeResult.embedding);
@@ -321,6 +341,9 @@ class SpoolAnalysisWorker {
                 computeResult.faceResults);
             debugPrint('[spool-worker] 📝 人脸检测结果已写入 spool (${computeResult.faceResults.length} 张脸)');
           }
+
+          await spool.writeResult(jobId, result);
+          debugPrint('[spool-worker] 📝 结果已写入 spool');
 
           succeeded++;
           debugPrint('[spool-worker] ✅ 第 ${index + 1}/$totalItems 张完成，累计成功=$succeeded');
@@ -354,12 +377,58 @@ class SpoolAnalysisWorker {
     debugPrint('[spool-worker] ======== Worker 运行结束 ========');
     debugPrint('[spool-worker] 总计: processed=$processed succeeded=$succeeded failed=$failed skipped=$skipped');
 
+    await _finishJob(spool, jobId, totalItems, processed, succeeded, failed,
+        skipped);
+  }
+
+  Future<void> _finishJob(
+    AnalysisSpoolService spool,
+    String jobId,
+    int totalItems,
+    int processed,
+    int succeeded,
+    int failed,
+    int skipped,
+  ) async {
     await _writeProgress(
       spool, jobId, totalItems, processed, succeeded, failed,
       skipped, processed >= totalItems ? '分析完成' : '已中断',
+      status: processed >= totalItems ? 'finished' : 'stopped',
     );
     await spool.writeDoneMarker(jobId);
     debugPrint('[spool-worker] ✅ done.marker 已写入');
+  }
+
+  Future<bool> _waitIfPausedOrStopped(
+    AnalysisSpoolService spool,
+    String jobId,
+    int total,
+    int processed,
+    int succeeded,
+    int failed,
+    int skipped,
+  ) async {
+    while (true) {
+      final control = await spool.readControl(jobId);
+      if (control.stopRequested || _stopRequested) {
+        _stopRequested = true;
+        await _writeProgress(
+          spool, jobId, total, processed, succeeded, failed, skipped,
+          '正在结束本轮，等待当前图片收尾',
+          status: 'stopping',
+        );
+        return false;
+      }
+      if (!control.pauseRequested) {
+        return true;
+      }
+      await _writeProgress(
+        spool, jobId, total, processed, succeeded, failed, skipped,
+        '后台分析已暂停',
+        status: 'paused',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 550));
+    }
   }
 
   Future<void> _writeProgress(
@@ -371,19 +440,22 @@ class SpoolAnalysisWorker {
     int failed,
     int skipped,
     String currentStep,
-  ) async {
-    final status =
-        _stopRequested ? 'stopped' : processed >= total ? 'finished' : 'running';
+    {
+    String? status,
+  }) async {
+    final resolvedStatus =
+        status ?? (_stopRequested ? 'stopped' : processed >= total ? 'finished' : 'running');
     await spool.writeProgress(
       AnalysisProgressSnapshot(
         jobId: jobId,
-        status: status,
+        status: resolvedStatus,
         total: total,
         processed: processed,
         succeeded: succeeded,
         failed: failed,
         skipped: skipped,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
+        currentStep: currentStep,
       ),
     );
   }
@@ -396,9 +468,10 @@ class SpoolAnalysisWorker {
   ) async {
     final json = faces.map((f) => f.toJson()).toList();
     final tmpDir = '${(await spool.baseDir).path}/jobs/$jobId/tmp';
-    final tmpFile = File('$tmpDir/${photoKey}_faces.json.tmp');
+    final key = Uri.encodeComponent(photoKey);
+    final tmpFile = File('$tmpDir/${key}_faces.json.tmp');
     final targetFile = File(
-      '${(await spool.baseDir).path}/jobs/$jobId/results_pending/${photoKey}_faces.json',
+      '${(await spool.baseDir).path}/jobs/$jobId/results_pending/${key}_faces.json',
     );
     await tmpFile.writeAsString(
       const JsonEncoder.withIndent(null).convert(json),
@@ -813,6 +886,8 @@ class SpoolAnalysisWorker {
     final contentUri = item.contentUri;
     Uint8List bytes;
     File file;
+    var width = item.width;
+    var height = item.height;
 
     if (contentUri != null) {
       bytes = (await MediaAccessGrantService.instance
@@ -820,13 +895,16 @@ class SpoolAnalysisWorker {
           Uint8List(0);
       if (bytes.isEmpty) return null;
       final tempDir = await getTemporaryDirectory();
-      file = File('${tempDir.path}/spool_input_${item.photoKey}.jpg');
+      final key = Uri.encodeComponent(item.photoKey);
+      file = File('${tempDir.path}/spool_input_$key.jpg');
       await file.writeAsBytes(bytes);
     } else if (path != null && path.isNotEmpty) {
       file = File(path);
       if (!await file.exists()) return null;
       final asset = await AssetEntity.fromId(item.photoKey);
       if (asset != null) {
+        width = width > 0 ? width : asset.width;
+        height = height > 0 ? height : asset.height;
         try {
           final thumb = await asset.thumbnailDataWithSize(
             const ThumbnailSize.square(384),
@@ -835,7 +913,8 @@ class SpoolAnalysisWorker {
             return _SpoolInputImage(
               file: file,
               mobileClipBytes: thumb,
-              width: 0, height: 0,
+              width: width,
+              height: height,
             );
           }
         } catch (_) {}
@@ -845,7 +924,20 @@ class SpoolAnalysisWorker {
       return null;
     }
 
-    return _SpoolInputImage(file: file, mobileClipBytes: bytes, width: 0, height: 0);
+    if (width <= 0 || height <= 0) {
+      final decoded = img.decodeImage(bytes);
+      if (decoded != null) {
+        width = decoded.width;
+        height = decoded.height;
+      }
+    }
+
+    return _SpoolInputImage(
+      file: file,
+      mobileClipBytes: bytes,
+      width: width,
+      height: height,
+    );
   }
 
   int _pickPrimaryFaceIndex(List<Face> faces) {

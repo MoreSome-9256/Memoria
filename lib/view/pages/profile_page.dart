@@ -75,11 +75,27 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _showScanPreferences() async {
     final prefs = await _albumSelectionPreferenceService.loadScanPreferences();
-    int? selectedYear = prefs['minYear'];
-    List<int>? selectedPair =
-        prefs['minWidth'] != null && prefs['minHeight'] != null
-        ? [prefs['minWidth']!, prefs['minHeight']!]
-        : null;
+    int? selectedYear = prefs.minYear;
+    String selectedResolutionKey = prefs.hasMinResolution
+        ? '${prefs.minWidth}x${prefs.minHeight}'
+        : 'none';
+    int? selectedMinPixels = prefs.minPixels;
+    var excludeScreenshots = prefs.excludeScreenshots;
+    var excludeExtremeAspectRatios = prefs.excludeExtremeAspectRatios;
+    const resolutionOptions = <String, List<int>?>{
+      'none': null,
+      '320x320': <int>[320, 320],
+      '640x480': <int>[640, 480],
+      '1280x720': <int>[1280, 720],
+      '1920x1080': <int>[1920, 1080],
+    };
+    const minPixelOptions = <int?>[
+      null,
+      300000,
+      1000000,
+      2000000,
+      4000000,
+    ];
 
     await showModalBottomSheet<void>(
       context: context,
@@ -108,7 +124,7 @@ class _ProfilePageState extends State<ProfilePage> {
                           ?.copyWith(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 12),
-                    const Text('可选：限制可进入分析队列的拍摄时间和分辨率。默认不限制。'),
+                    const Text('可选：在读取图片时先过滤明显不适合进入分析队列的项目。默认不限制。'),
                     const SizedBox(height: 12),
                     Text(
                       '最早年份（含）',
@@ -133,28 +149,63 @@ class _ProfilePageState extends State<ProfilePage> {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     const SizedBox(height: 8),
-                    DropdownButton<List<int>?>(
-                      value: selectedPair,
-                      items:
-                          <List<int>?>[
-                                null,
-                                [320, 320],
-                                [640, 480],
-                                [1280, 720],
-                                [1920, 1080],
-                              ]
-                              .map((pair) {
-                                final label = pair == null
-                                    ? '不限制'
-                                    : '${pair[0]} x ${pair[1]}';
-                                return DropdownMenuItem<List<int>?>(
-                                  value: pair,
-                                  child: Text(label),
-                                );
-                              })
-                              .toList(growable: false),
-                      onChanged: (pair) => setSheetState(() {
-                        selectedPair = pair;
+                    DropdownButton<String>(
+                      value: resolutionOptions.containsKey(selectedResolutionKey)
+                          ? selectedResolutionKey
+                          : 'none',
+                      items: resolutionOptions.entries.map((entry) {
+                        final pair = entry.value;
+                        final label = pair == null
+                            ? '不限制'
+                            : '${pair[0]} x ${pair[1]}';
+                        return DropdownMenuItem<String>(
+                          value: entry.key,
+                          child: Text(label),
+                        );
+                      }).toList(growable: false),
+                      onChanged: (key) => setSheetState(() {
+                        selectedResolutionKey = key ?? 'none';
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      '最小像素总量',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButton<int?>(
+                      value: selectedMinPixels,
+                      items: minPixelOptions.map((pixels) {
+                        final label = pixels == null
+                            ? '不限制'
+                            : pixels >= 1000000
+                            ? '${pixels ~/ 1000000} MP'
+                            : '${(pixels / 1000000).toStringAsFixed(1)} MP';
+                        return DropdownMenuItem<int?>(
+                          value: pixels,
+                          child: Text(label),
+                        );
+                      }).toList(growable: false),
+                      onChanged: (pixels) => setSheetState(() {
+                        selectedMinPixels = pixels;
+                      }),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('排除截图/录屏'),
+                      subtitle: const Text('根据系统文件名识别 Screenshot、截屏、录屏等项目'),
+                      value: excludeScreenshots,
+                      onChanged: (value) => setSheetState(() {
+                        excludeScreenshots = value;
+                      }),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('排除超宽/超长图片'),
+                      subtitle: const Text('过滤长截图、横幅、拼接图等极端宽高比项目'),
+                      value: excludeExtremeAspectRatios,
+                      onChanged: (value) => setSheetState(() {
+                        excludeExtremeAspectRatios = value;
                       }),
                     ),
                     const SizedBox(height: 20),
@@ -167,11 +218,17 @@ class _ProfilePageState extends State<ProfilePage> {
                         const Spacer(),
                         FilledButton(
                           onPressed: () async {
+                            final selectedPair =
+                                resolutionOptions[selectedResolutionKey];
                             await _albumSelectionPreferenceService
                                 .saveScanPreferences(
                                   minYear: selectedYear,
-                                  minWidth: selectedPair?.first,
-                                  minHeight: selectedPair?.last,
+                                  minWidth: selectedPair?[0],
+                                  minHeight: selectedPair?[1],
+                                  minPixels: selectedMinPixels,
+                                  excludeScreenshots: excludeScreenshots,
+                                  excludeExtremeAspectRatios:
+                                      excludeExtremeAspectRatios,
                                 );
                             if (!mounted) return;
                             Navigator.pop(context);

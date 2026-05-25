@@ -93,20 +93,26 @@ extension AIServiceLifecycle on AIService {
         if (await spool.hasDoneMarker(pendingJobId)) {
           // 已完成但未消费的 job — 尽快消费
           unawaited(consumeSpoolResults(pendingJobId));
+          return;
         } else {
           final manifest = await spool.readManifest(pendingJobId);
           if (manifest != null) {
             final snapshot = await spool.readProgress(pendingJobId);
             final processed = snapshot?.processed ?? 0;
             final isPaused = snapshot?.status == 'paused';
+            final isStopping = snapshot?.status == 'stopping';
             _progressNotifier.value = AIAnalysisProgress(
-              isRunning: !isPaused,
+              isRunning: !isPaused && !isStopping,
               isPaused: isPaused,
-              isStopping: false,
+              isStopping: isStopping,
               total: manifest.totalItems,
               completed: processed,
               failed: snapshot?.failed ?? 0,
-              currentStep: isPaused
+              currentStep: snapshot != null && snapshot.currentStep.isNotEmpty
+                  ? snapshot.currentStep
+                  : isStopping
+                  ? '正在结束本轮，等待当前图片收尾'
+                  : isPaused
                   ? '后台分析已暂停'
                   : '后台分析中 $processed/${manifest.totalItems}',
               elapsedMs: 0,
@@ -165,6 +171,19 @@ extension AIServiceLifecycle on AIService {
   }
 
   void pauseAnalysis() {
+    final current = _progressNotifier.value;
+    if (!_isAnalyzing) {
+      if (!current.isVisible || current.isPaused) {
+        return;
+      }
+      _progressNotifier.value = current.copyWith(
+        isRunning: false,
+        isPaused: true,
+        currentStep: '正在暂停后台分析…',
+      );
+      unawaited(_requestCurrentSpoolPause());
+      return;
+    }
     if (!_isAnalyzing || _pauseRequested) {
       debugPrint(
         '⏸️ 忽略暂停请求: isAnalyzing=$_isAnalyzing pauseRequested=$_pauseRequested',
@@ -172,7 +191,6 @@ extension AIServiceLifecycle on AIService {
       return;
     }
     _pauseRequested = true;
-    final current = _progressNotifier.value;
     if (current.isVisible) {
       final inflight = _inflightCount;
       _progressNotifier.value = current.copyWith(
@@ -186,12 +204,22 @@ extension AIServiceLifecycle on AIService {
 
   void resumeAnalysis() {
     unawaited(_setManualStopPending(false));
+    final current = _progressNotifier.value;
+    if (!_isAnalyzing && current.isPaused && current.total > 0) {
+      _pauseRequested = false;
+      _stopRequested = false;
+      _progressNotifier.value = current.copyWith(
+        isRunning: true,
+        isPaused: false,
+        currentStep: '正在继续后台打标…',
+      );
+      unawaited(_resumeCurrentSpoolOrStart());
+      return;
+    }
     if (_isAnalyzing && !_pauseRequested) {
       debugPrint('▶️ 忽略继续请求：当前任务未暂停');
       return;
     }
-
-    final current = _progressNotifier.value;
 
     // 常规暂停恢复：任务仍在运行，仅解除 pause gate。
     if (_isAnalyzing && _pauseRequested) {
@@ -223,17 +251,20 @@ extension AIServiceLifecycle on AIService {
     final current = _progressNotifier.value;
     _clearPendingCaptionTasks();
     _clearAnalysisQueue();
-    unawaited(AiBackgroundTaskService.instance.stop());
     if (!_isAnalyzing) {
-      if (current.isPaused && current.total > 0) {
-        _pauseRequested = false;
-        _stopRequested = false;
-        _progressNotifier.value = AIAnalysisProgress.idle();
-        unawaited(_persistRuntimeState(isActive: false));
-        unawaited(_setManualStopPending(true));
+      unawaited(_setManualStopPending(true));
+      if (current.isVisible) {
+        _progressNotifier.value = current.copyWith(
+          isRunning: false,
+          isPaused: false,
+          isStopping: true,
+          currentStep: '正在结束本轮，等待当前图片收尾…',
+        );
       }
+      unawaited(_requestCurrentSpoolStop());
       return;
     }
+    unawaited(AiBackgroundTaskService.instance.stop());
     _stopRequested = true;
     _pauseRequested = false;
     unawaited(_setManualStopPending(true));
@@ -254,12 +285,20 @@ extension AIServiceLifecycle on AIService {
     stopAnalysis();
     await stopAnalysisAndWait(timeout: timeout);
     await _waitForCaptionTasksToDrain(timeout: const Duration(seconds: 8));
+    await _cleanupCurrentJobSpool(allowPartial: true);
+    await AiBackgroundTaskService.instance.stop();
+    _progressNotifier.value = AIAnalysisProgress.idle();
+    await _persistRuntimeState(isActive: false);
   }
 
   Future<void> stopAnalysisAndWait({
     Duration timeout = const Duration(seconds: 30),
   }) async {
     if (!_isAnalyzing) {
+      final finished = await _waitForCurrentSpoolDone(timeout: timeout);
+      if (!finished) {
+        debugPrint('⚠️ 等待 spool 前台任务结束超时，准备消费已有阶段性结果');
+      }
       return;
     }
 
@@ -367,6 +406,81 @@ extension AIServiceLifecycle on AIService {
 
   Future<void> _startForegroundTaskAndRun() async {
     await analyzePhotosInBackground();
+  }
+
+  Future<void> _requestCurrentSpoolPause() async {
+    final jobId = await _readPendingSpoolJobId();
+    if (jobId == null) return;
+    await AnalysisSpoolService.instance.requestPause(jobId);
+  }
+
+  Future<void> _requestCurrentSpoolStop() async {
+    final jobId = await _readPendingSpoolJobId();
+    if (jobId == null) return;
+    await AnalysisSpoolService.instance.requestStop(jobId);
+  }
+
+  Future<void> _resumeCurrentSpoolOrStart() async {
+    final jobId = await _readPendingSpoolJobId();
+    if (jobId == null) {
+      await _startForegroundTaskAndRun();
+      return;
+    }
+    final spool = AnalysisSpoolService.instance;
+    if (await spool.hasDoneMarker(jobId)) {
+      await consumeSpoolResults(jobId);
+      return;
+    }
+    await spool.requestResume(jobId);
+    SpoolProgressNotifier.instance.startPolling(jobId);
+    await AiBackgroundTaskService.instance.startAnalysisWorker();
+  }
+
+  Future<bool> _waitForCurrentSpoolDone({
+    required Duration timeout,
+  }) async {
+    final jobId = await _readPendingSpoolJobId();
+    if (jobId == null) return true;
+    final spool = AnalysisSpoolService.instance;
+    if (await spool.hasDoneMarker(jobId)) return true;
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (await spool.hasDoneMarker(jobId)) {
+        return true;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+    return await spool.hasDoneMarker(jobId);
+  }
+
+  Future<void> _cleanupCurrentJobSpool({bool allowPartial = false}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jobId = prefs.getString('spool_pending_manifest_job_id');
+      if (jobId == null || jobId.isEmpty) return;
+
+      // 先消费未处理的 spool 结果，再清理
+      await consumeSpoolResults(jobId, requireDoneMarker: !allowPartial);
+      debugPrint('[spool] 已消费并清理 job 文件和缓存 jobId=$jobId');
+    } catch (e) {
+      debugPrint('[spool] 清理 job 失败: $e');
+      // 兜底：即使消费失败也强制删掉 job 文件
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final jobId = prefs.getString('spool_pending_manifest_job_id');
+        if (jobId != null && jobId.isNotEmpty) {
+          await AnalysisSpoolService.instance.cleanupJob(jobId);
+          await prefs.remove('spool_pending_manifest_job_id');
+        }
+      } catch (_) {}
+    }
+  }
+
+  Future<String?> _readPendingSpoolJobId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jobId = prefs.getString('spool_pending_manifest_job_id');
+    if (jobId == null || jobId.isEmpty) return null;
+    return jobId;
   }
 
   Future<void> _setManualStopPending(bool value) async {

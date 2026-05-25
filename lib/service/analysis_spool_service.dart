@@ -32,6 +32,8 @@ class AnalysisSpoolItem {
   final int modifiedAt;
   final double? latitude;
   final double? longitude;
+  final int width;
+  final int height;
 
   const AnalysisSpoolItem({
     required this.photoKey,
@@ -41,6 +43,8 @@ class AnalysisSpoolItem {
     required this.modifiedAt,
     this.latitude,
     this.longitude,
+    this.width = 0,
+    this.height = 0,
   });
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -51,6 +55,8 @@ class AnalysisSpoolItem {
     'modifiedAt': modifiedAt,
     'latitude': latitude,
     'longitude': longitude,
+    'width': width,
+    'height': height,
   };
 
   factory AnalysisSpoolItem.fromJson(Map<String, Object?> json) {
@@ -62,6 +68,8 @@ class AnalysisSpoolItem {
       modifiedAt: (json['modifiedAt'] as num).toInt(),
       latitude: (json['latitude'] as num?)?.toDouble(),
       longitude: (json['longitude'] as num?)?.toDouble(),
+      width: (json['width'] as num?)?.toInt() ?? 0,
+      height: (json['height'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -240,6 +248,7 @@ class AnalysisProgressSnapshot {
   final int failed;
   final int skipped;
   final int updatedAt;
+  final String currentStep;
 
   const AnalysisProgressSnapshot({
     required this.jobId,
@@ -250,6 +259,7 @@ class AnalysisProgressSnapshot {
     required this.failed,
     required this.skipped,
     required this.updatedAt,
+    this.currentStep = '',
   });
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -261,6 +271,7 @@ class AnalysisProgressSnapshot {
     'failed': failed,
     'skipped': skipped,
     'updatedAt': updatedAt,
+    'currentStep': currentStep,
   };
 
   factory AnalysisProgressSnapshot.fromJson(Map<String, Object?> json) {
@@ -273,11 +284,62 @@ class AnalysisProgressSnapshot {
       failed: (json['failed'] as num).toInt(),
       skipped: (json['skipped'] as num).toInt(),
       updatedAt: (json['updatedAt'] as num).toInt(),
+      currentStep: (json['currentStep'] as String?) ?? '',
     );
   }
 
   double get fraction =>
       total > 0 ? (processed / total).clamp(0.0, 1.0) : 0.0;
+}
+
+/// 主进程写入、前台服务读取的控制快照。
+class AnalysisJobControl {
+  final String jobId;
+  final bool pauseRequested;
+  final bool stopRequested;
+  final int updatedAt;
+
+  const AnalysisJobControl({
+    required this.jobId,
+    this.pauseRequested = false,
+    this.stopRequested = false,
+    required this.updatedAt,
+  });
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'jobId': jobId,
+    'pauseRequested': pauseRequested,
+    'stopRequested': stopRequested,
+    'updatedAt': updatedAt,
+  };
+
+  factory AnalysisJobControl.fromJson(Map<String, Object?> json) {
+    return AnalysisJobControl(
+      jobId: json['jobId'] as String,
+      pauseRequested: (json['pauseRequested'] as bool?) ?? false,
+      stopRequested: (json['stopRequested'] as bool?) ?? false,
+      updatedAt: (json['updatedAt'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  factory AnalysisJobControl.running(String jobId) {
+    return AnalysisJobControl(
+      jobId: jobId,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  AnalysisJobControl copyWith({
+    bool? pauseRequested,
+    bool? stopRequested,
+  }) {
+    return AnalysisJobControl(
+      jobId: jobId,
+      pauseRequested: pauseRequested ?? this.pauseRequested,
+      stopRequested: stopRequested ?? this.stopRequested,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+  }
 }
 
 /// Spool 版本信息，用于主进程快速判断是否需要扫描。
@@ -321,14 +383,8 @@ class AnalysisSpoolService {
     if (!await _baseDir!.exists()) {
       await _baseDir!.create(recursive: true);
     }
-    // 创建子目录（如果不存在）
-    await _ensureSubdirs();
+    await Directory('${_baseDir!.path}/jobs').create(recursive: true);
     return _baseDir!;
-  }
-
-  Future<void> _ensureSubdirs() async {
-    final base = await baseDir;
-    await Directory('${base.path}/jobs').create(recursive: true);
   }
 
   // ── Job 目录管理 ──
@@ -341,6 +397,7 @@ class AnalysisSpoolService {
   String _embeddingsDir(String jobId) => '${_jobDir(jobId)}/embeddings';
 
   Future<void> ensureJobDirs(String jobId) async {
+    await baseDir;
     await Directory(_jobDir(jobId)).create(recursive: true);
     await Directory(_tmpDir(jobId)).create(recursive: true);
     await Directory(_pendingDir(jobId)).create(recursive: true);
@@ -354,6 +411,7 @@ class AnalysisSpoolService {
   String _manifestPath(String jobId) => '${_jobDir(jobId)}/manifest.json';
 
   Future<void> writeManifest(AnalysisJobManifest manifest) async {
+    await baseDir; // 确保 _baseDir 初始化
     await ensureJobDirs(manifest.jobId);
     final json = jsonEncode(manifest.toJson());
     final tmpPath = '${_tmpDir(manifest.jobId)}/manifest.json.tmp';
@@ -367,6 +425,7 @@ class AnalysisSpoolService {
   }
 
   Future<AnalysisJobManifest?> readManifest(String jobId) async {
+    await baseDir;
     final file = File(_manifestPath(jobId));
     if (!await file.exists()) return null;
     try {
@@ -383,6 +442,8 @@ class AnalysisSpoolService {
   String _progressPath(String jobId) => '${_jobDir(jobId)}/progress.json';
 
   Future<void> writeProgress(AnalysisProgressSnapshot snapshot) async {
+    await baseDir;
+    await ensureJobDirs(snapshot.jobId);
     final json = jsonEncode(snapshot.toJson());
     final tmpPath = '${_tmpDir(snapshot.jobId)}/progress.json.tmp';
     final file = File(tmpPath);
@@ -392,6 +453,7 @@ class AnalysisSpoolService {
   }
 
   Future<AnalysisProgressSnapshot?> readProgress(String jobId) async {
+    await baseDir;
     final file = File(_progressPath(jobId));
     if (!await file.exists()) return null;
     try {
@@ -406,8 +468,12 @@ class AnalysisSpoolService {
   // ── Done marker（服务进程写入）──
 
   String _doneMarkerPath(String jobId) => '${_jobDir(jobId)}/done.marker';
+  String _controlPath(String jobId) => '${_jobDir(jobId)}/control.json';
+  String _fileKey(String rawKey) => Uri.encodeComponent(rawKey);
 
   Future<void> writeDoneMarker(String jobId) async {
+    await baseDir;
+    await ensureJobDirs(jobId);
     final tmpPath = '${_tmpDir(jobId)}/done.marker.tmp';
     final file = File(tmpPath);
     await file.writeAsString(
@@ -418,23 +484,75 @@ class AnalysisSpoolService {
       flush: true,
     );
     await file.rename(_doneMarkerPath(jobId));
+    await _bumpSpoolVersion();
     debugPrint('[spool] done.marker 写入 jobId=$jobId');
   }
 
   Future<bool> hasDoneMarker(String jobId) async {
+    await baseDir;
     return File(_doneMarkerPath(jobId)).exists();
+  }
+
+  // ── Control 写入/读取（主进程写入，服务进程读取）──
+
+  Future<void> writeControl(AnalysisJobControl control) async {
+    await baseDir;
+    await ensureJobDirs(control.jobId);
+    final tmpPath = '${_tmpDir(control.jobId)}/control.json.tmp';
+    final file = File(tmpPath);
+    await file.writeAsString(jsonEncode(control.toJson()), flush: true);
+    await file.rename(_controlPath(control.jobId));
+    await _bumpSpoolVersion();
+  }
+
+  Future<AnalysisJobControl> readControl(String jobId) async {
+    await baseDir;
+    final file = File(_controlPath(jobId));
+    if (!await file.exists()) return AnalysisJobControl.running(jobId);
+    try {
+      final json = jsonDecode(await file.readAsString()) as Map<String, Object?>;
+      return AnalysisJobControl.fromJson(json);
+    } catch (e) {
+      debugPrint('[spool] control 读取失败 jobId=$jobId: $e');
+      return AnalysisJobControl.running(jobId);
+    }
+  }
+
+  Future<void> requestPause(String jobId) async {
+    final current = await readControl(jobId);
+    await writeControl(
+      current.copyWith(pauseRequested: true, stopRequested: false),
+    );
+  }
+
+  Future<void> requestResume(String jobId) async {
+    final current = await readControl(jobId);
+    await writeControl(
+      current.copyWith(pauseRequested: false, stopRequested: false),
+    );
+  }
+
+  Future<void> requestStop(String jobId) async {
+    final current = await readControl(jobId);
+    await writeControl(
+      current.copyWith(pauseRequested: false, stopRequested: true),
+    );
   }
 
   // ── Result 写入（服务进程写入）──
 
   /// 写入单张图片的 result.json（使用 tmp + fsync + atomic rename）。
   Future<String> writeResult(String jobId, AnalysisSpoolResult result) async {
+    await baseDir;
+    await ensureJobDirs(jobId);
     final json = jsonEncode(result.toJson());
-    final tmpPath = '${_tmpDir(jobId)}/${result.photoKey}.json.tmp';
-    final pendingPath = '${_pendingDir(jobId)}/${result.photoKey}.json';
+    final key = _fileKey(result.photoKey);
+    final tmpPath = '${_tmpDir(jobId)}/$key.json.tmp';
+    final pendingPath = '${_pendingDir(jobId)}/$key.json';
     final file = File(tmpPath);
     await file.writeAsString(json, flush: true);
     await file.rename(pendingPath);
+    await _bumpSpoolVersion();
     return pendingPath;
   }
 
@@ -444,12 +562,15 @@ class AnalysisSpoolService {
     String photoKey,
     List<double> embedding,
   ) async {
+    await baseDir;
+    await ensureJobDirs(jobId);
     final buffer = Float64List(embedding.length);
     for (var i = 0; i < embedding.length; i++) {
       buffer[i] = embedding[i];
     }
-    final tmpPath = '${_tmpDir(jobId)}/${photoKey}.f32.tmp';
-    final embPath = '${_embeddingsDir(jobId)}/${photoKey}.f32';
+    final key = _fileKey(photoKey);
+    final tmpPath = '${_tmpDir(jobId)}/$key.f32.tmp';
+    final embPath = '${_embeddingsDir(jobId)}/$key.f32';
     final file = File(tmpPath);
     await file.writeAsBytes(buffer.buffer.asUint8List(), flush: true);
     await file.rename(embPath);
@@ -458,7 +579,8 @@ class AnalysisSpoolService {
 
   /// 读取 embedding 二进制文件。
   Future<List<double>?> readEmbedding(String jobId, String photoKey) async {
-    final embPath = '${_embeddingsDir(jobId)}/${photoKey}.f32';
+    await baseDir;
+    final embPath = '${_embeddingsDir(jobId)}/${_fileKey(photoKey)}.f32';
     final file = File(embPath);
     if (!await file.exists()) return null;
     try {
@@ -475,12 +597,14 @@ class AnalysisSpoolService {
 
   /// 扫描 results_pending/ 目录，返回所有完整的结果文件路径。
   Future<List<String>> listPendingResults(String jobId) async {
+    await baseDir;
     final dir = Directory(_pendingDir(jobId));
     if (!await dir.exists()) return [];
     final files = await dir.list().toList();
     return files
         .whereType<File>()
         .where((f) => f.path.endsWith('.json'))
+        .where((f) => !f.path.endsWith('_faces.json'))
         .map((f) => f.path)
         .toList();
   }
@@ -499,8 +623,10 @@ class AnalysisSpoolService {
 
   /// 将 result 从 pending 移动到 committed。
   Future<bool> moveToCommitted(String jobId, String photoKey) async {
-    final src = '${_pendingDir(jobId)}/${photoKey}.json';
-    final dst = '${_committedDir(jobId)}/${photoKey}.json';
+    await baseDir;
+    final key = _fileKey(photoKey);
+    final src = '${_pendingDir(jobId)}/$key.json';
+    final dst = '${_committedDir(jobId)}/$key.json';
     try {
       await File(src).rename(dst);
       return true;
@@ -512,8 +638,10 @@ class AnalysisSpoolService {
 
   /// 将 result 从 pending 移动到 failed。
   Future<bool> moveToFailed(String jobId, String photoKey) async {
-    final src = '${_pendingDir(jobId)}/${photoKey}.json';
-    final dst = '${_failedDir(jobId)}/${photoKey}.json';
+    await baseDir;
+    final key = _fileKey(photoKey);
+    final src = '${_pendingDir(jobId)}/$key.json';
+    final dst = '${_failedDir(jobId)}/$key.json';
     try {
       await File(src).rename(dst);
       return true;
@@ -528,6 +656,7 @@ class AnalysisSpoolService {
   String get _versionPath => '${_baseDir!.path}/spool_version.json';
 
   Future<void> _bumpSpoolVersion() async {
+    await baseDir;
     final current = await readSpoolVersion();
     final next = SpoolVersion(
       version: (current?.version ?? 0) + 1,
@@ -540,6 +669,7 @@ class AnalysisSpoolService {
   }
 
   Future<SpoolVersion?> readSpoolVersion() async {
+    await baseDir;
     final file = File(_versionPath);
     if (!await file.exists()) return null;
     try {
@@ -554,6 +684,7 @@ class AnalysisSpoolService {
 
   /// 列出所有 job 目录。
   Future<List<String>> listJobs() async {
+    await baseDir;
     final dir = Directory('${_baseDir!.path}/jobs');
     if (!await dir.exists()) return [];
     final entries = await dir.list().toList();
@@ -565,6 +696,7 @@ class AnalysisSpoolService {
 
   /// 清理 job 目录（主进程确认所有结果已消费后调用）。
   Future<void> cleanupJob(String jobId) async {
+    await baseDir;
     final dir = Directory(_jobDir(jobId));
     if (await dir.exists()) {
       await dir.delete(recursive: true);

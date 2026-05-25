@@ -67,6 +67,8 @@ class _SingleAssetBuildResult {
     this.skippedInvalidTime = 0,
     this.skippedNonCamera = 0,
     this.skippedScreenshot = 0,
+    this.skippedSmallResolution = 0,
+    this.skippedExtremeAspectRatio = 0,
   });
 
   final PhotoEntity? photo;
@@ -74,6 +76,8 @@ class _SingleAssetBuildResult {
   final int skippedInvalidTime;
   final int skippedNonCamera;
   final int skippedScreenshot;
+  final int skippedSmallResolution;
+  final int skippedExtremeAspectRatio;
 }
 
 class _PhotoAccessCacheEntry {

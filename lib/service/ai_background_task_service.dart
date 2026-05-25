@@ -104,6 +104,9 @@ class AiBackgroundTaskService {
   }) async {
     if (manifest != null) {
       await AnalysisSpoolService.instance.writeManifest(manifest);
+      await AnalysisSpoolService.instance.writeControl(
+        AnalysisJobControl.running(manifest.jobId),
+      );
       await _recordPendingJobId(manifest.jobId);
     }
     if (!Platform.isAndroid && !Platform.isIOS) {
@@ -179,6 +182,12 @@ class AiBackgroundTaskService {
       notificationTitle: title,
       notificationText: text,
     );
+  }
+
+  Future<bool> get isRunning async {
+    if (!Platform.isAndroid && !Platform.isIOS) return false;
+    await _ensureInitialized();
+    return FlutterForegroundTask.isRunningService;
   }
 
   Future<void> stop() async {

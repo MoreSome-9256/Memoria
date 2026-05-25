@@ -21,7 +21,39 @@ class PhotoFilterHelper {
         latitude != 0 &&
         longitude != 0;
   }
-  
+
+  static bool isExtremeAspectRatio(
+    int width,
+    int height, {
+    double maxRatio = 3.2,
+  }) {
+    if (width <= 0 || height <= 0) return false;
+    final longSide = width > height ? width : height;
+    final shortSide = width > height ? height : width;
+    return longSide / shortSide >= maxRatio;
+  }
+
+  static bool isLikelyScreenshotAsset({
+    required String? title,
+    required String? mimeType,
+    required int width,
+    required int height,
+  }) {
+    final name = (title ?? '').toLowerCase();
+    if (name.contains('screenshot') ||
+        name.contains('screen_shot') ||
+        name.contains('screen-shot') ||
+        name.contains('截屏') ||
+        name.contains('截图') ||
+        name.contains('录屏')) {
+      return true;
+    }
+    final type = (mimeType ?? '').toLowerCase();
+    if (type.contains('gif')) {
+      return false;
+    }
+    return false;
+  }
 
   static int? extractTimestampFromFileName(String filePath) {
     final normalized = filePath.replaceAll('\\', '/').toLowerCase();

@@ -20,6 +20,7 @@ class SpoolProgress {
   final int failed;
   final int skipped;
   final bool done;
+  final String currentStep;
 
   const SpoolProgress({
     required this.jobId,
@@ -30,6 +31,7 @@ class SpoolProgress {
     this.failed = 0,
     this.skipped = 0,
     this.done = false,
+    this.currentStep = '',
   });
 
   bool get isRunning => status == 'running';
@@ -49,6 +51,7 @@ class SpoolProgress {
       succeeded: snapshot.succeeded,
       failed: snapshot.failed,
       skipped: snapshot.skipped,
+      currentStep: snapshot.currentStep,
     );
   }
 }

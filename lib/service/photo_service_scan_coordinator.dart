@@ -80,7 +80,7 @@ class _PhotoScanCoordinator {
       return _emptyPlan(totalBefore);
     }
 
-    final filterProfile = PhotoScanFilterProfile.userSelectedAlbums;
+    final filterProfile = await _resolveFilterProfile();
 
     final targetNew = math.max(1, maxAssets ?? 50);
     const pageSize = 50;
@@ -378,16 +378,19 @@ class _PhotoScanCoordinator {
   Future<PhotoScanFilterProfile> _resolveFilterProfile() async {
     final prefs = await AlbumSelectionPreferenceService().loadScanPreferences();
     int? minTs;
-    if (prefs['minYear'] != null) {
-      final y = prefs['minYear']!;
+    if (prefs.minYear != null) {
+      final y = prefs.minYear!;
       minTs = DateTime(y, 1, 1).millisecondsSinceEpoch;
     }
     const base = PhotoScanFilterProfile.userSelectedAlbums;
     return PhotoScanFilterProfile(
       requireValidDimensions: base.requireValidDimensions,
       minTimestampMs: minTs,
-      minWidth: prefs['minWidth'],
-      minHeight: prefs['minHeight'],
+      minWidth: prefs.minWidth,
+      minHeight: prefs.minHeight,
+      minPixels: prefs.minPixels,
+      excludeScreenshots: prefs.excludeScreenshots,
+      excludeExtremeAspectRatios: prefs.excludeExtremeAspectRatios,
     );
   }
 
@@ -420,18 +423,25 @@ class _ScanStats {
     this.skippedInvalidTime = 0,
     this.skippedNonCamera = 0,
     this.skippedScreenshot = 0,
+    this.skippedSmallResolution = 0,
+    this.skippedExtremeAspectRatio = 0,
   });
 
   final int insertedNoGps;
   final int skippedInvalidTime;
   final int skippedNonCamera;
   final int skippedScreenshot;
+  final int skippedSmallResolution;
+  final int skippedExtremeAspectRatio;
 
   _ScanStats merge(_SingleAssetBuildResult r) => _ScanStats(
     insertedNoGps: insertedNoGps + r.insertedNoGps,
     skippedInvalidTime: skippedInvalidTime + r.skippedInvalidTime,
     skippedNonCamera: skippedNonCamera + r.skippedNonCamera,
     skippedScreenshot: skippedScreenshot + r.skippedScreenshot,
+    skippedSmallResolution: skippedSmallResolution + r.skippedSmallResolution,
+    skippedExtremeAspectRatio:
+        skippedExtremeAspectRatio + r.skippedExtremeAspectRatio,
   );
 }
 

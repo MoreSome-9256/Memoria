@@ -42,9 +42,13 @@ class _SpoolComputeResult {
   final List<String> tags;
   final String ocrText;
   final List<String> ocrTags;
+  final bool ocrRequired;
+  final bool ocrCompleted;
   final int faceCount;
   final double smileProb;
   final double joyScore;
+  final bool faceAnalysisRequired;
+  final bool faceAnalysisCompleted;
   final SpoolJunkCandidate? junkCandidate;
   final String? errorMessage;
   final int startedAt;
@@ -59,9 +63,13 @@ class _SpoolComputeResult {
     this.tags = const <String>[],
     this.ocrText = '',
     this.ocrTags = const <String>[],
+    this.ocrRequired = false,
+    this.ocrCompleted = true,
     this.faceCount = 0,
     this.smileProb = 0.0,
     this.joyScore = 0.0,
+    this.faceAnalysisRequired = false,
+    this.faceAnalysisCompleted = true,
     this.junkCandidate,
     this.errorMessage,
     required this.startedAt,
@@ -141,6 +149,8 @@ class SpoolAnalysisWorker {
     var succeeded = 0;
     var failed = 0;
     var skipped = 0;
+    var warmUpCompleted = 0;
+    const warmUpTotal = 3;
 
     debugPrint('[spool-worker] ======== 前台 Worker 启动 ========');
     debugPrint('[spool-worker] jobId=$jobId totalItems=$totalItems');
@@ -192,7 +202,9 @@ class SpoolAnalysisWorker {
     debugPrint('[spool-worker] 开始预热引擎…');
     await _writeProgress(
       spool, jobId, totalItems, processed, succeeded, failed,
-      skipped, '正在预热引擎…',
+      skipped, '正在预热引擎 (1/3)：加载图像模型…',
+      warmUpCompleted: warmUpCompleted,
+      warmUpTotal: warmUpTotal,
     );
 
     final liteRt = MobileClipLiteRtService.withAccelerator(
@@ -200,6 +212,13 @@ class SpoolAnalysisWorker {
     );
     final w0 = DateTime.now();
     await liteRt.warmUp();
+    warmUpCompleted = 1;
+    await _writeProgress(
+      spool, jobId, totalItems, processed, succeeded, failed,
+      skipped, '正在预热引擎 (2/3)：加载标签语义模型…',
+      warmUpCompleted: warmUpCompleted,
+      warmUpTotal: warmUpTotal,
+    );
     debugPrint('[spool-worker] LiteRT 预热耗时: ${DateTime.now().difference(w0).inMilliseconds}ms');
     if (!await _waitIfPausedOrStopped(
       spool, jobId, totalItems, processed, succeeded, failed, skipped,
@@ -210,6 +229,13 @@ class SpoolAnalysisWorker {
     }
     final w1 = DateTime.now();
     await _tagService.warmUp();
+    warmUpCompleted = 2;
+    await _writeProgress(
+      spool, jobId, totalItems, processed, succeeded, failed,
+      skipped, '正在预热引擎 (3/3)：加载低价值过滤模板…',
+      warmUpCompleted: warmUpCompleted,
+      warmUpTotal: warmUpTotal,
+    );
     debugPrint('[spool-worker] TagService 预热耗时: ${DateTime.now().difference(w1).inMilliseconds}ms');
     if (!await _waitIfPausedOrStopped(
       spool, jobId, totalItems, processed, succeeded, failed, skipped,
@@ -220,6 +246,13 @@ class SpoolAnalysisWorker {
     }
     final w2 = DateTime.now();
     await _warmUpJunkFilter();
+    warmUpCompleted = 3;
+    await _writeProgress(
+      spool, jobId, totalItems, processed, succeeded, failed,
+      skipped, '引擎预热完成，准备分析…',
+      warmUpCompleted: warmUpCompleted,
+      warmUpTotal: warmUpTotal,
+    );
     debugPrint('[spool-worker] JunkFilter 预热耗时: ${DateTime.now().difference(w2).inMilliseconds}ms');
     if (!await _waitIfPausedOrStopped(
       spool, jobId, totalItems, processed, succeeded, failed, skipped,
@@ -264,10 +297,12 @@ class SpoolAnalysisWorker {
         debugPrint('[spool-worker] photoKey=$photoKey path=${item.path} contentUri=${item.contentUri}');
         debugPrint('[spool-worker] GPS: lat=${item.latitude} lng=${item.longitude}');
 
-        await _writeProgress(
-          spool, jobId, totalItems, processed, succeeded, failed,
-          skipped, '正在分析第 ${index + 1} / $totalItems 张…',
-        );
+          await _writeProgress(
+            spool, jobId, totalItems, processed, succeeded, failed,
+            skipped, '正在分析第 ${index + 1} / $totalItems 张…',
+            warmUpCompleted: warmUpCompleted,
+            warmUpTotal: warmUpTotal,
+          );
 
         final startedAt = DateTime.now().millisecondsSinceEpoch;
         _SpoolComputeResult? computeResult;
@@ -346,9 +381,13 @@ class SpoolAnalysisWorker {
             aiCaption: '',
             ocrText: computeResult.ocrText,
             ocrTags: computeResult.ocrTags,
+            ocrRequired: computeResult.ocrRequired,
+            ocrCompleted: computeResult.ocrCompleted,
             faceCount: computeResult.faceCount,
             smileProb: computeResult.smileProb,
             joyScore: computeResult.joyScore,
+            faceAnalysisRequired: computeResult.faceAnalysisRequired,
+            faceAnalysisCompleted: computeResult.faceAnalysisCompleted,
             isJunk: computeResult.junkCandidate != null,
             junkCategoryId: computeResult.junkCandidate != null &&
                     computeResult.junkCandidate!.reasons.isNotEmpty
@@ -475,6 +514,8 @@ class SpoolAnalysisWorker {
     String currentStep,
     {
     String? status,
+    int warmUpCompleted = 0,
+    int warmUpTotal = 0,
   }) async {
     final resolvedStatus =
         status ?? (_stopRequested ? 'stopped' : processed >= total ? 'finished' : 'running');
@@ -487,6 +528,8 @@ class SpoolAnalysisWorker {
         succeeded: succeeded,
         failed: failed,
         skipped: skipped,
+        warmUpCompleted: warmUpCompleted,
+        warmUpTotal: warmUpTotal,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
         currentStep: currentStep,
       ),
@@ -784,6 +827,7 @@ class SpoolAnalysisWorker {
     // 5. OCR
     final t5 = DateTime.now();
     var ocrResult = OcrResult.empty();
+    var ocrCompleted = true;
     final aspectRatio = input.height > 0 ? input.width / input.height : 1.0;
     final shouldRunOcr =
         _settings.ocrEnabled &&
@@ -793,6 +837,7 @@ class SpoolAnalysisWorker {
       try {
         ocrResult = await _ocrService.analyzeImageFile(analysisFile);
       } catch (error) {
+        ocrCompleted = false;
         debugPrint('[spool-worker]   OCR 跳过：插件处理失败 $error');
       }
     }
@@ -853,8 +898,11 @@ class SpoolAnalysisWorker {
     var faceCount = 0;
     var maxSmileProb = 0.0;
     var joyScore = 0.0;
+    var faceAnalysisRequired = false;
+    var faceAnalysisCompleted = true;
     final faceResults = <_SpoolWorkerFaceResult>[];
     if (faceDetector != null && input.width >= 32 && input.height >= 32) {
+      faceAnalysisRequired = true;
       debugPrint('[spool-worker]   开始人脸检测: image=${input.width}x${input.height}');
       try {
         final inputImage = InputImage.fromFile(analysisFile);
@@ -893,6 +941,7 @@ class SpoolAnalysisWorker {
           ));
         }
       } catch (error) {
+        faceAnalysisCompleted = false;
         debugPrint('[spool-worker]   人脸检测跳过：插件处理失败 $error');
       }
     } else if (faceDetector != null) {
@@ -920,9 +969,13 @@ class SpoolAnalysisWorker {
       tags: visualTags,
       ocrText: ocrResult.text,
       ocrTags: ocrResult.tags,
+      ocrRequired: shouldRunOcr,
+      ocrCompleted: ocrCompleted,
       faceCount: faceCount,
       smileProb: maxSmileProb,
       joyScore: joyScore,
+      faceAnalysisRequired: faceAnalysisRequired,
+      faceAnalysisCompleted: faceAnalysisCompleted,
       startedAt: startedAt,
       finishedAt: DateTime.now().millisecondsSinceEpoch,
       junkCandidate: junkCandidate,

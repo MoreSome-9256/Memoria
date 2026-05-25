@@ -19,6 +19,8 @@ class SpoolProgress {
   final int succeeded;
   final int failed;
   final int skipped;
+  final int warmUpCompleted;
+  final int warmUpTotal;
   final bool done;
   final String currentStep;
 
@@ -30,6 +32,8 @@ class SpoolProgress {
     this.succeeded = 0,
     this.failed = 0,
     this.skipped = 0,
+    this.warmUpCompleted = 0,
+    this.warmUpTotal = 0,
     this.done = false,
     this.currentStep = '',
   });
@@ -51,6 +55,8 @@ class SpoolProgress {
       succeeded: snapshot.succeeded,
       failed: snapshot.failed,
       skipped: snapshot.skipped,
+      warmUpCompleted: snapshot.warmUpCompleted,
+      warmUpTotal: snapshot.warmUpTotal,
       currentStep: snapshot.currentStep,
     );
   }

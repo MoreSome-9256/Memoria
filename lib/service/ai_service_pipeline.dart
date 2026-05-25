@@ -68,6 +68,8 @@ extension AIServicePipeline on AIService {
             failed: failed,
             currentStep: currentStep,
             elapsedMs: _elapsedMsForSpoolProgress(manifest, snapshot),
+            warmUpCompleted: snapshot?.warmUpCompleted ?? 0,
+            warmUpTotal: snapshot?.warmUpTotal ?? 0,
           );
           SpoolProgressNotifier.instance.startPolling(existingJobId);
           if (serviceOffline && canAutoRestart) {
@@ -301,20 +303,39 @@ extension AIServicePipeline on AIService {
         continue;
       }
 
-      if (result.isSucceeded) {
+      if (result.isSucceeded && _isCompleteSpoolResult(result)) {
         List<double>? embedding;
         if (result.embeddingFile != null) {
           embedding = await spool.readEmbedding(jobId, result.photoKey);
         }
+        if (embedding == null || embedding.isEmpty) {
+          await _resetIncompletePhoto(photo);
+          await spool.moveToFailed(jobId, result.photoKey);
+          failedCount++;
+          debugPrint(
+            '[spool] succeeded result 缺少 embedding，保持未分析 photoId=${photo.id} key=${result.photoKey}',
+          );
+          continue;
+        }
 
         final faceResults = await _readFaceResults(spool, jobId, result.photoKey);
 
-        await _applySpoolResult(
-          photo: photo,
-          embedding: embedding ?? const <double>[],
-          faceResults: faceResults,
-          result: result,
-        );
+        try {
+          await _applySpoolResult(
+            photo: photo,
+            embedding: embedding,
+            faceResults: faceResults,
+            result: result,
+          );
+        } catch (error) {
+          await _resetIncompletePhoto(photo);
+          await spool.moveToFailed(jobId, result.photoKey);
+          failedCount++;
+          debugPrint(
+            '[spool] 写库阶段失败，保持未分析 photoId=${photo.id} key=${result.photoKey}: $error',
+          );
+          continue;
+        }
 
         if (photo.eventId != null && photo.eventId! > 0) {
           affectedEventIds.add(photo.eventId!);
@@ -326,13 +347,21 @@ extension AIServicePipeline on AIService {
         }
         consumedCount++;
       } else {
+        await _resetIncompletePhoto(photo);
         await spool.moveToFailed(jobId, result.photoKey);
         failedCount++;
+        if (result.isSucceeded) {
+          debugPrint(
+            '[spool] result 阶段未完整，保持未分析 photoId=${photo.id} '
+            'ocr=${result.ocrRequired}/${result.ocrCompleted} '
+            'face=${result.faceAnalysisRequired}/${result.faceAnalysisCompleted}',
+          );
+        }
       }
     }
 
     if (dismissUnfinishedItems) {
-      await _dismissUnfinishedSpoolItems(
+      await _resetUnfinishedSpoolItems(
         manifest: manifest,
         succeededPhotoIds: succeededPhotoIds,
       );
@@ -387,7 +416,7 @@ extension AIServicePipeline on AIService {
     unawaited(analyzePhotosInBackground(photoIds: pendingPhotoIds));
   }
 
-  Future<void> _dismissUnfinishedSpoolItems({
+  Future<void> _resetUnfinishedSpoolItems({
     required AnalysisJobManifest manifest,
     required Set<int> succeededPhotoIds,
   }) async {
@@ -405,7 +434,6 @@ extension AIServicePipeline on AIService {
     final photos = photoBox
         .getMany(unfinishedIds)
         .whereType<PhotoEntity>()
-        .where((photo) => !photo.isAiAnalyzed)
         .toList(growable: false);
     if (photos.isEmpty) {
       return;
@@ -413,13 +441,56 @@ extension AIServicePipeline on AIService {
 
     store.runInTransaction(TxMode.write, () {
       for (final photo in photos) {
-        photo.isAiAnalyzed = true;
-        photo.aiTags ??= <String>[];
-        photo.ocrTags ??= <String>[];
+        photo.isAiAnalyzed = false;
+        if (photo.imageEmbedding == null || photo.imageEmbedding!.isEmpty) {
+          photo.aiTags = <String>[];
+          photo.aiCaption = null;
+          photo.ocrText = null;
+          photo.ocrTags = <String>[];
+          photo.faceCount = 0;
+          photo.smileProb = 0;
+          photo.joyScore = 0;
+        }
       }
       photoBox.putMany(photos);
     });
-    debugPrint('[spool] 已从待分析队列移除 ${photos.length} 张未完成照片');
+    debugPrint('[spool] 已保留 ${photos.length} 张未完成照片为待分析状态');
+  }
+
+  Future<void> _resetIncompletePhoto(PhotoEntity photo) async {
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
+    store.runInTransaction(TxMode.write, () {
+      final p = photoBox.get(photo.id);
+      if (p == null) return;
+      p.isAiAnalyzed = false;
+      if (p.imageEmbedding == null || p.imageEmbedding!.isEmpty) {
+        p.aiTags = <String>[];
+        p.aiCaption = null;
+        p.ocrText = null;
+        p.ocrTags = <String>[];
+        p.faceCount = 0;
+        p.smileProb = 0;
+        p.joyScore = 0;
+      }
+      photoBox.put(p);
+    });
+  }
+
+  bool _isCompleteSpoolResult(AnalysisSpoolResult result) {
+    if (!result.isSucceeded) {
+      return false;
+    }
+    if (result.embeddingFile == null || result.embeddingDim <= 0) {
+      return false;
+    }
+    if (result.ocrRequired && !result.ocrCompleted) {
+      return false;
+    }
+    if (result.faceAnalysisRequired && !result.faceAnalysisCompleted) {
+      return false;
+    }
+    return true;
   }
 
   Future<List<_SpoolFaceFileResult>> _readFaceResults(
@@ -462,7 +533,7 @@ extension AIServicePipeline on AIService {
       if (p == null) return;
 
       p.aiTags = result.tags;
-      p.isAiAnalyzed = true;
+      p.isAiAnalyzed = false;
       p.aiCaption = result.aiCaption.isEmpty ? null : result.aiCaption;
       p.imageEmbedding = embedding.isEmpty ? null : embedding;
       p.ocrText = result.ocrText.isEmpty ? null : result.ocrText;
@@ -496,6 +567,13 @@ extension AIServicePipeline on AIService {
     if (faceResults.isNotEmpty) {
       await _applyFaceResults(photo, faceResults);
     }
+
+    store.runInTransaction(TxMode.write, () {
+      final p = photoBox.get(photo.id);
+      if (p == null) return;
+      p.isAiAnalyzed = true;
+      photoBox.put(p);
+    });
   }
 
   Future<void> _applyFaceResults(

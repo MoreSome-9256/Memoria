@@ -134,9 +134,13 @@ class AnalysisSpoolResult {
   final String aiCaption;
   final String ocrText;
   final List<String> ocrTags;
+  final bool ocrRequired;
+  final bool ocrCompleted;
   final int faceCount;
   final double smileProb;
   final double joyScore;
+  final bool faceAnalysisRequired;
+  final bool faceAnalysisCompleted;
   final bool isJunk;
   final String? junkCategoryId;
 
@@ -163,9 +167,13 @@ class AnalysisSpoolResult {
     this.aiCaption = '',
     this.ocrText = '',
     this.ocrTags = const <String>[],
+    this.ocrRequired = false,
+    this.ocrCompleted = true,
     this.faceCount = 0,
     this.smileProb = 0.0,
     this.joyScore = 0.0,
+    this.faceAnalysisRequired = false,
+    this.faceAnalysisCompleted = true,
     this.isJunk = false,
     this.junkCategoryId,
     this.province,
@@ -191,9 +199,13 @@ class AnalysisSpoolResult {
     'aiCaption': aiCaption,
     'ocrText': ocrText,
     'ocrTags': ocrTags,
+    'ocrRequired': ocrRequired,
+    'ocrCompleted': ocrCompleted,
     'faceCount': faceCount,
     'smileProb': smileProb,
     'joyScore': joyScore,
+    'faceAnalysisRequired': faceAnalysisRequired,
+    'faceAnalysisCompleted': faceAnalysisCompleted,
     'isJunk': isJunk,
     'junkCategoryId': junkCategoryId,
     'province': province,
@@ -220,9 +232,13 @@ class AnalysisSpoolResult {
       aiCaption: (json['aiCaption'] as String?) ?? '',
       ocrText: (json['ocrText'] as String?) ?? '',
       ocrTags: (json['ocrTags'] as List<Object?>?)?.cast<String>() ?? <String>[],
+      ocrRequired: (json['ocrRequired'] as bool?) ?? false,
+      ocrCompleted: (json['ocrCompleted'] as bool?) ?? true,
       faceCount: (json['faceCount'] as num?)?.toInt() ?? 0,
       smileProb: (json['smileProb'] as num?)?.toDouble() ?? 0.0,
       joyScore: (json['joyScore'] as num?)?.toDouble() ?? 0.0,
+      faceAnalysisRequired: (json['faceAnalysisRequired'] as bool?) ?? false,
+      faceAnalysisCompleted: (json['faceAnalysisCompleted'] as bool?) ?? true,
       isJunk: (json['isJunk'] as bool?) ?? false,
       junkCategoryId: json['junkCategoryId'] as String?,
       province: json['province'] as String?,
@@ -248,6 +264,8 @@ class AnalysisProgressSnapshot {
   final int succeeded;
   final int failed;
   final int skipped;
+  final int warmUpCompleted;
+  final int warmUpTotal;
   final int updatedAt;
   final String currentStep;
 
@@ -259,6 +277,8 @@ class AnalysisProgressSnapshot {
     required this.succeeded,
     required this.failed,
     required this.skipped,
+    this.warmUpCompleted = 0,
+    this.warmUpTotal = 0,
     required this.updatedAt,
     this.currentStep = '',
   });
@@ -271,6 +291,8 @@ class AnalysisProgressSnapshot {
     'succeeded': succeeded,
     'failed': failed,
     'skipped': skipped,
+    'warmUpCompleted': warmUpCompleted,
+    'warmUpTotal': warmUpTotal,
     'updatedAt': updatedAt,
     'currentStep': currentStep,
   };
@@ -284,6 +306,8 @@ class AnalysisProgressSnapshot {
       succeeded: (json['succeeded'] as num).toInt(),
       failed: (json['failed'] as num).toInt(),
       skipped: (json['skipped'] as num).toInt(),
+      warmUpCompleted: (json['warmUpCompleted'] as num?)?.toInt() ?? 0,
+      warmUpTotal: (json['warmUpTotal'] as num?)?.toInt() ?? 0,
       updatedAt: (json['updatedAt'] as num).toInt(),
       currentStep: (json['currentStep'] as String?) ?? '',
     );

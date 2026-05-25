@@ -19,7 +19,7 @@ extension LocalInferenceAcceleratorX on LocalInferenceAccelerator {
     LocalInferenceAccelerator.npu => 'NPU',
     LocalInferenceAccelerator.coreml => 'Core ML',
     LocalInferenceAccelerator.metal => 'Metal',
-    LocalInferenceAccelerator.xnnpack => 'CPU',
+    LocalInferenceAccelerator.xnnpack => 'XNNPACK',
     LocalInferenceAccelerator.cpu => 'CPU',
   };
 
@@ -31,7 +31,7 @@ extension LocalInferenceAcceleratorX on LocalInferenceAccelerator {
     LocalInferenceAccelerator.coreml => 'iOS/macOS Core ML delegate',
     LocalInferenceAccelerator.metal => 'iOS/macOS Metal GPU delegate',
     LocalInferenceAccelerator.xnnpack =>
-      '兼容旧设置：显式 XNNPACK delegate 已禁用，使用纯 CPU',
+      'CPU XNNPACK delegate；GPU/NPU 闪退时优先尝试的兼容方案',
     LocalInferenceAccelerator.cpu => '纯 CPU，不建议用于主流程',
   };
 
@@ -41,7 +41,7 @@ extension LocalInferenceAcceleratorX on LocalInferenceAccelerator {
       'npu' => LocalInferenceAccelerator.npu,
       'coreml' => LocalInferenceAccelerator.coreml,
       'metal' => LocalInferenceAccelerator.metal,
-      'xnnpack' => LocalInferenceAccelerator.cpu,
+      'xnnpack' => LocalInferenceAccelerator.xnnpack,
       'cpu' => LocalInferenceAccelerator.cpu,
       _ => LocalInferenceAccelerator.gpu,
     };
@@ -116,6 +116,7 @@ class LiteRtInferenceService {
 
   List<_LiteRtProviderAttempt> _buildAttempts(LiteRtSessionConfig config) {
     final fallback = <_LiteRtProviderAttempt>[
+      _LiteRtProviderAttempt.xnnpack(config.threads),
       _LiteRtProviderAttempt.cpu(),
     ];
 
@@ -134,6 +135,7 @@ class LiteRtInferenceService {
           ...fallback,
         ],
         LocalInferenceAccelerator.xnnpack => <_LiteRtProviderAttempt>[
+          _LiteRtProviderAttempt.xnnpack(config.threads),
           _LiteRtProviderAttempt.cpu(),
         ],
         LocalInferenceAccelerator.cpu => <_LiteRtProviderAttempt>[
@@ -161,6 +163,7 @@ class LiteRtInferenceService {
           ...fallback,
         ],
         LocalInferenceAccelerator.xnnpack => <_LiteRtProviderAttempt>[
+          _LiteRtProviderAttempt.xnnpack(config.threads),
           _LiteRtProviderAttempt.cpu(),
         ],
         LocalInferenceAccelerator.cpu => <_LiteRtProviderAttempt>[
@@ -225,6 +228,19 @@ class _LiteRtProviderAttempt {
     return _LiteRtProviderAttempt(
       label: 'CPU',
       createDelegates: () async => const <tfl.Delegate>[],
+    );
+  }
+
+  factory _LiteRtProviderAttempt.xnnpack(int threads) {
+    return _LiteRtProviderAttempt(
+      label: 'XNNPACK',
+      createDelegates: () async => <tfl.Delegate>[
+        tfl.XNNPackDelegate(
+          options: tfl.XNNPackDelegateOptions(
+            numThreads: threads.clamp(1, 2),
+          ),
+        ),
+      ],
     );
   }
 

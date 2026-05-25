@@ -72,7 +72,7 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
         children: [
           Text(
             Platform.isAndroid
-                ? '在同一批照片上对比 MobileCLIP2 LiteRT 在 GPU 与 NPU 路径上的速度。默认主链路使用 GPU。'
+                ? '在同一批照片上对比 MobileCLIP2 LiteRT 在 GPU、NPU 与 XNNPACK 路径上的速度。若 GPU/NPU 在设备上不稳定，请优先尝试 XNNPACK。'
                 : 'iOS 使用 Core ML 主链路，本页不运行 Android LiteRT delegate benchmark。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),

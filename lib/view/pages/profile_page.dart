@@ -338,16 +338,18 @@ class _ProfilePageState extends State<ProfilePage> {
                                 icon: Icon(Icons.developer_board_outlined),
                               ),
                               ButtonSegment<LocalInferenceAccelerator>(
+                                value: LocalInferenceAccelerator.xnnpack,
+                                label: Text('XNNPACK'),
+                                icon: Icon(Icons.tune_outlined),
+                              ),
+                              ButtonSegment<LocalInferenceAccelerator>(
                                 value: LocalInferenceAccelerator.cpu,
                                 label: Text('CPU'),
-                                icon: Icon(Icons.tune_outlined),
+                                icon: Icon(Icons.memory),
                               ),
                             ],
                         selected: <LocalInferenceAccelerator>{
-                          aiSettings.inferenceAccelerator ==
-                                  LocalInferenceAccelerator.xnnpack
-                              ? LocalInferenceAccelerator.cpu
-                              : aiSettings.inferenceAccelerator,
+                          aiSettings.inferenceAccelerator,
                         },
                         onSelectionChanged: (selection) {
                           setSheetState(() {
@@ -361,6 +363,11 @@ class _ProfilePageState extends State<ProfilePage> {
                       Text(
                         '${aiSettings.inferenceAccelerator.label} · ${aiSettings.inferenceAccelerator.description}',
                         style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '如果当前方案导致闪退或无法启动，请在这里切到兼容性更好的 XNNPACK；仍不稳定时再切 CPU。',
+                        style: TextStyle(color: Colors.orange[800], fontSize: 12),
                       ),
                       const SizedBox(height: 20),
 

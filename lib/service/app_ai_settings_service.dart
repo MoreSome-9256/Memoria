@@ -174,8 +174,10 @@ class AppAiSettingsService {
       iosContinuedProcessingEnabled:
           prefs.getBool(_iosContinuedProcessingKey) ??
           AppAiSettings.defaults.iosContinuedProcessingEnabled,
-      inferenceAccelerator: LocalInferenceAcceleratorX.fromStorageValue(
-        prefs.getString(_inferenceAcceleratorKey),
+      inferenceAccelerator: _normalizeAcceleratorForPlatform(
+        LocalInferenceAcceleratorX.fromStorageValue(
+          prefs.getString(_inferenceAcceleratorKey),
+        ),
       ),
       autoResumeAnalysis:
           prefs.getBool(_autoResumeKey) ??
@@ -184,5 +186,19 @@ class AppAiSettingsService {
           prefs.getBool(_autoAnalyzeNewKey) ??
           AppAiSettings.defaults.autoAnalyzeNewPhotos,
     );
+  }
+
+  LocalInferenceAccelerator _normalizeAcceleratorForPlatform(
+    LocalInferenceAccelerator accelerator,
+  ) {
+    if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.macOS)) {
+      return switch (accelerator) {
+        LocalInferenceAccelerator.gpu => LocalInferenceAccelerator.metal,
+        LocalInferenceAccelerator.npu => LocalInferenceAccelerator.coreml,
+        _ => accelerator,
+      };
+    }
+    return accelerator;
   }
 }

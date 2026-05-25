@@ -20,19 +20,19 @@ extension LocalInferenceAcceleratorX on LocalInferenceAccelerator {
     LocalInferenceAccelerator.coreml => 'Core ML',
     LocalInferenceAccelerator.metal => 'Metal',
     LocalInferenceAccelerator.xnnpack => 'XNNPACK',
-    LocalInferenceAccelerator.cpu => 'CPU',
+    LocalInferenceAccelerator.cpu => 'Raw CPU',
   };
 
   String get description => switch (this) {
     LocalInferenceAccelerator.gpu =>
-      'Android 使用 TFLite GPU delegate v2；iOS 使用 Metal',
+      'Android 使用 TFLite GPU delegate v2；Apple 平台请使用 Metal(GPU)',
     LocalInferenceAccelerator.npu =>
-      'iOS 使用 Core ML Neural Engine；Android 预留厂商 delegate 接入',
-    LocalInferenceAccelerator.coreml => 'iOS/macOS Core ML delegate',
-    LocalInferenceAccelerator.metal => 'iOS/macOS Metal GPU delegate',
+      'Android 预留厂商 NPU delegate 接入',
+    LocalInferenceAccelerator.coreml => 'Apple Core ML delegate，优先使用系统加速',
+    LocalInferenceAccelerator.metal => 'Apple Metal GPU delegate',
     LocalInferenceAccelerator.xnnpack =>
       'CPU XNNPACK delegate；GPU/NPU 闪退时优先尝试的兼容方案',
-    LocalInferenceAccelerator.cpu => '纯 CPU，不建议用于主流程',
+    LocalInferenceAccelerator.cpu => '不使用 delegate 的原始 CPU 路径，最稳但最慢',
   };
 
   static LocalInferenceAccelerator fromStorageValue(String? value) {
@@ -43,7 +43,9 @@ extension LocalInferenceAcceleratorX on LocalInferenceAccelerator {
       'metal' => LocalInferenceAccelerator.metal,
       'xnnpack' => LocalInferenceAccelerator.xnnpack,
       'cpu' => LocalInferenceAccelerator.cpu,
-      _ => LocalInferenceAccelerator.gpu,
+      _ => Platform.isIOS || Platform.isMacOS
+          ? LocalInferenceAccelerator.coreml
+          : LocalInferenceAccelerator.gpu,
     };
   }
 }

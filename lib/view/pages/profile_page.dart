@@ -273,6 +273,61 @@ class _ProfilePageState extends State<ProfilePage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
+            final isApplePlatform = Platform.isIOS || Platform.isMacOS;
+            final acceleratorSegments =
+                isApplePlatform
+                    ? const <ButtonSegment<LocalInferenceAccelerator>>[
+                        ButtonSegment<LocalInferenceAccelerator>(
+                          value: LocalInferenceAccelerator.coreml,
+                          label: Text('Core ML'),
+                          icon: Icon(Icons.auto_awesome),
+                        ),
+                        ButtonSegment<LocalInferenceAccelerator>(
+                          value: LocalInferenceAccelerator.metal,
+                          label: Text('Metal'),
+                          icon: Icon(Icons.memory_outlined),
+                        ),
+                        ButtonSegment<LocalInferenceAccelerator>(
+                          value: LocalInferenceAccelerator.xnnpack,
+                          label: Text('XNNPACK'),
+                          icon: Icon(Icons.tune_outlined),
+                        ),
+                        ButtonSegment<LocalInferenceAccelerator>(
+                          value: LocalInferenceAccelerator.cpu,
+                          label: Text('Raw CPU'),
+                          icon: Icon(Icons.memory),
+                        ),
+                      ]
+                    : const <ButtonSegment<LocalInferenceAccelerator>>[
+                        ButtonSegment<LocalInferenceAccelerator>(
+                          value: LocalInferenceAccelerator.gpu,
+                          label: Text('GPU'),
+                          icon: Icon(Icons.memory_outlined),
+                        ),
+                        ButtonSegment<LocalInferenceAccelerator>(
+                          value: LocalInferenceAccelerator.npu,
+                          label: Text('NPU'),
+                          icon: Icon(Icons.developer_board_outlined),
+                        ),
+                        ButtonSegment<LocalInferenceAccelerator>(
+                          value: LocalInferenceAccelerator.xnnpack,
+                          label: Text('XNNPACK'),
+                          icon: Icon(Icons.tune_outlined),
+                        ),
+                        ButtonSegment<LocalInferenceAccelerator>(
+                          value: LocalInferenceAccelerator.cpu,
+                          label: Text('CPU'),
+                          icon: Icon(Icons.memory),
+                        ),
+                      ];
+            final availableAccelerators =
+                acceleratorSegments.map((segment) => segment.value).toSet();
+            final selectedAccelerator =
+                availableAccelerators.contains(aiSettings.inferenceAccelerator)
+                    ? aiSettings.inferenceAccelerator
+                    : isApplePlatform
+                        ? LocalInferenceAccelerator.coreml
+                        : LocalInferenceAccelerator.gpu;
             return SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -325,31 +380,9 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       const SizedBox(height: 10),
                       SegmentedButton<LocalInferenceAccelerator>(
-                        segments:
-                            const <ButtonSegment<LocalInferenceAccelerator>>[
-                              ButtonSegment<LocalInferenceAccelerator>(
-                                value: LocalInferenceAccelerator.gpu,
-                                label: Text('GPU'),
-                                icon: Icon(Icons.memory_outlined),
-                              ),
-                              ButtonSegment<LocalInferenceAccelerator>(
-                                value: LocalInferenceAccelerator.npu,
-                                label: Text('NPU'),
-                                icon: Icon(Icons.developer_board_outlined),
-                              ),
-                              ButtonSegment<LocalInferenceAccelerator>(
-                                value: LocalInferenceAccelerator.xnnpack,
-                                label: Text('XNNPACK'),
-                                icon: Icon(Icons.tune_outlined),
-                              ),
-                              ButtonSegment<LocalInferenceAccelerator>(
-                                value: LocalInferenceAccelerator.cpu,
-                                label: Text('CPU'),
-                                icon: Icon(Icons.memory),
-                              ),
-                            ],
+                        segments: acceleratorSegments,
                         selected: <LocalInferenceAccelerator>{
-                          aiSettings.inferenceAccelerator,
+                          selectedAccelerator,
                         },
                         onSelectionChanged: (selection) {
                           setSheetState(() {
@@ -361,12 +394,14 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '${aiSettings.inferenceAccelerator.label} · ${aiSettings.inferenceAccelerator.description}',
+                        '${selectedAccelerator.label} · ${selectedAccelerator.description}',
                         style: TextStyle(color: Colors.grey[700], fontSize: 12),
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '如果当前方案导致闪退或无法启动，请在这里切到兼容性更好的 XNNPACK；仍不稳定时再切 CPU。',
+                        isApplePlatform
+                            ? 'Apple 平台建议先用 Core ML；如出问题可切 Metal(GPU)，再尝试 XNNPACK，最后使用 Raw CPU。'
+                            : '如果当前方案导致闪退或无法启动，请在这里切到兼容性更好的 XNNPACK；仍不稳定时再切 CPU。',
                         style: TextStyle(color: Colors.orange[800], fontSize: 12),
                       ),
                       const SizedBox(height: 20),
@@ -536,8 +571,11 @@ class _ProfilePageState extends State<ProfilePage> {
                             onPressed: () async {
                               await _backendPreferenceService
                                   .setSelectedBackend(selected);
+                              final settingsToSave = aiSettings.copyWith(
+                                inferenceAccelerator: selectedAccelerator,
+                              );
                               await AppAiSettingsService.instance.save(
-                                aiSettings,
+                                settingsToSave,
                               );
                               if (!context.mounted) {
                                 return;

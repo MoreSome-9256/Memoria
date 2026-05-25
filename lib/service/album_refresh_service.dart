@@ -286,8 +286,8 @@ class AlbumRefreshService {
       '正在安全结束当前 AI 任务',
     );
 
-    await AIService().stopAnalysisAndWait();
-    debugPrint('[scan] AI 已停止');
+    await AIService().endCurrentRoundSafely();
+    debugPrint('[scan] AI 已安全结束并消费阶段性结果');
 
     _setProgress(
       AlbumRefreshStage.scanning,

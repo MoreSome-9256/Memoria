@@ -199,6 +199,13 @@ class SpoolAnalysisWorker {
     final w2 = DateTime.now();
     await _warmUpJunkFilter();
     debugPrint('[spool-worker] JunkFilter 预热耗时: ${DateTime.now().difference(w2).inMilliseconds}ms');
+    if (!await _waitIfPausedOrStopped(
+      spool, jobId, totalItems, processed, succeeded, failed, skipped,
+    )) {
+      await _finishJob(spool, jobId, totalItems, processed, succeeded, failed,
+          skipped);
+      return;
+    }
 
     final faceDetector = enableFaceAnalysis
         ? FaceDetector(
@@ -717,9 +724,52 @@ class SpoolAnalysisWorker {
     final visualTags = _sanitizeVisualTags(tags);
     debugPrint('[spool-worker]   标签推理完成: ${visualTags.length} 个标签 tags=$visualTags');
 
-    // 4. 垃圾照片过滤
-    final t3 = DateTime.now();
     SpoolJunkCandidate? junkCandidate;
+
+    // 4. 辅助文件（用于 OCR / 人脸检测）
+    final t4 = DateTime.now();
+    final compressedBytes = await compute(
+      _spoolComputeCompressImage,
+      input.file.path,
+    );
+    File analysisFile;
+    if (compressedBytes != null && compressedBytes.isNotEmpty) {
+      final tempDir = await getTemporaryDirectory();
+      final uniqueSuffix = DateTime.now().microsecondsSinceEpoch;
+      final fileKey = Uri.encodeComponent(item.photoKey);
+      final targetPath =
+          '${tempDir.path}/temp_mlkit_${fileKey}_$uniqueSuffix.jpg';
+      final cf = File(targetPath);
+      await cf.writeAsBytes(compressedBytes, flush: true);
+      analysisFile = cf;
+    } else {
+      analysisFile = input.file;
+    }
+    final compressMs = DateTime.now().difference(t4).inMilliseconds;
+    phaseLog.add('compress=${compressMs}ms');
+    debugPrint('[spool-worker]   压缩图片完成: ${compressedBytes?.length ?? 0}bytes 耗时=${compressMs}ms');
+
+    // 5. OCR
+    final t5 = DateTime.now();
+    var ocrResult = OcrResult.empty();
+    final aspectRatio = input.height > 0 ? input.width / input.height : 1.0;
+    final shouldRunOcr =
+        _settings.ocrEnabled &&
+        OcrService.shouldRunOcr(visualTags, aspectRatio: aspectRatio);
+    if (_settings.ocrEnabled &&
+        shouldRunOcr) {
+      ocrResult = await _ocrService.analyzeImageFile(analysisFile);
+    }
+    final ocrMs = DateTime.now().difference(t5).inMilliseconds;
+    phaseLog.add('ocr=${ocrMs}ms');
+    if (_settings.ocrEnabled) {
+      debugPrint('[spool-worker]   OCR: enabled=true shouldRun=$shouldRunOcr result=${ocrResult.text.length > 0 ? "${ocrResult.text.length}字" : "无"} tags=${ocrResult.tags} 耗时=${ocrMs}ms');
+    } else {
+      debugPrint('[spool-worker]   OCR: 跳过（设置关闭）');
+    }
+
+    // 6. 垃圾照片过滤
+    final t3 = DateTime.now();
     if (item.photoId != null && item.photoId! > 0) {
       final junkResult = await compute(
         _spoolComputeJunkFilter,
@@ -727,7 +777,7 @@ class SpoolAnalysisWorker {
           'embedding': embedding,
           'prototypes': _junkPrototypes,
           'isProbablyScreenshot': false,
-          'ocrText': '',
+          'ocrText': ocrResult.text,
           'definitions': _junkDefinitions,
         },
       );
@@ -760,45 +810,6 @@ class SpoolAnalysisWorker {
     phaseLog.add('junk=${junkMs}ms');
     if (junkCandidate != null) {
       debugPrint('[spool-worker]   ⚠️ 垃圾照片过滤命中: ${junkCandidate.reasons.map((r) => r.label).join(", ")}');
-    }
-
-    // 5. 辅助文件（用于 OCR / 人脸检测）
-    final t4 = DateTime.now();
-    final compressedBytes = await compute(
-      _spoolComputeCompressImage,
-      input.file.path,
-    );
-    File analysisFile;
-    Uint8List? analysisBytes;
-    if (compressedBytes != null && compressedBytes.isNotEmpty) {
-      final tempDir = await getTemporaryDirectory();
-      final uniqueSuffix = DateTime.now().microsecondsSinceEpoch;
-      final targetPath =
-          '${tempDir.path}/temp_mlkit_${item.photoKey}_$uniqueSuffix.jpg';
-      final cf = File(targetPath);
-      await cf.writeAsBytes(compressedBytes, flush: true);
-      analysisFile = cf;
-      analysisBytes = Uint8List.fromList(compressedBytes);
-    } else {
-      analysisFile = input.file;
-    }
-    final compressMs = DateTime.now().difference(t4).inMilliseconds;
-    phaseLog.add('compress=${compressMs}ms');
-    debugPrint('[spool-worker]   压缩图片完成: ${compressedBytes?.length ?? 0}bytes 耗时=${compressMs}ms');
-
-    // 6. OCR
-    final t5 = DateTime.now();
-    var ocrResult = OcrResult.empty();
-    if (_settings.ocrEnabled &&
-        OcrService.shouldRunOcr(visualTags, aspectRatio: 1.0)) {
-      ocrResult = await _ocrService.analyzeImageFile(analysisFile);
-    }
-    final ocrMs = DateTime.now().difference(t5).inMilliseconds;
-    phaseLog.add('ocr=${ocrMs}ms');
-    if (_settings.ocrEnabled) {
-      debugPrint('[spool-worker]   OCR: enabled=true shouldRun=${OcrService.shouldRunOcr(visualTags, aspectRatio: 1.0)} result=${ocrResult.text.length > 0 ? "${ocrResult.text.length}字" : "无"} tags=${ocrResult.tags} 耗时=${ocrMs}ms');
-    } else {
-      debugPrint('[spool-worker]   OCR: 跳过（设置关闭）');
     }
 
     // 7. 人脸检测（仅检测，不计算 embedding）

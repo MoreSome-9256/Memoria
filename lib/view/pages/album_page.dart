@@ -227,7 +227,7 @@ class _AlbumPageState extends State<AlbumPage> {
 
     setState(() => _isClearingCache = true);
     try {
-      await AIService().stopAnalysisAndWait();
+      await AIService().endCurrentRoundSafely();
       await PhotoService().clearAllCachedData();
       AIService().clearPendingJunkCleanupReport();
       _lastPromptedJunkCleanupReportId = null;

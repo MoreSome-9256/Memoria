@@ -137,10 +137,7 @@ class _PhotoScanCoordinator {
         continue;
       }
 
-      var remainingSlots = targetNew - collectedPhotos.length;
-      final buildAssets = newAssets.length > remainingSlots
-          ? newAssets.take(remainingSlots).toList(growable: false)
-          : newAssets;
+      final buildAssets = newAssets;
       candidateCount += buildAssets.length;
       onProgress?.call(
         BatchScanProgress(
@@ -164,9 +161,14 @@ class _PhotoScanCoordinator {
       );
       for (final r in results) {
         if (r.photo != null) {
-          collectedPhotos.add(r.photo!);
+          if (collectedPhotos.length < targetNew) {
+            collectedPhotos.add(r.photo!);
+            stats = stats.merge(r);
+          }
+          continue;
+        } else {
+          stats = stats.merge(r);
         }
-        stats = stats.merge(r);
       }
       onProgress?.call(
         BatchScanProgress(
@@ -191,7 +193,9 @@ class _PhotoScanCoordinator {
     debugPrint(
       '增量扫描: scan=$totalScanned new=${collectedPhotos.length} '
       'noGps=${stats.insertedNoGps} badTime=${stats.skippedInvalidTime} '
-      'nonCam=${stats.skippedNonCamera} ss=${stats.skippedScreenshot}',
+      'nonCam=${stats.skippedNonCamera} ss=${stats.skippedScreenshot} '
+      'small=${stats.skippedSmallResolution} '
+      'wide=${stats.skippedExtremeAspectRatio}',
     );
 
     return _PhotoSyncPlan(

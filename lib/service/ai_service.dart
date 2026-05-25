@@ -150,7 +150,13 @@ class AIService {
       _progressNotifier;
   ValueListenable<JunkPhotoCleanupReport?> get junkCleanupReportListenable =>
       _junkCleanupReportNotifier;
-  bool get isAnalyzing => _isAnalyzing;
+  bool get isAnalyzing {
+    final progress = _progressNotifier.value;
+    return _isAnalyzing ||
+        progress.isRunning ||
+        progress.isPaused ||
+        progress.isStopping;
+  }
 
   JunkPhotoCleanupReport? get latestJunkCleanupReport =>
       _junkCleanupReportNotifier.value;

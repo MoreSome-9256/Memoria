@@ -98,9 +98,12 @@ extension AIServiceLifecycle on AIService {
           final manifest = await spool.readManifest(pendingJobId);
           if (manifest != null) {
             final snapshot = await spool.readProgress(pendingJobId);
+            final control = await spool.readControl(pendingJobId);
             final processed = snapshot?.processed ?? 0;
-            final isPaused = snapshot?.status == 'paused';
-            final isStopping = snapshot?.status == 'stopping';
+            final isPaused =
+                control.pauseRequested || snapshot?.status == 'paused';
+            final isStopping =
+                control.stopRequested || snapshot?.status == 'stopping';
             _progressNotifier.value = AIAnalysisProgress(
               isRunning: !isPaused && !isStopping,
               isPaused: isPaused,
@@ -295,6 +298,7 @@ extension AIServiceLifecycle on AIService {
     Duration timeout = const Duration(seconds: 30),
   }) async {
     if (!_isAnalyzing) {
+      await _requestCurrentSpoolStop();
       final finished = await _waitForCurrentSpoolDone(timeout: timeout);
       if (!finished) {
         debugPrint('⚠️ 等待 spool 前台任务结束超时，准备消费已有阶段性结果');
@@ -330,18 +334,40 @@ extension AIServiceLifecycle on AIService {
           debugPrint('[spool] 检测到已完成的任务 jobId=$pendingJobId，开始消费');
           await consumeSpoolResults(pendingJobId);
         } else {
-          // 有进行中的任务，显示进度而不是干预
+          // 有进行中的 spool 任务：恢复 UI；如果前台服务已被系统杀死，
+          // 且任务不是暂停/结束态，则重新拉起 worker 继续同一个 manifest。
           final manifest = await spool.readManifest(pendingJobId);
           if (manifest != null) {
             final snapshot = await spool.readProgress(pendingJobId);
+            final control = await spool.readControl(pendingJobId);
             final processed = snapshot?.processed ?? 0;
-            _progressNotifier.value = AIAnalysisProgress.running(
+            final isPaused =
+                control.pauseRequested || snapshot?.status == 'paused';
+            final isStopping =
+                control.stopRequested || snapshot?.status == 'stopping';
+            _progressNotifier.value = AIAnalysisProgress(
+              isRunning: !isPaused && !isStopping,
+              isPaused: isPaused,
+              isStopping: isStopping,
               total: manifest.totalItems,
               completed: processed,
               failed: snapshot?.failed ?? 0,
-              currentStep: '后台分析中 $processed/${manifest.totalItems}',
+              currentStep: snapshot != null && snapshot.currentStep.isNotEmpty
+                  ? snapshot.currentStep
+                  : isStopping
+                      ? '正在结束本轮，等待当前图片收尾'
+                      : isPaused
+                          ? '后台分析已暂停'
+                          : '后台分析中 $processed/${manifest.totalItems}',
               elapsedMs: 0,
             );
+            SpoolProgressNotifier.instance.startPolling(pendingJobId);
+            if (!isPaused &&
+                !isStopping &&
+                !await AiBackgroundTaskService.instance.isRunning) {
+              debugPrint('[spool] pending job=$pendingJobId 未完成且前台服务不在线，重新拉起 worker');
+              await AiBackgroundTaskService.instance.startAnalysisWorker();
+            }
             return;
           }
         }
@@ -460,7 +486,11 @@ extension AIServiceLifecycle on AIService {
       if (jobId == null || jobId.isEmpty) return;
 
       // 先消费未处理的 spool 结果，再清理
-      await consumeSpoolResults(jobId, requireDoneMarker: !allowPartial);
+      await consumeSpoolResults(
+        jobId,
+        requireDoneMarker: !allowPartial,
+        startNextPending: false,
+      );
       debugPrint('[spool] 已消费并清理 job 文件和缓存 jobId=$jobId');
     } catch (e) {
       debugPrint('[spool] 清理 job 失败: $e');

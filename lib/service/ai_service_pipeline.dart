@@ -35,18 +35,22 @@ extension AIServicePipeline on AIService {
     if (existingJobId != null) {
       final spool = AnalysisSpoolService.instance;
       if (await spool.hasDoneMarker(existingJobId)) {
-        await consumeSpoolResults(existingJobId);
+        await consumeSpoolResults(existingJobId, startNextPending: false);
       } else {
         final manifest = await spool.readManifest(existingJobId);
         final snapshot = await spool.readProgress(existingJobId);
         if (manifest != null) {
           final processed = snapshot?.processed ?? 0;
           final failed = snapshot?.failed ?? 0;
-          final paused = snapshot?.status == 'paused';
+          final control = await spool.readControl(existingJobId);
+          final paused =
+              control.pauseRequested || snapshot?.status == 'paused';
+          final stopping =
+              control.stopRequested || snapshot?.status == 'stopping';
           _progressNotifier.value = AIAnalysisProgress(
-            isRunning: !paused,
+            isRunning: !paused && !stopping,
             isPaused: paused,
-            isStopping: snapshot?.status == 'stopping',
+            isStopping: stopping,
             total: manifest.totalItems,
             completed: processed,
             failed: failed,
@@ -56,7 +60,9 @@ extension AIServicePipeline on AIService {
             elapsedMs: 0,
           );
           SpoolProgressNotifier.instance.startPolling(existingJobId);
-          await AiBackgroundTaskService.instance.startAnalysisWorker();
+          if (!paused && !stopping) {
+            await AiBackgroundTaskService.instance.startAnalysisWorker();
+          }
           debugPrint('[spool] 已存在未完成 job=$existingJobId，跳过新建 manifest');
           return;
         }
@@ -141,6 +147,7 @@ extension AIServicePipeline on AIService {
   Future<SpoolConsumeReport> consumeSpoolResults(
     String jobId, {
     bool requireDoneMarker = true,
+    bool startNextPending = true,
   }) async {
     final spool = AnalysisSpoolService.instance;
     final manifest = await spool.readManifest(jobId);
@@ -225,11 +232,40 @@ extension AIServicePipeline on AIService {
     _progressNotifier.value = AIAnalysisProgress.idle();
     await _persistRuntimeState(isActive: false);
 
+    if (startNextPending) {
+      await _startNextPendingSpoolBatchIfNeeded(
+        previousJobPhotoIds: manifest.items
+            .map((item) => item.photoId ?? 0)
+            .where((id) => id > 0)
+            .toSet(),
+      );
+    }
+
     return SpoolConsumeReport(
       jobId: jobId,
       consumedCount: consumedCount,
       failedCount: failedCount,
     );
+  }
+
+  Future<void> _startNextPendingSpoolBatchIfNeeded({
+    required Set<int> previousJobPhotoIds,
+  }) async {
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final pendingQ = photoBox
+        .query(PhotoEntity_.isAiAnalyzed.equals(false))
+        .build();
+    final pendingPhotoIds = pendingQ
+        .find()
+        .map((photo) => photo.id)
+        .where((id) => id > 0 && !previousJobPhotoIds.contains(id))
+        .toList(growable: false);
+    pendingQ.close();
+    if (pendingPhotoIds.isEmpty) {
+      return;
+    }
+    debugPrint('[spool] 检测到 ${pendingPhotoIds.length} 张新增待分析照片，自动提交下一轮 spool');
+    unawaited(analyzePhotosInBackground(photoIds: pendingPhotoIds));
   }
 
   Future<List<_SpoolFaceFileResult>> _readFaceResults(

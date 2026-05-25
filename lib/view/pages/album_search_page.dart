@@ -508,6 +508,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
                 showFullscreenPhotoViewer(
                   context,
                   path: photo.path,
+                  assetId: photo.assetId,
                   heroTag: 'search-photo-${photo.id}',
                 );
               },
@@ -558,6 +559,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
                     showFullscreenPhotoViewer(
                       context,
                       path: photo.path,
+                      assetId: photo.assetId,
                       heroTag: 'search-photo-${photo.id}',
                     );
                   },
@@ -968,7 +970,11 @@ class _SearchPhotoTile extends StatelessWidget {
           children: [
             Hero(
               tag: 'search-photo-${photo.id}',
-              child: DeferredPathImage(path: photo.path, fit: BoxFit.cover),
+              child: DeferredPathImage(
+                path: photo.path,
+                assetId: photo.assetId,
+                fit: BoxFit.cover,
+              ),
             ),
             if (selectionMode)
               if (!selected)

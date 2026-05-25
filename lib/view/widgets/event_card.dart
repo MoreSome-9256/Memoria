@@ -240,6 +240,7 @@ class EventCard extends StatelessWidget {
         onTap: () => showFullscreenPhotoViewer(
           context,
           path: photo.path,
+          assetId: photo.assetId,
           heroTag: heroTag,
         ),
         child: Hero(
@@ -247,7 +248,11 @@ class EventCard extends StatelessWidget {
           child: SizedBox(
             height: 200,
             width: double.infinity,
-            child: DeferredPathImage(path: photo.path, fit: BoxFit.cover),
+            child: DeferredPathImage(
+              path: photo.path,
+              assetId: photo.assetId,
+              fit: BoxFit.cover,
+            ),
           ),
         ),
       );
@@ -266,6 +271,7 @@ class EventCard extends StatelessWidget {
                 onTap: () => showFullscreenPhotoViewer(
                   context,
                   path: entry.value.path,
+                  assetId: entry.value.assetId,
                   heroTag: 'event-cover-${event.id}-${entry.value.id}',
                 ),
                 child: Hero(
@@ -274,6 +280,7 @@ class EventCard extends StatelessWidget {
                     height: 200,
                     child: DeferredPathImage(
                       path: entry.value.path,
+                      assetId: entry.value.assetId,
                       fit: BoxFit.cover,
                     ),
                   ),

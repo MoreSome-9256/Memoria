@@ -12,6 +12,12 @@ import '../data/tag_taxonomy_v2.dart';
 import '../utils/tag_sanitizer.dart';
 import 'semantic_matching_service.dart';
 
+typedef MobileClipTagWarmUpProgress = FutureOr<void> Function(
+  int completed,
+  int total,
+  String message,
+);
+
 class MobileClipTagService {
   MobileClipTagService._internal();
 
@@ -117,13 +123,15 @@ class MobileClipTagService {
     unawaited(_runScheduledWarmUp(initialDelay: initialDelay));
   }
 
-  Future<void> warmUp() async {
+  Future<void> warmUp({MobileClipTagWarmUpProgress? onProgress}) async {
     _touchUsage();
     if (_warmedUp) {
+      await onProgress?.call(1, 1, '标签原型已就绪');
       return;
     }
     if (_warmUpFuture != null) {
       await _warmUpFuture;
+      await onProgress?.call(1, 1, '标签原型已就绪');
       return;
     }
     _warmUpFuture = Future<void>(() async {
@@ -132,23 +140,47 @@ class MobileClipTagService {
       _coarsePrototypeById.clear();
       if (await _tryLoadPrototypesFromCache()) {
         _warmedUp = true;
+        await onProgress?.call(1, 1, '已读取标签原型缓存');
         return;
       }
 
+      final fineTotal = memoriaMasterTagDefinitions.length;
+      final coarseTotal = memoriaCoarseTagDefinitions
+          .where((definition) => definition.prompts.isNotEmpty)
+          .length;
+      final total = 1 + fineTotal + coarseTotal;
+      var completed = 0;
+      await onProgress?.call(completed, total, '加载文本语义模型');
       await _semanticService.warmUp();
+      completed++;
+      await onProgress?.call(completed, total, '构建细粒度标签原型');
       for (final definition in memoriaMasterTagDefinitions) {
         final prototype = await _buildPrototype(definition.prompts);
         if (prototype.isNotEmpty) {
           _prototypeByLabel[definition.label] = prototype;
         }
+        completed++;
+        await onProgress?.call(
+          completed,
+          total,
+          '构建细粒度标签原型 ${completed - 1}/$fineTotal',
+        );
         await Future<void>.delayed(Duration.zero);
       }
+      var coarseCompleted = 0;
       for (final coarse in memoriaCoarseTagDefinitions) {
         if (coarse.prompts.isEmpty) continue;
         final prototype = await _buildPrototype(coarse.prompts);
         if (prototype.isNotEmpty) {
           _coarsePrototypeById[coarse.id] = prototype;
         }
+        coarseCompleted++;
+        completed++;
+        await onProgress?.call(
+          completed,
+          total,
+          '构建粗粒度标签原型 $coarseCompleted/$coarseTotal',
+        );
         await Future<void>.delayed(Duration.zero);
       }
       await _savePrototypesToCache();

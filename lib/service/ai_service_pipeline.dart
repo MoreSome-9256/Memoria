@@ -527,6 +527,11 @@ extension AIServicePipeline on AIService {
 
     final selectedBackend = await MobileClipEmbeddingService()
         .getSelectedBackend();
+    final imageModelVersion = buildPhotoEmbeddingModelVersion(selectedBackend);
+    final resultModelVersion = _normalizeSpoolModelVersion(
+      result.modelVersion,
+      imageModelVersion,
+    );
 
     store.runInTransaction(TxMode.write, () {
       final p = photoBox.get(photo.id);
@@ -559,7 +564,7 @@ extension AIServicePipeline on AIService {
       _photoEmbeddingIndexRepository.upsertEmbedding(
         photoId: photo.id,
         vector: embedding,
-        modelVersion: buildPhotoEmbeddingModelVersion(selectedBackend),
+        modelVersion: resultModelVersion,
       );
     }
 
@@ -574,6 +579,18 @@ extension AIServicePipeline on AIService {
       p.isAiAnalyzed = true;
       photoBox.put(p);
     });
+  }
+
+  String _normalizeSpoolModelVersion(String? rawValue, String fallback) {
+    final value = rawValue?.trim() ?? '';
+    if (value.isEmpty) {
+      return fallback;
+    }
+    if (value.startsWith(kPhotoEmbeddingModelFamily) ||
+        value == 'mobileviclip_small_onnx_video_v1') {
+      return value;
+    }
+    return fallback;
   }
 
   Future<void> _applyFaceResults(

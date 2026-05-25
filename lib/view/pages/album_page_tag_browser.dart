@@ -72,7 +72,11 @@ class _AlbumTagClusterCoverMosaic extends StatelessWidget {
     }
 
     if (photos.length <= 2) {
-      return _DeferredPathImage(path: photos.first.path, fit: BoxFit.cover);
+      return _DeferredPathImage(
+        path: photos.first.path,
+        assetId: photos.first.assetId,
+        fit: BoxFit.cover,
+      );
     }
 
     final visible = photos.take(4).toList(growable: false);
@@ -86,7 +90,11 @@ class _AlbumTagClusterCoverMosaic extends StatelessWidget {
         crossAxisSpacing: 2,
       ),
       itemBuilder: (context, index) {
-        return _DeferredPathImage(path: visible[index].path, fit: BoxFit.cover);
+        return _DeferredPathImage(
+          path: visible[index].path,
+          assetId: visible[index].assetId,
+          fit: BoxFit.cover,
+        );
       },
     );
   }
@@ -325,6 +333,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                                           showFullscreenPhotoViewer(
                                             context,
                                             path: photo.path,
+                                            assetId: photo.assetId,
                                             heroTag:
                                                 'album-tag-photo-${photo.id}',
                                           );

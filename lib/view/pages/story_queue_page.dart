@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../service/story_queue_service.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
-import '../widgets/path_image.dart';
+import '../widgets/media_thumbnail.dart';
 import 'story_config_page.dart';
 
 class StoryQueuePage extends StatelessWidget {
@@ -83,6 +83,7 @@ class StoryQueuePage extends StatelessWidget {
                         showFullscreenPhotoViewer(
                           context,
                           path: item.photo.path,
+                          assetId: item.photo.id,
                           heroTag: 'story-queue-photo-${item.photo.id}',
                         );
                       },
@@ -236,7 +237,11 @@ class _QueuePhotoTileState extends State<_QueuePhotoTile> {
                       height: 68,
                       child: Hero(
                         tag: 'story-queue-photo-${photo.id}',
-                        child: PathImage(path: photo.path, fit: BoxFit.cover),
+                        child: MediaThumbnail(
+                          path: photo.path,
+                          assetId: photo.id,
+                          fit: BoxFit.cover,
+                        ),
                       ),
                     ),
                   ),

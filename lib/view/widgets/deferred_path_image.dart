@@ -5,16 +5,18 @@ import 'dart:collection';
 import 'package:flutter/widget_previews.dart';
 import 'package:flutter/material.dart';
 
-import 'path_image.dart';
+import 'media_thumbnail.dart';
 
 class DeferredPathImage extends StatefulWidget {
   const DeferredPathImage({
     super.key,
     required this.path,
+    this.assetId,
     this.fit = BoxFit.cover,
   });
 
   final String path;
+  final String? assetId;
   final BoxFit fit;
 
   @override
@@ -63,8 +65,9 @@ class _DeferredPathImageState extends State<DeferredPathImage> {
   @override
   Widget build(BuildContext context) {
     if (_ready) {
-      return PathImage(
+      return MediaThumbnail(
         path: widget.path,
+        assetId: widget.assetId,
         fit: widget.fit,
         onFirstFrame: _onFirstFrame,
       );
@@ -129,4 +132,3 @@ class _DeferredImageLoadScheduler {
     }
   }
 }
-

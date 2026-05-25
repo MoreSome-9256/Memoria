@@ -7,6 +7,7 @@ import '../models/vo/semantic_search_models.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
+import '../utils/media_type_helper.dart';
 import '../utils/tag_sanitizer.dart';
 import 'mobileclip_embedding_service.dart';
 import 'semantic_matching_service.dart';
@@ -543,7 +544,7 @@ class SemanticPhotoSearchService {
     return _photoEmbeddingIndexRepository.readEmbeddingForPhoto(
       photo,
       modelVersion: activeModelVersion,
-      allowLegacyFallback: true,
+      allowLegacyFallback: !MediaTypeHelper.isVideoPath(photo.path),
     );
   }
 

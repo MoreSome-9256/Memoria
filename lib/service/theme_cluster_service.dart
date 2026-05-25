@@ -10,6 +10,7 @@ import '../models/entity/photo_entity.dart';
 import '../models/theme_cluster_models.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
+import '../utils/media_type_helper.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/theme_subclustering.dart';
 import 'mobileclip_embedding_service.dart';
@@ -520,8 +521,10 @@ class ThemeClusterService {
       for (final photo in photos) {
         processed++;
 
-        // Keep screenshot-like UI captures out of visual-theme retrieval.
-        if (photo.isProbablyScreenshot) {
+        // Keep screenshot-like UI captures and video-model vectors out of
+        // image visual-theme retrieval.
+        if (photo.isProbablyScreenshot ||
+            MediaTypeHelper.isVideoPath(photo.path)) {
           skippedScreenshots++;
           _emitEmbeddingProgress(
             processed: processed,

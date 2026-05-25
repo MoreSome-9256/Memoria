@@ -13,7 +13,7 @@ import '../../service/story_queue_service.dart';
 import '../../utils/ocr_policy.dart';
 import '../widgets/deferred_path_image.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
-import '../widgets/path_image.dart';
+import '../widgets/media_thumbnail.dart';
 import 'story_queue_page.dart';
 import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
@@ -169,7 +169,11 @@ class _EventDetailPageState extends State<EventDetailPage> {
                     borderRadius: BorderRadius.circular(20),
                     child: AspectRatio(
                       aspectRatio: 1,
-                      child: PathImage(path: photo.path, fit: BoxFit.cover),
+                      child: MediaThumbnail(
+                        path: photo.path,
+                        assetId: photo.assetId,
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -713,6 +717,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
                       showFullscreenPhotoViewer(
                         context,
                         path: photo.path,
+                        assetId: photo.assetId,
                         heroTag: 'event-photo-${photo.id}',
                       );
                     },
@@ -724,6 +729,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
                           tag: 'event-photo-${photo.id}',
                           child: DeferredPathImage(
                             path: photo.path,
+                            assetId: photo.assetId,
                             fit: BoxFit.cover,
                           ),
                         ),

@@ -691,7 +691,13 @@ int _elapsedMsForSpoolProgress(
   AnalysisJobManifest manifest,
   AnalysisProgressSnapshot? snapshot,
 ) {
-  final endMs = snapshot?.updatedAt ?? DateTime.now().millisecondsSinceEpoch;
+  final status = snapshot?.status;
+  final endMs = status == 'paused' ||
+          status == 'finished' ||
+          status == 'stopped' ||
+          status == 'failed'
+      ? snapshot?.updatedAt ?? DateTime.now().millisecondsSinceEpoch
+      : DateTime.now().millisecondsSinceEpoch;
   final elapsedMs = endMs - manifest.createdAt;
   if (elapsedMs <= 0) {
     return 0;

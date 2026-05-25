@@ -25,7 +25,7 @@ import 'media_access_range_page.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/junk_photo_cleanup_banner.dart';
 import '../widgets/junk_photo_cleanup_dialog.dart';
-import '../widgets/path_image.dart';
+import '../widgets/media_thumbnail.dart';
 import 'album_search_page.dart';
 import 'story_queue_page.dart';
 
@@ -964,13 +964,11 @@ class _AlbumPageState extends State<AlbumPage> {
             progress.currentStep,
             style: TextStyle(color: Colors.grey[700], fontSize: 12),
           ),
-          if (avgSeconds != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              '已耗时 $elapsedLabel · 预计剩余 $etaLabel · 平均 $avgLabel',
-              style: TextStyle(color: Colors.grey[700], fontSize: 12),
-            ),
-          ],
+          const SizedBox(height: 6),
+          Text(
+            '已耗时 $elapsedLabel · 预计剩余 $etaLabel · 平均 $avgLabel',
+            style: TextStyle(color: Colors.grey[700], fontSize: 12),
+          ),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,

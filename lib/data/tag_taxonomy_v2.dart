@@ -969,6 +969,12 @@ const List<MemoriaTagDefinition> memoriaMasterTagDefinitions = <MemoriaTagDefini
     prompts: <String>['a meme or funny image with text', 'internet meme or sticker style image'],
     notes: '表情包、梗图。',
   ),
+  MemoriaTagDefinition(
+    label: '视频',
+    primaryDimension: MemoriaTagDimension.media,
+    prompts: <String>['a video clip thumbnail', 'a short mobile video cover frame'],
+    notes: '视频资源的封面与检索占位标签。',
+  ),
 ];
 
 final Map<String, String> memoriaMasterTaxonomy = Map<String, String>.unmodifiable(
@@ -1211,6 +1217,15 @@ const List<MemoriaCoarseTagDefinition> memoriaCoarseTagDefinitions =
         notes: '医院场景、就诊检查、药品药盒、病历报告、医疗器械。',
       ),
       MemoriaCoarseTagDefinition(
+        id: 'video_media',
+        label: '视频',
+        prompts: <String>[
+          'a video clip cover frame',
+          'mobile phone video footage thumbnail',
+        ],
+        notes: '视频资源、动态影像与短片。',
+      ),
+      MemoriaCoarseTagDefinition(
         id: memoriaOtherCoarseId,
         label: memoriaOtherLabel,
         prompts: <String>[],
@@ -1387,6 +1402,9 @@ const Map<String, List<String>> memoriaCoarseIdToFineLabels =
         '医院',
         '药品药盒',
       ],
+      'video_media': <String>[
+        '视频',
+      ],
       memoriaOtherCoarseId: <String>[
         memoriaOtherLabel,
       ],
@@ -1427,4 +1445,3 @@ final Map<String, List<MemoriaTagDefinition>> memoriaFineDefinitionsByCoarseId =
           ),
       },
     );
-

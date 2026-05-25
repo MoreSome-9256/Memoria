@@ -38,6 +38,7 @@ extension PhotoServiceAiReset on PhotoService {
     final taxonomyLabels = memoriaMasterLabels.toSet();
     const passthroughLabels = <String>{
       '截图',
+      '视频',
       memoriaOtherLabel,
       JunkPhotoFilterService.junkCandidateTag,
     };

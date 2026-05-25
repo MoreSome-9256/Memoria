@@ -105,7 +105,11 @@ class _AlbumTagPhotoTile extends StatelessWidget {
             children: [
               Hero(
                 tag: heroTag,
-                child: _DeferredPathImage(path: photo.path, fit: BoxFit.cover),
+                child: _DeferredPathImage(
+                  path: photo.path,
+                  assetId: photo.assetId,
+                  fit: BoxFit.cover,
+                ),
               ),
               if (selectionMode && !selected)
                 Container(color: Colors.black.withValues(alpha: 0.32)),
@@ -151,9 +155,14 @@ class _AlbumTagPhotoTile extends StatelessWidget {
 }
 
 class _DeferredPathImage extends StatefulWidget {
-  const _DeferredPathImage({required this.path, this.fit = BoxFit.cover});
+  const _DeferredPathImage({
+    required this.path,
+    this.assetId,
+    this.fit = BoxFit.cover,
+  });
 
   final String path;
+  final String? assetId;
   final BoxFit fit;
 
   @override
@@ -203,8 +212,9 @@ class _DeferredPathImageState extends State<_DeferredPathImage> {
   @override
   Widget build(BuildContext context) {
     if (_ready) {
-      return PathImage(
+      return MediaThumbnail(
         path: widget.path,
+        assetId: widget.assetId,
         fit: widget.fit,
         onFirstFrame: _onFirstFrame,
       );

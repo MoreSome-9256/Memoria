@@ -10,6 +10,11 @@
 part of 'photo_service.dart';
 
 extension PhotoServiceScan on PhotoService {
+  void invalidateScanSessionCache() {
+    _PhotoScanCoordinator.invalidateSessionCache();
+    _photoAccessCache.clear();
+  }
+
   // ── 全量重建（清空所有后重建）───────────────────────────────────
   Future<PhotoScanSummary> rebuildAllCachedData({int? maxAssets}) async {
     final plan = await _PhotoScanCoordinator(this).prepareRebuild(

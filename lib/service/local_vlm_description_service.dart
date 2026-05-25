@@ -4,8 +4,6 @@ import 'dart:io';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 import 'package:path_provider/path_provider.dart';
 
-import 'app_ai_settings_service.dart';
-
 class LocalVlmDescriptionService {
   LocalVlmDescriptionService._();
   static final LocalVlmDescriptionService instance =
@@ -13,10 +11,7 @@ class LocalVlmDescriptionService {
 
   LlamaEngine? _engine;
 
-  Future<bool> get isEnabled async {
-    final settings = await AppAiSettingsService.instance.load();
-    return settings.localVlmDescriptionEnabled;
-  }
+  Future<bool> get isEnabled async => true;
 
   Future<String> generateImageDescription({
     required File imageFile,

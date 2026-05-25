@@ -32,6 +32,7 @@ import 'app_ai_settings_service.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_litert_service.dart';
 import 'mobileclip_tag_service.dart';
+import 'media_embedding_service.dart';
 import 'mobileviclip_video_service.dart';
 import 'ocr_service.dart';
 import 'semantic_matching_service.dart';
@@ -799,20 +800,16 @@ class SpoolAnalysisWorker {
     List<double> embedding;
     late final String embeddingModelVersion;
     try {
-      if (input.kind == MemoriaMediaKind.video &&
-          _settings.mobileViClipEnabled) {
-        embedding = await MobileViClipVideoService().embedFrameBytes(
-          List<Uint8List>.filled(
-            MobileViClipVideoService.frameCount,
-            input.mobileClipBytes,
-            growable: false,
-          ),
-        );
-        embeddingModelVersion = MobileViClipVideoService.modelVersion;
-      } else {
-        embedding = await liteRt.embedImageBytes(input.mobileClipBytes);
-        embeddingModelVersion = buildPhotoEmbeddingModelVersion(backend);
-      }
+      final mediaEmbedding = await MediaEmbeddingService()
+          .embedPreparedMediaBytes(
+            kind: input.kind,
+            imageOrThumbnailBytes: input.mobileClipBytes,
+            mobileViClipEnabled: _settings.mobileViClipEnabled,
+            backend: backend,
+            liteRt: liteRt,
+          );
+      embedding = mediaEmbedding.embedding;
+      embeddingModelVersion = mediaEmbedding.modelVersion;
     } catch (error) {
       debugPrint('[spool-worker] ❌ Embedding 计算异常: $error');
       embedding = const <double>[];

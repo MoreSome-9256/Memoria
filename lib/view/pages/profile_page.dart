@@ -10,14 +10,18 @@ import 'package:photo_album/service/app_ai_settings_service.dart';
 import 'package:photo_album/service/media_access_grant_service.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/litert_inference_service.dart';
+import 'package:photo_album/service/photo_service.dart';
 import 'package:photo_album/service/travel_memory_detector.dart';
 import 'package:photo_album/view/pages/welcome_page.dart';
 
 import 'package:photo_album/service/album_selection_preference_service.dart';
 
 import 'face_cluster_debug_page.dart';
+import 'internvl_lab_page.dart';
 import 'junk_photo_trash_page.dart';
+import 'local_vlm_test_page.dart';
 import 'media_access_range_page.dart';
+import 'media_vector_similarity_test_page.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
 import '../../service/video_cache_service.dart';
@@ -219,6 +223,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                   excludeExtremeAspectRatios:
                                       excludeExtremeAspectRatios,
                                 );
+                            PhotoService().invalidateScanSessionCache();
                             if (!mounted) return;
                             Navigator.pop(context);
                           },
@@ -461,19 +466,6 @@ class _ProfilePageState extends State<ProfilePage> {
                           setSheetState(() {
                             aiSettings = aiSettings.copyWith(
                               mobileViClipEnabled: value,
-                            );
-                          });
-                        },
-                      ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('本地 VLM 生成描述'),
-                        subtitle: const Text('用于优先生成照片/视频描述和视频脚本文案'),
-                        value: aiSettings.localVlmDescriptionEnabled,
-                        onChanged: (value) {
-                          setSheetState(() {
-                            aiSettings = aiSettings.copyWith(
-                              localVlmDescriptionEnabled: value,
                             );
                           });
                         },
@@ -1088,38 +1080,78 @@ class _ProfilePageState extends State<ProfilePage> {
                                   ?.copyWith(fontWeight: FontWeight.bold),
                             ),
                             const SizedBox(height: 20),
-                            if (Platform.isAndroid) ...[
-                              ListTile(
-                                leading: const Icon(Icons.analytics_outlined),
-                                title: const Text('MobileCLIP Benchmark'),
-                                subtitle: const Text(
-                                  '对比 LiteRT 在 GPU 与 NPU 路径上的速度',
-                                ),
-                                trailing: const Icon(Icons.chevron_right),
-                                onTap: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (context) =>
-                                          const MobileClipBenchmarkPage(),
-                                    ),
-                                  );
-                                },
+                            ListTile(
+                              leading: const Icon(Icons.analytics_outlined),
+                              title: const Text('MobileCLIP Benchmark'),
+                              subtitle: const Text(
+                                '对比 LiteRT 在 GPU / NPU / XNNPACK 路径上的速度',
                               ),
-                              ListTile(
-                                leading: const Icon(Icons.science_outlined),
-                                title: const Text('MobileCLIP Vector Probe'),
-                                subtitle: const Text('检查示例图片在手机端 LiteRT 的向量'),
-                                trailing: const Icon(Icons.chevron_right),
-                                onTap: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (context) =>
-                                          const MobileClipVectorProbePage(),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ],
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (context) =>
+                                        const MobileClipBenchmarkPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.science_outlined),
+                              title: const Text('MobileCLIP Vector Probe'),
+                              subtitle: const Text('检查示例图片在手机端 LiteRT 的向量'),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (context) =>
+                                        const MobileClipVectorProbePage(),
+                                  ),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.compare_arrows),
+                              title: const Text('媒体向量相似度测试'),
+                              subtitle: const Text('从系统文件选择图片/视频，计算向量和文本相似度'),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (context) =>
+                                        const MediaVectorSimilarityTestPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.psychology_outlined),
+                              title: const Text('Local VLM Test'),
+                              subtitle: const Text('调试本地 VLM caption / story 生成'),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (context) =>
+                                        const LocalVlmTestPage(),
+                                  ),
+                                );
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.bug_report_outlined),
+                              title: const Text('InternVL Lab'),
+                              subtitle: const Text('调试端侧视觉语言实验流程'),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (context) =>
+                                        const InternvlLabPage(),
+                                  ),
+                                );
+                              },
+                            ),
                             ListTile(
                               leading: const Icon(
                                 Icons.face_retouching_natural_outlined,

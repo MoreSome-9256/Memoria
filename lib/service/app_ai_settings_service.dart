@@ -9,7 +9,6 @@ class AppAiSettings {
     required this.faceAnalysisEnabled,
     required this.includeVideos,
     required this.mobileViClipEnabled,
-    required this.localVlmDescriptionEnabled,
     required this.androidForegroundServiceEnabled,
     required this.requestUnrestrictedBatteryEnabled,
     required this.iosContinuedProcessingEnabled,
@@ -19,24 +18,22 @@ class AppAiSettings {
   });
 
   static const defaults = AppAiSettings(
-    ocrEnabled: false,
-    faceAnalysisEnabled: false,
-    includeVideos: false,
-    mobileViClipEnabled: false,
-    localVlmDescriptionEnabled: true,
-    androidForegroundServiceEnabled: false,
-    requestUnrestrictedBatteryEnabled: false,
-    iosContinuedProcessingEnabled: false,
+    ocrEnabled: true,
+    faceAnalysisEnabled: true,
+    includeVideos: true,
+    mobileViClipEnabled: true,
+    androidForegroundServiceEnabled: true,
+    requestUnrestrictedBatteryEnabled: true,
+    iosContinuedProcessingEnabled: true,
     inferenceAccelerator: LocalInferenceAccelerator.gpu,
-    autoResumeAnalysis: false,
-    autoAnalyzeNewPhotos: false,
+    autoResumeAnalysis: true,
+    autoAnalyzeNewPhotos: true,
   );
 
   final bool ocrEnabled;
   final bool faceAnalysisEnabled;
   final bool includeVideos;
   final bool mobileViClipEnabled;
-  final bool localVlmDescriptionEnabled;
   final bool androidForegroundServiceEnabled;
   final bool requestUnrestrictedBatteryEnabled;
   final bool iosContinuedProcessingEnabled;
@@ -49,7 +46,6 @@ class AppAiSettings {
     bool? faceAnalysisEnabled,
     bool? includeVideos,
     bool? mobileViClipEnabled,
-    bool? localVlmDescriptionEnabled,
     bool? androidForegroundServiceEnabled,
     bool? requestUnrestrictedBatteryEnabled,
     bool? iosContinuedProcessingEnabled,
@@ -62,8 +58,6 @@ class AppAiSettings {
       faceAnalysisEnabled: faceAnalysisEnabled ?? this.faceAnalysisEnabled,
       includeVideos: includeVideos ?? this.includeVideos,
       mobileViClipEnabled: mobileViClipEnabled ?? this.mobileViClipEnabled,
-      localVlmDescriptionEnabled:
-          localVlmDescriptionEnabled ?? this.localVlmDescriptionEnabled,
       androidForegroundServiceEnabled:
           androidForegroundServiceEnabled ??
           this.androidForegroundServiceEnabled,
@@ -125,10 +119,7 @@ class AppAiSettingsService {
     await prefs.setBool(_faceKey, settings.faceAnalysisEnabled);
     await prefs.setBool(_includeVideosKey, settings.includeVideos);
     await prefs.setBool(_mobileViClipKey, settings.mobileViClipEnabled);
-    await prefs.setBool(
-      _localVlmDescriptionKey,
-      settings.localVlmDescriptionEnabled,
-    );
+    await prefs.remove(_localVlmDescriptionKey);
     await prefs.setBool(
       _androidForegroundServiceKey,
       settings.androidForegroundServiceEnabled,
@@ -162,9 +153,6 @@ class AppAiSettingsService {
       mobileViClipEnabled:
           prefs.getBool(_mobileViClipKey) ??
           AppAiSettings.defaults.mobileViClipEnabled,
-      localVlmDescriptionEnabled:
-          prefs.getBool(_localVlmDescriptionKey) ??
-          AppAiSettings.defaults.localVlmDescriptionEnabled,
       androidForegroundServiceEnabled:
           prefs.getBool(_androidForegroundServiceKey) ??
           AppAiSettings.defaults.androidForegroundServiceEnabled,

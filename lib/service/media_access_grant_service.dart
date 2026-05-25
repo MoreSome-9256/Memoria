@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:photo_manager/photo_manager.dart';
 
+import 'photo_service.dart';
+
 class MediaAccessGrantSnapshot {
   const MediaAccessGrantSnapshot();
 
@@ -23,6 +25,7 @@ class MediaAccessGrantService {
 
   Future<void> presentLimitedLibraryPicker() async {
     await PhotoManager.presentLimited();
+    PhotoService().invalidateScanSessionCache();
   }
 
   Future<bool> requestIgnoreBatteryOptimizations() async {

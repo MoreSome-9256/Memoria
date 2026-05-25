@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../service/album_selection_preference_service.dart';
 import '../../service/media_access_grant_service.dart';
+import '../../service/photo_service.dart';
 
 class MediaAccessRangePage extends StatefulWidget {
   const MediaAccessRangePage({super.key});
@@ -41,7 +43,14 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
   }
 
   Future<void> _loadPermissionAndAlbums() async {
-    final state = await PhotoManager.requestPermissionExtend();
+    final state = await PhotoManager.requestPermissionExtend(
+      requestOption: const PermissionRequestOption(
+        androidPermission: AndroidPermission(
+          type: RequestType.common,
+          mediaLocation: false,
+        ),
+      ),
+    );
     final sel = await AlbumSelectionPreferenceService().loadSelection();
     if (!mounted) return;
     _permState = state;
@@ -51,26 +60,33 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
         type: RequestType.common,
       );
 
-      // 如果用户还没有主动选择过，自动匹配 DCIM / Camera
-      if (sel.selectedAlbumIds.isEmpty) {
-        final autoIds = <String>{};
+      final savedIds = sel.selectedAlbumIds.toSet();
+      final selectedIds = <String>{};
+      for (final album in allAlbums) {
+        final lower = album.name.toLowerCase();
+        if (savedIds.contains(album.id) ||
+            savedIds.contains(album.name) ||
+            savedIds.contains(lower)) {
+          selectedIds.add(album.id);
+        }
+      }
+
+      if (selectedIds.isEmpty) {
         for (final album in allAlbums) {
           final lower = album.name.toLowerCase();
-          if (lower == 'dcim' ||
-              lower == 'camera' ||
-              lower == '相机') {
-            autoIds.add(album.id);
+          if (lower == 'dcim' || lower == 'camera' || lower == '相机') {
+            selectedIds.add(album.id);
           }
         }
-        _selectedIds = autoIds;
-        if (autoIds.isNotEmpty) {
-          await AlbumSelectionPreferenceService().saveSelection(
-            selectedAlbumIds: autoIds.toList(growable: false),
-          );
-        }
-      } else {
-        _selectedIds = sel.selectedAlbumIds.toSet();
       }
+
+      if (selectedIds.isNotEmpty && !setEquals(savedIds, selectedIds)) {
+        await AlbumSelectionPreferenceService().saveSelection(
+          selectedAlbumIds: selectedIds.toList(growable: false),
+        );
+        PhotoService().invalidateScanSessionCache();
+      }
+      _selectedIds = selectedIds;
 
       _albums = allAlbums.map((a) => _AlbumItem(
         id: a.id,
@@ -105,7 +121,14 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
   }
 
   Future<void> _requestPermission() async {
-    final state = await PhotoManager.requestPermissionExtend();
+    final state = await PhotoManager.requestPermissionExtend(
+      requestOption: const PermissionRequestOption(
+        androidPermission: AndroidPermission(
+          type: RequestType.common,
+          mediaLocation: false,
+        ),
+      ),
+    );
     if (!mounted) return;
     setState(() => _permState = state);
     if (state.hasAccess) {
@@ -120,6 +143,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
     await AlbumSelectionPreferenceService().saveSelection(
       selectedAlbumIds: next.toList(growable: false),
     );
+    PhotoService().invalidateScanSessionCache();
   }
 
   @override
@@ -183,9 +207,13 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                     if (isLimited) ...[
                       const SizedBox(height: 8),
                       TextButton.icon(
-                        onPressed: () =>
-                            MediaAccessGrantService.instance
-                                .presentLimitedLibraryPicker(),
+                        onPressed: () async {
+                          await MediaAccessGrantService.instance
+                              .presentLimitedLibraryPicker();
+                          if (!mounted) return;
+                          setState(() => _loadingAlbums = true);
+                          await _loadPermissionAndAlbums();
+                        },
                         icon: const Icon(Icons.add_photo_alternate, size: 18),
                         label: const Text('选择更多照片'),
                       ),

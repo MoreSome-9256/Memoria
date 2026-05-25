@@ -26,8 +26,15 @@ class _PhotoScanCoordinator {
   static int _cachedTotalCount = -1;
   static String _cachedSelectionSignature = '';
 
+  static void invalidateSessionCache() {
+    _cachedAssets = const <AssetEntity>[];
+    _cachedTotalCount = -1;
+    _cachedSelectionSignature = '';
+  }
+
   // ── 全量重建（clearCacheFirst 路径）────────────────────────────────
   Future<_PhotoRebuildPlan> prepareRebuild({int? maxAssets}) async {
+    invalidateSessionCache();
     final totalBefore = _service._photoBox.count();
     final prepared = await _prepareScan(maxAssets: maxAssets);
     final filterProfile = await _resolveFilterProfile();
@@ -220,7 +227,14 @@ class _PhotoScanCoordinator {
     final requestType = settings.includeVideos
         ? RequestType.common
         : RequestType.image;
-    final state = await PhotoManager.requestPermissionExtend();
+    final state = await PhotoManager.requestPermissionExtend(
+      requestOption: PermissionRequestOption(
+        androidPermission: AndroidPermission(
+          type: requestType,
+          mediaLocation: false,
+        ),
+      ),
+    );
     if (!state.hasAccess) {
       throw const PhotoScanException(
         PhotoScanError.permissionDenied,
@@ -238,7 +252,9 @@ class _PhotoScanCoordinator {
 
     // 按选定相册分别加载
     final allAlbums = await PhotoManager.getAssetPathList(type: requestType);
-    final targetAlbums = allAlbums.where((a) => selectedIds.contains(a.id));
+    final targetAlbums = allAlbums.where(
+      (album) => _isSelectedAlbum(album, selectedIds),
+    ).toList(growable: false);
 
     if (targetAlbums.isEmpty) {
       _cachedAssets = const <AssetEntity>[];
@@ -247,7 +263,9 @@ class _PhotoScanCoordinator {
       return const _AlbumBundle(assets: <AssetEntity>[]);
     }
 
-    final signature = 'custom:${selectedIds.join(',')}';
+    final targetAlbumIds = targetAlbums.map((album) => album.id).toList()
+      ..sort();
+    final signature = 'custom:${targetAlbumIds.join(',')}';
     if (!forceRefresh &&
         _cachedTotalCount >= 0 &&
         _cachedSelectionSignature == signature) {
@@ -286,6 +304,12 @@ class _PhotoScanCoordinator {
     }
 
     return _AlbumBundle(assets: unique);
+  }
+
+  bool _isSelectedAlbum(AssetPathEntity album, Set<String> selectedIds) {
+    if (selectedIds.contains(album.id)) return true;
+    if (selectedIds.contains(album.name)) return true;
+    return selectedIds.contains(album.name.toLowerCase());
   }
 
   /// 回退路径：加载系统全部照片（用户未选择特定相册时）。

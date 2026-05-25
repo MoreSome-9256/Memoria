@@ -470,6 +470,10 @@ class AnalysisSpoolService {
   String _doneMarkerPath(String jobId) => '${_jobDir(jobId)}/done.marker';
   String _controlPath(String jobId) => '${_jobDir(jobId)}/control.json';
   String _fileKey(String rawKey) => Uri.encodeComponent(rawKey);
+  Future<bool> jobExists(String jobId) async {
+    await baseDir;
+    return Directory(_jobDir(jobId)).exists();
+  }
 
   Future<void> writeDoneMarker(String jobId) async {
     await baseDir;
@@ -497,12 +501,27 @@ class AnalysisSpoolService {
 
   Future<void> writeControl(AnalysisJobControl control) async {
     await baseDir;
-    await ensureJobDirs(control.jobId);
+    if (!await Directory(_jobDir(control.jobId)).exists()) {
+      debugPrint('[spool] control 写入跳过：job 已不存在 jobId=${control.jobId}');
+      return;
+    }
+    await Directory(_tmpDir(control.jobId)).create(recursive: true);
     final tmpPath = '${_tmpDir(control.jobId)}/control.json.tmp';
     final file = File(tmpPath);
-    await file.writeAsString(jsonEncode(control.toJson()), flush: true);
-    await file.rename(_controlPath(control.jobId));
-    await _bumpSpoolVersion();
+    try {
+      await file.writeAsString(jsonEncode(control.toJson()), flush: true);
+      if (!await Directory(_jobDir(control.jobId)).exists()) {
+        try {
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+        return;
+      }
+      await file.rename(_controlPath(control.jobId));
+      await _bumpSpoolVersion();
+    } on PathNotFoundException {
+      debugPrint('[spool] control 写入跳过：job 已被清理 jobId=${control.jobId}');
+      return;
+    }
   }
 
   Future<AnalysisJobControl> readControl(String jobId) async {
@@ -519,6 +538,7 @@ class AnalysisSpoolService {
   }
 
   Future<void> requestPause(String jobId) async {
+    if (!await jobExists(jobId)) return;
     final current = await readControl(jobId);
     await writeControl(
       current.copyWith(pauseRequested: true, stopRequested: false),
@@ -526,6 +546,7 @@ class AnalysisSpoolService {
   }
 
   Future<void> requestResume(String jobId) async {
+    if (!await jobExists(jobId)) return;
     final current = await readControl(jobId);
     await writeControl(
       current.copyWith(pauseRequested: false, stopRequested: false),
@@ -533,6 +554,7 @@ class AnalysisSpoolService {
   }
 
   Future<void> requestStop(String jobId) async {
+    if (!await jobExists(jobId)) return;
     final current = await readControl(jobId);
     await writeControl(
       current.copyWith(pauseRequested: false, stopRequested: true),
@@ -624,11 +646,16 @@ class AnalysisSpoolService {
   /// 将 result 从 pending 移动到 committed。
   Future<bool> moveToCommitted(String jobId, String photoKey) async {
     await baseDir;
+    await ensureJobDirs(jobId);
     final key = _fileKey(photoKey);
     final src = '${_pendingDir(jobId)}/$key.json';
     final dst = '${_committedDir(jobId)}/$key.json';
     try {
-      await File(src).rename(dst);
+      final srcFile = File(src);
+      if (!await srcFile.exists()) {
+        return await File(dst).exists();
+      }
+      await srcFile.rename(dst);
       return true;
     } catch (e) {
       debugPrint('[spool] 移动 committed 失败 photoKey=$photoKey: $e');
@@ -639,11 +666,16 @@ class AnalysisSpoolService {
   /// 将 result 从 pending 移动到 failed。
   Future<bool> moveToFailed(String jobId, String photoKey) async {
     await baseDir;
+    await ensureJobDirs(jobId);
     final key = _fileKey(photoKey);
     final src = '${_pendingDir(jobId)}/$key.json';
     final dst = '${_failedDir(jobId)}/$key.json';
     try {
-      await File(src).rename(dst);
+      final srcFile = File(src);
+      if (!await srcFile.exists()) {
+        return await File(dst).exists();
+      }
+      await srcFile.rename(dst);
       return true;
     } catch (e) {
       debugPrint('[spool] 移动 failed 失败 photoKey=$photoKey: $e');
@@ -698,9 +730,12 @@ class AnalysisSpoolService {
   Future<void> cleanupJob(String jobId) async {
     await baseDir;
     final dir = Directory(_jobDir(jobId));
-    if (await dir.exists()) {
+    try {
+      if (!await dir.exists()) return;
       await dir.delete(recursive: true);
       debugPrint('[spool] job 目录已清理 jobId=$jobId');
+    } on PathNotFoundException {
+      return;
     }
   }
 

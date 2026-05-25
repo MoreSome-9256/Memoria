@@ -127,22 +127,31 @@ class MobileClipTagService {
       return;
     }
     _warmUpFuture = Future<void>(() async {
-      // TEMP: 用随机向量代替实际 prompt embedding，跳过 TFLite 加载与推理
-      const dim = 512;
-      final rng = math.Random(42);
-      List<double> randomUnitVector() {
-        final v =
-            List<double>.generate(dim, (_) => (rng.nextDouble() - 0.5) * 2);
-        final norm = math.sqrt(v.fold(0.0, (sum, x) => sum + x * x));
-        return v.map((x) => x / norm).toList();
+      _prototypeCacheKey = _computePrototypeCacheKey();
+      _prototypeByLabel.clear();
+      _coarsePrototypeById.clear();
+      if (await _tryLoadPrototypesFromCache()) {
+        _warmedUp = true;
+        return;
       }
+
+      await _semanticService.warmUp();
       for (final definition in memoriaMasterTagDefinitions) {
-        _prototypeByLabel[definition.label] = randomUnitVector();
+        final prototype = await _buildPrototype(definition.prompts);
+        if (prototype.isNotEmpty) {
+          _prototypeByLabel[definition.label] = prototype;
+        }
+        await Future<void>.delayed(Duration.zero);
       }
       for (final coarse in memoriaCoarseTagDefinitions) {
         if (coarse.prompts.isEmpty) continue;
-        _coarsePrototypeById[coarse.id] = randomUnitVector();
+        final prototype = await _buildPrototype(coarse.prompts);
+        if (prototype.isNotEmpty) {
+          _coarsePrototypeById[coarse.id] = prototype;
+        }
+        await Future<void>.delayed(Duration.zero);
       }
+      await _savePrototypesToCache();
       _warmedUp = true;
     });
     try {
@@ -155,6 +164,7 @@ class MobileClipTagService {
   /// 生成标签定义的缓存键——拼接所有标签+prompts 然后做 base64
   String _computePrototypeCacheKey() {
     final buffer = StringBuffer();
+    buffer.write('mobileclip-tag-prototypes-real-text-v2');
     for (final def in memoriaMasterTagDefinitions) {
       buffer.write(def.label);
       for (final p in def.prompts) {
@@ -267,6 +277,41 @@ class MobileClipTagService {
       await Future<void>.delayed(Duration.zero);
     }
     return vectors;
+  }
+
+  Future<List<double>> _buildPrototype(Iterable<String> prompts) async {
+    final vectors = await _embedPromptsSequentially(
+      prompts.where((prompt) => prompt.trim().isNotEmpty),
+    );
+    if (vectors.isEmpty) return const <double>[];
+    final dim = vectors.first.length;
+    if (dim == 0) return const <double>[];
+    final sum = List<double>.filled(dim, 0);
+    var count = 0;
+    for (final vector in vectors) {
+      if (vector.length != dim) continue;
+      for (var i = 0; i < dim; i++) {
+        sum[i] += vector[i];
+      }
+      count++;
+    }
+    if (count == 0) return const <double>[];
+    for (var i = 0; i < dim; i++) {
+      sum[i] /= count;
+    }
+    return _l2Normalize(sum);
+  }
+
+  List<double> _l2Normalize(List<double> vector) {
+    var norm = 0.0;
+    for (final value in vector) {
+      norm += value * value;
+    }
+    norm = math.sqrt(norm);
+    if (norm <= 0 || norm.isNaN || norm.isInfinite) {
+      return const <double>[];
+    }
+    return vector.map((value) => value / norm).toList(growable: false);
   }
 
   Future<List<String>> retrieveTags(

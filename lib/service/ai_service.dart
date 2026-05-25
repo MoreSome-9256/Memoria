@@ -127,6 +127,8 @@ class AIService {
       ListQueue<_AsyncCaptionTask>();
   final ListQueue<PhotoEntity> _analysisQueue = ListQueue<PhotoEntity>();
   final Set<int> _analysisQueuedPhotoIds = <int>{};
+  final Map<String, Future<SpoolConsumeReport>> _activeSpoolConsumes =
+      <String, Future<SpoolConsumeReport>>{};
   static final _AnalysisInputConfig _analysisInputConfig =
       _AnalysisInputConfig.resolve(
         strategyLabel: _analysisInputStrategyOverride,

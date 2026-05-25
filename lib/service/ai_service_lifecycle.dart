@@ -122,7 +122,7 @@ extension AIServiceLifecycle on AIService {
                         : isPaused
                             ? '后台分析已暂停'
                             : '后台分析中 $processed/${manifest.totalItems}';
-            _progressNotifier.value = AIAnalysisProgress(
+            _publishProgressIfChanged(AIAnalysisProgress(
               isRunning:
                   !isPaused && !isStopping && (!serviceOffline || shouldRestartWorker),
               isPaused: isPaused || (serviceOffline && !shouldRestartWorker),
@@ -132,7 +132,7 @@ extension AIServiceLifecycle on AIService {
               failed: snapshot?.failed ?? 0,
               currentStep: currentStep,
               elapsedMs: 0,
-            );
+            ));
             if (shouldRestartWorker) {
               debugPrint('[spool] runtime poll 检测到前台服务离线，重新拉起 job=$pendingJobId');
               await AiBackgroundTaskService.instance.startAnalysisWorker();
@@ -151,7 +151,7 @@ extension AIServiceLifecycle on AIService {
       }
       return;
     }
-    _progressNotifier.value = AIAnalysisProgress(
+    _publishProgressIfChanged(AIAnalysisProgress(
       isRunning: !snapshot.isPaused && !snapshot.isStopping,
       isPaused: snapshot.isPaused,
       isStopping: snapshot.isStopping,
@@ -162,12 +162,29 @@ extension AIServiceLifecycle on AIService {
       elapsedMs: snapshot.elapsedMs,
       warmUpCompleted: snapshot.warmUpCompleted,
       warmUpTotal: snapshot.warmUpTotal,
-    );
+    ));
   }
 
   Future<bool> getAutoResumePreference() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(AIService._autoResumeKey) ?? false;
+  }
+
+  void _publishProgressIfChanged(AIAnalysisProgress next) {
+    final current = _progressNotifier.value;
+    if (current.isRunning == next.isRunning &&
+        current.isPaused == next.isPaused &&
+        current.isStopping == next.isStopping &&
+        current.total == next.total &&
+        current.completed == next.completed &&
+        current.failed == next.failed &&
+        current.currentStep == next.currentStep &&
+        current.elapsedMs == next.elapsedMs &&
+        current.warmUpCompleted == next.warmUpCompleted &&
+        current.warmUpTotal == next.warmUpTotal) {
+      return;
+    }
+    _progressNotifier.value = next;
   }
 
   Future<void> loadAutoResumePreference() async {
@@ -380,7 +397,7 @@ extension AIServiceLifecycle on AIService {
                         : isPaused
                             ? '后台分析已暂停'
                             : '后台分析中 $processed/${manifest.totalItems}';
-            _progressNotifier.value = AIAnalysisProgress(
+            _publishProgressIfChanged(AIAnalysisProgress(
               isRunning:
                   !isPaused && !isStopping && (!serviceOffline || shouldRestartWorker),
               isPaused: isPaused || (serviceOffline && !shouldRestartWorker),
@@ -390,7 +407,7 @@ extension AIServiceLifecycle on AIService {
               failed: snapshot?.failed ?? 0,
               currentStep: currentStep,
               elapsedMs: 0,
-            );
+            ));
             SpoolProgressNotifier.instance.startPolling(pendingJobId);
             if (shouldRestartWorker) {
               debugPrint('[spool] pending job=$pendingJobId 未完成且前台服务不在线，重新拉起 worker');

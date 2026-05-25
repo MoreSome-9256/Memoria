@@ -755,10 +755,16 @@ class SpoolAnalysisWorker {
 
     // 4. 辅助文件（用于 OCR / 人脸检测）
     final t4 = DateTime.now();
-    final compressedBytes = await compute(
+    var compressedBytes = await compute(
       _spoolComputeCompressImage,
       input.file.path,
     );
+    if (compressedBytes == null || compressedBytes.isEmpty) {
+      compressedBytes = await compute(
+        _spoolComputeCompressImageBytes,
+        input.mobileClipBytes,
+      );
+    }
     File analysisFile;
     if (compressedBytes != null && compressedBytes.isNotEmpty) {
       final tempDir = await getTemporaryDirectory();
@@ -785,7 +791,11 @@ class SpoolAnalysisWorker {
         OcrService.shouldRunOcr(visualTags, aspectRatio: aspectRatio);
     if (_settings.ocrEnabled &&
         shouldRunOcr) {
-      ocrResult = await _ocrService.analyzeImageFile(analysisFile);
+      try {
+        ocrResult = await _ocrService.analyzeImageFile(analysisFile);
+      } catch (error) {
+        debugPrint('[spool-worker]   OCR 跳过：插件处理失败 $error');
+      }
     }
     final ocrMs = DateTime.now().difference(t5).inMilliseconds;
     phaseLog.add('ocr=${ocrMs}ms');
@@ -847,40 +857,44 @@ class SpoolAnalysisWorker {
     final faceResults = <_SpoolWorkerFaceResult>[];
     if (faceDetector != null && input.width >= 32 && input.height >= 32) {
       debugPrint('[spool-worker]   开始人脸检测: image=${input.width}x${input.height}');
-      final inputImage = InputImage.fromFile(analysisFile);
-      final faces = await faceDetector.processImage(inputImage);
-      faceCount = faces.length;
-      maxSmileProb = faces.isNotEmpty
-          ? faces
-              .map((face) => face.smilingProbability ?? 0.0)
-              .reduce((a, b) => a > b ? a : b)
-          : 0.0;
-      joyScore = AIScoreHelper.calculateJoyScore(
-        faceCount: faceCount,
-        maxSmileProb: maxSmileProb,
-        tags: visualTags,
-      );
-      final primaryIndex = _pickPrimaryFaceIndex(faces);
-      debugPrint('[spool-worker]   人脸检测结果: ${faces.length}张脸 maxSmileProb=$maxSmileProb joyScore=$joyScore');
-      for (var fi = 0; fi < faces.length; fi++) {
-        final face = faces[fi];
-        final qualityScore = _estimateFaceQuality(
-          face, input.width, input.height,
+      try {
+        final inputImage = InputImage.fromFile(analysisFile);
+        final faces = await faceDetector.processImage(inputImage);
+        faceCount = faces.length;
+        maxSmileProb = faces.isNotEmpty
+            ? faces
+                .map((face) => face.smilingProbability ?? 0.0)
+                .reduce((a, b) => a > b ? a : b)
+            : 0.0;
+        joyScore = AIScoreHelper.calculateJoyScore(
+          faceCount: faceCount,
+          maxSmileProb: maxSmileProb,
+          tags: visualTags,
         );
-        faceResults.add(_SpoolWorkerFaceResult(
-          faceIndex: fi,
-          left: face.boundingBox.left,
-          top: face.boundingBox.top,
-          right: face.boundingBox.right,
-          bottom: face.boundingBox.bottom,
-          roll: face.headEulerAngleZ,
-          yaw: face.headEulerAngleY,
-          smilingProbability: face.smilingProbability,
-          leftEyeOpenProbability: face.leftEyeOpenProbability,
-          rightEyeOpenProbability: face.rightEyeOpenProbability,
-          qualityScore: qualityScore,
-          isPrimaryFace: fi == primaryIndex,
-        ));
+        final primaryIndex = _pickPrimaryFaceIndex(faces);
+        debugPrint('[spool-worker]   人脸检测结果: ${faces.length}张脸 maxSmileProb=$maxSmileProb joyScore=$joyScore');
+        for (var fi = 0; fi < faces.length; fi++) {
+          final face = faces[fi];
+          final qualityScore = _estimateFaceQuality(
+            face, input.width, input.height,
+          );
+          faceResults.add(_SpoolWorkerFaceResult(
+            faceIndex: fi,
+            left: face.boundingBox.left,
+            top: face.boundingBox.top,
+            right: face.boundingBox.right,
+            bottom: face.boundingBox.bottom,
+            roll: face.headEulerAngleZ,
+            yaw: face.headEulerAngleY,
+            smilingProbability: face.smilingProbability,
+            leftEyeOpenProbability: face.leftEyeOpenProbability,
+            rightEyeOpenProbability: face.rightEyeOpenProbability,
+            qualityScore: qualityScore,
+            isPrimaryFace: fi == primaryIndex,
+          ));
+        }
+      } catch (error) {
+        debugPrint('[spool-worker]   人脸检测跳过：插件处理失败 $error');
       }
     } else if (faceDetector != null) {
       debugPrint('[spool-worker]   人脸检测跳过: 图片太小 ${input.width}x${input.height} (<32)');
@@ -1215,12 +1229,29 @@ List<int>? _spoolComputeCompressImage(String filePath) {
   try {
     final file = File(filePath);
     if (!file.existsSync()) return null;
-    final bytes = file.readAsBytesSync();
-    final decoded = img.decodeImage(bytes);
-    if (decoded == null) return null;
-    final resized = img.copyResize(decoded, width: 1024, height: 1024);
-    return img.encodeJpg(resized, quality: 80);
+    return _spoolCompressImageBytes(file.readAsBytesSync());
   } catch (_) { return null; }
+}
+
+List<int>? _spoolComputeCompressImageBytes(Uint8List bytes) {
+  try {
+    return _spoolCompressImageBytes(bytes);
+  } catch (_) {
+    return null;
+  }
+}
+
+List<int>? _spoolCompressImageBytes(List<int> bytes) {
+  final decoded = img.decodeImage(Uint8List.fromList(bytes));
+  if (decoded == null) return null;
+  final baked = img.bakeOrientation(decoded);
+  final resized = img.copyResize(
+    baked,
+    width: 1024,
+    height: 1024,
+    interpolation: img.Interpolation.linear,
+  );
+  return img.encodeJpg(resized, quality: 80);
 }
 
 double _spoolCosineSimilarity(List<double> a, List<double> b) {

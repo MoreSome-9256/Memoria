@@ -159,6 +159,28 @@ extension AIServicePipeline on AIService {
     bool requireDoneMarker = true,
     bool startNextPending = true,
     bool dismissUnfinishedItems = false,
+  }) {
+    final active = _activeSpoolConsumes[jobId];
+    if (active != null) {
+      debugPrint('[spool] job=$jobId 已有消费流程在运行，复用同一个 future');
+      return active;
+    }
+    final future = _consumeSpoolResultsInternal(
+      jobId,
+      requireDoneMarker: requireDoneMarker,
+      startNextPending: startNextPending,
+      dismissUnfinishedItems: dismissUnfinishedItems,
+    );
+    _activeSpoolConsumes[jobId] = future;
+    future.whenComplete(() => _activeSpoolConsumes.remove(jobId));
+    return future;
+  }
+
+  Future<SpoolConsumeReport> _consumeSpoolResultsInternal(
+    String jobId, {
+    bool requireDoneMarker = true,
+    bool startNextPending = true,
+    bool dismissUnfinishedItems = false,
   }) async {
     final spool = AnalysisSpoolService.instance;
     final manifest = await spool.readManifest(jobId);

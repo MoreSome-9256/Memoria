@@ -131,7 +131,7 @@ extension AIServiceLifecycle on AIService {
               completed: processed,
               failed: snapshot?.failed ?? 0,
               currentStep: currentStep,
-              elapsedMs: 0,
+              elapsedMs: _elapsedMsForSpoolProgress(manifest, snapshot),
             ));
             if (shouldRestartWorker) {
               debugPrint('[spool] runtime poll 检测到前台服务离线，重新拉起 job=$pendingJobId');
@@ -406,7 +406,7 @@ extension AIServiceLifecycle on AIService {
               completed: processed,
               failed: snapshot?.failed ?? 0,
               currentStep: currentStep,
-              elapsedMs: 0,
+              elapsedMs: _elapsedMsForSpoolProgress(manifest, snapshot),
             ));
             SpoolProgressNotifier.instance.startPolling(pendingJobId);
             if (shouldRestartWorker) {
@@ -681,4 +681,16 @@ extension AIServiceLifecycle on AIService {
       await Future<void>.delayed(const Duration(milliseconds: 120));
     }
   }
+}
+
+int _elapsedMsForSpoolProgress(
+  AnalysisJobManifest manifest,
+  AnalysisProgressSnapshot? snapshot,
+) {
+  final endMs = snapshot?.updatedAt ?? DateTime.now().millisecondsSinceEpoch;
+  final elapsedMs = endMs - manifest.createdAt;
+  if (elapsedMs <= 0) {
+    return 0;
+  }
+  return elapsedMs;
 }

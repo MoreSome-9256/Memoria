@@ -6,7 +6,6 @@
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -29,7 +28,6 @@ class _SpoolTaskHandler extends TaskHandler {
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    WidgetsFlutterBinding.ensureInitialized();
     if (_started) return;
     _started = true;
     unawaited(_runWorker());
@@ -92,6 +90,8 @@ class AiBackgroundTaskService {
         eventAction: ForegroundTaskEventAction.nothing(),
         autoRunOnBoot: false,
         autoRunOnMyPackageReplaced: false,
+        allowAutoRestart: true,
+        stopWithTask: false,
       ),
     );
   }
@@ -165,10 +165,12 @@ class AiBackgroundTaskService {
     }
     await FlutterForegroundTask.startService(
       serviceId: 43021,
+      serviceTypes: const <ForegroundServiceTypes>[
+        ForegroundServiceTypes.dataSync,
+      ],
       notificationTitle: title,
       notificationText: text,
       notificationIcon: null,
-      notificationInitialRoute: '/',
       callback: foregroundTaskCallback,
     );
   }

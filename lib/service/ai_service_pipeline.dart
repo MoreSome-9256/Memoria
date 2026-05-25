@@ -67,7 +67,7 @@ extension AIServicePipeline on AIService {
             completed: processed,
             failed: failed,
             currentStep: currentStep,
-            elapsedMs: 0,
+            elapsedMs: _elapsedMsForSpoolProgress(manifest, snapshot),
           );
           SpoolProgressNotifier.instance.startPolling(existingJobId);
           if (serviceOffline && canAutoRestart) {

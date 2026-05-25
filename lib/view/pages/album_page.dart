@@ -748,141 +748,159 @@ class _AlbumPageState extends State<AlbumPage> {
           ),
         ],
       ),
-      body: ValueListenableBuilder<AIAnalysisProgress>(
-        valueListenable: AIService().progressListenable,
-        builder: (context, progress, _) {
-          return Column(
-            children: [
-              ValueListenableBuilder<int>(
-                valueListenable:
-                    _DeferredImageLoadScheduler.pendingCountListenable,
-                builder: (context, pendingCount, _) {
-                  return AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    child: pendingCount > 0
-                        ? const LinearProgressIndicator(
-                            key: ValueKey<String>('deferred-images-loading'),
-                            minHeight: 2.5,
-                          )
-                        : const SizedBox.shrink(),
-                  );
-                },
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                child: TextField(
-                  controller: _semanticSearchController,
-                  focusNode: _semanticSearchFocusNode,
-                  textInputAction: TextInputAction.search,
-                  onSubmitted: (_) => _submitSemanticSearch(),
-                  decoration: InputDecoration(
-                    hintText: '语义搜索',
-                    suffixIcon: IconButton(
-                      onPressed: _submitSemanticSearch,
-                      icon: const Icon(Icons.search),
-                      tooltip: '开始搜索',
-                    ),
-                    filled: true,
-                    fillColor: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest
-                        .withValues(alpha: 0.45),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(18),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                  ),
+      body: Column(
+        children: [
+          ValueListenableBuilder<int>(
+            valueListenable: _DeferredImageLoadScheduler.pendingCountListenable,
+            builder: (context, pendingCount, _) {
+              return AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child: pendingCount > 0
+                    ? const LinearProgressIndicator(
+                        key: ValueKey<String>('deferred-images-loading'),
+                        minHeight: 2.5,
+                      )
+                    : const SizedBox.shrink(),
+              );
+            },
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: TextField(
+              controller: _semanticSearchController,
+              focusNode: _semanticSearchFocusNode,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _submitSemanticSearch(),
+              decoration: InputDecoration(
+                hintText: '语义搜索',
+                suffixIcon: IconButton(
+                  onPressed: _submitSemanticSearch,
+                  icon: const Icon(Icons.search),
+                  tooltip: '开始搜索',
+                ),
+                filled: true,
+                fillColor: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.45),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                child: SegmentedButton<_AlbumViewMode>(
-                  segments: const <ButtonSegment<_AlbumViewMode>>[
-                    ButtonSegment<_AlbumViewMode>(
-                      value: _AlbumViewMode.tags,
-                      icon: Icon(Icons.sell_outlined),
-                      label: Text('标签浏览'),
-                    ),
-                    ButtonSegment<_AlbumViewMode>(
-                      value: _AlbumViewMode.moments,
-                      icon: Icon(Icons.auto_awesome_mosaic_outlined),
-                      label: Text('时刻分组'),
-                    ),
-                  ],
-                  selected: <_AlbumViewMode>{_viewMode},
-                  onSelectionChanged: (selection) {
-                    if (selection.isEmpty) {
-                      return;
-                    }
-                    setState(() {
-                      _viewMode = selection.first;
-                    });
-                  },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: SegmentedButton<_AlbumViewMode>(
+              segments: const <ButtonSegment<_AlbumViewMode>>[
+                ButtonSegment<_AlbumViewMode>(
+                  value: _AlbumViewMode.tags,
+                  icon: Icon(Icons.sell_outlined),
+                  label: Text('标签浏览'),
                 ),
-              ),
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(context).size.height * 0.34,
+                ButtonSegment<_AlbumViewMode>(
+                  value: _AlbumViewMode.moments,
+                  icon: Icon(Icons.auto_awesome_mosaic_outlined),
+                  label: Text('时刻分组'),
                 ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AnimatedSwitcher(
+              ],
+              selected: <_AlbumViewMode>{_viewMode},
+              onSelectionChanged: (selection) {
+                if (selection.isEmpty) {
+                  return;
+                }
+                setState(() {
+                  _viewMode = selection.first;
+                });
+              },
+            ),
+          ),
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.34,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildAnalysisProgressSection(),
+                  ValueListenableBuilder<AlbumRefreshProgress>(
+                    valueListenable: AlbumRefreshService().progressListenable,
+                    builder: (context, refreshProgress, _) {
+                      return AnimatedSwitcher(
                         duration: const Duration(milliseconds: 250),
-                        child: progress.isVisible
-                            ? _buildAnalysisProgressBanner(progress)
+                        child: refreshProgress.isVisible
+                            ? _buildImportProgressBanner(refreshProgress)
                             : const SizedBox.shrink(),
-                      ),
-                      ValueListenableBuilder<AlbumRefreshProgress>(
-                        valueListenable: AlbumRefreshService()
-                            .progressListenable,
-                        builder: (context, refreshProgress, _) {
-                          return AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 250),
-                            child: refreshProgress.isVisible
-                                ? _buildImportProgressBanner(refreshProgress)
-                                : const SizedBox.shrink(),
-                          );
-                        },
-                      ),
-                      ValueListenableBuilder<JunkPhotoCleanupReport?>(
-                        valueListenable:
-                            AIService().junkCleanupReportListenable,
-                        builder: (context, report, _) {
-                          return AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 250),
-                            child: report == null || !report.hasCandidates
-                                ? const SizedBox.shrink()
-                                : JunkPhotoCleanupBanner(
-                                    key: ValueKey<String>(report.reportId),
-                                    report: report,
-                                    onReview: () =>
-                                        _showJunkCleanupDialog(report),
-                                    onDismiss: _dismissJunkCleanupBanner,
-                                  ),
-                          );
-                        },
-                      ),
-                    ],
+                      );
+                    },
                   ),
-                ),
+                  ValueListenableBuilder<JunkPhotoCleanupReport?>(
+                    valueListenable: AIService().junkCleanupReportListenable,
+                    builder: (context, report, _) {
+                      return AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        child: report == null || !report.hasCandidates
+                            ? const SizedBox.shrink()
+                            : JunkPhotoCleanupBanner(
+                                key: ValueKey<String>(report.reportId),
+                                report: report,
+                                onReview: () =>
+                                    _showJunkCleanupDialog(report),
+                                onDismiss: _dismissJunkCleanupBanner,
+                              ),
+                      );
+                    },
+                  ),
+                ],
               ),
-              Expanded(
-                child: IndexedStack(
-                  index: _viewMode == _AlbumViewMode.tags ? 0 : 1,
-                  children: [_buildAlbumTagBrowserView(), _buildMomentsView()],
-                ),
-              ),
-            ],
-          );
-        },
+            ),
+          ),
+          Expanded(
+            child: IndexedStack(
+              index: _viewMode == _AlbumViewMode.tags ? 0 : 1,
+              children: [_buildAlbumTagBrowserView(), _buildMomentsView()],
+            ),
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _buildAnalysisProgressSection() {
+    return ValueListenableBuilder<AIAnalysisProgress>(
+      valueListenable: AIService().progressListenable,
+      builder: (context, progress, _) {
+        return AnimatedSwitcher(
+          duration: const Duration(milliseconds: 250),
+          child: progress.isVisible
+              ? _buildAnalysisProgressBanner(progress)
+              : const SizedBox.shrink(),
+        );
+      },
+    );
+  }
+
+  String _formatDurationCompact(Duration duration) {
+    final totalSeconds = duration.inSeconds;
+    if (totalSeconds <= 0) {
+      return '0秒';
+    }
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '$hours小时$minutes分';
+    }
+    if (minutes > 0) {
+      return '$minutes分$seconds秒';
+    }
+    return '$seconds秒';
   }
 
   Widget _buildAnalysisProgressBanner(AIAnalysisProgress progress) {
@@ -898,6 +916,9 @@ class _AlbumPageState extends State<AlbumPage> {
     final avgLabel = avgSeconds == null
         ? '--'
         : '${avgSeconds.toStringAsFixed(1)} 秒/张';
+    final eta = progress.estimatedRemainingDuration;
+    final etaLabel = eta == null ? '--' : _formatDurationCompact(eta);
+    final elapsedLabel = _formatDurationCompact(progress.elapsed);
 
     return Container(
       width: double.infinity,
@@ -946,7 +967,7 @@ class _AlbumPageState extends State<AlbumPage> {
           if (avgSeconds != null) ...[
             const SizedBox(height: 6),
             Text(
-              '平均 $avgLabel',
+              '已耗时 $elapsedLabel · 预计剩余 $etaLabel · 平均 $avgLabel',
               style: TextStyle(color: Colors.grey[700], fontSize: 12),
             ),
           ],

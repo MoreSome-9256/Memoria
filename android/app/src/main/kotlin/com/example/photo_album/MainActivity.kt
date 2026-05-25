@@ -4,9 +4,14 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import androidx.documentfile.provider.DocumentFile
+import com.pravera.flutter_foreground_task.FlutterForegroundTaskLifecycleListener
+import com.pravera.flutter_foreground_task.FlutterForegroundTaskPlugin
+import com.pravera.flutter_foreground_task.FlutterForegroundTaskStarter
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -18,8 +23,25 @@ class MainActivity : FlutterActivity() {
 	private val directoryRequestCode = 42031
 	private val batteryOptimizationRequestCode = 42032
 
+	override fun onCreate(savedInstanceState: Bundle?) {
+		Log.i(TAG, "onCreate savedInstanceState=${savedInstanceState != null} taskId=$taskId intent=$intent")
+		super.onCreate(savedInstanceState)
+	}
+
+	override fun onNewIntent(intent: Intent) {
+		Log.i(TAG, "onNewIntent taskId=$taskId intent=$intent flags=${intent.flags}")
+		super.onNewIntent(intent)
+	}
+
+	override fun onDestroy() {
+		Log.i(TAG, "onDestroy isFinishing=$isFinishing changingConfig=$isChangingConfigurations taskId=$taskId")
+		super.onDestroy()
+	}
+
 	override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+		Log.i(TAG, "configureFlutterEngine engine=$flutterEngine taskId=$taskId")
 		super.configureFlutterEngine(flutterEngine)
+		installForegroundTaskLifecycleLogger()
 
 		MethodChannel(
 			flutterEngine.dartExecutor.binaryMessenger,
@@ -236,4 +258,36 @@ class MainActivity : FlutterActivity() {
 		return powerManager?.isIgnoringBatteryOptimizations(packageName) == true
 	}
 
+}
+
+private const val TAG = "MemoriaMainActivity"
+
+private var foregroundTaskLifecycleLoggerInstalled = false
+
+private fun installForegroundTaskLifecycleLogger() {
+	if (foregroundTaskLifecycleLoggerInstalled) {
+		return
+	}
+	foregroundTaskLifecycleLoggerInstalled = true
+	FlutterForegroundTaskPlugin.addTaskLifecycleListener(
+		object : FlutterForegroundTaskLifecycleListener {
+			override fun onEngineCreate(flutterEngine: FlutterEngine?) {
+				Log.i(TAG, "foreground task FlutterEngine create engine=$flutterEngine")
+			}
+
+			override fun onTaskStart(starter: FlutterForegroundTaskStarter) {
+				Log.i(TAG, "foreground task start starter=$starter")
+			}
+
+			override fun onTaskRepeatEvent() = Unit
+
+			override fun onTaskDestroy() {
+				Log.i(TAG, "foreground task destroy")
+			}
+
+			override fun onEngineWillDestroy() {
+				Log.i(TAG, "foreground task FlutterEngine willDestroy")
+			}
+		},
+	)
 }

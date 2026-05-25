@@ -148,6 +148,29 @@ class SpoolAnalysisWorker {
 
     await spool.baseDir; // 初始化前台 isolate 的 _baseDir
     await spool.ensureJobDirs(jobId);
+    final alreadyCompletedKeys = <String>{};
+    final existingResultFiles = await spool.listPendingResults(jobId);
+    for (final resultFile in existingResultFiles) {
+      final result = await spool.readResultFile(resultFile);
+      if (result == null) continue;
+      alreadyCompletedKeys.add(result.photoKey);
+      processed++;
+      if (result.isSucceeded) {
+        succeeded++;
+      } else if (result.isSkipped) {
+        skipped++;
+      } else {
+        failed++;
+      }
+    }
+    if (alreadyCompletedKeys.isNotEmpty) {
+      debugPrint('[spool-worker] 检测到已有完整结果 ${alreadyCompletedKeys.length} 个，将从未完成项继续');
+    }
+    if (processed >= totalItems) {
+      await _finishJob(spool, jobId, totalItems, processed, succeeded, failed,
+          skipped);
+      return;
+    }
 
     final settings = await AppAiSettingsService.instance.load();
     OcrPolicy.setRuntimeEnabled(settings.ocrEnabled);
@@ -233,6 +256,10 @@ class SpoolAnalysisWorker {
 
         final item = manifest.items[index];
         final photoKey = item.photoKey;
+        if (alreadyCompletedKeys.contains(photoKey)) {
+          debugPrint('[spool-worker] ⏭️ 已有完整结果，跳过第 ${index + 1}/$totalItems 张 photoKey=$photoKey');
+          continue;
+        }
 
         debugPrint('[spool-worker] --- 开始处理第 ${index + 1}/$totalItems 张 ---');
         debugPrint('[spool-worker] photoKey=$photoKey path=${item.path} contentUri=${item.contentUri}');

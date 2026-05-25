@@ -496,6 +496,7 @@ extension AIServiceLifecycle on AIService {
         jobId,
         requireDoneMarker: !allowPartial,
         startNextPending: false,
+        dismissUnfinishedItems: allowPartial,
       );
       debugPrint('[spool] 已消费并清理 job 文件和缓存 jobId=$jobId');
     } catch (e) {

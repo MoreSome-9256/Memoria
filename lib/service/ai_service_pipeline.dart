@@ -148,6 +148,7 @@ extension AIServicePipeline on AIService {
     String jobId, {
     bool requireDoneMarker = true,
     bool startNextPending = true,
+    bool dismissUnfinishedItems = false,
   }) async {
     final spool = AnalysisSpoolService.instance;
     final manifest = await spool.readManifest(jobId);
@@ -165,6 +166,7 @@ extension AIServicePipeline on AIService {
     var consumedCount = 0;
     var failedCount = 0;
     var affectedEventIds = <int>{};
+    final succeededPhotoIds = <int>{};
 
     final photoById = <int, PhotoEntity>{};
     for (final photo in photoBox.getAll()) {
@@ -212,11 +214,21 @@ extension AIServicePipeline on AIService {
         }
 
         await spool.moveToCommitted(jobId, result.photoKey);
+        if (photo.id > 0) {
+          succeededPhotoIds.add(photo.id);
+        }
         consumedCount++;
       } else {
         await spool.moveToFailed(jobId, result.photoKey);
         failedCount++;
       }
+    }
+
+    if (dismissUnfinishedItems) {
+      await _dismissUnfinishedSpoolItems(
+        manifest: manifest,
+        succeededPhotoIds: succeededPhotoIds,
+      );
     }
 
     // 刷新事件智能信息
@@ -266,6 +278,41 @@ extension AIServicePipeline on AIService {
     }
     debugPrint('[spool] 检测到 ${pendingPhotoIds.length} 张新增待分析照片，自动提交下一轮 spool');
     unawaited(analyzePhotosInBackground(photoIds: pendingPhotoIds));
+  }
+
+  Future<void> _dismissUnfinishedSpoolItems({
+    required AnalysisJobManifest manifest,
+    required Set<int> succeededPhotoIds,
+  }) async {
+    final unfinishedIds = manifest.items
+        .map((item) => item.photoId ?? 0)
+        .where((id) => id > 0 && !succeededPhotoIds.contains(id))
+        .toSet()
+        .toList(growable: false);
+    if (unfinishedIds.isEmpty) {
+      return;
+    }
+
+    final store = ObjectBoxService().store;
+    final photoBox = store.box<PhotoEntity>();
+    final photos = photoBox
+        .getMany(unfinishedIds)
+        .whereType<PhotoEntity>()
+        .where((photo) => !photo.isAiAnalyzed)
+        .toList(growable: false);
+    if (photos.isEmpty) {
+      return;
+    }
+
+    store.runInTransaction(TxMode.write, () {
+      for (final photo in photos) {
+        photo.isAiAnalyzed = true;
+        photo.aiTags ??= <String>[];
+        photo.ocrTags ??= <String>[];
+      }
+      photoBox.putMany(photos);
+    });
+    debugPrint('[spool] 已从待分析队列移除 ${photos.length} 张未完成照片');
   }
 
   Future<List<_SpoolFaceFileResult>> _readFaceResults(

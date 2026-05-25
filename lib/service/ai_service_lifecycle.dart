@@ -104,25 +104,36 @@ extension AIServiceLifecycle on AIService {
                 control.pauseRequested || snapshot?.status == 'paused';
             final isStopping =
                 control.stopRequested || snapshot?.status == 'stopping';
+            final serviceRunning =
+                await AiBackgroundTaskService.instance.isRunning;
+            final shouldRestartWorker =
+                !isPaused &&
+                !isStopping &&
+                !serviceRunning &&
+                await _shouldAutoRestartSpoolWorker();
+            final serviceOffline =
+                !isPaused && !isStopping && !serviceRunning;
+            final currentStep = serviceOffline && !shouldRestartWorker
+                ? '后台服务未运行，任务已保留；点击继续后恢复'
+                : snapshot != null && snapshot.currentStep.isNotEmpty
+                    ? snapshot.currentStep
+                    : isStopping
+                        ? '正在结束本轮，等待当前图片收尾'
+                        : isPaused
+                            ? '后台分析已暂停'
+                            : '后台分析中 $processed/${manifest.totalItems}';
             _progressNotifier.value = AIAnalysisProgress(
-              isRunning: !isPaused && !isStopping,
-              isPaused: isPaused,
+              isRunning:
+                  !isPaused && !isStopping && (!serviceOffline || shouldRestartWorker),
+              isPaused: isPaused || (serviceOffline && !shouldRestartWorker),
               isStopping: isStopping,
               total: manifest.totalItems,
               completed: processed,
               failed: snapshot?.failed ?? 0,
-              currentStep: snapshot != null && snapshot.currentStep.isNotEmpty
-                  ? snapshot.currentStep
-                  : isStopping
-                  ? '正在结束本轮，等待当前图片收尾'
-                  : isPaused
-                  ? '后台分析已暂停'
-                  : '后台分析中 $processed/${manifest.totalItems}',
+              currentStep: currentStep,
               elapsedMs: 0,
             );
-            if (!isPaused &&
-                !isStopping &&
-                !await AiBackgroundTaskService.instance.isRunning) {
+            if (shouldRestartWorker) {
               debugPrint('[spool] runtime poll 检测到前台服务离线，重新拉起 job=$pendingJobId');
               await AiBackgroundTaskService.instance.startAnalysisWorker();
             }
@@ -351,26 +362,37 @@ extension AIServiceLifecycle on AIService {
                 control.pauseRequested || snapshot?.status == 'paused';
             final isStopping =
                 control.stopRequested || snapshot?.status == 'stopping';
+            final serviceRunning =
+                await AiBackgroundTaskService.instance.isRunning;
+            final shouldRestartWorker =
+                !isPaused &&
+                !isStopping &&
+                !serviceRunning &&
+                await _shouldAutoRestartSpoolWorker();
+            final serviceOffline =
+                !isPaused && !isStopping && !serviceRunning;
+            final currentStep = serviceOffline && !shouldRestartWorker
+                ? '后台服务未运行，任务已保留；点击继续后恢复'
+                : snapshot != null && snapshot.currentStep.isNotEmpty
+                    ? snapshot.currentStep
+                    : isStopping
+                        ? '正在结束本轮，等待当前图片收尾'
+                        : isPaused
+                            ? '后台分析已暂停'
+                            : '后台分析中 $processed/${manifest.totalItems}';
             _progressNotifier.value = AIAnalysisProgress(
-              isRunning: !isPaused && !isStopping,
-              isPaused: isPaused,
+              isRunning:
+                  !isPaused && !isStopping && (!serviceOffline || shouldRestartWorker),
+              isPaused: isPaused || (serviceOffline && !shouldRestartWorker),
               isStopping: isStopping,
               total: manifest.totalItems,
               completed: processed,
               failed: snapshot?.failed ?? 0,
-              currentStep: snapshot != null && snapshot.currentStep.isNotEmpty
-                  ? snapshot.currentStep
-                  : isStopping
-                      ? '正在结束本轮，等待当前图片收尾'
-                      : isPaused
-                          ? '后台分析已暂停'
-                          : '后台分析中 $processed/${manifest.totalItems}',
+              currentStep: currentStep,
               elapsedMs: 0,
             );
             SpoolProgressNotifier.instance.startPolling(pendingJobId);
-            if (!isPaused &&
-                !isStopping &&
-                !await AiBackgroundTaskService.instance.isRunning) {
+            if (shouldRestartWorker) {
               debugPrint('[spool] pending job=$pendingJobId 未完成且前台服务不在线，重新拉起 worker');
               await AiBackgroundTaskService.instance.startAnalysisWorker();
             }
@@ -450,6 +472,14 @@ extension AIServiceLifecycle on AIService {
     final jobId = await _readPendingSpoolJobId();
     if (jobId == null) return;
     await AnalysisSpoolService.instance.requestStop(jobId);
+  }
+
+  Future<bool> _shouldAutoRestartSpoolWorker() async {
+    final settings = await AppAiSettingsService.instance.load();
+    if (!settings.autoResumeAnalysis) {
+      return false;
+    }
+    return !await _readManualStopPending();
   }
 
   Future<void> _resumeCurrentSpoolOrStart() async {

@@ -47,20 +47,30 @@ extension AIServicePipeline on AIService {
               control.pauseRequested || snapshot?.status == 'paused';
           final stopping =
               control.stopRequested || snapshot?.status == 'stopping';
+          final serviceRunning = await AiBackgroundTaskService.instance.isRunning;
+          final settings = await AppAiSettingsService.instance.load();
+          final manuallyStopped = await _readManualStopPending();
+          final canAutoRestart =
+              settings.autoResumeAnalysis && !manuallyStopped;
+          final serviceOffline = !paused && !stopping && !serviceRunning;
+          final currentStep = serviceOffline && !canAutoRestart
+              ? '后台服务未运行，任务已保留；点击继续后恢复'
+              : snapshot != null && snapshot.currentStep.isNotEmpty
+                  ? snapshot.currentStep
+                  : '后台分析中 $processed/${manifest.totalItems}';
           _progressNotifier.value = AIAnalysisProgress(
-            isRunning: !paused && !stopping,
-            isPaused: paused,
+            isRunning:
+                !paused && !stopping && (!serviceOffline || canAutoRestart),
+            isPaused: paused || (serviceOffline && !canAutoRestart),
             isStopping: stopping,
             total: manifest.totalItems,
             completed: processed,
             failed: failed,
-            currentStep: snapshot != null && snapshot.currentStep.isNotEmpty
-                ? snapshot.currentStep
-                : '后台分析中 $processed/${manifest.totalItems}',
+            currentStep: currentStep,
             elapsedMs: 0,
           );
           SpoolProgressNotifier.instance.startPolling(existingJobId);
-          if (!paused && !stopping) {
+          if (serviceOffline && canAutoRestart) {
             await AiBackgroundTaskService.instance.startAnalysisWorker();
           }
           debugPrint('[spool] 已存在未完成 job=$existingJobId，跳过新建 manifest');

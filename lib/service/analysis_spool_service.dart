@@ -17,6 +17,7 @@ import 'package:path_provider/path_provider.dart';
 ///         progress.json        -- 服务进程写入：当前进度
 ///         done.marker          -- 服务进程写入：计算完成标记
 ///         tmp/                 -- 不完整的临时文件
+///         inputs/              -- 主进程准备好的稳定输入文件
 ///         results_pending/     -- 服务完成的结果，等待主进程消费
 ///         results_committed/   -- 主进程已消费并写库的结果
 ///         results_failed/      -- 主进程消费失败的结果
@@ -395,6 +396,7 @@ class AnalysisSpoolService {
   String _committedDir(String jobId) => '${_jobDir(jobId)}/results_committed';
   String _failedDir(String jobId) => '${_jobDir(jobId)}/results_failed';
   String _embeddingsDir(String jobId) => '${_jobDir(jobId)}/embeddings';
+  String _inputsDir(String jobId) => '${_jobDir(jobId)}/inputs';
 
   Future<void> ensureJobDirs(String jobId) async {
     await baseDir;
@@ -404,6 +406,18 @@ class AnalysisSpoolService {
     await Directory(_committedDir(jobId)).create(recursive: true);
     await Directory(_failedDir(jobId)).create(recursive: true);
     await Directory(_embeddingsDir(jobId)).create(recursive: true);
+    await Directory(_inputsDir(jobId)).create(recursive: true);
+  }
+
+  Future<File> inputFileFor({
+    required String jobId,
+    required String photoKey,
+    required String extension,
+  }) async {
+    await ensureJobDirs(jobId);
+    final safeKey = Uri.encodeComponent(photoKey);
+    final safeExtension = extension.startsWith('.') ? extension : '.$extension';
+    return File('${_inputsDir(jobId)}/$safeKey$safeExtension');
   }
 
   // ── Manifest 写入/读取（主进程写入，服务进程读取）──

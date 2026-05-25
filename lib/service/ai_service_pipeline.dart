@@ -112,21 +112,13 @@ extension AIServicePipeline on AIService {
       return;
     }
 
-    final items = batch.map((photo) {
-      return AnalysisSpoolItem(
-        photoKey: photo.assetId,
-        contentUri: photo.path.startsWith('content://') ? photo.path : null,
-        path: !photo.path.startsWith('content://') ? photo.path : null,
-        photoId: photo.id,
-        modifiedAt: photo.timestamp,
-        latitude: photo.latitude,
-        longitude: photo.longitude,
-        width: photo.width,
-        height: photo.height,
-      );
-    }).toList(growable: false);
-
     final jobId = 'ai_${DateTime.now().millisecondsSinceEpoch}';
+    final items = await _prepareSpoolItems(jobId, batch);
+    if (items.isEmpty) {
+      debugPrint('[spool] 没有可交给前台服务的稳定输入文件');
+      _progressNotifier.value = AIAnalysisProgress.idle();
+      return;
+    }
     final manifest = AnalysisJobManifest(
       jobId: jobId,
       createdAt: DateTime.now().millisecondsSinceEpoch,
@@ -151,6 +143,89 @@ extension AIServicePipeline on AIService {
     );
     SpoolProgressNotifier.instance.startPolling(jobId);
     unawaited(_persistRuntimeState(isActive: true, total: items.length));
+  }
+
+  Future<List<AnalysisSpoolItem>> _prepareSpoolItems(
+    String jobId,
+    List<PhotoEntity> photos,
+  ) async {
+    final spool = AnalysisSpoolService.instance;
+    await spool.ensureJobDirs(jobId);
+
+    final items = <AnalysisSpoolItem>[];
+    for (final photo in photos) {
+      var path = photo.path;
+
+      if (path.startsWith('content://')) {
+        final copiedPath = await _copyContentUriToSpoolInput(jobId, photo);
+        if (copiedPath == null) {
+          debugPrint(
+            '[spool] 跳过无法复制到 spool 输入目录的 content uri photoId=${photo.id} uri=${photo.path}',
+          );
+          continue;
+        }
+        path = copiedPath;
+      } else {
+        final file = File(path);
+        if (!await file.exists()) {
+          debugPrint('[spool] 跳过不存在的输入文件 photoId=${photo.id} path=$path');
+          continue;
+        }
+      }
+
+      items.add(
+        AnalysisSpoolItem(
+          photoKey: photo.assetId,
+          contentUri: null,
+          path: path,
+          photoId: photo.id,
+          modifiedAt: photo.timestamp,
+          latitude: photo.latitude,
+          longitude: photo.longitude,
+          width: photo.width,
+          height: photo.height,
+        ),
+      );
+    }
+    return items;
+  }
+
+  Future<String?> _copyContentUriToSpoolInput(
+    String jobId,
+    PhotoEntity photo,
+  ) async {
+    try {
+      final bytes = await MediaAccessGrantService.instance
+          .readContentUriBytes(photo.path);
+      if (bytes == null || bytes.isEmpty) {
+        return null;
+      }
+      final inputFile = await AnalysisSpoolService.instance.inputFileFor(
+        jobId: jobId,
+        photoKey: photo.assetId,
+        extension: _analysisInputExtension(photo.path),
+      );
+      await inputFile.writeAsBytes(bytes, flush: true);
+      return inputFile.path;
+    } catch (error) {
+      debugPrint(
+        '[spool] content uri 输入复制失败 photoId=${photo.id} uri=${photo.path}: $error',
+      );
+      return null;
+    }
+  }
+
+  String _analysisInputExtension(String source) {
+    final path = Uri.tryParse(source)?.path ?? source;
+    final slash = path.lastIndexOf('/');
+    final dot = path.lastIndexOf('.');
+    if (dot > slash && dot < path.length - 1) {
+      final ext = path.substring(dot + 1).toLowerCase();
+      if (ext.length <= 8 && RegExp(r'^[a-z0-9]+$').hasMatch(ext)) {
+        return ext;
+      }
+    }
+    return 'bin';
   }
 
   /// 消费 spool 结果：检测 done.marker → 读取所有 pending result → 写入 ObjectBox。

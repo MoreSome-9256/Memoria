@@ -27,7 +27,6 @@ import '../utils/tag_sanitizer.dart';
 import 'amap_geo_service.dart';
 import 'analysis_spool_service.dart';
 import 'app_ai_settings_service.dart';
-import 'media_access_grant_service.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_litert_service.dart';
 import 'mobileclip_tag_service.dart';
@@ -935,22 +934,12 @@ class SpoolAnalysisWorker {
 
   Future<_SpoolInputImage?> _loadImageInput(AnalysisSpoolItem item) async {
     final path = item.path;
-    final contentUri = item.contentUri;
     Uint8List bytes;
     File file;
     var width = item.width;
     var height = item.height;
 
-    if (contentUri != null) {
-      bytes = (await MediaAccessGrantService.instance
-              .readContentUriBytes(contentUri)) ??
-          Uint8List(0);
-      if (bytes.isEmpty) return null;
-      final tempDir = await getTemporaryDirectory();
-      final key = Uri.encodeComponent(item.photoKey);
-      file = File('${tempDir.path}/spool_input_$key.jpg');
-      await file.writeAsBytes(bytes);
-    } else if (path != null && path.isNotEmpty) {
+    if (path != null && path.isNotEmpty) {
       file = File(path);
       if (!await file.exists()) return null;
       final asset = await AssetEntity.fromId(item.photoKey);

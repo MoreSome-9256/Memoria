@@ -49,43 +49,61 @@ Future<void> _configureAmplifyAuth() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  static final _AppStartupCoordinator _startupCoordinator =
-      _AppStartupCoordinator();
-
   @override
   Widget build(BuildContext context) {
-    return WithForegroundTask(
-      child: MaterialApp(
-        title: '智能影记',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color.fromARGB(255, 255, 64, 129),
-            brightness: Brightness.light,
-          ),
-          useMaterial3: true,
-          appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
+    return MaterialApp(
+      title: '智能影记',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color.fromARGB(255, 255, 64, 129),
+          brightness: Brightness.light,
         ),
-        home: FutureBuilder<_LaunchTarget>(
-          future: _startupCoordinator.resolveLaunchTarget(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const Scaffold(
-                body: Center(child: CircularProgressIndicator()),
-              );
-            }
-            if (snapshot.data == _LaunchTarget.signedIn) {
-              return const WidgetTree();
-            }
-            return const WelcomePage();
-          },
-        ),
+        useMaterial3: true,
+        appBarTheme: const AppBarTheme(centerTitle: true, elevation: 0),
       ),
+      home: const _StartupGate(),
     );
   }
 }
 
 enum _LaunchTarget { signedIn, welcome }
+
+class _StartupGate extends StatefulWidget {
+  const _StartupGate();
+
+  @override
+  State<_StartupGate> createState() => _StartupGateState();
+}
+
+class _StartupGateState extends State<_StartupGate> {
+  late final Future<_LaunchTarget> _launchTargetFuture;
+  final _AppStartupCoordinator _startupCoordinator = _AppStartupCoordinator();
+
+  @override
+  void initState() {
+    super.initState();
+    _launchTargetFuture = _startupCoordinator.resolveLaunchTarget();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<_LaunchTarget>(
+      future: _launchTargetFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.data == _LaunchTarget.signedIn) {
+          return const WithForegroundTask(child: WidgetTree());
+        }
+        return const WelcomePage();
+      },
+    );
+  }
+}
 
 class _AppStartupCoordinator {
   Future<void>? _startupFuture;

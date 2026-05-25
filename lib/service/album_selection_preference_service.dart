@@ -14,7 +14,6 @@ class ScanFilterPreferences {
     this.minWidth,
     this.minHeight,
     this.minPixels,
-    this.excludeScreenshots = false,
     this.excludeExtremeAspectRatios = false,
   });
 
@@ -22,7 +21,6 @@ class ScanFilterPreferences {
   final int? minWidth;
   final int? minHeight;
   final int? minPixels;
-  final bool excludeScreenshots;
   final bool excludeExtremeAspectRatios;
 
   bool get hasMinResolution => minWidth != null && minHeight != null;
@@ -30,7 +28,6 @@ class ScanFilterPreferences {
       minYear != null ||
       hasMinResolution ||
       minPixels != null ||
-      excludeScreenshots ||
       excludeExtremeAspectRatios;
 
   String get summary {
@@ -42,7 +39,6 @@ class ScanFilterPreferences {
       final mp = minPixels! / 1000000.0;
       parts.add('不低于 ${mp.toStringAsFixed(mp >= 1 ? 0 : 1)}MP');
     }
-    if (excludeScreenshots) parts.add('排除截图/录屏');
     if (excludeExtremeAspectRatios) parts.add('排除超宽/超长图');
     return parts.join('，');
   }
@@ -92,7 +88,6 @@ class AlbumSelectionPreferenceService {
     int? minWidth,
     int? minHeight,
     int? minPixels,
-    bool excludeScreenshots = false,
     bool excludeExtremeAspectRatios = false,
   }) async {
     final prefs = await SharedPreferences.getInstance();
@@ -116,7 +111,7 @@ class AlbumSelectionPreferenceService {
     } else {
       await prefs.setInt(_minPixelsKey, minPixels);
     }
-    await prefs.setBool(_excludeScreenshotsKey, excludeScreenshots);
+    await prefs.remove(_excludeScreenshotsKey);
     await prefs.setBool(
       _excludeExtremeAspectRatiosKey,
       excludeExtremeAspectRatios,
@@ -134,7 +129,6 @@ class AlbumSelectionPreferenceService {
       minWidth: minWidth,
       minHeight: minHeight,
       minPixels: minPixels,
-      excludeScreenshots: prefs.getBool(_excludeScreenshotsKey) ?? false,
       excludeExtremeAspectRatios:
           prefs.getBool(_excludeExtremeAspectRatiosKey) ?? false,
     );

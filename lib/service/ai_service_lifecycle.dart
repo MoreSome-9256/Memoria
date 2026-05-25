@@ -120,6 +120,12 @@ extension AIServiceLifecycle on AIService {
                   : '后台分析中 $processed/${manifest.totalItems}',
               elapsedMs: 0,
             );
+            if (!isPaused &&
+                !isStopping &&
+                !await AiBackgroundTaskService.instance.isRunning) {
+              debugPrint('[spool] runtime poll 检测到前台服务离线，重新拉起 job=$pendingJobId');
+              await AiBackgroundTaskService.instance.startAnalysisWorker();
+            }
             return;
           }
         }

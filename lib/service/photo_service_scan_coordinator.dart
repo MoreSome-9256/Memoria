@@ -393,7 +393,6 @@ class _PhotoScanCoordinator {
       minWidth: prefs.minWidth,
       minHeight: prefs.minHeight,
       minPixels: prefs.minPixels,
-      excludeScreenshots: prefs.excludeScreenshots,
       excludeExtremeAspectRatios: prefs.excludeExtremeAspectRatios,
     );
   }

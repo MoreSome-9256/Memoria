@@ -80,7 +80,6 @@ class _ProfilePageState extends State<ProfilePage> {
         ? '${prefs.minWidth}x${prefs.minHeight}'
         : 'none';
     int? selectedMinPixels = prefs.minPixels;
-    var excludeScreenshots = prefs.excludeScreenshots;
     var excludeExtremeAspectRatios = prefs.excludeExtremeAspectRatios;
     const resolutionOptions = <String, List<int>?>{
       'none': null,
@@ -192,15 +191,6 @@ class _ProfilePageState extends State<ProfilePage> {
                     ),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('排除截图/录屏'),
-                      subtitle: const Text('根据系统文件名识别 Screenshot、截屏、录屏等项目'),
-                      value: excludeScreenshots,
-                      onChanged: (value) => setSheetState(() {
-                        excludeScreenshots = value;
-                      }),
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
                       title: const Text('排除超宽/超长图片'),
                       subtitle: const Text('过滤长截图、横幅、拼接图等极端宽高比项目'),
                       value: excludeExtremeAspectRatios,
@@ -226,7 +216,6 @@ class _ProfilePageState extends State<ProfilePage> {
                                   minWidth: selectedPair?[0],
                                   minHeight: selectedPair?[1],
                                   minPixels: selectedMinPixels,
-                                  excludeScreenshots: excludeScreenshots,
                                   excludeExtremeAspectRatios:
                                       excludeExtremeAspectRatios,
                                 );

@@ -13,7 +13,6 @@ class PhotoScanFilterProfile {
     this.minWidth,
     this.minHeight,
     this.minPixels,
-    this.excludeScreenshots = false,
     this.excludeExtremeAspectRatios = false,
   });
 
@@ -29,7 +28,6 @@ class PhotoScanFilterProfile {
   final int? minWidth;
   final int? minHeight;
   final int? minPixels;
-  final bool excludeScreenshots;
   final bool excludeExtremeAspectRatios;
 }
 
@@ -160,16 +158,6 @@ class _PhotoAssetBuilder {
         PhotoFilterHelper.isExtremeAspectRatio(width, height)) {
       return const _SingleAssetBuildResult(skippedExtremeAspectRatio: 1);
     }
-    if (filterProfile.excludeScreenshots &&
-        PhotoFilterHelper.isLikelyScreenshotAsset(
-          title: asset.title,
-          mimeType: asset.mimeType,
-          width: width,
-          height: height,
-        )) {
-      return const _SingleAssetBuildResult(skippedScreenshot: 1);
-    }
-
     // GPS 已由 getAssetListRange/fromId 加载到 AssetEntity 中，直接读取
     final latLong = asset.latLng;
 

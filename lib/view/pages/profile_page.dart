@@ -338,13 +338,16 @@ class _ProfilePageState extends State<ProfilePage> {
                                 icon: Icon(Icons.developer_board_outlined),
                               ),
                               ButtonSegment<LocalInferenceAccelerator>(
-                                value: LocalInferenceAccelerator.xnnpack,
-                                label: Text('XNNPACK'),
+                                value: LocalInferenceAccelerator.cpu,
+                                label: Text('CPU'),
                                 icon: Icon(Icons.tune_outlined),
                               ),
                             ],
                         selected: <LocalInferenceAccelerator>{
-                          aiSettings.inferenceAccelerator,
+                          aiSettings.inferenceAccelerator ==
+                                  LocalInferenceAccelerator.xnnpack
+                              ? LocalInferenceAccelerator.cpu
+                              : aiSettings.inferenceAccelerator,
                         },
                         onSelectionChanged: (selection) {
                           setSheetState(() {
@@ -1045,7 +1048,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                 leading: const Icon(Icons.analytics_outlined),
                                 title: const Text('MobileCLIP Benchmark'),
                                 subtitle: const Text(
-                                  '对比 LiteRT 在 GPU、NPU 与 XNNPACK 上的速度',
+                                  '对比 LiteRT 在 GPU 与 NPU 路径上的速度',
                                 ),
                                 trailing: const Icon(Icons.chevron_right),
                                 onTap: () {

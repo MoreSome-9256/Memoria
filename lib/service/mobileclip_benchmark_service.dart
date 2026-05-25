@@ -175,11 +175,6 @@ class MobileClipBenchmarkService {
         adapterDisplayName: 'LiteRT NPU',
         accelerator: LocalInferenceAccelerator.npu,
       ),
-      LiteRtMobileClipBenchmarkAdapter(
-        adapterId: 'litert_xnnpack',
-        adapterDisplayName: 'LiteRT XNNPACK',
-        accelerator: LocalInferenceAccelerator.xnnpack,
-      ),
     ];
   }
 

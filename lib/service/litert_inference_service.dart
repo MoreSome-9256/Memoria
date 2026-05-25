@@ -19,7 +19,7 @@ extension LocalInferenceAcceleratorX on LocalInferenceAccelerator {
     LocalInferenceAccelerator.npu => 'NPU',
     LocalInferenceAccelerator.coreml => 'Core ML',
     LocalInferenceAccelerator.metal => 'Metal',
-    LocalInferenceAccelerator.xnnpack => 'XNNPACK',
+    LocalInferenceAccelerator.xnnpack => 'CPU',
     LocalInferenceAccelerator.cpu => 'CPU',
   };
 
@@ -30,7 +30,8 @@ extension LocalInferenceAcceleratorX on LocalInferenceAccelerator {
       'iOS 使用 Core ML Neural Engine；Android 预留厂商 delegate 接入',
     LocalInferenceAccelerator.coreml => 'iOS/macOS Core ML delegate',
     LocalInferenceAccelerator.metal => 'iOS/macOS Metal GPU delegate',
-    LocalInferenceAccelerator.xnnpack => '优化 CPU delegate，仅作为兼容和调试后备',
+    LocalInferenceAccelerator.xnnpack =>
+      '兼容旧设置：显式 XNNPACK delegate 已禁用，使用纯 CPU',
     LocalInferenceAccelerator.cpu => '纯 CPU，不建议用于主流程',
   };
 
@@ -40,7 +41,7 @@ extension LocalInferenceAcceleratorX on LocalInferenceAccelerator {
       'npu' => LocalInferenceAccelerator.npu,
       'coreml' => LocalInferenceAccelerator.coreml,
       'metal' => LocalInferenceAccelerator.metal,
-      'xnnpack' => LocalInferenceAccelerator.xnnpack,
+      'xnnpack' => LocalInferenceAccelerator.cpu,
       'cpu' => LocalInferenceAccelerator.cpu,
       _ => LocalInferenceAccelerator.gpu,
     };
@@ -115,7 +116,6 @@ class LiteRtInferenceService {
 
   List<_LiteRtProviderAttempt> _buildAttempts(LiteRtSessionConfig config) {
     final fallback = <_LiteRtProviderAttempt>[
-      _LiteRtProviderAttempt.xnnpack(config.threads),
       _LiteRtProviderAttempt.cpu(),
     ];
 
@@ -133,7 +133,9 @@ class LiteRtInferenceService {
           _LiteRtProviderAttempt.androidGpu(),
           ...fallback,
         ],
-        LocalInferenceAccelerator.xnnpack => fallback,
+        LocalInferenceAccelerator.xnnpack => <_LiteRtProviderAttempt>[
+          _LiteRtProviderAttempt.cpu(),
+        ],
         LocalInferenceAccelerator.cpu => <_LiteRtProviderAttempt>[
           _LiteRtProviderAttempt.cpu(),
         ],
@@ -158,7 +160,9 @@ class LiteRtInferenceService {
           _LiteRtProviderAttempt.coreMl(),
           ...fallback,
         ],
-        LocalInferenceAccelerator.xnnpack => fallback,
+        LocalInferenceAccelerator.xnnpack => <_LiteRtProviderAttempt>[
+          _LiteRtProviderAttempt.cpu(),
+        ],
         LocalInferenceAccelerator.cpu => <_LiteRtProviderAttempt>[
           _LiteRtProviderAttempt.cpu(),
         ],
@@ -213,17 +217,6 @@ class _LiteRtProviderAttempt {
       label: 'Metal GPU',
       createDelegates: () async => <tfl.Delegate>[
         tfl.GpuDelegate(options: tfl.GpuDelegateOptions(allowPrecisionLoss: true)),
-      ],
-    );
-  }
-
-  factory _LiteRtProviderAttempt.xnnpack(int threads) {
-    return _LiteRtProviderAttempt(
-      label: 'XNNPACK',
-      createDelegates: () async => <tfl.Delegate>[
-        tfl.XNNPackDelegate(
-          options: tfl.XNNPackDelegateOptions(numThreads: threads),
-        ),
       ],
     );
   }

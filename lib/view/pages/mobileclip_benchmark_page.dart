@@ -65,9 +65,6 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
             for (final summary in report.adapterSummaries)
               summary.adapterId: summary,
           };
-    final xnnpackSummary = summariesById['litert_xnnpack'];
-    final gpuSummary = summariesById['litert_gpu'];
-
     return Scaffold(
       appBar: AppBar(title: const Text('MobileCLIP Benchmark')),
       body: ListView(
@@ -75,7 +72,7 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
         children: [
           Text(
             Platform.isAndroid
-                ? '在同一批照片上对比 MobileCLIP2 LiteRT 在 GPU、NPU 与 XNNPACK 上的速度。默认主链路使用 GPU。'
+                ? '在同一批照片上对比 MobileCLIP2 LiteRT 在 GPU 与 NPU 路径上的速度。默认主链路使用 GPU。'
                 : 'iOS 使用 Core ML 主链路，本页不运行 Android LiteRT delegate benchmark。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
@@ -135,13 +132,6 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
             const SizedBox(height: 16),
             _ReportOverviewCard(report: report),
             const SizedBox(height: 16),
-            if (xnnpackSummary != null && gpuSummary != null) ...[
-              _SpeedupCard(
-                baselineSummary: xnnpackSummary,
-                candidateSummary: gpuSummary,
-              ),
-              const SizedBox(height: 16),
-            ],
             ...report.warnings.map(
               (warning) => Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -257,63 +247,6 @@ class _AdapterSummaryCard extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _SpeedupCard extends StatelessWidget {
-  const _SpeedupCard({
-    required this.baselineSummary,
-    required this.candidateSummary,
-  });
-
-  final MobileClipAdapterSummary baselineSummary;
-  final MobileClipAdapterSummary candidateSummary;
-
-  @override
-  Widget build(BuildContext context) {
-    final inferenceSpeedup = _speedup(
-      baselineMs: baselineSummary.meanInferenceMs,
-      candidateMs: candidateSummary.meanInferenceMs,
-    );
-    final totalSpeedup = _speedup(
-      baselineMs: baselineSummary.meanTotalMs,
-      candidateMs: candidateSummary.meanTotalMs,
-    );
-
-    return Card(
-      color: Theme.of(context).colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'XNNPACK vs GPU 速度对比',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '平均推理: XNNPACK ${baselineSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
-              'GPU ${candidateSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
-              '加速比 $inferenceSpeedup',
-            ),
-            Text(
-              '平均总耗时: XNNPACK ${baselineSummary.meanTotalMs.toStringAsFixed(1)} ms, '
-              'GPU ${candidateSummary.meanTotalMs.toStringAsFixed(1)} ms, '
-              '加速比 $totalSpeedup',
-            ),
-            Text('共享预处理后，这里的差异主要反映 LiteRT delegate 的执行差异。'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _speedup({required double baselineMs, required double candidateMs}) {
-    if (baselineMs <= 0 || candidateMs <= 0) {
-      return '-';
-    }
-    return '${(baselineMs / candidateMs).toStringAsFixed(2)}x';
   }
 }
 

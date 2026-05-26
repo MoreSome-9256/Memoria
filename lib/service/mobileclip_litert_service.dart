@@ -19,10 +19,14 @@ class MobileClipLiteRtService {
   ) {
     final prevAccelerator = _instance._accelerator;
     _instance._accelerator = accelerator;
-    if (_instance._session != null && prevAccelerator != accelerator) {
-      _instance._session!.close();
-      _instance._session = null;
-      _instance._providerLabel = null;
+    if ((_instance._imageSession != null || _instance._textSession != null) &&
+        prevAccelerator != accelerator) {
+      _instance._imageSession?.close();
+      _instance._textSession?.close();
+      _instance._imageSession = null;
+      _instance._textSession = null;
+      _instance._imageProviderLabel = null;
+      _instance._textProviderLabel = null;
     }
     return _instance;
   }
@@ -30,20 +34,36 @@ class MobileClipLiteRtService {
   static const int inputImageSize = 256;
   static const int tokenLength = 77;
   static const int embeddingDim = 512;
-  static const String modelVersion = 'mobileclip2_s2_litert_v1';
-  static const String _modelAssetPath =
-      'assets/mobileclip2/s2/mobileclip_s2_datacompdr_last.tflite';
+  static const String modelVersion = 'mobileclip2_s2_fp32_split_tflite_v1';
+  static const String _imageModelAssetPath =
+      'assets/mobileclip2/s2/mobileclip2_s2_image.tflite';
+  static const String _textModelAssetPath =
+      'assets/mobileclip2/s2/mobileclip2_s2_text.tflite';
 
   LocalInferenceAccelerator _accelerator = LocalInferenceAccelerator.gpu;
   final LiteRtInferenceService _runtime = const LiteRtInferenceService();
 
-  LiteRtSession? _session;
-  String? _providerLabel;
+  LiteRtSession? _imageSession;
+  LiteRtSession? _textSession;
+  String? _imageProviderLabel;
+  String? _textProviderLabel;
 
-  String get executionProviderLabel => _providerLabel ?? 'Pending session init';
+  String get executionProviderLabel =>
+      _imageProviderLabel ?? _textProviderLabel ?? 'Pending session init';
 
   Future<void> warmUp() async {
-    await _loadSession();
+    await Future.wait([
+      warmUpImage(),
+      warmUpText(),
+    ]);
+  }
+
+  Future<void> warmUpImage() async {
+    await _loadImageSession();
+  }
+
+  Future<void> warmUpText() async {
+    await _loadTextSession();
   }
 
   Future<List<double>> embedImageFile(File imageFile) async {
@@ -110,20 +130,15 @@ class MobileClipLiteRtService {
       );
     }
 
-    final session = await _loadSession();
+    final session = await _loadImageSession();
     final tensorWatch = Stopwatch()..start();
-    final outputText = _zeroOutputBuffer();
     final outputImage = _zeroOutputBuffer();
-    final outputScale = <double>[0];
     tensorWatch.stop();
 
     final inferenceWatch = Stopwatch()..start();
-    session.interpreter.runForMultipleInputs(
-      <Object>[
-        input.reshape(<int>[1, 3, inputImageSize, inputImageSize]),
-        _zeroTokens(),
-      ],
-      <int, Object>{0: outputText, 1: outputImage, 2: outputScale},
+    session.interpreter.run(
+      input.reshape(<int>[1, 3, inputImageSize, inputImageSize]),
+      outputImage,
     );
     inferenceWatch.stop();
 
@@ -141,45 +156,62 @@ class MobileClipLiteRtService {
       );
     }
 
-    final session = await _loadSession();
+    final session = await _loadTextSession();
     final outputText = _zeroOutputBuffer();
-    final outputImage = _zeroOutputBuffer();
-    final outputScale = <double>[0];
-    session.interpreter.runForMultipleInputs(
-      <Object>[
-        Float32List(
-          3 * inputImageSize * inputImageSize,
-        ).reshape(<int>[1, 3, inputImageSize, inputImageSize]),
-        Int64List.fromList(tokenIds).reshape(<int>[1, tokenLength]),
-      ],
-      <int, Object>{0: outputText, 1: outputImage, 2: outputScale},
+    session.interpreter.run(
+      Int64List.fromList(tokenIds).reshape(<int>[1, tokenLength]),
+      outputText,
     );
     return _l2Normalize(outputText.first);
   }
 
   Future<void> dispose() async {
-    _session?.close();
-    _session = null;
-    _providerLabel = null;
+    _imageSession?.close();
+    _textSession?.close();
+    _imageSession = null;
+    _textSession = null;
+    _imageProviderLabel = null;
+    _textProviderLabel = null;
   }
 
-  Future<LiteRtSession> _loadSession() async {
-    if (_session != null) {
-      return _session!;
+  Future<LiteRtSession> _loadImageSession() async {
+    if (_imageSession != null) {
+      return _imageSession!;
     }
 
     final session = await _runtime.createSession(
       LiteRtSessionConfig(
-        modelAssetPath: _modelAssetPath,
-        modelToken: modelVersion,
+        modelAssetPath: _imageModelAssetPath,
+        modelToken: '${modelVersion}_image',
         accelerator: _accelerator,
         threads: 2,
       ),
     );
-    _session = session;
-    _providerLabel = session.providerLabel;
+    _imageSession = session;
+    _imageProviderLabel = session.providerLabel;
     debugPrint(
-      'MobileCLIP2 LiteRT 就绪 model=$_modelAssetPath provider=$_providerLabel',
+      'MobileCLIP2 image LiteRT 就绪 model=$_imageModelAssetPath provider=$_imageProviderLabel',
+    );
+    return session;
+  }
+
+  Future<LiteRtSession> _loadTextSession() async {
+    if (_textSession != null) {
+      return _textSession!;
+    }
+
+    final session = await _runtime.createSession(
+      LiteRtSessionConfig(
+        modelAssetPath: _textModelAssetPath,
+        modelToken: '${modelVersion}_text',
+        accelerator: _accelerator,
+        threads: 2,
+      ),
+    );
+    _textSession = session;
+    _textProviderLabel = session.providerLabel;
+    debugPrint(
+      'MobileCLIP2 text LiteRT 就绪 model=$_textModelAssetPath provider=$_textProviderLabel',
     );
     return session;
   }
@@ -187,8 +219,6 @@ class MobileClipLiteRtService {
   List<List<double>> _zeroOutputBuffer() => <List<double>>[
     List<double>.filled(embeddingDim, 0),
   ];
-
-  Int64List _zeroTokens() => Int64List(tokenLength);
 
   List<double> _l2Normalize(List<double> vector) {
     var sumSquares = 0.0;
@@ -213,13 +243,20 @@ Map<String, Object?> _preprocessImageForMobileClipLiteRt(Uint8List imageBytes) {
 
   final resizeNormalizeWatch = Stopwatch()..start();
   final baked = img.bakeOrientation(decoded);
+  final resizeWidth = baked.width <= baked.height
+      ? MobileClipLiteRtService.inputImageSize
+      : null;
+  final resizeHeight = baked.width > baked.height
+      ? MobileClipLiteRtService.inputImageSize
+      : null;
   final resized = img.copyResize(
     baked,
-    width: MobileClipLiteRtService.inputImageSize,
-    height: MobileClipLiteRtService.inputImageSize,
-    interpolation: img.Interpolation.linear,
+    width: resizeWidth,
+    height: resizeHeight,
+    interpolation: img.Interpolation.cubic,
   );
-  final input = _toNchwImageNet(resized);
+  final cropped = _centerCrop(resized, MobileClipLiteRtService.inputImageSize);
+  final input = _toNchwUnitRgb(cropped);
   resizeNormalizeWatch.stop();
   return <String, Object?>{
     'input': input,
@@ -228,9 +265,24 @@ Map<String, Object?> _preprocessImageForMobileClipLiteRt(Uint8List imageBytes) {
   };
 }
 
-Float32List _toNchwImageNet(img.Image image) {
-  const mean = <double>[0.485, 0.456, 0.406];
-  const std = <double>[0.229, 0.224, 0.225];
+img.Image _centerCrop(img.Image image, int size) {
+  if (image.width == size && image.height == size) {
+    return image;
+  }
+  final x = math.max(0, ((image.width - size) / 2).floor());
+  final y = math.max(0, ((image.height - size) / 2).floor());
+  final width = math.min(size, image.width - x);
+  final height = math.min(size, image.height - y);
+  return img.copyCrop(
+    image,
+    x: x,
+    y: y,
+    width: width,
+    height: height,
+  );
+}
+
+Float32List _toNchwUnitRgb(img.Image image) {
   const size = MobileClipLiteRtService.inputImageSize;
   final buffer = Float32List(3 * size * size);
 
@@ -244,8 +296,7 @@ Float32List _toNchwImageNet(img.Image image) {
           1 => pixel.g.toDouble() / 255.0,
           _ => pixel.b.toDouble() / 255.0,
         };
-        buffer[channelOffset + y * size + x] =
-            (raw - mean[channel]) / std[channel];
+        buffer[channelOffset + y * size + x] = raw;
       }
     }
   }

@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:image/image.dart' as img;
 import 'package:photo_manager/photo_manager.dart';
 
 import '../storage/objectbox/entities/media_asset_entity.dart';
@@ -63,8 +63,6 @@ class MediaEmbeddingIndexService {
     int maxConcurrency = 2,
     int batchSize = 240,
     int inputSize = MobileClipLiteRtService.inputImageSize,
-    List<double> mean = const <double>[0.485, 0.456, 0.406],
-    List<double> std = const <double>[0.229, 0.224, 0.225],
   }) async {
     if (_running) {
       return;
@@ -100,8 +98,7 @@ class MediaEmbeddingIndexService {
 
         await Future.wait(
           slice.map(
-            (entity) =>
-                _encodeOne(entity, inputSize: inputSize, mean: mean, std: std),
+            (entity) => _encodeOne(entity, inputSize: inputSize),
           ),
         );
 
@@ -149,28 +146,14 @@ class MediaEmbeddingIndexService {
   Future<List<MediaSearchHit>> searchByImageBytes(
     Uint8List imageBytes, {
     int topK = 24,
-    int inputSize = MobileClipLiteRtService.inputImageSize,
-    List<double> mean = const <double>[0.485, 0.456, 0.406],
-    List<double> std = const <double>[0.229, 0.224, 0.225],
   }) async {
-    final input = await compute<_ImagePreprocessTask, Float32List>(
-      _preprocessToNchwFloat32,
-      _ImagePreprocessTask(
-        imageBytes: imageBytes,
-        inputSize: inputSize,
-        mean: mean,
-        std: std,
-      ),
-    );
-    final vector = await _visionService.embedPreprocessedImageInput(input);
+    final vector = await _visionService.embedImageBytes(imageBytes);
     return _searchByVector(vector, topK);
   }
 
   Future<void> _encodeOne(
     MediaAssetEntity entity, {
     required int inputSize,
-    required List<double> mean,
-    required List<double> std,
   }) async {
     try {
       final asset = await AssetEntity.fromId(entity.assetId);
@@ -190,16 +173,7 @@ class MediaEmbeddingIndexService {
         return;
       }
 
-      final input = await compute<_ImagePreprocessTask, Float32List>(
-        _preprocessToNchwFloat32,
-        _ImagePreprocessTask(
-          imageBytes: bytes,
-          inputSize: inputSize,
-          mean: mean,
-          std: std,
-        ),
-      );
-      final embedding = await _visionService.embedPreprocessedImageInput(input);
+      final embedding = await _visionService.embedImageBytes(bytes);
       entity.embedding = _l2Normalize(embedding);
       entity.modelVersion = _modelVersion;
       entity.embeddingUpdatedAtMs = DateTime.now().millisecondsSinceEpoch;
@@ -233,50 +207,4 @@ class MediaEmbeddingIndexService {
     }
     return vector.map((value) => value / norm).toList(growable: false);
   }
-}
-
-class _ImagePreprocessTask {
-  const _ImagePreprocessTask({
-    required this.imageBytes,
-    required this.inputSize,
-    required this.mean,
-    required this.std,
-  });
-
-  final Uint8List imageBytes;
-  final int inputSize;
-  final List<double> mean;
-  final List<double> std;
-}
-
-Float32List _preprocessToNchwFloat32(_ImagePreprocessTask task) {
-  final decoded = img.decodeImage(task.imageBytes);
-  if (decoded == null) {
-    throw ArgumentError('decode image failed');
-  }
-
-  final oriented = img.bakeOrientation(decoded);
-  final resized = img.copyResize(
-    oriented,
-    width: task.inputSize,
-    height: task.inputSize,
-    interpolation: img.Interpolation.linear,
-  );
-
-  final out = Float32List(3 * task.inputSize * task.inputSize);
-  final planeSize = task.inputSize * task.inputSize;
-  for (var y = 0; y < task.inputSize; y++) {
-    for (var x = 0; x < task.inputSize; x++) {
-      final p = resized.getPixel(x, y);
-      final r = (p.r / 255.0 - task.mean[0]) / task.std[0];
-      final g = (p.g / 255.0 - task.mean[1]) / task.std[1];
-      final b = (p.b / 255.0 - task.mean[2]) / task.std[2];
-      final i = y * task.inputSize + x;
-      out[i] = r;
-      out[planeSize + i] = g;
-      out[2 * planeSize + i] = b;
-    }
-  }
-
-  return out;
 }

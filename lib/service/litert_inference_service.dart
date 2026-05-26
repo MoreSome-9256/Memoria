@@ -195,7 +195,7 @@ class _LiteRtProviderAttempt {
       createDelegates: () async => <tfl.Delegate>[
         tfl.GpuDelegateV2(
           options: tfl.GpuDelegateOptionsV2(
-            isPrecisionLossAllowed: true,
+            isPrecisionLossAllowed: false,
             inferencePriority1: 2,
             inferencePriority2: 0,
             inferencePriority3: 0,
@@ -221,7 +221,9 @@ class _LiteRtProviderAttempt {
     return _LiteRtProviderAttempt(
       label: 'Metal GPU',
       createDelegates: () async => <tfl.Delegate>[
-        tfl.GpuDelegate(options: tfl.GpuDelegateOptions(allowPrecisionLoss: true)),
+        tfl.GpuDelegate(
+          options: tfl.GpuDelegateOptions(allowPrecisionLoss: false),
+        ),
       ],
     );
   }

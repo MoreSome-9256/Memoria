@@ -117,7 +117,8 @@ flutter:
     - assets/expanded_tags_taxonomy.json
     - assets/mobileclip2/s2/vision_model.onnx
     - assets/mobileclip2/s2/text_model.onnx
-    - assets/mobileclip2/s2/mobileclip_s2_datacompdr_last.tflite
+    - assets/mobileclip2/s2/mobileclip2_s2_image.tflite
+    - assets/mobileclip2/s2/mobileclip2_s2_text.tflite
     - assets/mobileviclip/small/mobileviclip_small.onnx
     - assets/mobileviclip/small/mobileviclip_small_metadata.json
     - assets/face/   

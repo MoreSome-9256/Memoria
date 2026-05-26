@@ -13,7 +13,7 @@ class MobileClipTextService {
 
   Future<void> warmUp() async {
     _liteRtService = await _resolveLiteRtService();
-    await _liteRtService.warmUp();
+    await _liteRtService.warmUpText();
   }
 
   Future<List<double>> embedTextTokens(List<int> tokenIds) async {

@@ -137,7 +137,7 @@ class MobileClipLiteRtService {
 
     final inferenceWatch = Stopwatch()..start();
     session.interpreter.run(
-      input.reshape(<int>[1, 3, inputImageSize, inputImageSize]),
+      input.buffer,
       outputImage,
     );
     inferenceWatch.stop();
@@ -158,8 +158,9 @@ class MobileClipLiteRtService {
 
     final session = await _loadTextSession();
     final outputText = _zeroOutputBuffer();
+    final tokenBuffer = Int64List.fromList(tokenIds);
     session.interpreter.run(
-      Int64List.fromList(tokenIds).reshape(<int>[1, tokenLength]),
+      tokenBuffer.buffer,
       outputText,
     );
     return _l2Normalize(outputText.first);
@@ -189,6 +190,14 @@ class MobileClipLiteRtService {
     );
     _imageSession = session;
     _imageProviderLabel = session.providerLabel;
+    _validateTensorSpec(
+      session,
+      expectedInputShape: const <int>[1, 3, inputImageSize, inputImageSize],
+      expectedInputType: 'float32',
+      expectedOutputShape: const <int>[1, embeddingDim],
+      expectedOutputType: 'float32',
+      label: 'MobileCLIP2 image',
+    );
     debugPrint(
       'MobileCLIP2 image LiteRT 就绪 model=$_imageModelAssetPath provider=$_imageProviderLabel',
     );
@@ -210,10 +219,50 @@ class MobileClipLiteRtService {
     );
     _textSession = session;
     _textProviderLabel = session.providerLabel;
+    _validateTensorSpec(
+      session,
+      expectedInputShape: const <int>[1, tokenLength],
+      expectedInputType: 'int64',
+      expectedOutputShape: const <int>[1, embeddingDim],
+      expectedOutputType: 'float32',
+      label: 'MobileCLIP2 text',
+    );
     debugPrint(
       'MobileCLIP2 text LiteRT 就绪 model=$_textModelAssetPath provider=$_textProviderLabel',
     );
     return session;
+  }
+
+  void _validateTensorSpec(
+    LiteRtSession session, {
+    required List<int> expectedInputShape,
+    required String expectedInputType,
+    required List<int> expectedOutputShape,
+    required String expectedOutputType,
+    required String label,
+  }) {
+    final input = session.interpreter.getInputTensor(0);
+    final output = session.interpreter.getOutputTensor(0);
+    final inputType = input.type.toString();
+    final outputType = output.type.toString();
+    if (!_sameShape(input.shape, expectedInputShape) ||
+        inputType != expectedInputType ||
+        !_sameShape(output.shape, expectedOutputShape) ||
+        outputType != expectedOutputType) {
+      throw StateError(
+        '$label tensor spec mismatch: '
+        'input shape=${input.shape} type=$inputType, '
+        'output shape=${output.shape} type=$outputType',
+      );
+    }
+  }
+
+  bool _sameShape(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   List<List<double>> _zeroOutputBuffer() => <List<double>>[
@@ -301,53 +350,6 @@ Float32List _toNchwUnitRgb(img.Image image) {
     }
   }
   return buffer;
-}
-
-extension _Float32ListShape on Float32List {
-  Object reshape(List<int> shape) => reshapeToObject(this, shape);
-}
-
-extension _Int64ListShape on Int64List {
-  Object reshape(List<int> shape) => reshapeToObject(this, shape);
-}
-
-Object reshapeToObject(TypedData data, List<int> shape) {
-  if (shape.length == 2 && data is Float32List) {
-    final rows = shape[0];
-    final cols = shape[1];
-    return List<List<double>>.generate(
-      rows,
-      (row) => List<double>.generate(cols, (col) => data[row * cols + col]),
-    );
-  }
-  if (shape.length == 2 && data is Int64List) {
-    final rows = shape[0];
-    final cols = shape[1];
-    return List<List<int>>.generate(
-      rows,
-      (row) => List<int>.generate(cols, (col) => data[row * cols + col]),
-    );
-  }
-  if (shape.length == 4 && data is Float32List) {
-    final b = shape[0];
-    final c = shape[1];
-    final h = shape[2];
-    final w = shape[3];
-    return List.generate(
-      b,
-      (bi) => List.generate(
-        c,
-        (ci) => List.generate(
-          h,
-          (yi) => List<double>.generate(
-            w,
-            (xi) => data[((bi * c + ci) * h + yi) * w + xi],
-          ),
-        ),
-      ),
-    );
-  }
-  throw ArgumentError('不支持的 LiteRT 输入 shape: $shape');
 }
 
 class MobileClipLiteRtPreprocessProfile {

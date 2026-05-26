@@ -292,7 +292,7 @@ class MobileClipBenchmarkService {
             ('litert_cpu', 'LiteRT CPU', LocalInferenceAccelerator.cpu),
           ];
 
-    final adapters = accelerators.map((entry) {
+    final adapters = accelerators.map<MobileClipBenchmarkAdapter>((entry) {
       return LiteRtMobileClipBenchmarkAdapter(
         adapterId: entry.$1,
         adapterDisplayName: entry.$2,

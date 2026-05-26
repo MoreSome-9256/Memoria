@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../service/app_ai_settings_service.dart';
+import '../../service/litert_inference_service.dart';
 import '../../service/media_embedding_service.dart';
 import '../../service/media_file_embedding_input_service.dart';
 import '../../service/mobileclip_backend_preference_service.dart';
@@ -33,6 +35,15 @@ class _MediaVectorSimilarityTestPageState
   MediaTextSimilarityResult? _similarityResult;
   VideoPlayerController? _videoController;
   List<String> _cleanupPaths = const <String>[];
+  MobileClipBackend _selectedBackend = MobileClipBackend.mobileclip2LiteRt;
+  LocalInferenceAccelerator _selectedAccelerator =
+      LocalInferenceAccelerator.gpu;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadInitialSettings());
+  }
 
   @override
   void dispose() {
@@ -40,6 +51,17 @@ class _MediaVectorSimilarityTestPageState
     _videoController?.dispose();
     _cleanupTempFiles();
     super.dispose();
+  }
+
+  Future<void> _loadInitialSettings() async {
+    final settings = await AppAiSettingsService.instance.load();
+    final backend = await MobileClipBackendPreferenceService()
+        .getSelectedBackend();
+    if (!mounted) return;
+    setState(() {
+      _selectedBackend = backend;
+      _selectedAccelerator = settings.inferenceAccelerator;
+    });
   }
 
   Future<void> _pickAndRun() async {
@@ -99,17 +121,15 @@ class _MediaVectorSimilarityTestPageState
       }
 
       final settings = await AppAiSettingsService.instance.load();
-      final backend = await MobileClipBackendPreferenceService()
-          .getSelectedBackend();
-      final liteRt = MobileClipLiteRtService.withAccelerator(
-        settings.inferenceAccelerator,
+      final liteRt = MobileClipLiteRtService.detachedWithAccelerator(
+        _selectedAccelerator,
       );
       final mediaResult = input.kind == MemoriaMediaKind.video &&
               settings.mobileViClipEnabled
           ? await _embeddingService.embedVideoFrameBytes(input.videoFrameBytes)
           : await _embeddingService.embedImageBytes(
               input.imageOrThumbnailBytes,
-              backend: backend,
+              backend: _selectedBackend,
               liteRt: liteRt,
             ).then(
               (value) => input.kind == MemoriaMediaKind.image
@@ -122,6 +142,7 @@ class _MediaVectorSimilarityTestPageState
           : await _embeddingService.compareWithText(
               media: mediaResult,
               text: query,
+              liteRt: liteRt,
             );
 
       if (!mounted) return;
@@ -172,6 +193,18 @@ class _MediaVectorSimilarityTestPageState
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          _RuntimeOptionsCard(
+            selectedBackend: _selectedBackend,
+            selectedAccelerator: _selectedAccelerator,
+            isRunning: _isRunning,
+            onBackendChanged: (backend) {
+              setState(() => _selectedBackend = backend);
+            },
+            onAcceleratorChanged: (accelerator) {
+              setState(() => _selectedAccelerator = accelerator);
+            },
+          ),
+          const SizedBox(height: 12),
           TextField(
             controller: _queryController,
             decoration: const InputDecoration(
@@ -233,6 +266,125 @@ class _MediaVectorSimilarityTestPageState
   }
 }
 
+class _RuntimeOptionsCard extends StatelessWidget {
+  const _RuntimeOptionsCard({
+    required this.selectedBackend,
+    required this.selectedAccelerator,
+    required this.isRunning,
+    required this.onBackendChanged,
+    required this.onAcceleratorChanged,
+  });
+
+  final MobileClipBackend selectedBackend;
+  final LocalInferenceAccelerator selectedAccelerator;
+  final bool isRunning;
+  final ValueChanged<MobileClipBackend> onBackendChanged;
+  final ValueChanged<LocalInferenceAccelerator> onAcceleratorChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final isApple =
+        !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.iOS ||
+            defaultTargetPlatform == TargetPlatform.macOS);
+    final acceleratorSegments = isApple
+        ? const <ButtonSegment<LocalInferenceAccelerator>>[
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.coreml,
+              label: Text('Core ML'),
+            ),
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.metal,
+              label: Text('Metal'),
+            ),
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.xnnpack,
+              label: Text('XNNPACK'),
+            ),
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.cpu,
+              label: Text('CPU'),
+            ),
+          ]
+        : const <ButtonSegment<LocalInferenceAccelerator>>[
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.gpu,
+              label: Text('GPU'),
+            ),
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.npu,
+              label: Text('NPU'),
+            ),
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.xnnpack,
+              label: Text('XNNPACK'),
+            ),
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.cpu,
+              label: Text('CPU'),
+            ),
+          ];
+    final normalizedAccelerator = acceleratorSegments.any(
+      (segment) => segment.value == selectedAccelerator,
+    )
+        ? selectedAccelerator
+        : (isApple
+              ? LocalInferenceAccelerator.coreml
+              : LocalInferenceAccelerator.gpu);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('运行配置', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 12),
+            Text('图像后端', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            SegmentedButton<MobileClipBackend>(
+              segments: const <ButtonSegment<MobileClipBackend>>[
+                ButtonSegment<MobileClipBackend>(
+                  value: MobileClipBackend.mobileclip2LiteRt,
+                  label: Text('LiteRT'),
+                ),
+                ButtonSegment<MobileClipBackend>(
+                  value: MobileClipBackend.ncnn,
+                  label: Text('NCNN'),
+                ),
+              ],
+              selected: <MobileClipBackend>{selectedBackend},
+              onSelectionChanged: isRunning
+                  ? null
+                  : (selection) => onBackendChanged(selection.first),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'LiteRT 推理方式',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<LocalInferenceAccelerator>(
+              segments: acceleratorSegments,
+              selected: <LocalInferenceAccelerator>{normalizedAccelerator},
+              onSelectionChanged: isRunning
+                  ? null
+                  : (selection) => onAcceleratorChanged(selection.first),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              selectedBackend == MobileClipBackend.ncnn
+                  ? 'NCNN 图像向量走原生 FFI；文本向量仍使用这里选择的 LiteRT 推理方式。'
+                  : '图片和文本都会使用这里选择的 LiteRT 推理方式；视频默认走 MobileViCLIP。',
+              style: TextStyle(color: Colors.grey[700], fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _EmbeddingCard extends StatelessWidget {
   const _EmbeddingCard({required this.result});
 
@@ -277,9 +429,10 @@ class _SimilarityCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final unavailableReason = result.unavailableReason;
     final normalized = ((result.score + 1) / 2).clamp(0.0, 1.0);
     return Card(
-      color: result.isSameEmbeddingSpace
+      color: result.isSameEmbeddingSpace && unavailableReason == null
           ? null
           : colorScheme.secondaryContainer,
       child: Padding(
@@ -290,14 +443,19 @@ class _SimilarityCard extends StatelessWidget {
             Text('文本相似度', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             SelectableText('query: ${result.text}'),
-            Text('score: ${result.score.toStringAsFixed(6)}'),
-            const SizedBox(height: 8),
-            LinearProgressIndicator(value: normalized),
-            if (!result.isSameEmbeddingSpace) ...[
+            if (unavailableReason == null) ...[
+              Text('score: ${result.score.toStringAsFixed(6)}'),
+              const SizedBox(height: 8),
+              LinearProgressIndicator(value: normalized),
+            ],
+            if (unavailableReason != null) ...[
+              const SizedBox(height: 12),
+              Text(unavailableReason),
+            ] else if (!result.isSameEmbeddingSpace) ...[
               const SizedBox(height: 12),
               const Text(
-                '注意：当前视频向量来自 MobileViCLIP 视觉编码器，文本向量来自 MobileCLIP2 文本编码器。'
-                '两者不是已验证的同一 embedding space，此分数只适合调试，不适合作为真实视频文本检索结果。',
+                '注意：当前媒体向量和文本向量不是已验证的同一 embedding space。'
+                '此分数只适合调试，不适合作为真实检索结果。',
               ),
             ],
           ],

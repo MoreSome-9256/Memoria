@@ -32,8 +32,6 @@ part 'photo_service_ai_reset.dart';
 
 class PhotoService {
   bool _isInitialized = false;
-  static const int _assetExistenceWorkerCount = 12;
-  static const int _assetBuildWorkerCount = 8;
   static const Duration _photoAccessCacheTtl = Duration(seconds: 20);
 
   static final PhotoService _instance = PhotoService._internal();

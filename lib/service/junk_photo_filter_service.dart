@@ -339,9 +339,10 @@ class JunkPhotoFilterService {
   Future<List<double>> _buildPrototype(
     JunkPhotoCategoryDefinition definition,
   ) async {
-    final promptVectors = await Future.wait(
-      definition.prototypePrompts.map(_semanticService.embedText),
-    );
+    final promptVectors = <List<double>>[];
+    for (final prompt in definition.prototypePrompts) {
+      promptVectors.add(await _semanticService.embedText(prompt));
+    }
     return _meanAndNormalize(promptVectors);
   }
 

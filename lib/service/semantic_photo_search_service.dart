@@ -374,33 +374,36 @@ class SemanticPhotoSearchService {
   ) async {
     try {
       await _semanticService.warmUp();
-      final positiveVectors = await Future.wait(
-        query.positiveSemantics.map((item) async {
-          return _SemanticVector(
+      final positiveVectors = <_SemanticVector>[];
+      for (final item in query.positiveSemantics) {
+        positiveVectors.add(
+          _SemanticVector(
             text: item.text,
             weight: item.weight,
             vector: await _semanticService.embedText(item.text),
-          );
-        }),
-      );
-      final recallVectors = await Future.wait(
-        query.recallSemantics.map((item) async {
-          return _SemanticVector(
+          ),
+        );
+      }
+      final recallVectors = <_SemanticVector>[];
+      for (final item in query.recallSemantics) {
+        recallVectors.add(
+          _SemanticVector(
             text: item.text,
             weight: item.weight,
             vector: await _semanticService.embedText(item.text),
-          );
-        }),
-      );
-      final negativeVectors = await Future.wait(
-        query.negativeSemantics.map((item) async {
-          return _SemanticVector(
+          ),
+        );
+      }
+      final negativeVectors = <_SemanticVector>[];
+      for (final item in query.negativeSemantics) {
+        negativeVectors.add(
+          _SemanticVector(
             text: item.text,
             weight: item.weight,
             vector: await _semanticService.embedText(item.text),
-          );
-        }),
-      );
+          ),
+        );
+      }
       return _SemanticVectorBundle(
         positiveVectors: positiveVectors,
         recallVectors: recallVectors,

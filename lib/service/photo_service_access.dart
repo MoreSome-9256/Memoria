@@ -69,20 +69,7 @@ extension PhotoServiceAccess on PhotoService {
 
     final removedIds = <int>[];
     final repairedPhotos = <PhotoEntity>[];
-    var cursor = 0;
-    final workerCount = math.min(
-      PhotoService._assetExistenceWorkerCount,
-      localPhotos.length,
-    );
-    final workers = List<Future<void>>.generate(workerCount, (_) async {
-      while (true) {
-        final index = cursor;
-        cursor++;
-        if (index >= localPhotos.length) {
-          break;
-        }
-
-        final photo = localPhotos[index];
+    for (final photo in localPhotos) {
         if (photo.path.startsWith('content://')) {
           continue;
         }
@@ -111,10 +98,7 @@ extension PhotoServiceAccess on PhotoService {
         } else {
           removedIds.add(photo.id);
         }
-      }
-    });
-
-    await Future.wait(workers);
+    }
 
     if (removedIds.isEmpty && repairedPhotos.isEmpty) {
       return 0;
@@ -152,20 +136,7 @@ extension PhotoServiceAccess on PhotoService {
     var cacheHits = 0;
     var removedCount = 0;
     var repairedCount = 0;
-    var cursor = 0;
-    final workerCount = math.min(
-      PhotoService._assetExistenceWorkerCount,
-      candidates.length,
-    );
-    final workers = List<Future<void>>.generate(workerCount, (_) async {
-      while (true) {
-        final index = cursor;
-        cursor++;
-        if (index >= candidates.length) {
-          break;
-        }
-
-        final photo = candidates[index];
+    for (final photo in candidates) {
         if (photo.path.startsWith('content://')) {
           _photoAccessCache[_photoAccessCacheKey(
             photo,
@@ -238,10 +209,7 @@ extension PhotoServiceAccess on PhotoService {
           );
           removedCount++;
         }
-      }
-    });
-
-    await Future.wait(workers);
+    }
 
     final repairedPhotos = repairedIds.isEmpty
         ? const <PhotoEntity>[]

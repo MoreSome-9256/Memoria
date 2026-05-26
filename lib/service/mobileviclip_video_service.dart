@@ -167,7 +167,7 @@ class MobileViClipVideoService {
     )).buffer.asUint8List();
     final loadResult = await OnnxSessionProviderService.createSession(
       modelBytes: modelBytes,
-      intraOpNumThreads: 2,
+      intraOpNumThreads: 1,
       interOpNumThreads: 1,
       preference: _providerPreference,
     );

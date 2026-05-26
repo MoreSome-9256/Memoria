@@ -51,10 +51,8 @@ class SemanticMatchingService {
       return;
     }
     _warmUpFuture = Future<void>(() async {
-      await Future.wait([
-        _tokenizer.warmUp(),
-        _textService.warmUp(),
-      ]);
+      await _tokenizer.warmUp();
+      await _textService.warmUp();
       _isReady = true;
     });
     try {
@@ -134,9 +132,10 @@ class SemanticMatchingService {
     // the internal OrtRunOptions lock; cache makes this nearly free after
     // the first call.
     final prompts = tagMap.keys.toList(growable: false);
-    final textVectors = await Future.wait(
-      prompts.map(embedText),
-    );
+    final textVectors = <List<double>>[];
+    for (final prompt in prompts) {
+      textVectors.add(await embedText(prompt));
+    }
 
     // Score and sort.
     final scored = <({String label, double score})>[];
@@ -166,7 +165,10 @@ class SemanticMatchingService {
     if (tagMap.isEmpty) return const [];
 
     final prompts = tagMap.keys.toList(growable: false);
-    final textVectors = await Future.wait(prompts.map(embedText));
+    final textVectors = <List<double>>[];
+    for (final prompt in prompts) {
+      textVectors.add(await embedText(prompt));
+    }
 
     final scored = <({String label, double score})>[];
     for (var i = 0; i < prompts.length; i++) {
@@ -185,6 +187,8 @@ class SemanticMatchingService {
   /// Call this once after [warmUp] with your full tag vocabulary to ensure that
   /// the first batch of image analysis has all prompts ready in cache.
   Future<void> preCacheTagMap(Map<String, String> tagMap) async {
-    await Future.wait(tagMap.keys.map(embedText));
+    for (final prompt in tagMap.keys) {
+      await embedText(prompt);
+    }
   }
 }

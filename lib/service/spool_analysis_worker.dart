@@ -14,7 +14,6 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
@@ -619,6 +618,39 @@ class SpoolAnalysisWorker {
     await tmpFile.rename(targetFile.path);
   }
 
+  Future<List<String>> _retrieveTagsForPhotoEmbedding(
+    List<double> embedding,
+  ) async {
+    if (embedding.isEmpty) {
+      return const <String>[];
+    }
+    if (_tagService.isWarmedUp) {
+      return compute(
+        _spoolComputeTagRetrieval,
+        <String, Object?>{
+          'embedding': embedding,
+          'coarsePrototypes': _tagService.coarsePrototypes,
+          'finePrototypes': _tagService.finePrototypes,
+          'fineLabelToCoarse': memoriaFineLabelToCoarseId,
+          'dimThresholds': <String, double>{
+            'subject': 0.165,
+            'scene': 0.17,
+            'activity': 0.18,
+            'atmosphere': 0.19,
+            'media': 0.205,
+          },
+          'coarseThreshold': 0.16,
+          'coarseProbThreshold': 0.035,
+          'coarseMargin': 0.075,
+          'blockedTags': const <String>[],
+          'coarseTopK': 2,
+          'topK': 3,
+        },
+      );
+    }
+    return _tagService.retrieveTags(embedding);
+  }
+
   // ── Junk Filter 轻量实现 ──
 
   Future<void> _warmUpJunkFilter() async {
@@ -831,37 +863,30 @@ class SpoolAnalysisWorker {
     }
     debugPrint('[spool-worker]   Embedding 成功 dim=${embedding.length} model=$embeddingModelVersion');
 
-    // 3. 标签推理
+    // 3. 标签推理。视频检索向量使用 MobileViCLIP；标签仍用封面图走
+    // MobileCLIP2 文本空间，避免只得到“视频/其他”这类媒体类型标签。
     final t2 = DateTime.now();
     List<String> tags = const <String>[];
-    if (embeddingModelVersion == buildPhotoEmbeddingModelVersion(backend) &&
-        _tagService.isWarmedUp) {
-      tags = await compute(
-        _spoolComputeTagRetrieval,
-        <String, Object?>{
-          'embedding': embedding,
-          'coarsePrototypes': _tagService.coarsePrototypes,
-          'finePrototypes': _tagService.finePrototypes,
-          'fineLabelToCoarse': memoriaFineLabelToCoarseId,
-          'dimThresholds': <String, double>{
-            'subject': 0.165,
-            'scene': 0.17,
-            'activity': 0.18,
-            'atmosphere': 0.19,
-            'media': 0.205,
-          },
-          'coarseThreshold': 0.16,
-          'coarseProbThreshold': 0.035,
-          'coarseMargin': 0.075,
-          'blockedTags': const <String>[],
-          'coarseTopK': 2,
-          'topK': 3,
-        },
-      );
-    } else if (embeddingModelVersion == buildPhotoEmbeddingModelVersion(backend)) {
-      tags = await _tagService.retrieveTags(embedding);
-    } else {
-      tags = <String>['视频'];
+    final photoModelVersion = buildPhotoEmbeddingModelVersion(backend);
+    var tagEmbedding = embedding;
+    if (embeddingModelVersion != photoModelVersion) {
+      try {
+        final tagMediaEmbedding = await MediaEmbeddingService().embedImageBytes(
+          input.mobileClipBytes,
+          backend: backend,
+          liteRt: liteRt,
+        );
+        tagEmbedding = tagMediaEmbedding.embedding;
+      } catch (error) {
+        debugPrint('[spool-worker]   视频封面标签向量失败，回退媒体标签: $error');
+        tagEmbedding = const <double>[];
+      }
+    }
+    if (tagEmbedding.isNotEmpty) {
+      tags = await _retrieveTagsForPhotoEmbedding(tagEmbedding);
+    }
+    if (tags.isEmpty && input.kind == MemoriaMediaKind.video) {
+      tags = const <String>['视频'];
     }
     final tagMs = DateTime.now().difference(t2).inMilliseconds;
     phaseLog.add('tag=${tagMs}ms');

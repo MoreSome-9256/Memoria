@@ -36,6 +36,8 @@ class MediaThumbnail extends StatelessWidget {
                 fit: fit,
                 width: double.infinity,
                 height: double.infinity,
+                cacheWidth: 384,
+                cacheHeight: 384,
                 filterQuality: FilterQuality.low,
                 frameBuilder: _frameBuilder,
                 errorBuilder: (_, _, _) => _pathImage(),
@@ -109,8 +111,8 @@ class MediaThumbnail extends StatelessWidget {
     try {
       final asset = await AssetEntity.fromId(assetId!);
       final bytes = await asset?.thumbnailDataWithSize(
-        const ThumbnailSize.square(512),
-        quality: 88,
+        const ThumbnailSize.square(256),
+        quality: 72,
       );
       return _MediaThumbnailData(kind: kind, thumbnailBytes: bytes);
     } catch (_) {

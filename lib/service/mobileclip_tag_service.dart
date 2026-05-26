@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../data/tag_taxonomy_v2.dart';
 import '../utils/tag_sanitizer.dart';
+import 'mobileclip_litert_service.dart';
 import 'semantic_matching_service.dart';
 
 typedef MobileClipTagWarmUpProgress = FutureOr<void> Function(
@@ -196,7 +197,8 @@ class MobileClipTagService {
   /// 生成标签定义的缓存键——拼接所有标签+prompts 然后做 base64
   String _computePrototypeCacheKey() {
     final buffer = StringBuffer();
-    buffer.write('mobileclip-tag-prototypes-real-text-v2');
+    buffer.write('mobileclip-tag-prototypes-real-text-v3');
+    buffer.write(MobileClipLiteRtService.modelVersion);
     for (final def in memoriaMasterTagDefinitions) {
       buffer.write(def.label);
       for (final p in def.prompts) {

@@ -1,14 +1,12 @@
 /// AI 分析主编排服务，协调照片处理、标签、向量、人脸和 OCR 流程。
 
 import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
@@ -97,8 +95,6 @@ class AIService {
         defaultValue: 'always_compress',
       );
   static const int _minFaceDetectorInputSize = 32;
-  static const int _maxParallelWorkers = 4;
-  static const int _maxConcurrentCaptionWorkers = 2;
   static const String _autoResumeKey = 'ai_auto_resume';
   static const String _runtimeActiveKey = 'ai_runtime_active';
   static const String _runtimeHeartbeatAtKey = 'ai_runtime_heartbeat_at';
@@ -123,10 +119,6 @@ class AIService {
   final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
       PhotoEmbeddingIndexRepository();
   final Set<int> _junkFilterBypassPhotoIds = <int>{};
-  final ListQueue<_AsyncCaptionTask> _pendingCaptionTasks =
-      ListQueue<_AsyncCaptionTask>();
-  final ListQueue<PhotoEntity> _analysisQueue = ListQueue<PhotoEntity>();
-  final Set<int> _analysisQueuedPhotoIds = <int>{};
   final Map<String, Future<SpoolConsumeReport>> _activeSpoolConsumes =
       <String, Future<SpoolConsumeReport>>{};
   static final _AnalysisInputConfig _analysisInputConfig =
@@ -143,7 +135,6 @@ class AIService {
   bool _pauseRequested = false;
   bool _stopRequested = false;
   int _inflightCount = 0;
-  int _activeCaptionTasks = 0;
   Completer<void>? _analysisCompleter;
   int _lastRuntimeHeartbeatPersistAtMs = 0;
   Timer? _runtimeProgressPoller;

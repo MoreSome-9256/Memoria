@@ -33,7 +33,7 @@ extension AIServicePhotoProcessing on AIService {
         result.profile.objectBoxWriteMs = persistenceProfile.objectBoxWriteMs;
       }
       if (result.deferredCaptionTask != null) {
-        _enqueueAsyncCaption(result.deferredCaptionTask!);
+        await _runAsyncCaptionTask(result.deferredCaptionTask!);
       }
       return result;
     } catch (error) {

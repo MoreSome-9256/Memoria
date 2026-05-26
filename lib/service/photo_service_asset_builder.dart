@@ -75,17 +75,7 @@ class _PhotoAssetBuilder {
       );
     }
 
-    var cursor = 0;
-    final workerCount = math.min(
-      PhotoService._assetBuildWorkerCount,
-      assets.length,
-    );
-    final workers = List<Future<void>>.generate(workerCount, (_) async {
-      while (true) {
-        final idx = cursor;
-        cursor++;
-        if (idx >= assets.length) break;
-        final asset = assets[idx];
+    for (final asset in assets) {
 
         if (skipExisting && existingByAssetId.containsKey(asset.id)) {
           if (resolveFile) {
@@ -96,16 +86,14 @@ class _PhotoAssetBuilder {
           continue;
         }
 
-          buildResults.add(
-            await buildSingleAssetPhoto(
-              asset,
-              filterProfile: filterProfile,
-              resolveFile: resolveFile,
-            ),
-          );
-      }
-    });
-    await Future.wait(workers);
+        buildResults.add(
+          await buildSingleAssetPhoto(
+            asset,
+            filterProfile: filterProfile,
+            resolveFile: resolveFile,
+          ),
+        );
+    }
 
     if (refreshedExisting.isNotEmpty) {
       _service._store.runInTransaction(

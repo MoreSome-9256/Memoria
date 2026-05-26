@@ -58,10 +58,8 @@ class MobileClipLiteRtService {
       _imageProviderLabel ?? _textProviderLabel ?? 'Pending session init';
 
   Future<void> warmUp() async {
-    await Future.wait([
-      warmUpImage(),
-      warmUpText(),
-    ]);
+    await warmUpImage();
+    await warmUpText();
   }
 
   Future<void> warmUpImage() async {
@@ -191,7 +189,6 @@ class MobileClipLiteRtService {
         modelAssetPath: _imageModelAssetPath,
         modelToken: '${modelVersion}_image',
         accelerator: _accelerator,
-        threads: 2,
       ),
     );
     _imageSession = session;
@@ -220,7 +217,6 @@ class MobileClipLiteRtService {
         modelAssetPath: _textModelAssetPath,
         modelToken: '${modelVersion}_text',
         accelerator: _accelerator,
-        threads: 2,
       ),
     );
     _textSession = session;

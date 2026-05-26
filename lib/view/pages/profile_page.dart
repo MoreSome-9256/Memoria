@@ -415,6 +415,29 @@ class _ProfilePageState extends State<ProfilePage> {
                         style: TextStyle(color: Colors.orange[800], fontSize: 12),
                       ),
                       const SizedBox(height: 20),
+                      Text(
+                        '分析批大小：${aiSettings.analysisBatchSize}',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      Slider(
+                        value: aiSettings.analysisBatchSize.toDouble(),
+                        min: 1,
+                        max: 100,
+                        divisions: 99,
+                        label: '${aiSettings.analysisBatchSize}',
+                        onChanged: (value) {
+                          setSheetState(() {
+                            aiSettings = aiSettings.copyWith(
+                              analysisBatchSize: value.round(),
+                            );
+                          });
+                        },
+                      ),
+                      Text(
+                        '每次提交给后台服务的媒体数量；批内串行计算，不再使用手写 worker pool。',
+                        style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                      ),
+                      const SizedBox(height: 20),
 
                       Divider(color: Colors.grey[300]),
                       const SizedBox(height: 12),

@@ -3,8 +3,10 @@ import 'dart:typed_data';
 import '../storage/vector_index/vector_index_constants.dart';
 import '../utils/media_type_helper.dart';
 import 'app_ai_settings_service.dart';
+import 'clip_tokenizer_service.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_litert_service.dart';
+import 'ncnn_mobileclip_native_service.dart';
 import 'mobileviclip_video_service.dart';
 import 'semantic_matching_service.dart';
 
@@ -17,6 +19,9 @@ class MediaEmbeddingService {
   factory MediaEmbeddingService() => _instance;
 
   final SemanticMatchingService _semanticService = SemanticMatchingService();
+  final ClipTokenizerService _tokenizer = ClipTokenizerService();
+  final NcnnMobileClipNativeService _ncnnService =
+      NcnnMobileClipNativeService();
 
   Future<MediaEmbeddingResult> embedImageBytes(
     Uint8List bytes, {
@@ -25,20 +30,37 @@ class MediaEmbeddingService {
   }) async {
     final effectiveBackend = backend ??
         await MobileClipBackendPreferenceService().getSelectedBackend();
-    final effectiveLiteRt = liteRt ??
-        MobileClipLiteRtService.withAccelerator(
-          (await AppAiSettingsService.instance.load()).inferenceAccelerator,
+    switch (effectiveBackend) {
+      case MobileClipBackend.mobileclip2LiteRt:
+        final effectiveLiteRt =
+            liteRt ??
+            MobileClipLiteRtService.withAccelerator(
+              (await AppAiSettingsService.instance.load())
+                  .inferenceAccelerator,
+            );
+        final profile = await effectiveLiteRt.profileImageBytes(bytes);
+        return MediaEmbeddingResult(
+          kind: MemoriaMediaKind.image,
+          embedding: profile.embedding,
+          modelVersion: buildPhotoEmbeddingModelVersion(effectiveBackend),
+          modelLabel:
+              'MobileCLIP2 LiteRT (${effectiveLiteRt.executionProviderLabel})',
+          preprocessMs: profile.decodeMs + profile.resizeNormalizeMs,
+          inferenceMs: profile.inferenceMs,
+          isSameSpaceAsMobileClipText: true,
         );
-    final profile = await effectiveLiteRt.profileImageBytes(bytes);
-    return MediaEmbeddingResult(
-      kind: MemoriaMediaKind.image,
-      embedding: profile.embedding,
-      modelVersion: buildPhotoEmbeddingModelVersion(effectiveBackend),
-      modelLabel: 'MobileCLIP2 LiteRT',
-      preprocessMs: profile.decodeMs + profile.resizeNormalizeMs,
-      inferenceMs: profile.inferenceMs,
-      isSameSpaceAsMobileClipText: true,
-    );
+      case MobileClipBackend.ncnn:
+        final profile = await _ncnnService.profileEncodeImageBytes(bytes);
+        return MediaEmbeddingResult(
+          kind: MemoriaMediaKind.image,
+          embedding: profile.embedding,
+          modelVersion: buildPhotoEmbeddingModelVersion(effectiveBackend),
+          modelLabel: 'NCNN FFI (${_ncnnService.getStatus().version})',
+          preprocessMs: profile.preprocessMs,
+          inferenceMs: profile.inferenceMs,
+          isSameSpaceAsMobileClipText: true,
+        );
+    }
   }
 
   Future<MediaEmbeddingResult> embedVideoFrameBytes(
@@ -87,8 +109,19 @@ class MediaEmbeddingService {
   Future<MediaTextSimilarityResult> compareWithText({
     required MediaEmbeddingResult media,
     required String text,
+    MobileClipLiteRtService? liteRt,
   }) async {
-    final textVector = await _semanticService.embedText(text);
+    if (media.kind == MemoriaMediaKind.video &&
+        media.modelVersion == MobileViClipVideoService.modelVersion) {
+      return MediaTextSimilarityResult.unavailable(
+        text: text,
+        reason:
+            '当前只接入了 MobileViCLIP vision encoder，缺少同一模型空间的 text encoder；视频不能再用 MobileCLIP2 文本向量做相似度。',
+      );
+    }
+    final textVector = liteRt == null
+        ? await _semanticService.embedText(text)
+        : await liteRt.embedTextTokens(await _tokenizer.tokenize(text));
     return MediaTextSimilarityResult(
       text: text,
       textVector: textVector,
@@ -97,6 +130,7 @@ class MediaEmbeddingService {
         textVector,
       ),
       isSameEmbeddingSpace: media.isSameSpaceAsMobileClipText,
+      unavailableReason: null,
     );
   }
 }
@@ -141,10 +175,22 @@ class MediaTextSimilarityResult {
     required this.textVector,
     required this.score,
     required this.isSameEmbeddingSpace,
+    this.unavailableReason,
   });
+
+  const MediaTextSimilarityResult.unavailable({
+    required this.text,
+    required String reason,
+  }) : textVector = const <double>[],
+       score = 0,
+       isSameEmbeddingSpace = false,
+       unavailableReason = reason;
 
   final String text;
   final List<double> textVector;
   final double score;
   final bool isSameEmbeddingSpace;
+  final String? unavailableReason;
+
+  bool get isAvailable => unavailableReason == null;
 }

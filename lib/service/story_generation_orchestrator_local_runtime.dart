@@ -381,7 +381,7 @@ ${jsonEncode(photoPayload)}
           server: server,
           prompt: prompt,
           payloads: payloads,
-          profileThreads: profile?.recommendedThreads ?? 4,
+          profileThreads: 1,
           profileContextSize: profile?.recommendedContextSize ?? 2048,
           maxTokens: maxTokens,
           cliTimeoutMs: cliTimeoutMs,
@@ -390,7 +390,7 @@ ${jsonEncode(photoPayload)}
       if (_looksLikeServerPipeFailure(error)) {
         await OnDeviceInternvlService().stopServer();
         final restarted = await OnDeviceInternvlService().ensureServerStarted(
-          threads: profile?.recommendedThreads ?? 4,
+          threads: 1,
           contextSize: profile?.recommendedContextSize ?? 2048,
         );
         if (restarted == null || !restarted.ready) {
@@ -420,7 +420,7 @@ ${jsonEncode(photoPayload)}
               server: restarted,
               prompt: prompt,
               payloads: payloads,
-              profileThreads: profile?.recommendedThreads ?? 4,
+              profileThreads: 1,
               profileContextSize: profile?.recommendedContextSize ?? 2048,
               maxTokens: maxTokens,
               cliTimeoutMs: cliTimeoutMs,
@@ -436,7 +436,7 @@ ${jsonEncode(photoPayload)}
   Future<_LocalRuntime> _prepareLocalRuntime() async {
     final profile = await OnDeviceInternvlService().probeDeviceProfile();
     final server = await OnDeviceInternvlService().ensureServerStarted(
-      threads: profile?.recommendedThreads ?? 4,
+      threads: 1,
       contextSize: profile?.recommendedContextSize ?? 2048,
     );
     return _LocalRuntime(profile: profile, server: server);

@@ -13,6 +13,7 @@ class AppAiSettings {
     required this.requestUnrestrictedBatteryEnabled,
     required this.iosContinuedProcessingEnabled,
     required this.inferenceAccelerator,
+    required this.analysisBatchSize,
     required this.autoResumeAnalysis,
     required this.autoAnalyzeNewPhotos,
   });
@@ -26,6 +27,7 @@ class AppAiSettings {
     requestUnrestrictedBatteryEnabled: true,
     iosContinuedProcessingEnabled: true,
     inferenceAccelerator: LocalInferenceAccelerator.gpu,
+    analysisBatchSize: 24,
     autoResumeAnalysis: true,
     autoAnalyzeNewPhotos: true,
   );
@@ -38,6 +40,7 @@ class AppAiSettings {
   final bool requestUnrestrictedBatteryEnabled;
   final bool iosContinuedProcessingEnabled;
   final LocalInferenceAccelerator inferenceAccelerator;
+  final int analysisBatchSize;
   final bool autoResumeAnalysis;
   final bool autoAnalyzeNewPhotos;
 
@@ -50,6 +53,7 @@ class AppAiSettings {
     bool? requestUnrestrictedBatteryEnabled,
     bool? iosContinuedProcessingEnabled,
     LocalInferenceAccelerator? inferenceAccelerator,
+    int? analysisBatchSize,
     bool? autoResumeAnalysis,
     bool? autoAnalyzeNewPhotos,
   }) {
@@ -67,6 +71,7 @@ class AppAiSettings {
       iosContinuedProcessingEnabled:
           iosContinuedProcessingEnabled ?? this.iosContinuedProcessingEnabled,
       inferenceAccelerator: inferenceAccelerator ?? this.inferenceAccelerator,
+      analysisBatchSize: analysisBatchSize ?? this.analysisBatchSize,
       autoResumeAnalysis: autoResumeAnalysis ?? this.autoResumeAnalysis,
       autoAnalyzeNewPhotos: autoAnalyzeNewPhotos ?? this.autoAnalyzeNewPhotos,
     );
@@ -90,6 +95,7 @@ class AppAiSettingsService {
   static const _iosContinuedProcessingKey =
       'ai_settings_ios_continued_processing_enabled';
   static const _inferenceAcceleratorKey = 'ai_settings_inference_accelerator';
+  static const _analysisBatchSizeKey = 'ai_settings_analysis_batch_size';
   static const _autoResumeKey = 'ai_settings_auto_resume';
   static const _autoAnalyzeNewKey = 'ai_settings_auto_analyze_new';
 
@@ -136,6 +142,10 @@ class AppAiSettingsService {
       _inferenceAcceleratorKey,
       settings.inferenceAccelerator.storageValue,
     );
+    await prefs.setInt(
+      _analysisBatchSizeKey,
+      _normalizeBatchSize(settings.analysisBatchSize),
+    );
     await prefs.setBool(_autoResumeKey, settings.autoResumeAnalysis);
     await prefs.setBool(_autoAnalyzeNewKey, settings.autoAnalyzeNewPhotos);
     notifier.value = settings;
@@ -167,6 +177,10 @@ class AppAiSettingsService {
           prefs.getString(_inferenceAcceleratorKey),
         ),
       ),
+      analysisBatchSize: _normalizeBatchSize(
+        prefs.getInt(_analysisBatchSizeKey) ??
+            AppAiSettings.defaults.analysisBatchSize,
+      ),
       autoResumeAnalysis:
           prefs.getBool(_autoResumeKey) ??
           AppAiSettings.defaults.autoResumeAnalysis,
@@ -188,5 +202,11 @@ class AppAiSettingsService {
       };
     }
     return accelerator;
+  }
+
+  static int _normalizeBatchSize(int value) {
+    if (value < 1) return 1;
+    if (value > 200) return 200;
+    return value;
   }
 }

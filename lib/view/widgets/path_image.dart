@@ -152,7 +152,7 @@ class _PathImageState extends State<PathImage> {
         return null;
       }
       final pixels = (logical * dpr).round();
-      return math.max(80, math.min(2200, pixels));
+      return math.max(80, math.min(1200, pixels));
     }
 
     final cw = toCache(logicalWidth);

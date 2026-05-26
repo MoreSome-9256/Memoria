@@ -55,13 +55,11 @@ class LiteRtSessionConfig {
     required this.modelAssetPath,
     required this.modelToken,
     this.accelerator = LocalInferenceAccelerator.gpu,
-    this.threads = 2,
   });
 
   final String modelAssetPath;
   final String modelToken;
   final LocalInferenceAccelerator accelerator;
-  final int threads;
 }
 
 class LiteRtSession {
@@ -93,7 +91,7 @@ class LiteRtInferenceService {
     for (final attempt in attempts) {
       try {
         final options = tfl.InterpreterOptions();
-        options.threads = config.threads;
+        options.threads = 1;
         final delegates = await attempt.createDelegates();
         for (final delegate in delegates) {
           options.addDelegate(delegate);
@@ -118,7 +116,7 @@ class LiteRtInferenceService {
 
   List<_LiteRtProviderAttempt> _buildAttempts(LiteRtSessionConfig config) {
     final fallback = <_LiteRtProviderAttempt>[
-      _LiteRtProviderAttempt.xnnpack(config.threads),
+      _LiteRtProviderAttempt.xnnpack(),
       _LiteRtProviderAttempt.cpu(),
     ];
 
@@ -137,7 +135,7 @@ class LiteRtInferenceService {
           ...fallback,
         ],
         LocalInferenceAccelerator.xnnpack => <_LiteRtProviderAttempt>[
-          _LiteRtProviderAttempt.xnnpack(config.threads),
+          _LiteRtProviderAttempt.xnnpack(),
           _LiteRtProviderAttempt.cpu(),
         ],
         LocalInferenceAccelerator.cpu => <_LiteRtProviderAttempt>[
@@ -165,7 +163,7 @@ class LiteRtInferenceService {
           ...fallback,
         ],
         LocalInferenceAccelerator.xnnpack => <_LiteRtProviderAttempt>[
-          _LiteRtProviderAttempt.xnnpack(config.threads),
+          _LiteRtProviderAttempt.xnnpack(),
           _LiteRtProviderAttempt.cpu(),
         ],
         LocalInferenceAccelerator.cpu => <_LiteRtProviderAttempt>[
@@ -235,15 +233,11 @@ class _LiteRtProviderAttempt {
     );
   }
 
-  factory _LiteRtProviderAttempt.xnnpack(int threads) {
+  factory _LiteRtProviderAttempt.xnnpack() {
     return _LiteRtProviderAttempt(
       label: 'XNNPACK',
       createDelegates: () async => <tfl.Delegate>[
-        tfl.XNNPackDelegate(
-          options: tfl.XNNPackDelegateOptions(
-            numThreads: threads.clamp(1, 2),
-          ),
-        ),
+        tfl.XNNPackDelegate(),
       ],
     );
   }

@@ -288,8 +288,6 @@ extension AIServiceLifecycle on AIService {
 
   void stopAnalysis() {
     final current = _progressNotifier.value;
-    _clearPendingCaptionTasks();
-    _clearAnalysisQueue();
     if (!_isAnalyzing) {
       unawaited(_setManualStopPending(true));
       if (current.isVisible) {
@@ -320,10 +318,8 @@ extension AIServiceLifecycle on AIService {
   Future<void> endCurrentRoundSafely({
     Duration timeout = const Duration(seconds: 45),
   }) async {
-    _clearPendingCaptionTasks();
     stopAnalysis();
     await stopAnalysisAndWait(timeout: timeout);
-    await _waitForCaptionTasksToDrain(timeout: const Duration(seconds: 8));
     await _cleanupCurrentJobSpool(allowPartial: true);
     await AiBackgroundTaskService.instance.stop();
     _progressNotifier.value = AIAnalysisProgress.idle();
@@ -675,16 +671,6 @@ extension AIServiceLifecycle on AIService {
     return !_stopRequested;
   }
 
-  Future<void> _waitForCaptionTasksToDrain({required Duration timeout}) async {
-    final deadline = DateTime.now().add(timeout);
-    while (_activeCaptionTasks > 0) {
-      if (DateTime.now().isAfter(deadline)) {
-        debugPrint('⚠️ 等待 caption 任务结束超时，剩余=$_activeCaptionTasks');
-        return;
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 120));
-    }
-  }
 }
 
 int _elapsedMsForSpoolProgress(

@@ -14,15 +14,20 @@ extension AIServicePipeline on AIService {
   /// [manageForegroundService] = false：在调用方 isolate 中直接运行完整管线
   /// （仅供旧路径兼容，新代码应走 spool 模式）。
   Future<void> analyzePhotosInBackground({
-    int batchSize = 6,
+    int? batchSize,
     int? maxPhotos,
     List<int>? photoIds,
     bool manageForegroundService = true,
   }) async {
+    final appSettings = await AppAiSettingsService.instance.load();
+    final effectiveBatchSize = (batchSize ?? appSettings.analysisBatchSize)
+        .clamp(1, 200)
+        .toInt();
+
     if (!manageForegroundService) {
       await _AiPipelineRunner(
         service: this,
-        batchSize: batchSize,
+        batchSize: effectiveBatchSize,
         maxPhotos: maxPhotos,
         photoIds: photoIds,
         manageForegroundService: manageForegroundService,
@@ -48,10 +53,9 @@ extension AIServicePipeline on AIService {
           final stopping =
               control.stopRequested || snapshot?.status == 'stopping';
           final serviceRunning = await AiBackgroundTaskService.instance.isRunning;
-          final settings = await AppAiSettingsService.instance.load();
           final manuallyStopped = await _readManualStopPending();
           final canAutoRestart =
-              settings.autoResumeAnalysis && !manuallyStopped;
+              appSettings.autoResumeAnalysis && !manuallyStopped;
           final serviceOffline = !paused && !stopping && !serviceRunning;
           final currentStep = serviceOffline && !canAutoRestart
               ? '后台服务未运行，任务已保留；点击继续后恢复'
@@ -105,7 +109,10 @@ extension AIServicePipeline on AIService {
     final pendingPhotos = q.find();
     q.close();
 
-    final limit = maxPhotos ?? pendingPhotos.length;
+    final limit = math.min(
+      maxPhotos ?? pendingPhotos.length,
+      effectiveBatchSize,
+    );
     final batch = pendingPhotos.take(limit).toList(growable: false);
 
     if (batch.isEmpty) {
@@ -692,29 +699,11 @@ extension AIServicePipeline on AIService {
     );
   }
 
-  void _enqueueAsyncCaption(_AsyncCaptionTask task) {
+  Future<void> _runAsyncCaptionTask(_AsyncCaptionTask task) async {
     if (_stopRequested) {
       _disposeSkippedCaptionTask(task);
       return;
     }
-    _pendingCaptionTasks.addLast(task);
-    _pumpAsyncCaptionQueue();
-  }
-
-  void _pumpAsyncCaptionQueue() {
-    if (_stopRequested) {
-      _clearPendingCaptionTasks();
-      return;
-    }
-    while (_activeCaptionTasks < AIService._maxConcurrentCaptionWorkers &&
-        _pendingCaptionTasks.isNotEmpty) {
-      final task = _pendingCaptionTasks.removeFirst();
-      _activeCaptionTasks++;
-      unawaited(_runAsyncCaptionTask(task));
-    }
-  }
-
-  Future<void> _runAsyncCaptionTask(_AsyncCaptionTask task) async {
     final watch = Stopwatch()..start();
     try {
       final caption = await task.captionService.generateCaption(
@@ -749,28 +738,7 @@ extension AIServicePipeline on AIService {
           await task.imageFile.delete();
         } catch (_) {}
       }
-      _activeCaptionTasks = math.max(0, _activeCaptionTasks - 1);
-      _pumpAsyncCaptionQueue();
     }
-  }
-
-  void _clearPendingCaptionTasks() {
-    if (_pendingCaptionTasks.isEmpty) return;
-    final skipped = _pendingCaptionTasks.length;
-    while (_pendingCaptionTasks.isNotEmpty) {
-      _disposeSkippedCaptionTask(_pendingCaptionTasks.removeFirst());
-    }
-    debugPrint('🛑 已清空待生成 caption 队列: $skipped 个任务');
-  }
-
-  void _clearAnalysisQueue() {
-    if (_analysisQueue.isEmpty) return;
-    final dropped = _analysisQueue.length;
-    for (final photo in _analysisQueue) {
-      _analysisQueuedPhotoIds.remove(photo.id);
-    }
-    _analysisQueue.clear();
-    debugPrint('🛑 已清空 AI 打标任务队列: $dropped 个任务');
   }
 
   void _disposeSkippedCaptionTask(_AsyncCaptionTask task) {
@@ -799,16 +767,6 @@ extension AIServicePipeline on AIService {
     });
   }
 
-  int _resolveWorkerCount(int workItems) {
-    if (workItems <= 1) return 1;
-    final cpuCores = Platform.numberOfProcessors;
-    final suggested = Platform.isAndroid || Platform.isIOS
-        ? (cpuCores <= 4 ? 2 : 3)
-        : (cpuCores <= 2 ? 1 : math.max(2, cpuCores - 1));
-    final bounded = math.min(AIService._maxParallelWorkers, suggested);
-    return math.max(1, math.min(bounded, workItems));
-  }
-
   Future<String?> _pendingSpoolJobId() async {
     final prefs = await SharedPreferences.getInstance();
     final jobId = prefs.getString('spool_pending_manifest_job_id');
@@ -816,11 +774,6 @@ extension AIServicePipeline on AIService {
     return jobId;
   }
 
-  String _formatWorkerWarmupStatus(List<int> readyWorkers, int totalWorkers) {
-    if (readyWorkers.isEmpty) return 'workers无 / 共$totalWorkers';
-    final labels = readyWorkers.map((id) => 'workers$id').join(',');
-    return '$labels / 共$totalWorkers';
-  }
 }
 
 /// Spool 消费报告。

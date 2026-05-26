@@ -1,0 +1,9 @@
+[submodule "third_party/ncnn_mobileclip"]
+	path = third_party/ncnn_mobileclip
+	url = https://github.com/szw0407/ncnn_mobileclip.git
+[submodule "third_party/mobileclip2_litert_export"]
+	path = third_party/mobileclip2_litert_export
+	url = https://github.com/szw0407/mobileclip2_litert_export.git
+[submodule "third_party/flutter_foreground_task"]
+	path = third_party/flutter_foreground_task
+	url = https://github.com/szw0407/flutter_foreground_task.git

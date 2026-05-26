@@ -8,6 +8,7 @@ import '../models/mobileclip_benchmark.dart';
 import 'litert_inference_service.dart';
 import 'mobileclip_litert_service.dart';
 import 'mobileclip_tag_service.dart';
+import 'ncnn_mobileclip_native_service.dart';
 
 abstract class MobileClipBenchmarkAdapter {
   const MobileClipBenchmarkAdapter();
@@ -149,6 +150,105 @@ class LiteRtMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
   }
 }
 
+class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
+  NcnnMobileClipBenchmarkAdapter({
+    NcnnMobileClipNativeService? nativeService,
+    MobileClipTagService? tagService,
+  }) : _nativeService = nativeService ?? NcnnMobileClipNativeService(),
+       _tagService = tagService ?? MobileClipTagService();
+
+  final NcnnMobileClipNativeService _nativeService;
+  final MobileClipTagService _tagService;
+
+  @override
+  String get id => 'ncnn';
+
+  @override
+  String get displayName => 'NCNN FFI';
+
+  @override
+  bool get usesSharedPreprocessing => false;
+
+  @override
+  Future<bool> isAvailable() async {
+    final status = _nativeService.getStatus();
+    if (!status.libraryLoaded) {
+      return false;
+    }
+    try {
+      await _nativeService.ensureModelInitialized();
+    } catch (_) {
+      return false;
+    }
+    return _nativeService.getStatus().canEncode;
+  }
+
+  @override
+  Future<String?> unavailableReason() async {
+    final status = _nativeService.getStatus();
+    if (!status.libraryLoaded) {
+      return status.summary;
+    }
+    try {
+      await _nativeService.ensureModelInitialized();
+    } catch (error) {
+      return error.toString();
+    }
+    return _nativeService.getStatus().summary;
+  }
+
+  @override
+  Future<double> warmUp() async {
+    final stopwatch = Stopwatch()..start();
+    await _nativeService.warmUp();
+    await _tagService.warmUp();
+    stopwatch.stop();
+    return stopwatch.elapsedMicroseconds / 1000.0;
+  }
+
+  @override
+  Future<Float32List> encodePreprocessedInput(Uint8List imageBytes) {
+    throw UnsupportedError('NCNN FFI owns its preprocessing in native code.');
+  }
+
+  @override
+  Future<MobileClipAdapterRunResult> encodeImageBytes(
+    Uint8List imageBytes, {
+    Float32List? sharedInput,
+    double? sharedPreprocessMs,
+    required MobileClipBenchmarkSample sample,
+  }) async {
+    final rssBefore = ProcessInfo.currentRss;
+    final profile = await _nativeService.profileEncodeImageBytes(imageBytes);
+    final tagWatch = Stopwatch()..start();
+    final tags = await _tagService.retrieveTags(profile.embedding);
+    tagWatch.stop();
+    final rssAfter = ProcessInfo.currentRss;
+
+    return MobileClipAdapterRunResult(
+      sample: sample,
+      adapterId: id,
+      displayName: displayName,
+      embedding: profile.embedding,
+      preprocessMs: profile.preprocessMs,
+      inferenceMs: profile.inferenceMs,
+      tagRetrievalMs: tagWatch.elapsedMicroseconds / 1000.0,
+      totalMs:
+          profile.preprocessMs +
+          profile.inferenceMs +
+          tagWatch.elapsedMicroseconds / 1000.0,
+      rssBeforeBytes: rssBefore,
+      rssAfterBytes: rssAfter,
+      tags: tags,
+    );
+  }
+
+  @override
+  Future<void> dispose() async {
+    await _nativeService.dispose();
+  }
+}
+
 class MobileClipBenchmarkService {
   MobileClipBenchmarkService({
     List<MobileClipBenchmarkAdapter>? adapters,
@@ -192,13 +292,17 @@ class MobileClipBenchmarkService {
             ('litert_cpu', 'LiteRT CPU', LocalInferenceAccelerator.cpu),
           ];
 
-    return accelerators.map((entry) {
+    final adapters = accelerators.map((entry) {
       return LiteRtMobileClipBenchmarkAdapter(
         adapterId: entry.$1,
         adapterDisplayName: entry.$2,
         accelerator: entry.$3,
       );
-    }).toList(growable: false);
+    }).toList(growable: true);
+    if (Platform.isAndroid) {
+      adapters.add(NcnnMobileClipBenchmarkAdapter());
+    }
+    return adapters;
   }
 
   Future<MobileClipBenchmarkReport> runBenchmark({

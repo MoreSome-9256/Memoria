@@ -10,6 +10,7 @@ import '../storage/vector_index/vector_index_constants.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_litert_service.dart';
 import 'app_ai_settings_service.dart';
+import 'ncnn_mobileclip_native_service.dart';
 
 class MobileClipEmbeddingService {
   MobileClipEmbeddingService._internal();
@@ -20,6 +21,8 @@ class MobileClipEmbeddingService {
   factory MobileClipEmbeddingService() => _instance;
 
   MobileClipLiteRtService _mobileclip2LiteRtService = MobileClipLiteRtService();
+  final NcnnMobileClipNativeService _ncnnService =
+      NcnnMobileClipNativeService();
   final MobileClipBackendPreferenceService _preferenceService =
       MobileClipBackendPreferenceService();
   final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
@@ -142,6 +145,9 @@ class MobileClipEmbeddingService {
       try {
         await _mobileclip2LiteRtService.dispose();
       } catch (_) {}
+      try {
+        await _ncnnService.dispose();
+      } catch (_) {}
     });
   }
 
@@ -153,6 +159,8 @@ class MobileClipEmbeddingService {
     switch (backend) {
       case MobileClipBackend.mobileclip2LiteRt:
         await _mobileclip2LiteRtService.dispose();
+      case MobileClipBackend.ncnn:
+        await _ncnnService.dispose();
     }
   }
 
@@ -163,6 +171,18 @@ class MobileClipEmbeddingService {
         _mobileclip2LiteRtService = await _resolveLiteRtService();
         await _mobileclip2LiteRtService.warmUp();
         return null;
+      case MobileClipBackend.ncnn:
+        final status = _ncnnService.getStatus();
+        if (!status.libraryLoaded) {
+          return status.summary;
+        }
+        try {
+          await _ncnnService.ensureModelInitialized();
+        } catch (error) {
+          return error.toString();
+        }
+        final refreshed = _ncnnService.getStatus();
+        return refreshed.canEncode ? null : refreshed.summary;
     }
   }
 
@@ -177,6 +197,8 @@ class MobileClipEmbeddingService {
       case MobileClipBackend.mobileclip2LiteRt:
         _mobileclip2LiteRtService = await _resolveLiteRtService();
         await _mobileclip2LiteRtService.warmUp();
+      case MobileClipBackend.ncnn:
+        await _ncnnService.warmUp();
     }
   }
 
@@ -206,6 +228,9 @@ class MobileClipEmbeddingService {
       case MobileClipBackend.mobileclip2LiteRt:
         _mobileclip2LiteRtService = await _resolveLiteRtService();
         return _mobileclip2LiteRtService.embedImageFile(imageFile);
+      case MobileClipBackend.ncnn:
+        final bytes = await imageFile.readAsBytes();
+        return _ncnnService.encodeImageBytes(bytes);
     }
   }
 
@@ -222,6 +247,8 @@ class MobileClipEmbeddingService {
       case MobileClipBackend.mobileclip2LiteRt:
         _mobileclip2LiteRtService = await _resolveLiteRtService();
         return _mobileclip2LiteRtService.embedImageBytes(imageBytes);
+      case MobileClipBackend.ncnn:
+        return _ncnnService.encodeImageBytes(imageBytes);
     }
   }
 
@@ -248,6 +275,17 @@ class MobileClipEmbeddingService {
           decodeMs: profile.decodeMs,
           resizeNormalizeMs: profile.resizeNormalizeMs,
           tensorBuildMs: profile.tensorBuildMs,
+          inferenceMs: profile.inferenceMs,
+        );
+      case MobileClipBackend.ncnn:
+        final profile = await _ncnnService.profileEncodeImageBytes(imageBytes);
+        return MobileClipEmbeddingProfile(
+          embedding: profile.embedding,
+          backendLabel: backend.label,
+          providerLabel: _ncnnService.getStatus().version,
+          decodeMs: profile.preprocessMs,
+          resizeNormalizeMs: 0,
+          tensorBuildMs: 0,
           inferenceMs: profile.inferenceMs,
         );
     }

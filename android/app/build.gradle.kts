@@ -10,6 +10,12 @@ android {
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -36,6 +42,11 @@ android {
         versionCode = flutter.versionCode.toInt()
         versionName = flutter.versionName
 
+        externalNativeBuild {
+            cmake {
+                cppFlags += listOf("-std=c++17")
+            }
+        }
     }
 
     buildTypes {

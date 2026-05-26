@@ -365,6 +365,11 @@ class _ProfilePageState extends State<ProfilePage> {
                             label: Text('MobileCLIP2 LiteRT'),
                             icon: Icon(Icons.auto_awesome_outlined),
                           ),
+                          ButtonSegment<MobileClipBackend>(
+                            value: MobileClipBackend.ncnn,
+                            label: Text('NCNN FFI'),
+                            icon: Icon(Icons.memory_outlined),
+                          ),
                         ],
                         selected: <MobileClipBackend>{selected},
                         onSelectionChanged: (selection) {

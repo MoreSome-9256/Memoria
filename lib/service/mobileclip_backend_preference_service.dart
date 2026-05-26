@@ -3,26 +3,30 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum MobileClipBackend { mobileclip2LiteRt }
+enum MobileClipBackend { mobileclip2LiteRt, ncnn }
 
 extension MobileClipBackendX on MobileClipBackend {
   String get storageValue => switch (this) {
     MobileClipBackend.mobileclip2LiteRt => 'mobileclip2_litert',
+    MobileClipBackend.ncnn => 'ncnn',
   };
 
   String get label => switch (this) {
     MobileClipBackend.mobileclip2LiteRt => 'MobileCLIP2 LiteRT',
+    MobileClipBackend.ncnn => 'NCNN FFI',
   };
 
   String get description => switch (this) {
     MobileClipBackend.mobileclip2LiteRt =>
       'Android 默认 LiteRT GPU；iOS 默认 Metal/Core ML；CPU 仅作显式后备',
+    MobileClipBackend.ncnn => 'Android 原生 FFI 桥接，优先尝试 NCNN Vulkan GPU',
   };
 
   static MobileClipBackend fromStorageValue(String? value) {
     return switch (value) {
       'mobileclip2_litert' => MobileClipBackend.mobileclip2LiteRt,
       'mobileclip2_onnx' => MobileClipBackend.mobileclip2LiteRt,
+      'ncnn' => MobileClipBackend.ncnn,
       _ => MobileClipBackend.mobileclip2LiteRt,
     };
   }

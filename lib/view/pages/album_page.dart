@@ -20,6 +20,7 @@ import '../../service/media_access_grant_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_queue_service.dart';
 import '../../storage/objectbox/objectbox_service.dart';
+import '../../utils/media_type_helper.dart';
 import '../widgets/event_card.dart';
 import 'media_access_range_page.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
@@ -286,8 +287,10 @@ class _AlbumPageState extends State<AlbumPage> {
             onPressed: () async {
               final s = await PhotoManager.requestPermissionExtend(
                 requestOption: PermissionRequestOption(
-                  androidPermission:
-                      AndroidPermission(type: type, mediaLocation: false),
+                  androidPermission: AndroidPermission(
+                    type: type,
+                    mediaLocation: false,
+                  ),
                 ),
               );
               Navigator.pop(ctx, s.hasAccess);
@@ -435,9 +438,7 @@ class _AlbumPageState extends State<AlbumPage> {
         await MediaAccessGrantService.instance.presentLimitedLibraryPicker();
       case _ImportAction.managePermissions:
         await Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(
-            builder: (_) => const MediaAccessRangePage(),
-          ),
+          MaterialPageRoute<void>(builder: (_) => const MediaAccessRangePage()),
         );
     }
   }
@@ -779,10 +780,9 @@ class _AlbumPageState extends State<AlbumPage> {
                   tooltip: '开始搜索',
                 ),
                 filled: true,
-                fillColor: Theme.of(context)
-                    .colorScheme
-                    .surfaceContainerHighest
-                    .withValues(alpha: 0.45),
+                fillColor: Theme.of(
+                  context,
+                ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(18),
                   borderSide: BorderSide.none,
@@ -850,8 +850,7 @@ class _AlbumPageState extends State<AlbumPage> {
                             : JunkPhotoCleanupBanner(
                                 key: ValueKey<String>(report.reportId),
                                 report: report,
-                                onReview: () =>
-                                    _showJunkCleanupDialog(report),
+                                onReview: () => _showJunkCleanupDialog(report),
                                 onDismiss: _dismissJunkCleanupBanner,
                               ),
                       );
@@ -862,9 +861,17 @@ class _AlbumPageState extends State<AlbumPage> {
             ),
           ),
           Expanded(
-            child: IndexedStack(
-              index: _viewMode == _AlbumViewMode.tags ? 0 : 1,
-              children: [_buildAlbumTagBrowserView(), _buildMomentsView()],
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: _viewMode == _AlbumViewMode.tags
+                  ? KeyedSubtree(
+                      key: const ValueKey<String>('album-tags-view'),
+                      child: _buildAlbumTagBrowserView(),
+                    )
+                  : KeyedSubtree(
+                      key: const ValueKey<String>('album-moments-view'),
+                      child: _buildMomentsView(),
+                    ),
             ),
           ),
         ],

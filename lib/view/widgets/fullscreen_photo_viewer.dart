@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../service/photo_service.dart';
 import '../../utils/media_type_helper.dart';
 import 'path_image.dart';
 
@@ -32,7 +33,7 @@ Future<void> showFullscreenPhotoViewer(
   );
 }
 
-class _FullscreenPhotoViewer extends StatelessWidget {
+class _FullscreenPhotoViewer extends StatefulWidget {
   const _FullscreenPhotoViewer({
     required this.path,
     required this.assetId,
@@ -44,19 +45,44 @@ class _FullscreenPhotoViewer extends StatelessWidget {
   final String? heroTag;
 
   @override
+  State<_FullscreenPhotoViewer> createState() => _FullscreenPhotoViewerState();
+}
+
+class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
+  late Future<_ResolvedFullscreenMedia> _mediaFuture;
+  bool _cleanupStarted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _mediaFuture = _resolveMedia();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return FutureBuilder<MemoriaMediaKind>(
-      future: MediaTypeHelper.resolve(path: path, assetId: assetId),
+    return FutureBuilder<_ResolvedFullscreenMedia>(
+      future: _mediaFuture,
       builder: (context, snapshot) {
-        final kind = snapshot.data ?? MediaTypeHelper.fromPath(path);
+        final media = snapshot.data;
+        if (media != null && !media.available) {
+          _cleanupUnavailableMedia();
+          return const _FullscreenMediaScaffold(
+            child: _UnavailableMediaMessage(message: '原始文件已不可访问，正在移除本地记录…'),
+          );
+        }
+        final resolvedPath = media?.path ?? widget.path;
+        final kind = media?.kind ?? MediaTypeHelper.fromPath(widget.path);
         if (kind == MemoriaMediaKind.video) {
           return _FullscreenMediaScaffold(
-            child: _FullscreenVideoPlayer(path: path, assetId: assetId),
+            child: _FullscreenVideoPlayer(
+              path: resolvedPath,
+              assetId: widget.assetId,
+            ),
           );
         }
 
         final image = PathImage(
-          path: path,
+          path: resolvedPath,
           fit: BoxFit.contain,
           enableSmartCache: false,
         );
@@ -65,13 +91,109 @@ class _FullscreenPhotoViewer extends StatelessWidget {
             child: InteractiveViewer(
               minScale: 0.8,
               maxScale: 4.0,
-              child: heroTag == null
+              child: widget.heroTag == null
                   ? image
-                  : Hero(tag: heroTag!, child: image),
+                  : Hero(tag: widget.heroTag!, child: image),
             ),
           ),
         );
       },
+    );
+  }
+
+  Future<_ResolvedFullscreenMedia> _resolveMedia() async {
+    final kind = await MediaTypeHelper.resolve(
+      path: widget.path,
+      assetId: widget.assetId,
+    );
+    if (widget.assetId != null && widget.assetId!.isNotEmpty) {
+      final asset = await AssetEntity.fromId(widget.assetId!);
+      if (asset == null) {
+        return _ResolvedFullscreenMedia(
+          kind: kind,
+          path: widget.path,
+          available: false,
+        );
+      }
+      final file = await asset.file;
+      if (file != null && await file.exists()) {
+        return _ResolvedFullscreenMedia(
+          kind: kind,
+          path: file.path,
+          available: true,
+        );
+      }
+    }
+    if (widget.path.startsWith('content://')) {
+      return _ResolvedFullscreenMedia(
+        kind: kind,
+        path: widget.path,
+        available: true,
+      );
+    }
+    final file = File(widget.path);
+    return _ResolvedFullscreenMedia(
+      kind: kind,
+      path: widget.path,
+      available: widget.path.trim().isNotEmpty && await file.exists(),
+    );
+  }
+
+  void _cleanupUnavailableMedia() {
+    if (_cleanupStarted) {
+      return;
+    }
+    _cleanupStarted = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final assetId = widget.assetId?.trim();
+      var removed = 0;
+      if (assetId != null && assetId.isNotEmpty) {
+        removed = await PhotoService().removeUnavailablePhotosByAssetIds(
+          <String>[assetId],
+        );
+      }
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).maybePop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(removed > 0 ? '原始文件已失效，已移除本地记录。' : '原始文件已不可访问。'),
+        ),
+      );
+    });
+  }
+}
+
+class _ResolvedFullscreenMedia {
+  const _ResolvedFullscreenMedia({
+    required this.kind,
+    required this.path,
+    required this.available,
+  });
+
+  final MemoriaMediaKind kind;
+  final String path;
+  final bool available;
+}
+
+class _UnavailableMediaMessage extends StatelessWidget {
+  const _UnavailableMediaMessage({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
+        ),
+      ),
     );
   }
 }

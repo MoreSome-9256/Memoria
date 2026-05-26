@@ -130,6 +130,8 @@ class EventEntity {
           id: entity.assetId,
           path: resolvedPath,
           dateTaken: DateTime.fromMillisecondsSinceEpoch(entity.timestamp),
+          mediaKind: entity.mediaKind,
+          thumbnailPath: entity.thumbnailPath,
           tags: TagSanitizer.sanitizeVisualTags(
             entity.aiTags ?? const <String>[],
           ),

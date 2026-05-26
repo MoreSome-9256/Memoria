@@ -3,6 +3,26 @@
 part of 'photo_service.dart';
 
 extension PhotoServiceAccess on PhotoService {
+  Future<int> removeUnavailablePhotosByAssetIds(
+    Iterable<String> assetIds,
+  ) async {
+    final normalized = assetIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (normalized.isEmpty) {
+      return 0;
+    }
+
+    final query = _photoBox
+        .query(PhotoEntity_.assetId.oneOf(normalized))
+        .build();
+    final ids = query.findIds();
+    query.close();
+    return removeUnavailablePhotosByIds(ids);
+  }
+
   Future<int> removeUnavailablePhotosByIds(Iterable<int> photoIds) async {
     final ids = photoIds.where((id) => id > 0).toSet().toList(growable: false);
     if (ids.isEmpty) {
@@ -70,34 +90,34 @@ extension PhotoServiceAccess on PhotoService {
     final removedIds = <int>[];
     final repairedPhotos = <PhotoEntity>[];
     for (final photo in localPhotos) {
-        if (photo.path.startsWith('content://')) {
-          continue;
-        }
-        final asset = await AssetEntity.fromId(photo.assetId);
-        if (asset == null) {
-          removedIds.add(photo.id);
-          continue;
-        }
+      if (photo.path.startsWith('content://')) {
+        continue;
+      }
+      final asset = await AssetEntity.fromId(photo.assetId);
+      if (asset == null) {
+        removedIds.add(photo.id);
+        continue;
+      }
 
-        final currentFile = photo.path.trim().isEmpty ? null : File(photo.path);
-        if (currentFile != null && currentFile.existsSync()) {
-          continue;
-        }
+      final currentFile = photo.path.trim().isEmpty ? null : File(photo.path);
+      if (currentFile != null && currentFile.existsSync()) {
+        continue;
+      }
 
-        final refreshedFile = await _resolveReadableFile(asset);
-        if (refreshedFile != null && refreshedFile.existsSync()) {
-          photo.path = refreshedFile.path;
-          final refreshedTimestamp = _resolveBestTimestampMs(
-            asset,
-            refreshedFile,
-          );
-          if (PhotoFilterHelper.hasValidTimestamp(refreshedTimestamp)) {
-            photo.timestamp = refreshedTimestamp;
-          }
-          repairedPhotos.add(photo);
-        } else {
-          removedIds.add(photo.id);
+      final refreshedFile = await _resolveReadableFile(asset);
+      if (refreshedFile != null && refreshedFile.existsSync()) {
+        photo.path = refreshedFile.path;
+        final refreshedTimestamp = _resolveBestTimestampMs(
+          asset,
+          refreshedFile,
+        );
+        if (PhotoFilterHelper.hasValidTimestamp(refreshedTimestamp)) {
+          photo.timestamp = refreshedTimestamp;
         }
+        repairedPhotos.add(photo);
+      } else {
+        removedIds.add(photo.id);
+      }
     }
 
     if (removedIds.isEmpty && repairedPhotos.isEmpty) {
@@ -137,78 +157,76 @@ extension PhotoServiceAccess on PhotoService {
     var removedCount = 0;
     var repairedCount = 0;
     for (final photo in candidates) {
-        if (photo.path.startsWith('content://')) {
-          _photoAccessCache[_photoAccessCacheKey(
-            photo,
-          )] = _PhotoAccessCacheEntry(
-            checkedAtMs: nowMs,
-            resolvedPath: photo.path,
-          );
-          continue;
-        }
-        final cacheKey = _photoAccessCacheKey(photo);
-        final cacheEntry = _photoAccessCache[cacheKey];
-        if (cacheEntry != null &&
-            nowMs - cacheEntry.checkedAtMs <=
-                PhotoService._photoAccessCacheTtl.inMilliseconds) {
-          cacheHits++;
-          if (cacheEntry.isRemoved) {
-            if (photo.id > 0) {
-              removedIds.add(photo.id);
-            }
-            removedCount++;
-            continue;
-          }
-          final resolvedPath = cacheEntry.resolvedPath;
-          if (resolvedPath != null && resolvedPath.isNotEmpty) {
-            photo.path = resolvedPath;
-            continue;
-          }
-        }
-
-        final currentFile = photo.path.trim().isEmpty ? null : File(photo.path);
-        if (currentFile != null && currentFile.existsSync()) {
-          _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
-            checkedAtMs: nowMs,
-            resolvedPath: photo.path,
-          );
-          continue;
-        }
-
-        final asset = await AssetEntity.fromId(photo.assetId);
-        if (asset == null) {
+      if (photo.path.startsWith('content://')) {
+        _photoAccessCache[_photoAccessCacheKey(photo)] = _PhotoAccessCacheEntry(
+          checkedAtMs: nowMs,
+          resolvedPath: photo.path,
+        );
+        continue;
+      }
+      final cacheKey = _photoAccessCacheKey(photo);
+      final cacheEntry = _photoAccessCache[cacheKey];
+      if (cacheEntry != null &&
+          nowMs - cacheEntry.checkedAtMs <=
+              PhotoService._photoAccessCacheTtl.inMilliseconds) {
+        cacheHits++;
+        if (cacheEntry.isRemoved) {
           if (photo.id > 0) {
             removedIds.add(photo.id);
           }
-          _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
-            checkedAtMs: nowMs,
-            isRemoved: true,
-          );
           removedCount++;
           continue;
         }
-
-        final refreshedFile = await _resolveReadableFile(asset);
-        if (refreshedFile != null && refreshedFile.existsSync()) {
-          if (photo.path != refreshedFile.path) {
-            photo.path = refreshedFile.path;
-            if (photo.id > 0) {
-              repairedIds.add(photo.id);
-            }
-            repairedCount++;
-          }
-          _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
-            checkedAtMs: nowMs,
-            resolvedPath: refreshedFile.path,
-          );
-        } else if (photo.id > 0) {
-          removedIds.add(photo.id);
-          _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
-            checkedAtMs: nowMs,
-            isRemoved: true,
-          );
-          removedCount++;
+        final resolvedPath = cacheEntry.resolvedPath;
+        if (resolvedPath != null && resolvedPath.isNotEmpty) {
+          photo.path = resolvedPath;
+          continue;
         }
+      }
+
+      final currentFile = photo.path.trim().isEmpty ? null : File(photo.path);
+      if (currentFile != null && currentFile.existsSync()) {
+        _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
+          checkedAtMs: nowMs,
+          resolvedPath: photo.path,
+        );
+        continue;
+      }
+
+      final asset = await AssetEntity.fromId(photo.assetId);
+      if (asset == null) {
+        if (photo.id > 0) {
+          removedIds.add(photo.id);
+        }
+        _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
+          checkedAtMs: nowMs,
+          isRemoved: true,
+        );
+        removedCount++;
+        continue;
+      }
+
+      final refreshedFile = await _resolveReadableFile(asset);
+      if (refreshedFile != null && refreshedFile.existsSync()) {
+        if (photo.path != refreshedFile.path) {
+          photo.path = refreshedFile.path;
+          if (photo.id > 0) {
+            repairedIds.add(photo.id);
+          }
+          repairedCount++;
+        }
+        _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
+          checkedAtMs: nowMs,
+          resolvedPath: refreshedFile.path,
+        );
+      } else if (photo.id > 0) {
+        removedIds.add(photo.id);
+        _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
+          checkedAtMs: nowMs,
+          isRemoved: true,
+        );
+        removedCount++;
+      }
     }
 
     final repairedPhotos = repairedIds.isEmpty

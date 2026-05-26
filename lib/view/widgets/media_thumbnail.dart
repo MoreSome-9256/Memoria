@@ -3,14 +3,16 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 
+import '../../service/media_thumbnail_cache_service.dart';
 import '../../utils/media_type_helper.dart';
-import 'path_image.dart';
 
-class MediaThumbnail extends StatelessWidget {
+class MediaThumbnail extends StatefulWidget {
   const MediaThumbnail({
     super.key,
     required this.path,
     this.assetId,
+    this.kind,
+    this.thumbnailPath,
     this.fit = BoxFit.cover,
     this.onFirstFrame,
     this.showBadge = true,
@@ -18,33 +20,68 @@ class MediaThumbnail extends StatelessWidget {
 
   final String path;
   final String? assetId;
+  final MemoriaMediaKind? kind;
+  final String? thumbnailPath;
   final BoxFit fit;
   final VoidCallback? onFirstFrame;
   final bool showBadge;
 
   @override
+  State<MediaThumbnail> createState() => _MediaThumbnailState();
+}
+
+class _MediaThumbnailState extends State<MediaThumbnail> {
+  static const int _thumbnailSize = 256;
+  static const int _maxMemoryCacheEntries = 96;
+  static final Map<String, _MediaThumbnailData> _memoryCache =
+      <String, _MediaThumbnailData>{};
+
+  late Future<_MediaThumbnailData> _future;
+  bool _frameReported = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant MediaThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.path != widget.path ||
+        oldWidget.assetId != widget.assetId ||
+        oldWidget.kind != widget.kind ||
+        oldWidget.thumbnailPath != widget.thumbnailPath) {
+      _frameReported = false;
+      _future = _load();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return FutureBuilder<_MediaThumbnailData>(
-      future: _load(),
+      future: _future,
       builder: (context, snapshot) {
         final data = snapshot.data;
-        final kind = data?.kind ?? MediaTypeHelper.fromPath(path);
+        final kind =
+            data?.kind ?? widget.kind ?? MediaTypeHelper.fromPath(widget.path);
         final thumb = data?.thumbnailBytes;
         final child = thumb != null && thumb.isNotEmpty
             ? Image.memory(
                 thumb,
-                fit: fit,
+                fit: widget.fit,
                 width: double.infinity,
                 height: double.infinity,
-                cacheWidth: 384,
-                cacheHeight: 384,
+                cacheWidth: _thumbnailSize,
+                cacheHeight: _thumbnailSize,
                 filterQuality: FilterQuality.low,
                 frameBuilder: _frameBuilder,
-                errorBuilder: (_, _, _) => _pathImage(),
+                gaplessPlayback: true,
+                errorBuilder: (_, _, _) => _fallbackForKind(kind),
               )
-            : _pathImage();
+            : _fallbackForKind(kind);
 
-        if (!showBadge ||
+        if (!widget.showBadge ||
             (kind != MemoriaMediaKind.video &&
                 kind != MemoriaMediaKind.dynamicImage)) {
           return child;
@@ -86,38 +123,92 @@ class MediaThumbnail extends StatelessWidget {
     bool wasSynchronouslyLoaded,
   ) {
     if (wasSynchronouslyLoaded || frame != null) {
-      onFirstFrame?.call();
+      _reportFirstFrame();
     }
     return child;
   }
 
-  Widget _pathImage() {
-    return PathImage(
-      path: path,
-      fit: fit,
-      onFirstFrame: onFirstFrame,
+  void _reportFirstFrame() {
+    if (_frameReported) {
+      return;
+    }
+    _frameReported = true;
+    widget.onFirstFrame?.call();
+  }
+
+  Widget _fallbackForKind(MemoriaMediaKind kind) {
+    _reportFirstFrame();
+    return DecoratedBox(
+      decoration: BoxDecoration(color: Colors.grey.shade200),
+      child: Center(
+        child: Icon(
+          kind == MemoriaMediaKind.video
+              ? Icons.play_arrow_rounded
+              : Icons.image_outlined,
+          color: Colors.grey.shade500,
+        ),
+      ),
     );
   }
 
   Future<_MediaThumbnailData> _load() async {
-    final kind = await MediaTypeHelper.resolve(path: path, assetId: assetId);
-    if (assetId == null || assetId!.isEmpty) {
-      return _MediaThumbnailData(kind: kind);
+    final indexedKind = widget.kind ?? MediaTypeHelper.fromPath(widget.path);
+    final cacheKey =
+        '${widget.assetId ?? ''}|${widget.path}|${widget.thumbnailPath ?? ''}|${indexedKind.name}';
+    final cached = _memoryCache[cacheKey];
+    if (cached != null) {
+      return cached;
     }
-    if (kind != MemoriaMediaKind.video &&
-        kind != MemoriaMediaKind.dynamicImage) {
-      return _MediaThumbnailData(kind: kind);
-    }
-    try {
-      final asset = await AssetEntity.fromId(assetId!);
-      final bytes = await asset?.thumbnailDataWithSize(
-        const ThumbnailSize.square(256),
-        quality: 72,
+
+    final kind =
+        widget.kind ??
+        await MediaTypeHelper.resolve(
+          path: widget.path,
+          assetId: widget.assetId,
+        );
+    final indexedThumbBytes = await MediaThumbnailCacheService.instance
+        .readBytes(widget.thumbnailPath);
+    if (indexedThumbBytes != null && indexedThumbBytes.isNotEmpty) {
+      return _remember(
+        cacheKey,
+        _MediaThumbnailData(kind: kind, thumbnailBytes: indexedThumbBytes),
       );
-      return _MediaThumbnailData(kind: kind, thumbnailBytes: bytes);
-    } catch (_) {
-      return _MediaThumbnailData(kind: kind);
     }
+
+    final assetId = widget.assetId;
+    if (assetId == null || assetId.isEmpty) {
+      return _remember(cacheKey, _MediaThumbnailData(kind: kind));
+    }
+
+    try {
+      final asset = await AssetEntity.fromId(assetId);
+      if (asset == null) {
+        return _remember(cacheKey, _MediaThumbnailData(kind: kind));
+      }
+      final cachedPath = await MediaThumbnailCacheService.instance
+          .ensureForAsset(asset);
+      final bytes = await MediaThumbnailCacheService.instance.readBytes(
+        cachedPath,
+      );
+      if (bytes != null &&
+          bytes.lengthInBytes > MediaThumbnailCacheService.maxThumbnailBytes) {
+        return _remember(cacheKey, _MediaThumbnailData(kind: kind));
+      }
+      return _remember(
+        cacheKey,
+        _MediaThumbnailData(kind: kind, thumbnailBytes: bytes),
+      );
+    } catch (_) {
+      return _remember(cacheKey, _MediaThumbnailData(kind: kind));
+    }
+  }
+
+  _MediaThumbnailData _remember(String key, _MediaThumbnailData data) {
+    _memoryCache[key] = data;
+    if (_memoryCache.length > _maxMemoryCacheEntries) {
+      _memoryCache.remove(_memoryCache.keys.first);
+    }
+    return data;
   }
 }
 

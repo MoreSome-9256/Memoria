@@ -152,6 +152,8 @@ class StoryEntity {
           entity.district ??
           entity.city ??
           entity.province,
+      mediaKind: entity.mediaKind,
+      thumbnailPath: entity.thumbnailPath,
     );
   }
 }

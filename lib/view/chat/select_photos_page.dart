@@ -3,9 +3,10 @@ import '../../models/entity/photo_entity.dart';
 import '../../models/vo/photo.dart';
 import '../../models/event.dart';
 import '../../models/ai_theme.dart';
+import '../../utils/media_type_helper.dart';
 import '../../utils/tag_sanitizer.dart';
 import '../../utils/ocr_policy.dart';
-import '../widgets/path_image.dart';
+import '../widgets/media_thumbnail.dart';
 import '../pages/story_config_page.dart'; // 请确认这个路径匹配你的项目目录结构
 
 class SelectPhotosPage extends StatefulWidget {
@@ -51,6 +52,8 @@ class _SelectPhotosPageState extends State<SelectPhotosPage> {
       ),
       ocrTags: OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]),
       isSelected: true,
+      mediaKind: photo.mediaKind,
+      thumbnailPath: photo.thumbnailPath,
     );
   }
 
@@ -153,7 +156,16 @@ class _SelectPhotosPageState extends State<SelectPhotosPage> {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: PathImage(path: photo.path, fit: BoxFit.cover),
+                  child: MediaThumbnail(
+                    path: photo.path,
+                    assetId: photo.assetId,
+                    kind: MediaTypeHelper.fromStorageValue(
+                      photo.mediaKind,
+                      path: photo.path,
+                    ),
+                    thumbnailPath: photo.thumbnailPath,
+                    fit: BoxFit.cover,
+                  ),
                 ),
                 if (isSelected)
                   Container(

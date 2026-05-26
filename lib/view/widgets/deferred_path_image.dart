@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 
+import '../../utils/media_type_helper.dart';
 import 'media_thumbnail.dart';
 
 class DeferredPathImage extends StatefulWidget {
@@ -10,11 +11,15 @@ class DeferredPathImage extends StatefulWidget {
     super.key,
     required this.path,
     this.assetId,
+    this.kind,
+    this.thumbnailPath,
     this.fit = BoxFit.cover,
   });
 
   final String path;
   final String? assetId;
+  final MemoriaMediaKind? kind;
+  final String? thumbnailPath;
   final BoxFit fit;
 
   @override
@@ -28,6 +33,23 @@ class _DeferredPathImageState extends State<DeferredPathImage> {
   @override
   void initState() {
     super.initState();
+    _scheduleLoad();
+  }
+
+  @override
+  void didUpdateWidget(covariant DeferredPathImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.path != widget.path ||
+        oldWidget.assetId != widget.assetId ||
+        oldWidget.kind != widget.kind ||
+        oldWidget.thumbnailPath != widget.thumbnailPath) {
+      _ready = false;
+      _timer?.cancel();
+      _scheduleLoad();
+    }
+  }
+
+  void _scheduleLoad() {
     final delayMs = 30 + (widget.path.hashCode.abs() % 11) * 28;
     _timer = Timer(Duration(milliseconds: delayMs), () {
       if (!mounted) {
@@ -51,6 +73,8 @@ class _DeferredPathImageState extends State<DeferredPathImage> {
       return MediaThumbnail(
         path: widget.path,
         assetId: widget.assetId,
+        kind: widget.kind,
+        thumbnailPath: widget.thumbnailPath,
         fit: widget.fit,
       );
     }

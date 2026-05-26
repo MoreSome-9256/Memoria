@@ -76,23 +76,22 @@ class _PhotoAssetBuilder {
     }
 
     for (final asset in assets) {
-
-        if (skipExisting && existingByAssetId.containsKey(asset.id)) {
-          if (resolveFile) {
-            final existing = existingByAssetId[asset.id]!;
-            final refreshed = await _refreshIfChanged(existing, asset);
-            if (refreshed != null) refreshedExisting.add(refreshed);
-          }
-          continue;
+      if (skipExisting && existingByAssetId.containsKey(asset.id)) {
+        if (resolveFile) {
+          final existing = existingByAssetId[asset.id]!;
+          final refreshed = await _refreshIfChanged(existing, asset);
+          if (refreshed != null) refreshedExisting.add(refreshed);
         }
+        continue;
+      }
 
-        buildResults.add(
-          await buildSingleAssetPhoto(
-            asset,
-            filterProfile: filterProfile,
-            resolveFile: resolveFile,
-          ),
-        );
+      buildResults.add(
+        await buildSingleAssetPhoto(
+          asset,
+          filterProfile: filterProfile,
+          resolveFile: resolveFile,
+        ),
+      );
     }
 
     if (refreshedExisting.isNotEmpty) {
@@ -158,6 +157,16 @@ class _PhotoAssetBuilder {
         ? resolveBestTimestampMs(asset, file)
         : asset.createDateTime.millisecondsSinceEpoch;
     final path = file?.path ?? '';
+    final mimeType = asset.mimeType;
+    final isLivePhoto = asset.isLivePhoto;
+    final mediaKind = _resolveMediaKind(
+      asset: asset,
+      path: path,
+      mimeType: mimeType,
+      isLivePhoto: isLivePhoto,
+    );
+    final thumbnailPath = await MediaThumbnailCacheService.instance
+        .ensureForAsset(asset);
 
     final hasGps = PhotoFilterHelper.hasValidGps(
       latLong?.latitude,
@@ -169,6 +178,10 @@ class _PhotoAssetBuilder {
       ..path = path
       ..width = width
       ..height = height
+      ..mediaKind = MediaTypeHelper.toStorageValue(mediaKind)
+      ..mimeType = mimeType
+      ..isLivePhoto = isLivePhoto
+      ..thumbnailPath = thumbnailPath
       ..latitude = hasGps ? latLong!.latitude : null
       ..longitude = hasGps ? latLong!.longitude : null
       ..isLocationProcessed = false;
@@ -251,7 +264,58 @@ class _PhotoAssetBuilder {
       existing.height = asset.height;
       changed = true;
     }
+    final mimeType = asset.mimeType;
+    final isLivePhoto = asset.isLivePhoto;
+    final mediaKind = MediaTypeHelper.toStorageValue(
+      _resolveMediaKind(
+        asset: asset,
+        path: file.path,
+        mimeType: mimeType,
+        isLivePhoto: isLivePhoto,
+      ),
+    );
+    if (existing.mediaKind != mediaKind) {
+      existing.mediaKind = mediaKind;
+      changed = true;
+    }
+    if (existing.mimeType != mimeType) {
+      existing.mimeType = mimeType;
+      changed = true;
+    }
+    if (existing.isLivePhoto != isLivePhoto) {
+      existing.isLivePhoto = isLivePhoto;
+      changed = true;
+    }
+    final thumbnailPath = await MediaThumbnailCacheService.instance
+        .ensureForAsset(asset);
+    if (thumbnailPath != null &&
+        thumbnailPath.isNotEmpty &&
+        existing.thumbnailPath != thumbnailPath) {
+      existing.thumbnailPath = thumbnailPath;
+      changed = true;
+    }
     return changed ? existing : null;
+  }
+
+  MemoriaMediaKind _resolveMediaKind({
+    required AssetEntity asset,
+    required String path,
+    required String? mimeType,
+    required bool isLivePhoto,
+  }) {
+    if (asset.type == AssetType.video ||
+        mimeType?.toLowerCase().startsWith('video/') == true ||
+        MediaTypeHelper.isVideoPath(path)) {
+      return MemoriaMediaKind.video;
+    }
+    final normalizedMime = mimeType?.toLowerCase() ?? '';
+    if (isLivePhoto ||
+        normalizedMime == 'image/gif' ||
+        normalizedMime == 'image/webp' ||
+        MediaTypeHelper.isDynamicImagePath(path)) {
+      return MemoriaMediaKind.dynamicImage;
+    }
+    return MemoriaMediaKind.image;
   }
 
   void logAssetExtInfo({

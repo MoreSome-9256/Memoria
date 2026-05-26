@@ -18,6 +18,13 @@ class PhotoEntity {
   late int width;
   late int height;
 
+  // 媒体索引信息：扫描阶段写入，UI 阶段只读本地字段，避免逐张反查系统相册。
+  @Index()
+  String mediaKind = 'image'; // image / dynamicImage / video
+  String? mimeType;
+  bool isLivePhoto = false;
+  String? thumbnailPath;
+
   // 📍 地理坐标 (WGS84 标准坐标)
   double? latitude;
   double? longitude;

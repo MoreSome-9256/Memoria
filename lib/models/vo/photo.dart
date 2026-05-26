@@ -13,6 +13,8 @@ class Photo {
   final bool isSelected;
   final int width;
   final int height;
+  final String mediaKind;
+  final String? thumbnailPath;
   final List<dynamic>? faces; // 存放人脸数据 (可以兼容传入 FaceEntity)
 
   Photo({
@@ -29,6 +31,8 @@ class Photo {
     // 默认给 0 和 null，这样你项目里其他创建 Photo 的旧代码就不会报错
     this.width = 0,
     this.height = 0,
+    this.mediaKind = 'image',
+    this.thumbnailPath,
     this.faces,
   });
 
@@ -45,6 +49,8 @@ class Photo {
     bool? isSelected,
     int? width,
     int? height,
+    String? mediaKind,
+    String? thumbnailPath,
     List<dynamic>? faces,
   }) {
     return Photo(
@@ -60,6 +66,8 @@ class Photo {
       isSelected: isSelected ?? this.isSelected,
       width: width ?? this.width,
       height: height ?? this.height,
+      mediaKind: mediaKind ?? this.mediaKind,
+      thumbnailPath: thumbnailPath ?? this.thumbnailPath,
       faces: faces ?? this.faces,
     );
   }

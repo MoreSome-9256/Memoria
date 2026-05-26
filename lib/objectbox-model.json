@@ -621,7 +621,7 @@
     },
     {
       "id": "8:8597624262250363654",
-      "lastPropertyId": "25:2523304659420016161",
+      "lastPropertyId": "29:6330921796923913428",
       "name": "PhotoEntity",
       "properties": [
         {
@@ -761,6 +761,28 @@
           "indexId": "25:4477625239667923326",
           "type": 6,
           "flags": 8
+        },
+        {
+          "id": "26:7583627293392505609",
+          "name": "mediaKind",
+          "indexId": "40:6858426564956238268",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "27:6192413369837109762",
+          "name": "mimeType",
+          "type": 9
+        },
+        {
+          "id": "28:1591879939755344233",
+          "name": "isLivePhoto",
+          "type": 1
+        },
+        {
+          "id": "29:6330921796923913428",
+          "name": "thumbnailPath",
+          "type": 9
         }
       ],
       "relations": []
@@ -1062,7 +1084,7 @@
     }
   ],
   "lastEntityId": "13:5122727067842506599",
-  "lastIndexId": "39:6827518044726972568",
+  "lastIndexId": "40:6858426564956238268",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

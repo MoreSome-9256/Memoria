@@ -10,7 +10,7 @@ class _DeferredImageTicket {
 }
 
 class _DeferredImageLoadScheduler {
-  static const int _maxConcurrent = 4;
+  static const int _maxConcurrent = 2;
   static final ValueNotifier<int> pendingCountListenable = ValueNotifier<int>(
     0,
   );
@@ -108,6 +108,11 @@ class _AlbumTagPhotoTile extends StatelessWidget {
                 child: _DeferredPathImage(
                   path: photo.path,
                   assetId: photo.assetId,
+                  kind: MediaTypeHelper.fromStorageValue(
+                    photo.mediaKind,
+                    path: photo.path,
+                  ),
+                  thumbnailPath: photo.thumbnailPath,
                   fit: BoxFit.cover,
                 ),
               ),
@@ -158,11 +163,15 @@ class _DeferredPathImage extends StatefulWidget {
   const _DeferredPathImage({
     required this.path,
     this.assetId,
+    this.kind,
+    this.thumbnailPath,
     this.fit = BoxFit.cover,
   });
 
   final String path;
   final String? assetId;
+  final MemoriaMediaKind? kind;
+  final String? thumbnailPath;
   final BoxFit fit;
 
   @override
@@ -215,6 +224,8 @@ class _DeferredPathImageState extends State<_DeferredPathImage> {
       return MediaThumbnail(
         path: widget.path,
         assetId: widget.assetId,
+        kind: widget.kind,
+        thumbnailPath: widget.thumbnailPath,
         fit: widget.fit,
         onFirstFrame: _onFirstFrame,
       );

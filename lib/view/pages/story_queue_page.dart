@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../service/story_queue_service.dart';
+import '../../utils/media_type_helper.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import '../widgets/media_thumbnail.dart';
 import 'story_config_page.dart';
@@ -53,16 +54,13 @@ class StoryQueuePage extends StatelessWidget {
                     Text(
                       '共 ${items.length} 张，按加入队列的顺序生成故事',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Text(
                       '建议先把每张图片描述改成更贴合画面的内容，再生成故事；拖动可调整顺序，点图片查看大图，点右侧可移除。',
-                      style: TextStyle(
-                        color: Colors.grey[700],
-                        height: 1.4,
-                      ),
+                      style: TextStyle(color: Colors.grey[700], height: 1.4),
                     ),
                   ],
                 ),
@@ -106,7 +104,9 @@ class StoryQueuePage extends StatelessWidget {
             return Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
               child: FilledButton.icon(
-                onPressed: items.isEmpty ? null : () => _openConfigPage(context, queue),
+                onPressed: items.isEmpty
+                    ? null
+                    : () => _openConfigPage(context, queue),
                 icon: const Icon(Icons.auto_stories_rounded),
                 label: Text(items.isEmpty ? '先加入照片' : '生成故事 ${items.length}'),
                 style: FilledButton.styleFrom(
@@ -176,7 +176,8 @@ class _QueuePhotoTileState extends State<_QueuePhotoTile> {
   void didUpdateWidget(covariant _QueuePhotoTile oldWidget) {
     super.didUpdateWidget(oldWidget);
     final latestCaption = _captionText;
-    if (_captionFocusNode.hasFocus || _captionController.text == latestCaption) {
+    if (_captionFocusNode.hasFocus ||
+        _captionController.text == latestCaption) {
       return;
     }
     _captionController.value = TextEditingValue(
@@ -240,6 +241,11 @@ class _QueuePhotoTileState extends State<_QueuePhotoTile> {
                         child: MediaThumbnail(
                           path: photo.path,
                           assetId: photo.id,
+                          kind: MediaTypeHelper.fromStorageValue(
+                            photo.mediaKind,
+                            path: photo.path,
+                          ),
+                          thumbnailPath: photo.thumbnailPath,
                           fit: BoxFit.cover,
                         ),
                       ),
@@ -254,17 +260,13 @@ class _QueuePhotoTileState extends State<_QueuePhotoTile> {
                     children: [
                       Text(
                         '第 ${widget.index + 1} 张',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 6),
-                      Text(
-                        meta,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if ((widget.item.semanticSearchQuery?.trim().isNotEmpty ?? false)) ...[
+                      Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      if ((widget.item.semanticSearchQuery?.trim().isNotEmpty ??
+                          false)) ...[
                         const SizedBox(height: 6),
                         Text(
                           '搜索线索：${widget.item.semanticSearchQuery!.trim()}',
@@ -314,10 +316,9 @@ class _QueuePhotoTileState extends State<_QueuePhotoTile> {
                 hintText: '手动写一句更贴合这张图片的描述',
                 isDense: true,
                 filled: true,
-                fillColor: Theme.of(context)
-                    .colorScheme
-                    .surfaceContainerHighest
-                    .withValues(alpha: 0.18),
+                fillColor: Theme.of(
+                  context,
+                ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.18),
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 14,
                   vertical: 12,
@@ -325,13 +326,17 @@ class _QueuePhotoTileState extends State<_QueuePhotoTile> {
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
                   borderSide: BorderSide(
-                    color: Theme.of(context).dividerColor.withValues(alpha: 0.18),
+                    color: Theme.of(
+                      context,
+                    ).dividerColor.withValues(alpha: 0.18),
                   ),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(16),
                   borderSide: BorderSide(
-                    color: Theme.of(context).dividerColor.withValues(alpha: 0.18),
+                    color: Theme.of(
+                      context,
+                    ).dividerColor.withValues(alpha: 0.18),
                   ),
                 ),
                 focusedBorder: OutlineInputBorder(
@@ -349,10 +354,7 @@ class _QueuePhotoTileState extends State<_QueuePhotoTile> {
                 '参考标签：$tags',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.grey[700],
-                  fontSize: 12,
-                ),
+                style: TextStyle(color: Colors.grey[700], fontSize: 12),
               ),
             ],
           ],
@@ -379,10 +381,9 @@ class _EmptyQueueView extends StatelessWidget {
               width: 84,
               height: 84,
               decoration: BoxDecoration(
-                color: Theme.of(context)
-                    .colorScheme
-                    .primaryContainer
-                    .withValues(alpha: 0.65),
+                color: Theme.of(
+                  context,
+                ).colorScheme.primaryContainer.withValues(alpha: 0.65),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -394,9 +395,9 @@ class _EmptyQueueView extends StatelessWidget {
             const SizedBox(height: 18),
             Text(
               '故事队列还是空的',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 8),
             Text(

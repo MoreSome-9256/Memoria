@@ -18,9 +18,11 @@ import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/face_embedding_index_repository.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../utils/photo_filter_helper.dart';
+import '../utils/media_type_helper.dart';
 import 'album_selection_preference_service.dart';
 import 'app_ai_settings_service.dart';
 import 'junk_photo_filter_service.dart';
+import 'media_thumbnail_cache_service.dart';
 
 part 'photo_service_models.dart';
 part 'photo_service_scan.dart';
@@ -99,9 +101,11 @@ class PhotoService {
     PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
     bool resolveFile = false,
   }) {
-    return _PhotoAssetBuilder(
-      this,
-    ).buildSingleAssetPhoto(asset, filterProfile: filterProfile, resolveFile: resolveFile);
+    return _PhotoAssetBuilder(this).buildSingleAssetPhoto(
+      asset,
+      filterProfile: filterProfile,
+      resolveFile: resolveFile,
+    );
   }
 
   Future<File?> _resolveReadableFile(AssetEntity asset) {

@@ -234,6 +234,8 @@ class StoryQueueService {
       ),
       ocrTags: OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]),
       isSelected: true,
+      mediaKind: photo.mediaKind,
+      thumbnailPath: photo.thumbnailPath,
     );
   }
 

@@ -112,8 +112,10 @@ class _CreatePageState extends State<CreatePage> {
     }
 
     final _pb = ObjectBoxService().store.box<PhotoEntity>();
-    final _q = _pb.query(PhotoEntity_.isAiAnalyzed.equals(true))
-        .order(PhotoEntity_.timestamp, flags: Order.descending).build();
+    final _q = _pb
+        .query(PhotoEntity_.isAiAnalyzed.equals(true))
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
     final photos = _q.find();
     _q.close();
 
@@ -179,6 +181,8 @@ class _CreatePageState extends State<CreatePage> {
       ),
       ocrTags: OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]),
       isSelected: true,
+      mediaKind: photo.mediaKind,
+      thumbnailPath: photo.thumbnailPath,
     );
   }
 
@@ -535,7 +539,9 @@ class _CreatePageState extends State<CreatePage> {
       return;
     }
 
-    final allSelected = _searchResults.every((photo) => _selectedPhotoIds.contains(photo.id));
+    final allSelected = _searchResults.every(
+      (photo) => _selectedPhotoIds.contains(photo.id),
+    );
     if (allSelected) {
       _deselectAll();
     } else {
@@ -795,7 +801,8 @@ class _CreatePageState extends State<CreatePage> {
 
   // ✨ 全选/全不选操作条
   Widget _buildSelectionBar() {
-    final allSelected = _searchResults.isNotEmpty &&
+    final allSelected =
+        _searchResults.isNotEmpty &&
         _searchResults.every((photo) => _selectedPhotoIds.contains(photo.id));
 
     return Padding(

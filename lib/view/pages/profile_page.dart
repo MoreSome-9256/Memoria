@@ -24,6 +24,7 @@ import 'media_access_range_page.dart';
 import 'media_vector_similarity_test_page.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
+import '../../service/media_thumbnail_cache_service.dart';
 import '../../service/video_cache_service.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -92,13 +93,7 @@ class _ProfilePageState extends State<ProfilePage> {
       '1280x720': <int>[1280, 720],
       '1920x1080': <int>[1920, 1080],
     };
-    const minPixelOptions = <int?>[
-      null,
-      300000,
-      1000000,
-      2000000,
-      4000000,
-    ];
+    const minPixelOptions = <int?>[null, 300000, 1000000, 2000000, 4000000];
 
     await showModalBottomSheet<void>(
       context: context,
@@ -153,19 +148,22 @@ class _ProfilePageState extends State<ProfilePage> {
                     ),
                     const SizedBox(height: 8),
                     DropdownButton<String>(
-                      value: resolutionOptions.containsKey(selectedResolutionKey)
+                      value:
+                          resolutionOptions.containsKey(selectedResolutionKey)
                           ? selectedResolutionKey
                           : 'none',
-                      items: resolutionOptions.entries.map((entry) {
-                        final pair = entry.value;
-                        final label = pair == null
-                            ? '不限制'
-                            : '${pair[0]} x ${pair[1]}';
-                        return DropdownMenuItem<String>(
-                          value: entry.key,
-                          child: Text(label),
-                        );
-                      }).toList(growable: false),
+                      items: resolutionOptions.entries
+                          .map((entry) {
+                            final pair = entry.value;
+                            final label = pair == null
+                                ? '不限制'
+                                : '${pair[0]} x ${pair[1]}';
+                            return DropdownMenuItem<String>(
+                              value: entry.key,
+                              child: Text(label),
+                            );
+                          })
+                          .toList(growable: false),
                       onChanged: (key) => setSheetState(() {
                         selectedResolutionKey = key ?? 'none';
                       }),
@@ -178,17 +176,19 @@ class _ProfilePageState extends State<ProfilePage> {
                     const SizedBox(height: 8),
                     DropdownButton<int?>(
                       value: selectedMinPixels,
-                      items: minPixelOptions.map((pixels) {
-                        final label = pixels == null
-                            ? '不限制'
-                            : pixels >= 1000000
-                            ? '${pixels ~/ 1000000} MP'
-                            : '${(pixels / 1000000).toStringAsFixed(1)} MP';
-                        return DropdownMenuItem<int?>(
-                          value: pixels,
-                          child: Text(label),
-                        );
-                      }).toList(growable: false),
+                      items: minPixelOptions
+                          .map((pixels) {
+                            final label = pixels == null
+                                ? '不限制'
+                                : pixels >= 1000000
+                                ? '${pixels ~/ 1000000} MP'
+                                : '${(pixels / 1000000).toStringAsFixed(1)} MP';
+                            return DropdownMenuItem<int?>(
+                              value: pixels,
+                              child: Text(label),
+                            );
+                          })
+                          .toList(growable: false),
                       onChanged: (pixels) => setSheetState(() {
                         selectedMinPixels = pixels;
                       }),
@@ -262,7 +262,8 @@ class _ProfilePageState extends State<ProfilePage> {
     await _backendPreferenceService.initialize();
     var aiSettings = await AppAiSettingsService.instance.load();
     var batteryOptimizationAllowed = Platform.isAndroid
-        ? await MediaAccessGrantService.instance.isIgnoringBatteryOptimizations()
+        ? await MediaAccessGrantService.instance
+              .isIgnoringBatteryOptimizations()
         : false;
     if (!mounted) {
       return;
@@ -279,60 +280,60 @@ class _ProfilePageState extends State<ProfilePage> {
         return StatefulBuilder(
           builder: (context, setSheetState) {
             final isApplePlatform = Platform.isIOS || Platform.isMacOS;
-            final acceleratorSegments =
-                isApplePlatform
-                    ? const <ButtonSegment<LocalInferenceAccelerator>>[
-                        ButtonSegment<LocalInferenceAccelerator>(
-                          value: LocalInferenceAccelerator.coreml,
-                          label: Text('Core ML'),
-                          icon: Icon(Icons.auto_awesome),
-                        ),
-                        ButtonSegment<LocalInferenceAccelerator>(
-                          value: LocalInferenceAccelerator.metal,
-                          label: Text('Metal'),
-                          icon: Icon(Icons.memory_outlined),
-                        ),
-                        ButtonSegment<LocalInferenceAccelerator>(
-                          value: LocalInferenceAccelerator.xnnpack,
-                          label: Text('XNNPACK'),
-                          icon: Icon(Icons.tune_outlined),
-                        ),
-                        ButtonSegment<LocalInferenceAccelerator>(
-                          value: LocalInferenceAccelerator.cpu,
-                          label: Text('Raw CPU'),
-                          icon: Icon(Icons.memory),
-                        ),
-                      ]
-                    : const <ButtonSegment<LocalInferenceAccelerator>>[
-                        ButtonSegment<LocalInferenceAccelerator>(
-                          value: LocalInferenceAccelerator.gpu,
-                          label: Text('GPU'),
-                          icon: Icon(Icons.memory_outlined),
-                        ),
-                        ButtonSegment<LocalInferenceAccelerator>(
-                          value: LocalInferenceAccelerator.npu,
-                          label: Text('NPU'),
-                          icon: Icon(Icons.developer_board_outlined),
-                        ),
-                        ButtonSegment<LocalInferenceAccelerator>(
-                          value: LocalInferenceAccelerator.xnnpack,
-                          label: Text('XNNPACK'),
-                          icon: Icon(Icons.tune_outlined),
-                        ),
-                        ButtonSegment<LocalInferenceAccelerator>(
-                          value: LocalInferenceAccelerator.cpu,
-                          label: Text('CPU'),
-                          icon: Icon(Icons.memory),
-                        ),
-                      ];
-            final availableAccelerators =
-                acceleratorSegments.map((segment) => segment.value).toSet();
+            final acceleratorSegments = isApplePlatform
+                ? const <ButtonSegment<LocalInferenceAccelerator>>[
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.coreml,
+                      label: Text('Core ML'),
+                      icon: Icon(Icons.auto_awesome),
+                    ),
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.metal,
+                      label: Text('Metal'),
+                      icon: Icon(Icons.memory_outlined),
+                    ),
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.xnnpack,
+                      label: Text('XNNPACK'),
+                      icon: Icon(Icons.tune_outlined),
+                    ),
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.cpu,
+                      label: Text('Raw CPU'),
+                      icon: Icon(Icons.memory),
+                    ),
+                  ]
+                : const <ButtonSegment<LocalInferenceAccelerator>>[
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.gpu,
+                      label: Text('GPU'),
+                      icon: Icon(Icons.memory_outlined),
+                    ),
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.npu,
+                      label: Text('NPU'),
+                      icon: Icon(Icons.developer_board_outlined),
+                    ),
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.xnnpack,
+                      label: Text('XNNPACK'),
+                      icon: Icon(Icons.tune_outlined),
+                    ),
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.cpu,
+                      label: Text('CPU'),
+                      icon: Icon(Icons.memory),
+                    ),
+                  ];
+            final availableAccelerators = acceleratorSegments
+                .map((segment) => segment.value)
+                .toSet();
             final selectedAccelerator =
                 availableAccelerators.contains(aiSettings.inferenceAccelerator)
-                    ? aiSettings.inferenceAccelerator
-                    : isApplePlatform
-                        ? LocalInferenceAccelerator.coreml
-                        : LocalInferenceAccelerator.gpu;
+                ? aiSettings.inferenceAccelerator
+                : isApplePlatform
+                ? LocalInferenceAccelerator.coreml
+                : LocalInferenceAccelerator.gpu;
             return SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -412,7 +413,10 @@ class _ProfilePageState extends State<ProfilePage> {
                         isApplePlatform
                             ? 'Apple 平台建议先用 Core ML；如出问题可切 Metal(GPU)，再尝试 XNNPACK，最后使用 Raw CPU。'
                             : '如果当前方案导致闪退或无法启动，请在这里切到兼容性更好的 XNNPACK；仍不稳定时再切 CPU。',
-                        style: TextStyle(color: Colors.orange[800], fontSize: 12),
+                        style: TextStyle(
+                          color: Colors.orange[800],
+                          fontSize: 12,
+                        ),
                       ),
                       const SizedBox(height: 20),
                       Text(
@@ -699,13 +703,14 @@ class _ProfilePageState extends State<ProfilePage> {
   /// 显示缓存管理界面
   Future<void> _showCacheManagement() async {
     // 获取缓存统计信息
-    final cacheStats = await VideoCacheService.instance.getCacheStats();
+    final videoStats = await VideoCacheService.instance.getCacheStats();
+    final thumbnailStats = await MediaThumbnailCacheService.instance.getStats();
 
     showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('📁 视频缓存管理'),
+          title: const Text('📁 缓存管理'),
           content: SizedBox(
             width: double.maxFinite,
             child: Column(
@@ -714,11 +719,16 @@ class _ProfilePageState extends State<ProfilePage> {
               children: [
                 const Text('缓存统计信息:'),
                 const SizedBox(height: 12),
-                _buildStatItem('缓存文件数量', '${cacheStats['cacheFileCount']} 个'),
-                _buildStatItem('缓存总大小', cacheStats['cacheSizeFormatted']),
-                _buildStatItem('导出文件数量', '${cacheStats['exportFileCount']} 个'),
-                _buildStatItem('导出总大小', cacheStats['exportSizeFormatted']),
-                _buildStatItem('内存缓存数量', '${cacheStats['memoryCacheCount']} 个'),
+                _buildStatItem('缩略图缓存数量', '${thumbnailStats['count']} 个'),
+                _buildStatItem(
+                  '缩略图缓存大小',
+                  '${thumbnailStats['formattedBytes']}',
+                ),
+                _buildStatItem('视频缓存数量', '${videoStats['cacheFileCount']} 个'),
+                _buildStatItem('视频缓存大小', videoStats['cacheSizeFormatted']),
+                _buildStatItem('导出文件数量', '${videoStats['exportFileCount']} 个'),
+                _buildStatItem('导出总大小', videoStats['exportSizeFormatted']),
+                _buildStatItem('视频内存缓存', '${videoStats['memoryCacheCount']} 个'),
                 const SizedBox(height: 16),
                 const Text(
                   '注意:',
@@ -728,8 +738,9 @@ class _ProfilePageState extends State<ProfilePage> {
                   ),
                 ),
                 const Text(
-                  '• 清理缓存会删除所有缓存的视频文件\n'
+                  '• 清理缓存会删除缩略图和缓存的视频文件\n'
                   '• 清理导出文件会删除所有导出的视频\n'
+                  '• 缩略图会在扫描或显示时按需重建\n'
                   '• 这些操作不可恢复，请谨慎操作',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
@@ -779,13 +790,14 @@ class _ProfilePageState extends State<ProfilePage> {
     final confirmed = await _showConfirmationDialog(
       '清理缓存',
       '确定要清理所有缓存文件吗？\n\n'
-          '这将删除所有缓存的视频文件，但不会影响已导出的视频。\n'
-          '下次导出相同内容时需要重新生成视频。',
+          '这将删除缩略图缓存和视频缓存，但不会影响已导出的视频。\n'
+          '下次显示缩略图或导出相同内容时需要重新生成缓存。',
     );
 
     if (!confirmed) return;
 
     try {
+      await MediaThumbnailCacheService.instance.clear();
       await VideoCacheService.instance.clearAllCache();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -810,6 +822,7 @@ class _ProfilePageState extends State<ProfilePage> {
       '清理全部',
       '确定要清理所有缓存和导出文件吗？\n\n'
           '这将删除：\n'
+          '• 所有缓存的缩略图文件\n'
           '• 所有缓存的视频文件\n'
           '• 所有已导出的视频文件\n\n'
           '这个操作不可恢复！',
@@ -819,6 +832,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
     try {
       // 清理缓存
+      await MediaThumbnailCacheService.instance.clear();
       await VideoCacheService.instance.clearAllCache();
 
       // 清理导出目录
@@ -1155,7 +1169,9 @@ class _ProfilePageState extends State<ProfilePage> {
                             ListTile(
                               leading: const Icon(Icons.psychology_outlined),
                               title: const Text('Local VLM Test'),
-                              subtitle: const Text('调试本地 VLM caption / story 生成'),
+                              subtitle: const Text(
+                                '调试本地 VLM caption / story 生成',
+                              ),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () {
                                 Navigator.of(context).push(
@@ -1262,8 +1278,8 @@ class _ProfilePageState extends State<ProfilePage> {
           _buildSettingsTile(
             context,
             Icons.storage,
-            '视频缓存管理',
-            '清理导出的视频和缓存文件',
+            '缓存管理',
+            '清理缩略图、视频缓存和导出文件',
             onTap: _showCacheManagement,
           ),
           _buildSettingsTile(context, Icons.info_outline, '关于', '版本 1.0.0'),

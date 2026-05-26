@@ -75,6 +75,11 @@ class _AlbumTagClusterCoverMosaic extends StatelessWidget {
       return _DeferredPathImage(
         path: photos.first.path,
         assetId: photos.first.assetId,
+        kind: MediaTypeHelper.fromStorageValue(
+          photos.first.mediaKind,
+          path: photos.first.path,
+        ),
+        thumbnailPath: photos.first.thumbnailPath,
         fit: BoxFit.cover,
       );
     }
@@ -93,6 +98,11 @@ class _AlbumTagClusterCoverMosaic extends StatelessWidget {
         return _DeferredPathImage(
           path: visible[index].path,
           assetId: visible[index].assetId,
+          kind: MediaTypeHelper.fromStorageValue(
+            visible[index].mediaKind,
+            path: visible[index].path,
+          ),
+          thumbnailPath: visible[index].thumbnailPath,
           fit: BoxFit.cover,
         );
       },
@@ -128,8 +138,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
   void initState() {
     super.initState();
     _photosStream = _debounceStream<void>(
-      ObjectBoxService()
-          .store
+      ObjectBoxService().store
           .box<PhotoEntity>()
           .query()
           .watch(triggerImmediately: true)
@@ -403,8 +412,9 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                     onPressed: clusterPhotos.isEmpty
                         ? null
                         : () {
-                            final allSelected = clusterPhotos
-                                .every((p) => _selectedPhotoIds.contains(p.id));
+                            final allSelected = clusterPhotos.every(
+                              (p) => _selectedPhotoIds.contains(p.id),
+                            );
                             if (allSelected) {
                               setState(() {
                                 _selectedPhotoIds.clear();
@@ -419,15 +429,17 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                           },
                     icon: Icon(
                       clusterPhotos.isNotEmpty &&
-                              clusterPhotos
-                                  .every((p) => _selectedPhotoIds.contains(p.id))
+                              clusterPhotos.every(
+                                (p) => _selectedPhotoIds.contains(p.id),
+                              )
                           ? Icons.deselect_rounded
                           : Icons.select_all_rounded,
                     ),
                     label: Text(
                       clusterPhotos.isNotEmpty &&
-                              clusterPhotos
-                                  .every((p) => _selectedPhotoIds.contains(p.id))
+                              clusterPhotos.every(
+                                (p) => _selectedPhotoIds.contains(p.id),
+                              )
                           ? '取消全选'
                           : '全选',
                     ),

@@ -2,11 +2,7 @@ import 'dart:io';
 
 import 'package:photo_manager/photo_manager.dart';
 
-enum MemoriaMediaKind {
-  image,
-  dynamicImage,
-  video,
-}
+enum MemoriaMediaKind { image, dynamicImage, video }
 
 class MediaTypeHelper {
   MediaTypeHelper._();
@@ -22,12 +18,7 @@ class MediaTypeHelper {
     '.webm',
   };
 
-  static const Set<String> _dynamicImageExtensions = <String>{
-    '.gif',
-    '.webp',
-    '.heic',
-    '.heif',
-  };
+  static const Set<String> _dynamicImageExtensions = <String>{'.gif', '.webp'};
 
   static bool isVideoPath(String? path) =>
       _videoExtensions.contains(_extension(path));
@@ -45,6 +36,17 @@ class MediaTypeHelper {
     return MemoriaMediaKind.image;
   }
 
+  static MemoriaMediaKind fromStorageValue(String? value, {String? path}) {
+    return switch (value) {
+      'video' => MemoriaMediaKind.video,
+      'dynamicImage' => MemoriaMediaKind.dynamicImage,
+      'image' => MemoriaMediaKind.image,
+      _ => fromPath(path),
+    };
+  }
+
+  static String toStorageValue(MemoriaMediaKind kind) => kind.name;
+
   static Future<MemoriaMediaKind> resolve({
     required String? path,
     required String? assetId,
@@ -52,6 +54,9 @@ class MediaTypeHelper {
     final pathKind = fromPath(path);
     if (pathKind == MemoriaMediaKind.video) {
       return MemoriaMediaKind.video;
+    }
+    if (pathKind == MemoriaMediaKind.dynamicImage) {
+      return MemoriaMediaKind.dynamicImage;
     }
 
     if (assetId != null && assetId.isNotEmpty) {
@@ -69,10 +74,7 @@ class MediaTypeHelper {
           if (normalizedMime.startsWith('video/')) {
             return MemoriaMediaKind.video;
           }
-          if (normalizedMime == 'image/gif' ||
-              normalizedMime == 'image/webp' ||
-              normalizedMime == 'image/heic' ||
-              normalizedMime == 'image/heif') {
+          if (normalizedMime == 'image/gif' || normalizedMime == 'image/webp') {
             return MemoriaMediaKind.dynamicImage;
           }
         }

@@ -10,7 +10,6 @@ import 'package:path_provider/path_provider.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../service/mobileclip_litert_service.dart';
 import '../../service/semantic_matching_service.dart';
-import '../../service/vector_index_benchmark_service.dart';
 
 class MobileClipVectorProbePage extends StatefulWidget {
   const MobileClipVectorProbePage({super.key});
@@ -23,14 +22,11 @@ class MobileClipVectorProbePage extends StatefulWidget {
 class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
   final MobileClipLiteRtService _visionService = MobileClipLiteRtService();
   final SemanticMatchingService _semanticService = SemanticMatchingService();
-  final VectorIndexStorageBenchmarkService _storageBenchmarkService =
-      VectorIndexStorageBenchmarkService();
 
   bool _isRunning = false;
   String? _errorMessage;
   String? _zeroShotWarning;
   String? _reportFilePath;
-  VectorIndexStorageBenchmarkReport? _storageBenchmarkReport;
   List<_VectorProbeResult> _results = const <_VectorProbeResult>[];
   List<_ZeroShotResult> _zeroShotResults = const <_ZeroShotResult>[];
 
@@ -45,7 +41,6 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
       _isRunning = true;
       _errorMessage = null;
       _zeroShotWarning = null;
-      _storageBenchmarkReport = null;
     });
 
     try {
@@ -98,12 +93,8 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
         }
       }
 
-      final storageBenchmarkReport = await _storageBenchmarkService
-          .runPhotoEmbeddingReadBenchmark();
-
       final report = <String, Object?>{
         'results': output.map((item) => item.toJson()).toList(growable: false),
-        'storageBenchmark': storageBenchmarkReport.toJson(),
       };
       final reportFilePath = await _writeReportToFile(report);
       debugPrint('MOBILECLIP_VECTOR_PROBE_JSON=${jsonEncode(report)}');
@@ -116,7 +107,6 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
         _results = output;
         _zeroShotResults = zsOutput;
         _reportFilePath = reportFilePath;
-        _storageBenchmarkReport = storageBenchmarkReport;
       });
     } catch (error) {
       if (!mounted) {
@@ -175,8 +165,6 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
                 ),
               ),
             ),
-          if (_storageBenchmarkReport != null)
-            _StorageBenchmarkCard(report: _storageBenchmarkReport!),
           if (_isRunning)
             const Card(
               child: Padding(
@@ -393,72 +381,6 @@ class _ZeroShotCard extends StatelessWidget {
                 ),
               );
             }),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StorageBenchmarkCard extends StatelessWidget {
-  const _StorageBenchmarkCard({required this.report});
-
-  final VectorIndexStorageBenchmarkReport report;
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final speedup = report.speedupRatio;
-
-    return Card(
-      margin: const EdgeInsets.only(top: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Isar vs ObjectBox Read Benchmark',
-              style: textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            SelectableText('modelVersion: ${report.modelVersion}'),
-            SelectableText(
-              'samples: ${report.actualSampleCount}/${report.requestedSampleCount}, rounds: ${report.rounds}',
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Isar mean/p90: ${report.isarMeanReadMs.toStringAsFixed(3)} ms / ${report.isarP90ReadMs.toStringAsFixed(3)} ms',
-            ),
-            Text(
-              'ObjectBox mean/p90: ${report.objectBoxMeanReadMs.toStringAsFixed(3)} ms / ${report.objectBoxP90ReadMs.toStringAsFixed(3)} ms',
-            ),
-            if (speedup != null)
-              Text(
-                'speedup: ${speedup.toStringAsFixed(2)}x',
-                style: textTheme.bodyMedium?.copyWith(
-                  fontFeatures: const <FontFeature>[
-                    FontFeature.tabularFigures(),
-                  ],
-                ),
-              ),
-            const SizedBox(height: 8),
-            SelectableText(
-              'Isar rounds: ${report.isarReadRoundsMs.map((e) => e.toStringAsFixed(3)).join(', ')}',
-            ),
-            const SizedBox(height: 4),
-            SelectableText(
-              'ObjectBox rounds: ${report.objectBoxReadRoundsMs.map((e) => e.toStringAsFixed(3)).join(', ')}',
-            ),
-            if (report.warnings.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              ...report.warnings.map(
-                (warning) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(warning),
-                ),
-              ),
-            ],
           ],
         ),
       ),

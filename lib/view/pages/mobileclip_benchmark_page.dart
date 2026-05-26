@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../models/mobileclip_benchmark.dart';
 import '../../service/mobileclip_benchmark_service.dart';
 import '../widgets/path_image.dart';
+import 'vlm_photo_picker_page.dart';
 
 class MobileClipBenchmarkPage extends StatefulWidget {
   const MobileClipBenchmarkPage({super.key});
@@ -19,10 +20,34 @@ class MobileClipBenchmarkPage extends StatefulWidget {
 class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
   final MobileClipBenchmarkService _benchmarkService =
       MobileClipBenchmarkService();
-  int _sampleCount = 24;
+  List<MobileClipBenchmarkSample> _samples = const <MobileClipBenchmarkSample>[];
   bool _isRunning = false;
   MobileClipBenchmarkReport? _report;
   String? _errorMessage;
+
+  Future<void> _pickSamples() async {
+    final result = await Navigator.of(context).push<List<VlmPhotoPickerResult>>(
+      MaterialPageRoute<List<VlmPhotoPickerResult>>(
+        builder: (context) => const VlmPhotoPickerPage(
+          maxSelection: 48,
+          title: '选择 Benchmark 图片',
+        ),
+      ),
+    );
+    if (result == null || result.isEmpty || !mounted) return;
+    setState(() {
+      _samples = result.map((item) {
+        return MobileClipBenchmarkSample(
+          photoId: 0,
+          assetId: item.assetId,
+          path: item.path,
+          timestamp: item.createdAt.millisecondsSinceEpoch,
+        );
+      }).toList(growable: false);
+      _report = null;
+      _errorMessage = null;
+    });
+  }
 
   Future<void> _runBenchmark() async {
     setState(() {
@@ -32,7 +57,7 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
 
     try {
       final report = await _benchmarkService.runBenchmark(
-        sampleCount: _sampleCount,
+        samples: _samples,
       );
       if (!mounted) {
         return;
@@ -59,12 +84,6 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
   @override
   Widget build(BuildContext context) {
     final report = _report;
-    final summariesById = report == null
-        ? const <String, MobileClipAdapterSummary>{}
-        : <String, MobileClipAdapterSummary>{
-            for (final summary in report.adapterSummaries)
-              summary.adapterId: summary,
-          };
     return Scaffold(
       appBar: AppBar(title: const Text('MobileCLIP Benchmark')),
       body: ListView(
@@ -72,8 +91,8 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
         children: [
           Text(
             Platform.isAndroid
-                ? '在同一批照片上对比 MobileCLIP2 LiteRT 在 GPU、NPU 与 XNNPACK 路径上的速度。若 GPU/NPU 在设备上不稳定，请优先尝试 XNNPACK。'
-                : 'iOS 使用 Core ML 主链路，本页不运行 Android LiteRT delegate benchmark。',
+                ? '从相册选择同一批图片，对比 MobileCLIP2 LiteRT 在 GPU、NPU、XNNPACK 与 CPU 路径上的 embedding、标签和速度。'
+                : '从相册选择同一批图片，对比当前平台可用的 LiteRT 后端 embedding、标签和速度。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -83,37 +102,41 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('样本数量', style: Theme.of(context).textTheme.titleMedium),
+                  Text(
+                    'Benchmark 样本',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                   const SizedBox(height: 8),
-                  SegmentedButton<int>(
-                    segments: const [
-                      ButtonSegment<int>(value: 12, label: Text('12')),
-                      ButtonSegment<int>(value: 24, label: Text('24')),
-                      ButtonSegment<int>(value: 48, label: Text('48')),
-                    ],
-                    selected: <int>{_sampleCount},
-                    onSelectionChanged: _isRunning
-                        ? null
-                        : (selection) {
-                            setState(() {
-                              _sampleCount = selection.first;
-                            });
-                          },
-                  ),
+                  Text('已选择 ${_samples.length} 张图片'),
                   const SizedBox(height: 12),
-                  FilledButton.icon(
-                    onPressed: _isRunning || !Platform.isAndroid
-                        ? null
-                        : _runBenchmark,
-                    icon: _isRunning
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.speed_outlined),
-                    label: Text(_isRunning ? '运行中...' : '开始 Benchmark'),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: _isRunning ? null : _pickSamples,
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: const Text('从相册选择图片'),
+                      ),
+                      FilledButton.icon(
+                        onPressed: _isRunning || _samples.isEmpty
+                            ? null
+                            : _runBenchmark,
+                        icon: _isRunning
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.speed_outlined),
+                        label: Text(_isRunning ? '运行中...' : '开始 Benchmark'),
+                      ),
+                    ],
                   ),
+                  if (_samples.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _SelectedSamplesStrip(samples: _samples),
+                  ],
                 ],
               ),
             ),
@@ -158,6 +181,35 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _SelectedSamplesStrip extends StatelessWidget {
+  const _SelectedSamplesStrip({required this.samples});
+
+  final List<MobileClipBenchmarkSample> samples;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 72,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: samples.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final sample = samples[index];
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: 72,
+              height: 72,
+              child: PathImage(path: sample.path, fit: BoxFit.cover),
+            ),
+          );
+        },
       ),
     );
   }

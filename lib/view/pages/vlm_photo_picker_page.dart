@@ -19,7 +19,14 @@ class VlmPhotoPickerResult {
 }
 
 class VlmPhotoPickerPage extends StatefulWidget {
-  const VlmPhotoPickerPage({super.key});
+  const VlmPhotoPickerPage({
+    super.key,
+    this.maxSelection = 9,
+    this.title = '选择图片',
+  });
+
+  final int maxSelection;
+  final String title;
 
   @override
   State<VlmPhotoPickerPage> createState() => _VlmPhotoPickerPageState();
@@ -27,8 +34,6 @@ class VlmPhotoPickerPage extends StatefulWidget {
 
 class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
   static const int _pageSize = 80;
-  static const int _maxSelection = 9;
-
   final List<AssetEntity> _assets = <AssetEntity>[];
   final Map<String, VlmPhotoPickerResult> _selectedResults =
       <String, VlmPhotoPickerResult>{};
@@ -145,12 +150,12 @@ class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
       return;
     }
 
-    if (_selectedResults.length >= _maxSelection) {
+    if (_selectedResults.length >= widget.maxSelection) {
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('一次最多选择 $_maxSelection 张图片')),
+        SnackBar(content: Text('一次最多选择 ${widget.maxSelection} 张图片')),
       );
       return;
     }
@@ -197,7 +202,7 @@ class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('选择图片'),
+        title: Text(widget.title),
         actions: [
           TextButton(
             onPressed: _selectedResults.isEmpty ? null : _confirmSelection,

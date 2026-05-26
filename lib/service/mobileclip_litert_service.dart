@@ -14,6 +14,12 @@ class MobileClipLiteRtService {
       MobileClipLiteRtService._internal();
 
   factory MobileClipLiteRtService() => _instance;
+  factory MobileClipLiteRtService.detachedWithAccelerator(
+    LocalInferenceAccelerator accelerator,
+  ) {
+    return MobileClipLiteRtService._internal().._accelerator = accelerator;
+  }
+
   factory MobileClipLiteRtService.withAccelerator(
     LocalInferenceAccelerator accelerator,
   ) {

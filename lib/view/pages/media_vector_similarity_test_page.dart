@@ -65,7 +65,7 @@ class _MediaVectorSimilarityTestPageState
   }
 
   Future<void> _pickAndRun() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const <String>[
         'jpg',

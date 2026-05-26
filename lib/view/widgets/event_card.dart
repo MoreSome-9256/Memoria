@@ -237,22 +237,22 @@ class EventCard extends StatelessWidget {
       final photo = coverPhotos.first;
       final heroTag = 'event-cover-${event.id}-${photo.id}';
       return GestureDetector(
-        onTap: () => showFullscreenPhotoViewer(
-          context,
-          path: photo.path,
-          assetId: photo.assetId,
-          heroTag: heroTag,
-        ),
+         onTap: () => showFullscreenPhotoViewer(
+           context,
+           path: photo.path,
+           assetId: photo.id,
+           heroTag: heroTag,
+         ),
         child: Hero(
           tag: heroTag,
           child: SizedBox(
             height: 200,
             width: double.infinity,
-            child: DeferredPathImage(
-              path: photo.path,
-              assetId: photo.assetId,
-              fit: BoxFit.cover,
-            ),
+             child: DeferredPathImage(
+               path: photo.path,
+               assetId: photo.id,
+               fit: BoxFit.cover,
+             ),
           ),
         ),
       );
@@ -268,21 +268,21 @@ class EventCard extends StatelessWidget {
                 right: entry.key < coverPhotos.length - 1 ? 2 : 0,
               ),
               child: GestureDetector(
-                onTap: () => showFullscreenPhotoViewer(
-                  context,
-                  path: entry.value.path,
-                  assetId: entry.value.assetId,
-                  heroTag: 'event-cover-${event.id}-${entry.value.id}',
-                ),
+                 onTap: () => showFullscreenPhotoViewer(
+                   context,
+                   path: entry.value.path,
+                   assetId: entry.value.id,
+                   heroTag: 'event-cover-${event.id}-${entry.value.id}',
+                 ),
                 child: Hero(
                   tag: 'event-cover-${event.id}-${entry.value.id}',
                   child: SizedBox(
                     height: 200,
-                    child: DeferredPathImage(
-                      path: entry.value.path,
-                      assetId: entry.value.assetId,
-                      fit: BoxFit.cover,
-                    ),
+                     child: DeferredPathImage(
+                       path: entry.value.path,
+                       assetId: entry.value.id,
+                       fit: BoxFit.cover,
+                     ),
                   ),
                 ),
               ),

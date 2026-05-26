@@ -165,17 +165,17 @@ class _EventDetailPageState extends State<EventDetailPage> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: AspectRatio(
-                      aspectRatio: 1,
-                      child: MediaThumbnail(
-                        path: photo.path,
-                        assetId: photo.assetId,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                  ),
+                   ClipRRect(
+                     borderRadius: BorderRadius.circular(20),
+                     child: AspectRatio(
+                       aspectRatio: 1,
+                       child: MediaThumbnail(
+                         path: photo.path,
+                         assetId: photo.id,
+                         fit: BoxFit.cover,
+                       ),
+                     ),
+                   ),
                   const SizedBox(height: 16),
                   Text(
                     '照片详情',
@@ -714,25 +714,25 @@ class _EventDetailPageState extends State<EventDetailPage> {
                         _togglePhotoSelection(photo);
                         return;
                       }
-                      showFullscreenPhotoViewer(
-                        context,
-                        path: photo.path,
-                        assetId: photo.assetId,
-                        heroTag: 'event-photo-${photo.id}',
-                      );
+                       showFullscreenPhotoViewer(
+                         context,
+                         path: photo.path,
+                         assetId: photo.id,
+                         heroTag: 'event-photo-${photo.id}',
+                       );
                     },
                     onLongPress: () => _showPhotoDetail(photo),
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        Hero(
-                          tag: 'event-photo-${photo.id}',
-                          child: DeferredPathImage(
-                            path: photo.path,
-                            assetId: photo.assetId,
-                            fit: BoxFit.cover,
-                          ),
-                        ),
+                         Hero(
+                           tag: 'event-photo-${photo.id}',
+                           child: DeferredPathImage(
+                             path: photo.path,
+                             assetId: photo.id,
+                             fit: BoxFit.cover,
+                           ),
+                         ),
                         if (_isSelectionMode && !isSelected)
                           Container(color: Colors.black.withValues(alpha: 0.32)),
                         Positioned(

@@ -144,12 +144,12 @@ class AlbumRefreshService {
 
   // ── 增量扫描（"下一批 N 张" 路径）───────────────────────────────
   Future<AlbumRefreshResult> _runIncrementalScan(int? recentPhotoLimit) async {
-    final batchSize = math.max(10, recentPhotoLimit ?? 100);
-    final isRemainingScan = batchSize >= 0x7fffffff;
-    final scopeLabel = isRemainingScan ? '剩余所有照片' : '$batchSize 张新照片';
+    final isFullImport = recentPhotoLimit == null;
+    final batchSize = isFullImport ? null : math.max(10, recentPhotoLimit);
+    final scopeLabel = isFullImport ? '剩余所有照片' : '$batchSize 张新照片';
 
     debugPrint(
-      '[scan] _runIncrementalScan: batchSize=$batchSize isRemainingScan=$isRemainingScan',
+      '[scan] _runIncrementalScan: batchSize=$batchSize isFullImport=$isFullImport',
     );
 
     _setProgress(
@@ -173,14 +173,14 @@ class AlbumRefreshService {
           return;
         }
         lastProgressUpdate = now;
-        final baseFraction = isRemainingScan
+        final baseFraction = isFullImport
             ? scanProgress.scannedFraction
             : math.max(
                 scanProgress.scannedFraction * 0.35,
                 scanProgress.acceptedFraction,
               );
         final progress = 0.08 + 0.52 * baseFraction.clamp(0, 1).toDouble();
-        final acceptedText = isRemainingScan
+        final acceptedText = isFullImport
             ? '${scanProgress.acceptedCount} 个'
             : '${scanProgress.acceptedCount}/${scanProgress.targetNew} 个';
         _setProgress(
@@ -227,9 +227,7 @@ class AlbumRefreshService {
       debugPrint('[scan] 没有新照片，直接触发 AI (aiRunning=${AIService().isAnalyzing})');
       final aiRunning = AIService().isAnalyzing;
       if (!aiRunning) {
-        unawaited(
-          _runAiPipeline(maxPhotos: isRemainingScan ? null : batchSize),
-        );
+        unawaited(_runAiPipeline(maxPhotos: batchSize));
       }
       _setProgress(
         AlbumRefreshStage.handoff,
@@ -251,9 +249,9 @@ class AlbumRefreshService {
     // step 2: 有新照片 → requeue（标记为未分析）
     await PhotoService().requeuePhotosForAiByIds(scanResult.insertedPhotoIds);
     _scheduleMediaIndexRefresh(
-      batchSize: isRemainingScan
+      batchSize: isFullImport
           ? math.max(scanResult.insertedCount, 300)
-          : batchSize,
+          : batchSize!,
     );
     debugPrint('[scan] requeue 完成');
 
@@ -305,8 +303,7 @@ class AlbumRefreshService {
   // ── 全量重建（"安全重建" 路径）───────────────────────────────────
   Future<AlbumRefreshResult> _runFullRebuild(int? recentPhotoLimit) async {
     debugPrint('[scan] _runFullRebuild: recentPhotoLimit=$recentPhotoLimit');
-    final isFullImport =
-        recentPhotoLimit == null || recentPhotoLimit >= 0x7fffffff;
+    final isFullImport = recentPhotoLimit == null;
     _setProgress(
       AlbumRefreshStage.scanning,
       0.04,

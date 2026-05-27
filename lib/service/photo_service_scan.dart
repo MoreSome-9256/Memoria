@@ -52,9 +52,10 @@ extension PhotoServiceScan on PhotoService {
 
   // ── ★ 推荐入口：增量收集新照片，收够即停 ────────────────────────
   /// 从系统相册最新照片开始扫描，收集到 [batchSize] 张新照片后停止。
+  /// [batchSize] 为 null 时扫描完整授权范围。
   /// 返回 [BatchScanResult]，包含新照片列表和统计信息。
   Future<BatchScanResult> scanBatchPhotos({
-    required int batchSize,
+    required int? batchSize,
     ValueChanged<BatchScanProgress>? onProgress,
   }) async {
     final plan = await _PhotoScanCoordinator(

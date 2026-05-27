@@ -73,8 +73,10 @@ class _PhotoScanCoordinator {
   }) async {
     final totalBefore = _service._photoBox.count();
 
-    final albumBundle = await _resolveAlbums(runCleanupOnce: totalBefore <= 0);
-    if (albumBundle.isEmpty || _cachedTotalCount <= 0) {
+    final scanSource = await _resolveIncrementalScanSource(
+      runCleanupOnce: totalBefore <= 0,
+    );
+    if (scanSource.isEmpty) {
       onProgress?.call(
         const BatchScanProgress(
           scannedCount: 0,
@@ -89,7 +91,8 @@ class _PhotoScanCoordinator {
 
     final filterProfile = await _resolveFilterProfile();
 
-    final targetNew = math.max(1, maxAssets ?? 50);
+    final targetNew = maxAssets == null ? null : math.max(1, maxAssets);
+    final progressTarget = targetNew ?? scanSource.totalCount;
     const pageSize = 50;
 
     final collectedPhotos = <PhotoEntity>[];
@@ -102,26 +105,17 @@ class _PhotoScanCoordinator {
         scannedCount: 0,
         candidateCount: 0,
         acceptedCount: 0,
-        totalCount: _cachedTotalCount,
-        targetNew: targetNew,
+        totalCount: scanSource.totalCount,
+        targetNew: progressTarget,
       ),
     );
 
-    for (
-      var cursor = 0;
-      collectedPhotos.length < targetNew && cursor < albumBundle.totalLength;
-      cursor += pageSize
-    ) {
-      final end = math.max(
-        0,
-        math.min(albumBundle.totalLength, cursor + pageSize),
-      );
-      final assets = albumBundle.assets.length > cursor
-          ? albumBundle.assets.sublist(
-              cursor,
-              math.min(end, albumBundle.assets.length),
-            )
-          : const <AssetEntity>[];
+    await for (final assets in _incrementalAssetPages(
+      scanSource,
+      pageSize: pageSize,
+      offsetFromNewest: offsetFromNewest,
+    )) {
+      if (targetNew != null && collectedPhotos.length >= targetNew) break;
       if (assets.isEmpty) break;
       totalScanned += assets.length;
 
@@ -137,8 +131,8 @@ class _PhotoScanCoordinator {
             scannedCount: totalScanned,
             candidateCount: candidateCount,
             acceptedCount: collectedPhotos.length,
-            totalCount: _cachedTotalCount,
-            targetNew: targetNew,
+            totalCount: scanSource.totalCount,
+            targetNew: progressTarget,
           ),
         );
         continue;
@@ -151,8 +145,8 @@ class _PhotoScanCoordinator {
           scannedCount: totalScanned,
           candidateCount: candidateCount,
           acceptedCount: collectedPhotos.length,
-          totalCount: _cachedTotalCount,
-          targetNew: targetNew,
+          totalCount: scanSource.totalCount,
+          targetNew: progressTarget,
         ),
       );
 
@@ -168,7 +162,7 @@ class _PhotoScanCoordinator {
       );
       for (final r in results) {
         if (r.photo != null) {
-          if (collectedPhotos.length < targetNew) {
+          if (targetNew == null || collectedPhotos.length < targetNew) {
             collectedPhotos.add(r.photo!);
             stats = stats.merge(r);
           }
@@ -182,8 +176,8 @@ class _PhotoScanCoordinator {
           scannedCount: totalScanned,
           candidateCount: candidateCount,
           acceptedCount: collectedPhotos.length,
-          totalCount: _cachedTotalCount,
-          targetNew: targetNew,
+          totalCount: scanSource.totalCount,
+          targetNew: progressTarget,
         ),
       );
     }
@@ -210,12 +204,140 @@ class _PhotoScanCoordinator {
       removedCount: 0,
       prepared: _PreparedScanData(
         assets: const [],
-        totalCount: _cachedTotalCount,
+        totalCount: scanSource.totalCount,
         fetchCount: totalScanned,
         startOffset: offsetFromNewest,
       ),
       built: built,
     );
+  }
+
+  Future<_IncrementalScanSource> _resolveIncrementalScanSource({
+    bool runCleanupOnce = false,
+  }) async {
+    final settings = await AppAiSettingsService.instance.load();
+    final requestType = settings.includeVideos
+        ? RequestType.common
+        : RequestType.image;
+    final state = await PhotoManager.requestPermissionExtend(
+      requestOption: PermissionRequestOption(
+        androidPermission: AndroidPermission(
+          type: requestType,
+          mediaLocation: false,
+        ),
+      ),
+    );
+    if (!state.hasAccess) {
+      throw const PhotoScanException(
+        PhotoScanError.permissionDenied,
+        '没有相册权限，无法扫描系统相册。',
+      );
+    }
+
+    final albSel = await AlbumSelectionPreferenceService().loadSelection();
+    final selectedIds = albSel.selectedAlbumIds.toSet();
+    final albumStates = <_IncrementalAlbumState>[];
+
+    if (selectedIds.isEmpty) {
+      final albums = await PhotoManager.getAssetPathList(
+        onlyAll: true,
+        type: requestType,
+      );
+      if (albums.isEmpty) {
+        return const _IncrementalScanSource(albums: <_IncrementalAlbumState>[]);
+      }
+      final allAlbum = albums.first;
+      final count = await allAlbum.assetCountAsync;
+      albumStates.add(
+        _IncrementalAlbumState(album: allAlbum, totalCount: count),
+      );
+    } else {
+      final allAlbums = await PhotoManager.getAssetPathList(type: requestType);
+      final targetAlbums = allAlbums
+          .where((album) => _isSelectedAlbum(album, selectedIds))
+          .toList(growable: false);
+      for (final album in targetAlbums) {
+        final count = await album.assetCountAsync;
+        if (count > 0) {
+          albumStates.add(
+            _IncrementalAlbumState(album: album, totalCount: count),
+          );
+        }
+      }
+    }
+
+    if (runCleanupOnce) {
+      _service._removeUnavailablePhotos().ignore();
+    }
+
+    return _IncrementalScanSource(albums: albumStates);
+  }
+
+  Stream<List<AssetEntity>> _incrementalAssetPages(
+    _IncrementalScanSource source, {
+    required int pageSize,
+    required int offsetFromNewest,
+  }) async* {
+    if (source.albums.isEmpty) return;
+
+    if (source.albums.length == 1) {
+      final state = source.albums.first;
+      for (
+        var offset = math.max(0, offsetFromNewest);
+        offset < state.totalCount;
+        offset += pageSize
+      ) {
+        final end = math.min(state.totalCount, offset + pageSize);
+        final page = await state.album.getAssetListRange(
+          start: offset,
+          end: end,
+        );
+        if (page.isEmpty) break;
+        yield page;
+      }
+      return;
+    }
+
+    var skipped = 0;
+    while (source.albums.any((state) => !state.exhausted)) {
+      final pageAssets = <AssetEntity>[];
+      for (final state in source.albums) {
+        if (state.exhausted) continue;
+        final end = math.min(state.totalCount, state.offset + pageSize);
+        final page = await state.album.getAssetListRange(
+          start: state.offset,
+          end: end,
+        );
+        state.offset = end;
+        if (page.isEmpty || state.offset >= state.totalCount) {
+          state.exhausted = true;
+        }
+        pageAssets.addAll(page);
+      }
+      if (pageAssets.isEmpty) break;
+
+      final seen = <String>{};
+      final unique = <AssetEntity>[];
+      for (final asset in pageAssets) {
+        if (seen.add(asset.id)) {
+          unique.add(asset);
+        }
+      }
+      unique.sort((a, b) => b.createDateTime.compareTo(a.createDateTime));
+
+      final offset = math.max(0, offsetFromNewest);
+      if (skipped < offset) {
+        final remainingSkip = offset - skipped;
+        if (remainingSkip >= unique.length) {
+          skipped += unique.length;
+          continue;
+        }
+        yield unique.sublist(remainingSkip);
+        skipped = offset;
+      } else {
+        yield unique;
+      }
+    }
   }
 
   // ── 获取并缓存系统相册引用 ───────────────────────────────────────
@@ -252,9 +374,9 @@ class _PhotoScanCoordinator {
 
     // 按选定相册分别加载
     final allAlbums = await PhotoManager.getAssetPathList(type: requestType);
-    final targetAlbums = allAlbums.where(
-      (album) => _isSelectedAlbum(album, selectedIds),
-    ).toList(growable: false);
+    final targetAlbums = allAlbums
+        .where((album) => _isSelectedAlbum(album, selectedIds))
+        .toList(growable: false);
 
     if (targetAlbums.isEmpty) {
       _cachedAssets = const <AssetEntity>[];
@@ -473,12 +595,35 @@ class _ScanStats {
 }
 
 class _AlbumBundle {
-  const _AlbumBundle({
-    required this.assets,
-  });
+  const _AlbumBundle({required this.assets});
 
   final List<AssetEntity> assets;
 
   bool get isEmpty => assets.isEmpty;
   int get totalLength => assets.length;
+}
+
+class _IncrementalScanSource {
+  const _IncrementalScanSource({required this.albums});
+
+  final List<_IncrementalAlbumState> albums;
+
+  bool get isEmpty => albums.isEmpty || totalCount <= 0;
+
+  int get totalCount {
+    var total = 0;
+    for (final album in albums) {
+      total += album.totalCount;
+    }
+    return total;
+  }
+}
+
+class _IncrementalAlbumState {
+  _IncrementalAlbumState({required this.album, required this.totalCount});
+
+  final AssetPathEntity album;
+  final int totalCount;
+  int offset = 0;
+  bool exhausted = false;
 }

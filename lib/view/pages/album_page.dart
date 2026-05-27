@@ -34,7 +34,6 @@ part 'album_page_tag_browser.dart';
 part 'album_page_deferred_image.dart';
 
 const int _albumTagBrowserPhotoSoftLimit = 1200;
-const int _importAllNewMediaLimit = 0x7fffffff;
 
 enum _ImportAction {
   importAllNew,
@@ -101,8 +100,7 @@ class _AlbumPageState extends State<AlbumPage> {
     }
     setState(() => _isStartingImport = true);
 
-    final scopeLabel =
-        recentPhotoLimit == null || recentPhotoLimit == _importAllNewMediaLimit
+    final scopeLabel = recentPhotoLimit == null
         ? '全部新的图片和视频'
         : '最新的 $recentPhotoLimit 个未分析项目';
     ScaffoldMessenger.of(context).showSnackBar(
@@ -440,7 +438,7 @@ class _AlbumPageState extends State<AlbumPage> {
 
     switch (selected) {
       case _ImportAction.importAllNew:
-        _startRefresh(recentPhotoLimit: _importAllNewMediaLimit);
+        _startRefresh();
       case _ImportAction.importLatest100:
         _startRefresh(recentPhotoLimit: 100);
       case _ImportAction.rebuildAll:

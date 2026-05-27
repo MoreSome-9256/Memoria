@@ -567,36 +567,6 @@ class SpoolAnalysisWorker {
         'junk=${computeResult.junkCandidate != null}',
       );
 
-      String? province, city, district, locationName, formattedAddress, adcode;
-      if (item.latitude != null && item.longitude != null) {
-        debugPrint(
-          '[spool-worker] 开始逆地理编码 lat=${item.latitude} lng=${item.longitude}',
-        );
-        final geoStart = DateTime.now();
-        final addr = await AmapGeoService.reverseGeocode(
-          latitude: item.latitude!,
-          longitude: item.longitude!,
-        );
-        final geoElapsed = DateTime.now().difference(geoStart).inMilliseconds;
-        if (addr != null) {
-          province = addr.province;
-          city = addr.city;
-          district = addr.district;
-          locationName = addr.locationName;
-          formattedAddress = addr.formattedAddress;
-          adcode = addr.adcode;
-          debugPrint(
-            '[spool-worker] ✅ 逆地理编码成功: '
-            'city=$city district=$district locationName=$locationName '
-            '耗时=${geoElapsed}ms',
-          );
-        } else {
-          debugPrint('[spool-worker] ⚠️ 逆地理编码返回空 耗时=${geoElapsed}ms');
-        }
-      } else {
-        debugPrint('[spool-worker] ⏭️ 跳过逆地理编码：无 GPS 坐标');
-      }
-
       final result = AnalysisSpoolResult(
         jobId: jobId,
         photoKey: photoKey,
@@ -626,12 +596,6 @@ class SpoolAnalysisWorker {
                 computeResult.junkCandidate!.reasons.isNotEmpty
             ? computeResult.junkCandidate!.reasons.first.categoryId
             : null,
-        province: province,
-        city: city,
-        district: district,
-        locationName: locationName,
-        formattedAddress: formattedAddress,
-        adcode: adcode,
       );
 
       if (computeResult.embedding.isNotEmpty) {

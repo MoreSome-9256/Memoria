@@ -76,6 +76,7 @@ dependencies:
   open_file_manager: ^2.0.1
   music_feature_analyzer: ^1.0.3
   zstandard: ^1.5.0
+  pool: ^1.5.1
   tflite_flutter: 0.12.1
   llama_cpp_dart:
     git:

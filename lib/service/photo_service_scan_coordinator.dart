@@ -116,7 +116,6 @@ class _PhotoScanCoordinator {
     )) {
       if (assets.isEmpty) break;
 
-      // 批量过滤已存在；已有记录只补齐数据库中的缩略图路径。
       final existingByAssetId = _existingAssetMap(assets);
       final newAssets = <AssetEntity>[];
       for (final asset in assets) {
@@ -127,32 +126,26 @@ class _PhotoScanCoordinator {
         } else {
           await _refreshExistingThumbnailIfNeeded(existing, asset);
         }
-        onProgress?.call(
-          BatchScanProgress(
-            scannedCount: totalScanned,
-            candidateCount: candidateCount,
-            acceptedCount: insertedPhotoIds.length,
-            totalCount: scanSource.totalCount,
-            targetNew: scanSource.totalCount,
-          ),
-        );
       }
       if (newAssets.isEmpty) {
+        if (totalScanned % 20 == 0) {
+          onProgress?.call(
+            BatchScanProgress(
+              scannedCount: totalScanned,
+              candidateCount: candidateCount,
+              acceptedCount: insertedPhotoIds.length,
+              totalCount: scanSource.totalCount,
+              targetNew: scanSource.totalCount,
+            ),
+          );
+        }
         continue;
       }
 
       final buildAssets = newAssets;
       candidateCount += buildAssets.length;
-      onProgress?.call(
-        BatchScanProgress(
-          scannedCount: totalScanned,
-          candidateCount: candidateCount,
-          acceptedCount: insertedPhotoIds.length,
-          totalCount: scanSource.totalCount,
-          targetNew: scanSource.totalCount,
-        ),
-      );
 
+      final batchPhotos = <PhotoEntity>[];
       for (final asset in buildAssets) {
         final r = await _service._buildSingleAssetPhoto(
           asset,
@@ -160,12 +153,22 @@ class _PhotoScanCoordinator {
           resolveFile: false,
         );
         if (r.photo != null) {
-          final id = _service._photoBox.put(r.photo!);
-          if (id > 0) insertedPhotoIds.add(id);
+          batchPhotos.add(r.photo!);
           stats = stats.merge(r);
         } else {
           stats = stats.merge(r);
         }
+      }
+
+      if (batchPhotos.isNotEmpty) {
+        final storedIds = _service._store.runInTransaction(
+          TxMode.write,
+          () => _service._photoBox.putMany(batchPhotos),
+        );
+        insertedPhotoIds.addAll(storedIds.where((id) => id > 0));
+      }
+
+      if (totalScanned % 20 == 0 || batchPhotos.isNotEmpty) {
         onProgress?.call(
           BatchScanProgress(
             scannedCount: totalScanned,

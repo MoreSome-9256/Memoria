@@ -145,23 +145,14 @@ class _PhotoAssetBuilder {
         PhotoFilterHelper.isExtremeAspectRatio(width, height)) {
       return const _SingleAssetBuildResult(skippedExtremeAspectRatio: 1);
     }
-    // GPS 已由 getAssetListRange/fromId 加载到 AssetEntity 中，直接读取
+
     final latLong = asset.latLng;
-
-    File? file;
-    if (resolveFile) {
-      file = await resolveReadableFile(asset);
-    }
-
-    final timestamp = file != null
-        ? resolveBestTimestampMs(asset, file)
-        : asset.createDateTime.millisecondsSinceEpoch;
-    final path = file?.path ?? '';
+    final timestamp = asset.createDateTime.millisecondsSinceEpoch;
     final mimeType = asset.mimeType;
     final isLivePhoto = asset.isLivePhoto;
     final mediaKind = _resolveMediaKind(
       asset: asset,
-      path: path,
+      path: '',
       mimeType: mimeType,
       isLivePhoto: isLivePhoto,
     );
@@ -175,7 +166,7 @@ class _PhotoAssetBuilder {
     final photo = PhotoEntity()
       ..assetId = asset.id
       ..timestamp = timestamp
-      ..path = path
+      ..path = ''
       ..width = width
       ..height = height
       ..mediaKind = MediaTypeHelper.toStorageValue(mediaKind)

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:photo_manager/photo_manager.dart';
+import 'package:pool/pool.dart';
 import 'package:zstandard/zstandard.dart';
 
 class MediaThumbnailCacheService {
@@ -9,24 +10,27 @@ class MediaThumbnailCacheService {
   static final MediaThumbnailCacheService instance =
       MediaThumbnailCacheService._();
 
-  static const int thumbnailSize = 256;
+  static const int thumbnailSize = 200;
   static const int maxThumbnailBytes = 1024 * 1024;
+  static final Pool _thumbnailPool = Pool(3);
 
   Future<Uint8List?> generateCompressedBytes(AssetEntity asset) async {
-    try {
-      final bytes = await asset.thumbnailDataWithSize(
-        const ThumbnailSize.square(thumbnailSize),
-        quality: 70,
-      );
-      if (bytes == null ||
-          bytes.isEmpty ||
-          bytes.lengthInBytes > maxThumbnailBytes) {
+    return await _thumbnailPool.withResource(() async {
+      try {
+        final bytes = await asset.thumbnailDataWithSize(
+          const ThumbnailSize.square(thumbnailSize),
+          quality: 65,
+        );
+        if (bytes == null ||
+            bytes.isEmpty ||
+            bytes.lengthInBytes > maxThumbnailBytes) {
+          return null;
+        }
+        return bytes;
+      } catch (_) {
         return null;
       }
-      return await bytes.compress(compressionLevel: 3) ?? bytes;
-    } catch (_) {
-      return null;
-    }
+    });
   }
 
   Future<Uint8List?> decompressBytes(Uint8List? compressed) async {

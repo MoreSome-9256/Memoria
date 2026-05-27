@@ -80,8 +80,10 @@ class _ChatPageState extends State<ChatPage> {
     _scrollToBottom();
   }
 
-  // 🌟 3. 本地解析搜图
-  Future<List<PhotoEntity>?> _executeLocalSearch(String responseText) async {
+  Future<List<PhotoEntity>?> _executeLocalSearch(
+    String responseText,
+    String userText,
+  ) async {
     final RegExp searchExp = RegExp(r'<SEARCH>(.*?)</SEARCH>', dotAll: true);
     final match = searchExp.firstMatch(responseText);
 
@@ -91,36 +93,185 @@ class _ChatPageState extends State<ChatPage> {
       final jsonStr = match.group(1)!.trim();
       final queryParams = jsonDecode(jsonStr);
 
-      final List<dynamic> tags = queryParams['tags'] ?? [];
-      final int? year = queryParams['year'];
+      final List<dynamic> rawTags = queryParams['tags'] ?? [];
 
+      List<String> tags = rawTags
+          .map((t) => t.toString().toLowerCase().trim())
+          .map((t) => t.replaceAll(RegExp(r'的照片|照片|图片'), '')) // 清理废话
+          .where((t) => t.isNotEmpty)
+          .toList();
+
+      final ut = userText.toLowerCase();
+
+      // ==========================================
+      // 🌟 1. 年份提取
+      // ==========================================
+      int? targetYear;
+      final now = DateTime.now();
+
+      if (ut.contains('今年'))
+        targetYear = now.year;
+      else if (ut.contains('去年'))
+        targetYear = now.year - 1;
+      else if (ut.contains('前年'))
+        targetYear = now.year - 2;
+      else {
+        final yearMatch = RegExp(r'(20\d{2})年').firstMatch(ut);
+        if (yearMatch != null) {
+          targetYear = int.tryParse(yearMatch.group(1)!);
+        }
+      }
+
+      // ==========================================
+      // 🌟 2. 季节与月份提取
+      // ==========================================
+      List<int>? targetMonths;
+
+      final springKeys = ['春天', '春日', '春季', '春', 'spring'];
+      final summerKeys = ['夏天', '夏日', '夏季', '夏', 'summer'];
+      final autumnKeys = ['秋天', '秋日', '秋季', '秋', 'autumn', 'fall'];
+      final winterKeys = ['冬天', '冬日', '冬季', '冬', 'winter'];
+
+      final monthRegExp = RegExp(
+        r'(1[0-2]|[1-9])月份?|(一|二|三|四|五|六|七|八|九|十|十一|十二)月份?',
+      );
+      final monthMatch = monthRegExp.firstMatch(ut);
+
+      if (monthMatch != null) {
+        String mStr = monthMatch.group(1) ?? monthMatch.group(2) ?? '';
+        int? m = int.tryParse(mStr);
+        if (m == null) {
+          const zhMonths = {
+            '一': 1,
+            '二': 2,
+            '三': 3,
+            '四': 4,
+            '五': 5,
+            '六': 6,
+            '七': 7,
+            '八': 8,
+            '九': 9,
+            '十': 10,
+            '十一': 11,
+            '十二': 12,
+          };
+          m = zhMonths[mStr];
+        }
+        if (m != null) targetMonths = [m];
+      } else {
+        if (springKeys.any(ut.contains)) {
+          targetMonths = [3, 4, 5];
+        } else if (summerKeys.any(ut.contains)) {
+          targetMonths = [6, 7, 8];
+        } else if (autumnKeys.any(ut.contains)) {
+          targetMonths = [9, 10, 11];
+        } else if (winterKeys.any(ut.contains)) {
+          targetMonths = [12, 1, 2];
+        }
+      }
+
+      // ==========================================
+      // 🌟 3. 意图纯净度检测（专门猎杀 AI 幻觉）
+      // ==========================================
+      // 抠掉所有的功能词、时间词
+      String pureIntent = ut
+          .replaceAll(RegExp(r'帮我|查找|找找|看看|推荐|一下|的|照片|图片|回忆'), '')
+          .replaceAll(monthRegExp, '');
+      for (var key in [
+        ...springKeys,
+        ...summerKeys,
+        ...autumnKeys,
+        ...winterKeys,
+      ]) {
+        pureIntent = pureIntent.replaceAll(key, '');
+      }
+      pureIntent = pureIntent.replaceAll(RegExp(r'今年|去年|前年|20\d{2}年'), '');
+
+      // 如果用户仅仅说了时间（比如"冬天的照片"、"一月份照片"），直接清空 AI 瞎编的视觉 tags！
+      if (pureIntent.trim().isEmpty) {
+        tags.clear();
+      } else {
+        // 如果用户不仅说了时间，还说了景物（如"冬天海边"），正常清洗时间词，保留视觉词
+        for (int i = 0; i < tags.length; i++) {
+          for (var key in [
+            ...springKeys,
+            ...summerKeys,
+            ...autumnKeys,
+            ...winterKeys,
+          ]) {
+            tags[i] = tags[i].replaceAll(key, '');
+          }
+          tags[i] = tags[i].replaceAll(monthRegExp, '');
+          tags[i] = tags[i].replaceAll('的', '').trim();
+        }
+        tags.removeWhere((t) => t.isEmpty);
+      }
+
+      // ==========================================
+      // 4. ObjectBox 查询（🌟 完美兼容 10 位和 13 位时间戳）
+      // ==========================================
       final store = ObjectBoxService().store;
       final photoBox = store.box<PhotoEntity>();
-      final normalizedTags = tags
-          .map((t) => t.toString().toLowerCase().trim())
-          .where((t) => t.isNotEmpty)
-          .toList(growable: false);
-      final queryBuilder = year != null
-          ? photoBox.query(
-              PhotoEntity_.timestamp.between(
-                DateTime(year, 1, 1).millisecondsSinceEpoch,
-                DateTime(year, 12, 31, 23, 59, 59, 999).millisecondsSinceEpoch,
+
+      QueryBuilder<PhotoEntity> queryBuilder;
+      if (targetYear != null) {
+        final startMillis = DateTime(targetYear, 1, 1).millisecondsSinceEpoch;
+        final endMillis = DateTime(
+          targetYear,
+          12,
+          31,
+          23,
+          59,
+          59,
+          999,
+        ).millisecondsSinceEpoch;
+
+        queryBuilder = photoBox.query(
+          PhotoEntity_.timestamp
+              .between(startMillis, endMillis)
+              .or(
+                PhotoEntity_.timestamp.between(
+                  startMillis ~/ 1000,
+                  endMillis ~/ 1000,
+                ),
               ),
-            )
-          : photoBox.query();
+        );
+      } else {
+        queryBuilder = photoBox.query();
+      }
+
       queryBuilder.order(PhotoEntity_.timestamp, flags: Order.descending);
       final query = queryBuilder.build();
       query.limit = 500;
       final candidates = query.find();
       query.close();
 
+      // ==========================================
+      // 5. 内存精细过滤
+      // ==========================================
       final filtered = candidates.where((p) {
-        if (normalizedTags.isNotEmpty) {
+        // 🌟 时空修复：把 10 位秒级时间戳强行放大回毫秒级
+        int ts = p.timestamp;
+        if (ts < 10000000000) ts *= 1000;
+        final photoMonth = DateTime.fromMillisecondsSinceEpoch(ts).month;
+
+        if (targetMonths != null) {
+          if (!targetMonths!.contains(photoMonth)) return false;
+        }
+
+        if (tags.isNotEmpty) {
           if (p.aiTags == null || p.aiTags!.isEmpty) return false;
-          final pTagsLower = p.aiTags!
-              .map((t) => t.toLowerCase())
-              .toSet();
-          final tagMatched = normalizedTags.any(pTagsLower.contains);
+          final pTagsLower = p.aiTags!.map((t) => t.toLowerCase()).toList();
+
+          final tagMatched = tags.any((searchTag) {
+            return pTagsLower.any((photoTag) {
+              if (photoTag.contains(searchTag)) return true;
+              if (photoTag.length >= 2 && searchTag.contains(photoTag))
+                return true;
+              return false;
+            });
+          });
+
           if (!tagMatched) return false;
         }
         return true;
@@ -150,7 +301,7 @@ class _ChatPageState extends State<ChatPage> {
     setState(() => _isLoading = true);
 
     final rawResponse = await _chatService.sendMessage(text, _messages);
-    final foundPhotos = await _executeLocalSearch(rawResponse);
+    final foundPhotos = await _executeLocalSearch(rawResponse, text);
 
     final cleanText = rawResponse
         .replaceAll(RegExp(r'<SEARCH>.*?</SEARCH>', dotAll: true), '')

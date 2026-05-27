@@ -70,6 +70,7 @@ extension PhotoServiceAiReset on PhotoService {
       }
 
       photo.isAiAnalyzed = false;
+      photo.isAiAnalysisCandidate = true;
       photo.aiTags = <String>[];
       photo.aiCaption = null;
       photo.imageEmbedding = null;
@@ -136,6 +137,7 @@ extension PhotoServiceAiReset on PhotoService {
     var updatedCount = 0;
     for (final photo in photos) {
       photo.isAiAnalyzed = false;
+      photo.isAiAnalysisCandidate = true;
       photo.aiTags = <String>[];
       photo.aiCaption = null;
       photo.imageEmbedding = null;
@@ -170,6 +172,91 @@ extension PhotoServiceAiReset on PhotoService {
     }
   }
 
+  int countPendingAnalysisCandidates() {
+    final q = _photoBox
+        .query(
+          PhotoEntity_.isAiAnalysisCandidate
+              .equals(true)
+              .and(PhotoEntity_.isAiAnalyzed.equals(false)),
+        )
+        .build();
+    try {
+      return q.count();
+    } finally {
+      q.close();
+    }
+  }
+
+  List<int> loadPendingAnalysisCandidateIds({int? limit}) {
+    final q = _photoBox
+        .query(
+          PhotoEntity_.isAiAnalysisCandidate
+              .equals(true)
+              .and(PhotoEntity_.isAiAnalyzed.equals(false)),
+        )
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    try {
+      final ids = q.find().map((p) => p.id).where((id) => id > 0);
+      return limit == null
+          ? ids.toList(growable: false)
+          : ids.take(limit).toList(growable: false);
+    } finally {
+      q.close();
+    }
+  }
+
+  List<PhotoEntity> loadPendingAnalysisCandidatePhotos({int? limit}) {
+    final ids = loadPendingAnalysisCandidateIds(limit: limit);
+    if (ids.isEmpty) {
+      return const <PhotoEntity>[];
+    }
+    return _photoBox
+        .getMany(ids)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
+  }
+
+  void markAiAnalysisCandidatesByIds(Iterable<int> photoIds) {
+    final ids = photoIds.where((id) => id > 0).toSet().toList(growable: false);
+    if (ids.isEmpty) {
+      return;
+    }
+    final photos = _photoBox
+        .getMany(ids)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
+    if (photos.isEmpty) {
+      return;
+    }
+    for (final photo in photos) {
+      if (!photo.isAiAnalyzed) {
+        photo.isAiAnalysisCandidate = true;
+      }
+    }
+    _store.runInTransaction(TxMode.write, () => _photoBox.putMany(photos));
+  }
+
+  void clearAiAnalysisCandidatesByIds(Iterable<int> photoIds) {
+    final ids = photoIds.where((id) => id > 0).toSet().toList(growable: false);
+    if (ids.isEmpty) {
+      return;
+    }
+    final photos = _photoBox
+        .getMany(ids)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
+    if (photos.isEmpty) {
+      return;
+    }
+    for (final photo in photos) {
+      if (!photo.isAiAnalyzed) {
+        photo.isAiAnalysisCandidate = false;
+      }
+    }
+    _store.runInTransaction(TxMode.write, () => _photoBox.putMany(photos));
+  }
+
   Future<void> migrateToMobileClip() async {
     debugPrint("🔄 开始执行 Memoria 2.0 AI 数据迁移...");
 
@@ -189,6 +276,7 @@ extension PhotoServiceAiReset on PhotoService {
 
     for (var photo in oldPhotos) {
       photo.isAiAnalyzed = false;
+      photo.isAiAnalysisCandidate = true;
 
       photo.aiTags = []; // 清空 ML Kit 时代干瘪的标签
       photo.imageEmbedding = null;

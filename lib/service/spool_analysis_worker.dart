@@ -24,7 +24,6 @@ import '../utils/ai_score_helper.dart';
 import '../utils/media_type_helper.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
-import 'amap_geo_service.dart';
 import 'analysis_spool_service.dart';
 import 'app_ai_settings_service.dart';
 import 'mobileclip_backend_preference_service.dart';
@@ -930,6 +929,60 @@ class SpoolAnalysisWorker {
         'threshold': 0.285,
         'ocrBoostThreshold': 8,
         'ocrBoost': 0.015,
+      },
+      <String, Object?>{
+        'id': 'plain_selfie',
+        'label': '低信息自拍/证件照',
+        'description': '纯大头自拍、证件照或没有背景、他人和事件线索的人像。多人场景、旅行和活动合照不应命中。',
+        'prototypePrompts': <String>[
+          'a plain close-up selfie headshot with no background context',
+          'an ID photo portrait against a plain background',
+          'a passport photo or document portrait',
+          'a close-up face selfie without environment or event context',
+        ],
+        'threshold': 0.285,
+      },
+      <String, Object?>{
+        'id': 'advertisement_poster',
+        'label': '广告/海报',
+        'description': '程序生成的分享海报、营销广告、纯宣传图。街景或活动照片中出现广告牌不应命中。',
+        'prototypePrompts': <String>[
+          'a generated advertising poster image',
+          'a promotional marketing poster with text',
+          'a social media share poster advertisement',
+          'a product advertisement image with graphic design',
+        ],
+        'threshold': 0.285,
+        'ocrBoostThreshold': 16,
+        'ocrBoost': 0.02,
+      },
+      <String, Object?>{
+        'id': 'internet_content',
+        'label': '网页/新闻/社交媒体',
+        'description': '网页、新闻报道、社交媒体、地图、行情图、聊天记录和互联网超文本截图。',
+        'prototypePrompts': <String>[
+          'a screenshot of a news article webpage',
+          'a screenshot of a social media feed',
+          'a stock market candlestick chart screenshot',
+          'a map application screenshot',
+          'a browser webpage screenshot with text',
+        ],
+        'threshold': 0.26,
+        'screenshotBoost': 0.06,
+        'ocrBoostThreshold': 20,
+        'ocrBoost': 0.025,
+      },
+      <String, Object?>{
+        'id': 'abstract_low_value',
+        'label': '低事件价值图形',
+        'description': '抽象图案、纯装饰图、无具体事件意义或生活线索的图片。',
+        'prototypePrompts': <String>[
+          'an abstract graphic pattern with no real world event',
+          'a decorative wallpaper image',
+          'a simple abstract art image without people or place',
+          'a generated geometric pattern image',
+        ],
+        'threshold': 0.295,
       },
       <String, Object?>{
         'id': 'dark_or_occluded',

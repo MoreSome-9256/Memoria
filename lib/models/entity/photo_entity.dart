@@ -52,6 +52,8 @@ class PhotoEntity {
   List<String>? aiTags; // AI 识别的标签（美食、海滩等）
   @Index()
   bool isAiAnalyzed = false; // AI 分析状态标记
+  @Index()
+  bool isAiAnalysisCandidate = false; // 已明确加入某轮 AI 任务但尚未完成
   String? aiCaption; // 单张照片的一句话描述
   List<double>? imageEmbedding; // MobileCLIP 图像向量，用于后续聚类
   String? ocrText; // OCR 提取出的原始文本

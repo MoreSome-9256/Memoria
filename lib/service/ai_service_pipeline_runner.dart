@@ -394,7 +394,13 @@ class _AiPipelineRunner {
                     .and(PhotoEntity_.id.oneOf(requestedPhotoIds)),
               )
               .build()
-        : photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
+        : photoBox
+              .query(
+                PhotoEntity_.isAiAnalysisCandidate
+                    .equals(true)
+                    .and(PhotoEntity_.isAiAnalyzed.equals(false)),
+              )
+              .build();
     try {
       return query.count();
     } finally {
@@ -421,7 +427,11 @@ class _AiPipelineRunner {
                 .order(PhotoEntity_.timestamp, flags: Order.descending)
                 .build()
           : photoBox
-                .query(PhotoEntity_.isAiAnalyzed.equals(false))
+                .query(
+                  PhotoEntity_.isAiAnalysisCandidate
+                      .equals(true)
+                      .and(PhotoEntity_.isAiAnalyzed.equals(false)),
+                )
                 .order(PhotoEntity_.timestamp, flags: Order.descending)
                 .build();
       final candidates = query

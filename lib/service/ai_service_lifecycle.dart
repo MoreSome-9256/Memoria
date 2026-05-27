@@ -433,12 +433,8 @@ extension AIServiceLifecycle on AIService {
       debugPrint('[spool] spool 检查失败: $error');
     }
 
-    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final pendingQ = photoBox
-        .query(PhotoEntity_.isAiAnalyzed.equals(false))
-        .build();
-    final pending = pendingQ.count();
-    pendingQ.close();
+    final pendingIds = PhotoService().loadPendingAnalysisCandidateIds();
+    final pending = pendingIds.length;
     if (pending <= 0) {
       await AIProgressNotificationService().clearProgressNotificationSurfaces();
       await _persistRuntimeState(isActive: false);
@@ -475,7 +471,11 @@ extension AIServiceLifecycle on AIService {
   }
 
   Future<void> _startForegroundTaskAndRun() async {
-    await analyzePhotosInBackground();
+    final pendingIds = PhotoService().loadPendingAnalysisCandidateIds();
+    if (pendingIds.isEmpty) {
+      return;
+    }
+    await analyzePhotosInBackground(photoIds: pendingIds);
   }
 
   Future<void> _requestCurrentSpoolPause() async {

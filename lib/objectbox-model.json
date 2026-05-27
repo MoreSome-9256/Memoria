@@ -621,7 +621,7 @@
     },
     {
       "id": "8:8597624262250363654",
-      "lastPropertyId": "30:5287670559240961596",
+      "lastPropertyId": "31:8224221571986436293",
       "name": "PhotoEntity",
       "properties": [
         {
@@ -783,6 +783,13 @@
           "id": "30:5287670559240961596",
           "name": "thumbnailBytes",
           "type": 23
+        },
+        {
+          "id": "31:8224221571986436293",
+          "name": "isAiAnalysisCandidate",
+          "indexId": "41:7387194497188768424",
+          "type": 1,
+          "flags": 8
         }
       ],
       "relations": []
@@ -1084,7 +1091,7 @@
     }
   ],
   "lastEntityId": "13:5122727067842506599",
-  "lastIndexId": "40:6858426564956238268",
+  "lastIndexId": "41:7387194497188768424",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'ai_service.dart';
 import 'ai_background_task_service.dart';
+import 'app_ai_settings_service.dart';
 import 'event_service.dart';
 import '../storage/objectbox/media_asset_repository.dart';
 import 'media_asset_sync_service.dart';
@@ -165,8 +166,8 @@ class AlbumRefreshService {
     _setProgress(
       AlbumRefreshStage.handoff,
       _progressNotifier.value.progress,
-      '正在停止扫描',
-      '已停止继续扫描；已移交的 AI 任务会继续处理。',
+      '正在停止任务',
+      '已停止继续扫描，并正在停止 AI 消费者。',
     );
   }
 
@@ -289,8 +290,12 @@ class AlbumRefreshService {
     var cacheForegroundStarted = false;
     debugPrint('[scan] 开始调用 scanBatchPhotos…');
     try {
-      cacheForegroundStarted = await AiBackgroundTaskService.instance
-          .startAlbumCacheForeground(text: '正在更新相册缓存……');
+      final settings = await AppAiSettingsService.instance.load();
+      cacheForegroundStarted = settings.androidForegroundServiceEnabled
+          ? await AiBackgroundTaskService.instance.startAlbumCacheForeground(
+              text: '正在更新相册缓存……',
+            )
+          : false;
       final scanResult = await PhotoService().scanBatchPhotos(
         batchSize: batchSize,
         onProgress: (scanProgress) {

@@ -79,6 +79,9 @@ class _AlbumPageState extends State<AlbumPage> {
   bool _isClearingCache = false;
   bool _isStartingImport = false;
   bool _tagBrowserAiRecoveryTriggered = false;
+  bool _hiddenPendingAnalysisPromptForSession = false;
+  bool _autoResumePendingStarted = false;
+  int _pendingAnalysisCandidateCount = 0;
   String? _lastPromptedJunkCleanupReportId;
   final TextEditingController _semanticSearchController =
       TextEditingController();
@@ -97,6 +100,7 @@ class _AlbumPageState extends State<AlbumPage> {
   // UI streams for moments and tag browser data.
   late Stream<Map<String, List<Event>>> _uiEventsStream;
   late Stream<_AlbumTagBrowserData> _albumTagBrowserStream;
+  StreamSubscription<void>? _pendingAnalysisSubscription;
 
   void _startRefresh({
     bool clearCacheFirst = false,
@@ -181,6 +185,59 @@ class _AlbumPageState extends State<AlbumPage> {
         }
       }),
     );
+  }
+
+  Future<void> _refreshPendingAnalysisPrompt() async {
+    final count = PhotoService().countPendingAnalysisCandidates();
+    if (!mounted) {
+      return;
+    }
+    if (count != _pendingAnalysisCandidateCount) {
+      setState(() {
+        _pendingAnalysisCandidateCount = count;
+        if (count == 0) {
+          _hiddenPendingAnalysisPromptForSession = false;
+        }
+      });
+    }
+
+    if (count > 0 &&
+        !_autoResumePendingStarted &&
+        !AlbumRefreshService().isRunning &&
+        !UnifiedAnalysisPipelineService().isRunning) {
+      final settings = await AppAiSettingsService.instance.load();
+      if (!mounted) {
+        return;
+      }
+      if (settings.autoResumeAnalysis) {
+        _autoResumePendingStarted = true;
+        unawaited(_resumePendingAnalysisCandidates());
+      }
+    }
+  }
+
+  Future<void> _resumePendingAnalysisCandidates() async {
+    final count = PhotoService().countPendingAnalysisCandidates();
+    if (count <= 0) {
+      await _refreshPendingAnalysisPrompt();
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text('正在继续分析 $count 个未完成图片。'),
+      ),
+    );
+    try {
+      await UnifiedAnalysisPipelineService().startPendingAnalysisCandidates();
+    } finally {
+      if (mounted) {
+        await _refreshPendingAnalysisPrompt();
+      }
+    }
   }
 
   Future<void> _showPhotoPermissionGuide(String message) async {
@@ -629,6 +686,21 @@ class _AlbumPageState extends State<AlbumPage> {
             .asyncMap((_) => _loadAllPhotosForTagBrowser())
             .asyncMap(_buildAlbumTagBrowserData)
             .asBroadcastStream();
+    _pendingAnalysisSubscription =
+        _debounceStream<void>(
+          ObjectBoxService().store
+              .box<PhotoEntity>()
+              .query(
+                PhotoEntity_.isAiAnalysisCandidate
+                    .equals(true)
+                    .and(PhotoEntity_.isAiAnalyzed.equals(false)),
+              )
+              .watch(triggerImmediately: true)
+              .map((_) {}),
+          const Duration(milliseconds: 600),
+        ).listen((_) {
+          unawaited(_refreshPendingAnalysisPrompt());
+        });
   }
 
   Future<_AlbumTagBrowserData> _buildAlbumTagBrowserData(
@@ -673,6 +745,7 @@ class _AlbumPageState extends State<AlbumPage> {
     AIService().junkCleanupReportListenable.removeListener(
       _onJunkCleanupReportChanged,
     );
+    _pendingAnalysisSubscription?.cancel();
     _momentsFastScrollerHideTimer?.cancel();
     _momentsScrollController.dispose();
     _semanticSearchController.dispose();
@@ -885,6 +958,7 @@ class _AlbumPageState extends State<AlbumPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _buildUnifiedWorkProgressSection(),
+                  _buildPendingAnalysisPromptSection(),
                   _buildAnalysisProgressSection(),
                   ValueListenableBuilder<AlbumRefreshProgress>(
                     valueListenable: AlbumRefreshService().progressListenable,
@@ -974,6 +1048,52 @@ class _AlbumPageState extends State<AlbumPage> {
               : const SizedBox.shrink(),
         );
       },
+    );
+  }
+
+  Widget _buildPendingAnalysisPromptSection() {
+    final count = _pendingAnalysisCandidateCount;
+    final isBusy =
+        AlbumRefreshService().isRunning ||
+        UnifiedAnalysisPipelineService().isRunning ||
+        AIService().isAnalyzing;
+    if (count <= 0 || _hiddenPendingAnalysisPromptForSession || isBusy) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.amber.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.amber.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.pending_actions_outlined, color: Colors.amber),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '还有$count个图片没有分析，是否继续分析',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _hiddenPendingAnalysisPromptForSession = true;
+              });
+            },
+            child: const Text('隐藏'),
+          ),
+          FilledButton(
+            onPressed: () => unawaited(_resumePendingAnalysisCandidates()),
+            child: const Text('是'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1105,6 +1225,10 @@ class _AlbumPageState extends State<AlbumPage> {
     final aiDetail = progress.analysisEnabled
         ? '队列 ${progress.queueSize} · 失败 ${progress.aiFailed}'
         : '仅更新缓存，不预热模型，不移交任务';
+    final canStop =
+        progress.isRunning &&
+        progress.stage != UnifiedAnalysisStage.completed &&
+        !progress.scanStopped;
 
     return Container(
       width: double.infinity,
@@ -1141,7 +1265,7 @@ class _AlbumPageState extends State<AlbumPage> {
             detail: progress.scanDone
                 ? '缓存索引构建完成'
                 : progress.scanStopped
-                ? '已停止继续扫描；已移交的 AI 任务会继续处理'
+                ? '已停止继续扫描和 AI 消费者'
                 : progress.message,
             value: progress.scanTotal > 0 ? cacheFraction : null,
             color: Colors.pinkAccent,
@@ -1160,9 +1284,9 @@ class _AlbumPageState extends State<AlbumPage> {
           Align(
             alignment: Alignment.centerRight,
             child: TextButton.icon(
-              onPressed: progress.scanDone || progress.scanStopped
-                  ? null
-                  : AlbumRefreshService().stopScanningOnly,
+              onPressed: canStop
+                  ? AlbumRefreshService().stopScanningOnly
+                  : null,
               icon: const Icon(Icons.stop_circle_outlined),
               label: const Text('停止扫描'),
             ),
@@ -1351,7 +1475,7 @@ class _AlbumPageState extends State<AlbumPage> {
             !UnifiedAnalysisPipelineService().isRunning &&
             !_tagBrowserAiRecoveryTriggered) {
           _tagBrowserAiRecoveryTriggered = true;
-          unawaited(AIService().analyzePhotosInBackground());
+          unawaited(_refreshPendingAnalysisPrompt());
         } else if (analyzedPhotoCount > 0 || AIService().isAnalyzing) {
           _tagBrowserAiRecoveryTriggered = false;
         }

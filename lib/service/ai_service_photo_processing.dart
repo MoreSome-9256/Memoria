@@ -73,6 +73,7 @@ extension AIServicePhotoProcessing on AIService {
         storeImageEmbedding = mediaKind == MemoriaMediaKind.image;
         p.aiTags = tags;
         p.isAiAnalyzed = true;
+        p.isAiAnalysisCandidate = false;
         p.aiCaption = aiCaption.isEmpty ? null : aiCaption;
         p.imageEmbedding = storeImageEmbedding && imageEmbedding.isNotEmpty
             ? imageEmbedding

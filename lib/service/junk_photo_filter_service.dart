@@ -46,16 +46,10 @@ class JunkPhotoHit {
 }
 
 class JunkPhotoDecision {
-  const JunkPhotoDecision({
-    required this.shouldFilter,
-    required this.hits,
-  });
+  const JunkPhotoDecision({required this.shouldFilter, required this.hits});
 
   factory JunkPhotoDecision.keep() {
-    return const JunkPhotoDecision(
-      shouldFilter: false,
-      hits: <JunkPhotoHit>[],
-    );
+    return const JunkPhotoDecision(shouldFilter: false, hits: <JunkPhotoHit>[]);
   }
 
   final bool shouldFilter;
@@ -221,7 +215,70 @@ class JunkPhotoFilterService {
           threshold: 0.285,
           ocrBoostThreshold: 8,
           ocrBoost: 0.015,
-          extraKeywordHints: <String>['meme', 'sticker', 'reaction', '梗图', '表情包'],
+          extraKeywordHints: <String>[
+            'meme',
+            'sticker',
+            'reaction',
+            '梗图',
+            '表情包',
+          ],
+        ),
+        JunkPhotoCategoryDefinition(
+          id: 'plain_selfie',
+          label: '低信息自拍/证件照',
+          description: '纯大头自拍、证件照或没有背景、他人和事件线索的人像。多人场景、旅行和活动合照不应命中。',
+          prototypePrompts: <String>[
+            'a plain close-up selfie headshot with no background context',
+            'an ID photo portrait against a plain background',
+            'a passport photo or document portrait',
+            'a close-up face selfie without environment or event context',
+          ],
+          threshold: 0.285,
+          extraKeywordHints: <String>['selfie', 'passport photo', 'id photo'],
+        ),
+        JunkPhotoCategoryDefinition(
+          id: 'advertisement_poster',
+          label: '广告/海报',
+          description: '程序生成的分享海报、营销广告、纯宣传图。街景或活动照片中出现广告牌不应命中。',
+          prototypePrompts: <String>[
+            'a generated advertising poster image',
+            'a promotional marketing poster with text',
+            'a social media share poster advertisement',
+            'a product advertisement image with graphic design',
+          ],
+          threshold: 0.285,
+          ocrBoostThreshold: 16,
+          ocrBoost: 0.02,
+          extraKeywordHints: <String>['广告', '海报', '推广', 'promo', 'sale'],
+        ),
+        JunkPhotoCategoryDefinition(
+          id: 'internet_content',
+          label: '网页/新闻/社交媒体',
+          description: '网页、新闻报道、社交媒体、地图、行情图、聊天记录和互联网超文本截图。',
+          prototypePrompts: <String>[
+            'a screenshot of a news article webpage',
+            'a screenshot of a social media feed',
+            'a stock market candlestick chart screenshot',
+            'a map application screenshot',
+            'a browser webpage screenshot with text',
+          ],
+          threshold: 0.26,
+          screenshotBoost: 0.06,
+          ocrBoostThreshold: 20,
+          ocrBoost: 0.025,
+          extraKeywordHints: <String>['http', 'www', '新闻', '地图', 'k线', '微博'],
+        ),
+        JunkPhotoCategoryDefinition(
+          id: 'abstract_low_value',
+          label: '低事件价值图形',
+          description: '抽象图案、纯装饰图、无具体事件意义或生活线索的图片。',
+          prototypePrompts: <String>[
+            'an abstract graphic pattern with no real world event',
+            'a decorative wallpaper image',
+            'a simple abstract art image without people or place',
+            'a generated geometric pattern image',
+          ],
+          threshold: 0.295,
         ),
         JunkPhotoCategoryDefinition(
           id: 'dark_or_occluded',
@@ -258,19 +315,24 @@ class JunkPhotoFilterService {
   List<JunkPhotoCategoryDefinition> get definitions => _definitions;
 
   /// 可被 `compute()` 序列化的原型缓存
-  Map<String, List<double>> get prototypeCache => Map<String, List<double>>.unmodifiable(_prototypeCache);
+  Map<String, List<double>> get prototypeCache =>
+      Map<String, List<double>>.unmodifiable(_prototypeCache);
 
   /// 可被 `compute()` 序列化的分类定义列表
   List<Map<String, Object?>> get definitionsJson {
-    return _definitions.map((d) => <String, Object?>{
-      'id': d.id,
-      'label': d.label,
-      'description': d.description,
-      'threshold': d.threshold,
-      'screenshotBoost': d.screenshotBoost,
-      'ocrBoostThreshold': d.ocrBoostThreshold,
-      'ocrBoost': d.ocrBoost,
-    }).toList(growable: false);
+    return _definitions
+        .map(
+          (d) => <String, Object?>{
+            'id': d.id,
+            'label': d.label,
+            'description': d.description,
+            'threshold': d.threshold,
+            'screenshotBoost': d.screenshotBoost,
+            'ocrBoostThreshold': d.ocrBoostThreshold,
+            'ocrBoost': d.ocrBoost,
+          },
+        )
+        .toList(growable: false);
   }
 
   Future<void> warmUp() async {
@@ -303,7 +365,10 @@ class JunkPhotoFilterService {
         continue;
       }
 
-      var score = _semanticService.calculateSimilarity(imageEmbedding, prototype);
+      var score = _semanticService.calculateSimilarity(
+        imageEmbedding,
+        prototype,
+      );
       if (definition.screenshotBoost > 0 && photo.isProbablyScreenshot) {
         score += definition.screenshotBoost;
       }

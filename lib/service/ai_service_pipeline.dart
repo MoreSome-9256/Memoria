@@ -100,7 +100,11 @@ extension AIServicePipeline on AIService {
               .order(PhotoEntity_.timestamp, flags: Order.descending)
               .build()
         : photoBox
-              .query(PhotoEntity_.isAiAnalyzed.equals(false))
+              .query(
+                PhotoEntity_.isAiAnalysisCandidate
+                    .equals(true)
+                    .and(PhotoEntity_.isAiAnalyzed.equals(false)),
+              )
               .order(PhotoEntity_.timestamp, flags: Order.descending)
               .build();
     final pendingPhotos = q.find();
@@ -292,7 +296,11 @@ extension AIServicePipeline on AIService {
   }) async {
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
     final pendingQ = photoBox
-        .query(PhotoEntity_.isAiAnalyzed.equals(false))
+        .query(
+          PhotoEntity_.isAiAnalysisCandidate
+              .equals(true)
+              .and(PhotoEntity_.isAiAnalyzed.equals(false)),
+        )
         .build();
     final pendingPhotoIds = pendingQ
         .find()
@@ -333,6 +341,7 @@ extension AIServicePipeline on AIService {
     store.runInTransaction(TxMode.write, () {
       for (final photo in photos) {
         photo.isAiAnalyzed = false;
+        photo.isAiAnalysisCandidate = false;
         if (photo.imageEmbedding == null || photo.imageEmbedding!.isEmpty) {
           photo.aiTags = <String>[];
           photo.aiCaption = null;
@@ -355,6 +364,7 @@ extension AIServicePipeline on AIService {
       final p = photoBox.get(photo.id);
       if (p == null) return;
       p.isAiAnalyzed = false;
+      p.isAiAnalysisCandidate = true;
       if (p.imageEmbedding == null || p.imageEmbedding!.isEmpty) {
         p.aiTags = <String>[];
         p.aiCaption = null;
@@ -430,6 +440,7 @@ extension AIServicePipeline on AIService {
 
       p.aiTags = result.tags;
       p.isAiAnalyzed = false;
+      p.isAiAnalysisCandidate = true;
       p.aiCaption = result.aiCaption.isEmpty ? null : result.aiCaption;
       p.imageEmbedding =
           isPhotoEmbeddingModelVersion(resultModelVersion) &&
@@ -471,6 +482,7 @@ extension AIServicePipeline on AIService {
       final p = photoBox.get(photo.id);
       if (p == null) return;
       p.isAiAnalyzed = true;
+      p.isAiAnalysisCandidate = false;
       photoBox.put(p);
     });
   }

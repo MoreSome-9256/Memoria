@@ -252,14 +252,11 @@ class _LiteRtProviderAttempt {
     final threads = threadCount.clamp(1, 8).toInt();
     return _LiteRtProviderAttempt(
       label: 'XNNPACK ($threads threads)',
-      createDelegates: () async {
-        final options = tfl.XNNPackDelegateOptions(numThreads: threads);
-        try {
-          return <tfl.Delegate>[tfl.XNNPackDelegate(options: options)];
-        } finally {
-          options.delete();
-        }
-      },
+      createDelegates: () async => <tfl.Delegate>[
+        tfl.XNNPackDelegate(
+          options: tfl.XNNPackDelegateOptions(numThreads: threads),
+        ),
+      ],
     );
   }
 

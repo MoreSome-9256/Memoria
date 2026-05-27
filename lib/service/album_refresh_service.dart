@@ -183,14 +183,19 @@ class AlbumRefreshService {
         final acceptedText = isFullImport
             ? '${scanProgress.acceptedCount} 个'
             : '${scanProgress.acceptedCount}/${scanProgress.targetNew} 个';
+        final scannedText = scanProgress.totalCount > 0
+            ? '${scanProgress.scannedCount}/${scanProgress.totalCount}'
+            : '${scanProgress.scannedCount}';
         _setProgress(
           AlbumRefreshStage.scanning,
           progress,
           '正在读取图片',
-          '已读取 ${scanProgress.scannedCount}/${scanProgress.totalCount} 项，找到 $acceptedText 可加入 AI 的新项目。',
+          '已读取 $scannedText 项，找到 $acceptedText 可加入 AI 的新项目。',
         );
         debugPrint(
-          '[scan]   扫描进度: scanned=${scanProgress.scannedCount}/${scanProgress.totalCount} accepted=${scanProgress.acceptedCount}/${scanProgress.targetNew} progress=${progress.toStringAsFixed(3)}',
+          isFullImport
+              ? '[scan]   扫描进度: scanned=$scannedText accepted=${scanProgress.acceptedCount} progress=${progress.toStringAsFixed(3)}'
+              : '[scan]   扫描进度: scanned=$scannedText accepted=${scanProgress.acceptedCount}/${scanProgress.targetNew} progress=${progress.toStringAsFixed(3)}',
         );
       },
     );

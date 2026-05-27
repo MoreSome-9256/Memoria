@@ -1,4 +1,4 @@
-/// MobileCLIP 基准测试服务，负责收集模型运行时性能数据。
+// MobileCLIP 基准测试服务，负责收集模型运行时性能数据。
 
 import 'dart:io';
 import 'dart:math' as math;
@@ -250,17 +250,14 @@ class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
 }
 
 class MobileClipBenchmarkService {
-  MobileClipBenchmarkService({
-    List<MobileClipBenchmarkAdapter>? adapters,
-  }) : _adapters = adapters ?? _buildDefaultAdapters();
+  MobileClipBenchmarkService({List<MobileClipBenchmarkAdapter>? adapters})
+    : _adapters = adapters ?? _buildDefaultAdapters();
 
   final List<MobileClipBenchmarkAdapter> _adapters;
 
   static List<MobileClipBenchmarkAdapter> _buildDefaultAdapters() {
     final accelerators = Platform.isAndroid
         ? const <(String, String, LocalInferenceAccelerator)>[
-            ('litert_gpu', 'LiteRT GPU', LocalInferenceAccelerator.gpu),
-            ('litert_npu', 'LiteRT NPU', LocalInferenceAccelerator.npu),
             (
               'litert_xnnpack',
               'LiteRT XNNPACK',
@@ -270,12 +267,6 @@ class MobileClipBenchmarkService {
           ]
         : (Platform.isIOS || Platform.isMacOS)
         ? const <(String, String, LocalInferenceAccelerator)>[
-            (
-              'litert_coreml',
-              'LiteRT Core ML',
-              LocalInferenceAccelerator.coreml,
-            ),
-            ('litert_metal', 'LiteRT Metal', LocalInferenceAccelerator.metal),
             (
               'litert_xnnpack',
               'LiteRT XNNPACK',
@@ -292,13 +283,15 @@ class MobileClipBenchmarkService {
             ('litert_cpu', 'LiteRT CPU', LocalInferenceAccelerator.cpu),
           ];
 
-    final adapters = accelerators.map<MobileClipBenchmarkAdapter>((entry) {
-      return LiteRtMobileClipBenchmarkAdapter(
-        adapterId: entry.$1,
-        adapterDisplayName: entry.$2,
-        accelerator: entry.$3,
-      );
-    }).toList(growable: true);
+    final adapters = accelerators
+        .map<MobileClipBenchmarkAdapter>((entry) {
+          return LiteRtMobileClipBenchmarkAdapter(
+            adapterId: entry.$1,
+            adapterDisplayName: entry.$2,
+            accelerator: entry.$3,
+          );
+        })
+        .toList(growable: true);
     if (Platform.isAndroid) {
       adapters.add(NcnnMobileClipBenchmarkAdapter());
     }

@@ -1,10 +1,10 @@
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 
+import 'ai_model_weight_service.dart';
 import 'litert_inference_service.dart';
 
 class MobileClipLiteRtService {
@@ -20,20 +20,16 @@ class MobileClipLiteRtService {
     return MobileClipLiteRtService._internal().._accelerator = accelerator;
   }
 
-  factory MobileClipLiteRtService.withAccelerator(
-    LocalInferenceAccelerator accelerator,
-  ) {
-    final prevAccelerator = _instance._accelerator;
-    _instance._accelerator = accelerator;
-    if ((_instance._imageSession != null || _instance._textSession != null) &&
-        prevAccelerator != accelerator) {
-      _instance._imageSession?.close();
-      _instance._textSession?.close();
-      _instance._imageSession = null;
-      _instance._textSession = null;
-      _instance._imageProviderLabel = null;
-      _instance._textProviderLabel = null;
-    }
+  factory MobileClipLiteRtService.withRuntimeOptions({
+    required LocalInferenceAccelerator accelerator,
+    required int xnnpackThreadCount,
+    required int modelBatchSize,
+  }) {
+    _instance._configureRuntime(
+      accelerator: accelerator,
+      xnnpackThreadCount: xnnpackThreadCount,
+      modelBatchSize: modelBatchSize,
+    );
     return _instance;
   }
 
@@ -46,7 +42,9 @@ class MobileClipLiteRtService {
   static const String _textModelAssetPath =
       'assets/mobileclip2/s2/mobileclip2_s2_text.tflite';
 
-  LocalInferenceAccelerator _accelerator = LocalInferenceAccelerator.gpu;
+  LocalInferenceAccelerator _accelerator = LocalInferenceAccelerator.xnnpack;
+  int _xnnpackThreadCount = 2;
+  int _modelBatchSize = 1;
   final LiteRtInferenceService _runtime = const LiteRtInferenceService();
 
   LiteRtSession? _imageSession;
@@ -56,6 +54,34 @@ class MobileClipLiteRtService {
 
   String get executionProviderLabel =>
       _imageProviderLabel ?? _textProviderLabel ?? 'Pending session init';
+
+  void _configureRuntime({
+    required LocalInferenceAccelerator accelerator,
+    int? xnnpackThreadCount,
+    int? modelBatchSize,
+  }) {
+    final nextThreads = _normalizeThreadCount(
+      xnnpackThreadCount ?? _xnnpackThreadCount,
+    );
+    final nextModelBatchSize = _normalizeModelBatchSize(
+      modelBatchSize ?? _modelBatchSize,
+    );
+    final changed =
+        _accelerator != accelerator ||
+        _xnnpackThreadCount != nextThreads ||
+        _modelBatchSize != nextModelBatchSize;
+    _accelerator = accelerator;
+    _xnnpackThreadCount = nextThreads;
+    _modelBatchSize = nextModelBatchSize;
+    if (changed) {
+      _imageSession?.close();
+      _textSession?.close();
+      _imageSession = null;
+      _textSession = null;
+      _imageProviderLabel = null;
+      _textProviderLabel = null;
+    }
+  }
 
   Future<void> warmUp() async {
     await warmUpImage();
@@ -140,10 +166,7 @@ class MobileClipLiteRtService {
     tensorWatch.stop();
 
     final inferenceWatch = Stopwatch()..start();
-    session.interpreter.run(
-      input.buffer,
-      outputImage,
-    );
+    session.interpreter.run(input.buffer, outputImage);
     inferenceWatch.stop();
 
     return MobileClipLiteRtRunProfile(
@@ -163,10 +186,7 @@ class MobileClipLiteRtService {
     final session = await _loadTextSession();
     final outputText = _zeroOutputBuffer();
     final tokenBuffer = Int64List.fromList(tokenIds);
-    session.interpreter.run(
-      tokenBuffer.buffer,
-      outputText,
-    );
+    session.interpreter.run(tokenBuffer.buffer, outputText);
     return _l2Normalize(outputText.first);
   }
 
@@ -183,12 +203,17 @@ class MobileClipLiteRtService {
     if (_imageSession != null) {
       return _imageSession!;
     }
+    await AiModelWeightService.instance.ensureWeightsAvailableForInference(
+      AiModelWeightId.mobileclip2LiteRt,
+    );
 
     final session = await _runtime.createSession(
       LiteRtSessionConfig(
         modelAssetPath: _imageModelAssetPath,
         modelToken: '${modelVersion}_image',
         accelerator: _accelerator,
+        xnnpackThreadCount: _xnnpackThreadCount,
+        modelBatchSize: _modelBatchSize,
       ),
     );
     _imageSession = session;
@@ -211,12 +236,17 @@ class MobileClipLiteRtService {
     if (_textSession != null) {
       return _textSession!;
     }
+    await AiModelWeightService.instance.ensureWeightsAvailableForInference(
+      AiModelWeightId.mobileclip2LiteRt,
+    );
 
     final session = await _runtime.createSession(
       LiteRtSessionConfig(
         modelAssetPath: _textModelAssetPath,
         modelToken: '${modelVersion}_text',
         accelerator: _accelerator,
+        xnnpackThreadCount: _xnnpackThreadCount,
+        modelBatchSize: _modelBatchSize,
       ),
     );
     _textSession = session;
@@ -282,6 +312,18 @@ class MobileClipLiteRtService {
     }
     return vector.map((value) => value / norm).toList(growable: false);
   }
+
+  int _normalizeThreadCount(int value) {
+    if (value < 1) return 1;
+    if (value > 8) return 8;
+    return value;
+  }
+
+  int _normalizeModelBatchSize(int value) {
+    if (value < 1) return 1;
+    if (value > 16) return 16;
+    return value;
+  }
 }
 
 Map<String, Object?> _preprocessImageForMobileClipLiteRt(Uint8List imageBytes) {
@@ -324,13 +366,7 @@ img.Image _centerCrop(img.Image image, int size) {
   final y = math.max(0, ((image.height - size) / 2).floor());
   final width = math.min(size, image.width - x);
   final height = math.min(size, image.height - y);
-  return img.copyCrop(
-    image,
-    x: x,
-    y: y,
-    width: width,
-    height: height,
-  );
+  return img.copyCrop(image, x: x, y: y, width: width, height: height);
 }
 
 Float32List _toNchwUnitRgb(img.Image image) {

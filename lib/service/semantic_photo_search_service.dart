@@ -1,4 +1,4 @@
-/// 语义照片搜索服务，串联查询解析、向量检索和结果排序。
+// 语义照片搜索服务，串联查询解析、向量检索和结果排序。
 
 import 'package:flutter/foundation.dart';
 import '../data/tag_taxonomy_v2.dart';
@@ -64,7 +64,9 @@ class SemanticPhotoSearchService {
     );
   }
 
-  Future<SemanticSearchResult> searchWithQuery(SemanticSearchQuery query) async {
+  Future<SemanticSearchResult> searchWithQuery(
+    SemanticSearchQuery query,
+  ) async {
     final allPhotos = await _loadAllPhotos();
     return _searchParsedQuery(
       rawQuery: query.rawQuery,
@@ -106,8 +108,9 @@ class SemanticPhotoSearchService {
           relaxationMessage: metadataOnlyResult.message,
         );
       }
-      final metadataOnlyPhotos = metadataOnlyResult.photos.toList(growable: false)
-        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      final metadataOnlyPhotos = metadataOnlyResult.photos.toList(
+        growable: false,
+      )..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       return SemanticSearchResult(
         query: query,
         exactPhotos: metadataOnlyPhotos,
@@ -153,10 +156,11 @@ class SemanticPhotoSearchService {
     );
 
     final relatedHits = <int, SemanticSearchHit>{};
-    final primaryRelatedHits = primaryScores.hits.values
-        .where((hit) => !hit.isExactMatch)
-        .toList(growable: false)
-      ..sort((a, b) => b.score.compareTo(a.score));
+    final primaryRelatedHits =
+        primaryScores.hits.values
+            .where((hit) => !hit.isExactMatch)
+            .toList(growable: false)
+          ..sort((a, b) => b.score.compareTo(a.score));
     for (final hit in primaryRelatedHits) {
       relatedHits[hit.photoId] = hit;
     }
@@ -207,9 +211,12 @@ class SemanticPhotoSearchService {
 
     return SemanticSearchResult(
       query: query,
-      exactPhotos: exactPhotos.take(_maxResultsPerBucket).toList(growable: false),
-      relatedPhotos:
-          relatedPhotos.take(_maxResultsPerBucket).toList(growable: false),
+      exactPhotos: exactPhotos
+          .take(_maxResultsPerBucket)
+          .toList(growable: false),
+      relatedPhotos: relatedPhotos
+          .take(_maxResultsPerBucket)
+          .toList(growable: false),
       hits: hits,
       totalAnalyzedPhotos: photos.length,
       filteredCandidateCount: exactPhotos.length + relatedPhotos.length,
@@ -217,14 +224,16 @@ class SemanticPhotoSearchService {
       relaxationMessage: relaxationMessage,
       metadataCandidateCount: metadataCandidateCount,
       tagCandidateCount: tagCandidateCount,
-      noExactMatchMessage:
-          exactPhotos.isEmpty && relatedPhotos.isNotEmpty ? _messageNoExactRelated : null,
+      noExactMatchMessage: exactPhotos.isEmpty && relatedPhotos.isNotEmpty
+          ? _messageNoExactRelated
+          : null,
     );
   }
 
   Future<List<PhotoEntity>> _loadAllPhotos() async {
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final q = photoBox.query()
+    final q = photoBox
+        .query()
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
     final photos = q.find();
@@ -281,16 +290,18 @@ class SemanticPhotoSearchService {
     List<PhotoEntity> photos,
     SemanticSearchQuery query,
   ) {
-    return photos.where((photo) {
-      if (query.hasTimeConstraints && !_matchesAnyTimeRange(photo, query)) {
-        return false;
-      }
-      if (query.hasLocationConstraints &&
-          !_matchesAnyLocation(photo, query.locations)) {
-        return false;
-      }
-      return true;
-    }).toList(growable: false);
+    return photos
+        .where((photo) {
+          if (query.hasTimeConstraints && !_matchesAnyTimeRange(photo, query)) {
+            return false;
+          }
+          if (query.hasLocationConstraints &&
+              !_matchesAnyLocation(photo, query.locations)) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
   }
 
   bool _matchesAnyTimeRange(PhotoEntity photo, SemanticSearchQuery query) {
@@ -363,10 +374,12 @@ class SemanticPhotoSearchService {
       return photos;
     }
     final targetIds = coarseTags.map((item) => item.id).toSet();
-    return photos.where((photo) {
-      final coarseIds = _photoCoarseIds(photo);
-      return coarseIds.any(targetIds.contains);
-    }).toList(growable: false);
+    return photos
+        .where((photo) {
+          final coarseIds = _photoCoarseIds(photo);
+          return coarseIds.any(targetIds.contains);
+        })
+        .toList(growable: false);
   }
 
   Future<_SemanticVectorBundle> _buildSemanticVectors(
@@ -477,14 +490,17 @@ class SemanticPhotoSearchService {
     }
 
     final negative = _scoreNegativeSemantics(imageEmbedding, negativeVectors);
-    final finalScore = positive.qualifiedPositiveScore -
+    final finalScore =
+        positive.qualifiedPositiveScore -
         (_negativePenaltyAlpha * negative.negativeScore);
 
-    final isExact = !forceAllRelated &&
+    final isExact =
+        !forceAllRelated &&
         positive.qualifiedPositiveScore >= _exactPositiveThreshold &&
         finalScore >= _minimumFinalScore;
     final isRelated =
-        positive.semanticScore >= semanticThreshold && finalScore >= _minimumFinalScore;
+        positive.semanticScore >= semanticThreshold &&
+        finalScore >= _minimumFinalScore;
     if (!isExact && !isRelated) {
       return null;
     }
@@ -514,7 +530,8 @@ class SemanticPhotoSearchService {
     if (matchedLocations.isNotEmpty) {
       explanation.add('location: ${matchedLocations.join(' / ')}');
     }
-    if (negative.bestNegativeSemantic != null && negative.negativeScore >= 0.18) {
+    if (negative.bestNegativeSemantic != null &&
+        negative.negativeScore >= 0.18) {
       explanation.add('negative: ${negative.bestNegativeSemantic}');
     }
     if (forceAllRelated) {
@@ -544,10 +561,14 @@ class SemanticPhotoSearchService {
     // The merged architecture stores vectors in ObjectBox, but many existing
     // photos still only have legacy Isar embeddings. Search should remain
     // usable while the index is warming up or after a partial migration.
+    final kind = MediaTypeHelper.fromStorageValue(
+      photo.mediaKind,
+      path: photo.path,
+    );
     return _photoEmbeddingIndexRepository.readEmbeddingForPhoto(
       photo,
       modelVersion: activeModelVersion,
-      allowLegacyFallback: !MediaTypeHelper.isVideoPath(photo.path),
+      allowLegacyFallback: kind == MemoriaMediaKind.image,
     );
   }
 
@@ -683,7 +704,8 @@ class SemanticPhotoSearchService {
           query: query,
         ) &&
         vectors.recallVectors.isNotEmpty) {
-      final recallCandidates = query.tagStrictness == SemanticSearchTagStrictness.strict
+      final recallCandidates =
+          query.tagStrictness == SemanticSearchTagStrictness.strict
           ? levelOneCandidates
           : relaxedMetadata.photos;
       final recallScores = _scoreCandidates(
@@ -750,7 +772,9 @@ class SemanticPhotoSearchService {
         return _MetadataRelaxationResult(
           photos: preferTime ? timeOnly : locationOnly,
           usedFallback: true,
-          message: preferTime ? _messageRelaxTimeOnly : _messageRelaxLocationOnly,
+          message: preferTime
+              ? _messageRelaxTimeOnly
+              : _messageRelaxLocationOnly,
         );
       }
     }
@@ -795,7 +819,9 @@ class SemanticPhotoSearchService {
         return _MetadataRelaxationResult(
           photos: preferTime ? timeOnly : locationOnly,
           usedFallback: true,
-          message: preferTime ? _messageRelaxTimeOnly : _messageRelaxLocationOnly,
+          message: preferTime
+              ? _messageRelaxTimeOnly
+              : _messageRelaxLocationOnly,
         );
       }
     }
@@ -803,7 +829,9 @@ class SemanticPhotoSearchService {
     return _MetadataRelaxationResult(
       photos: const <PhotoEntity>[],
       usedFallback: false,
-      message: query.hasLocationConstraints ? _messageLocationNeedsGeocode : null,
+      message: query.hasLocationConstraints
+          ? _messageLocationNeedsGeocode
+          : null,
     );
   }
 
@@ -832,8 +860,10 @@ class SemanticPhotoSearchService {
     if (imageEmbedding.length != textVector.length || imageEmbedding.isEmpty) {
       return 0.0;
     }
-    final similarity =
-        _semanticService.calculateSimilarity(imageEmbedding, textVector);
+    final similarity = _semanticService.calculateSimilarity(
+      imageEmbedding,
+      textVector,
+    );
     if (!similarity.isFinite) {
       return 0.0;
     }
@@ -841,7 +871,9 @@ class SemanticPhotoSearchService {
   }
 
   Set<String> _photoCoarseIds(PhotoEntity photo) {
-    final tags = TagSanitizer.sanitizeVisualTags(photo.aiTags ?? const <String>[]);
+    final tags = TagSanitizer.sanitizeVisualTags(
+      photo.aiTags ?? const <String>[],
+    );
     final coarseIds = <String>{};
     for (final tag in tags) {
       final coarseId = memoriaAlbumTagLabelToCoarseId[tag];
@@ -854,12 +886,12 @@ class SemanticPhotoSearchService {
 
   List<String> _photoLocationParts(PhotoEntity photo) {
     return <String?>[
-      photo.locationName,
-      photo.district,
-      photo.city,
-      photo.province,
-      photo.formattedAddress,
-    ]
+          photo.locationName,
+          photo.district,
+          photo.city,
+          photo.province,
+          photo.formattedAddress,
+        ]
         .whereType<String>()
         .map((item) => item.trim())
         .where((item) => item.isNotEmpty)

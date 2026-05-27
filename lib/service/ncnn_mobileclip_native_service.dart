@@ -1,4 +1,4 @@
-/// NCNN MobileCLIP 原生服务，封装本地推理桥接与结果转换。
+// NCNN MobileCLIP 原生服务，封装本地推理桥接与结果转换。
 
 import 'dart:ffi' as ffi;
 import 'dart:io';
@@ -8,6 +8,8 @@ import 'dart:ui' as ui;
 import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+
+import 'ai_model_weight_service.dart';
 
 class NcnnBackendStatus {
   const NcnnBackendStatus({
@@ -83,7 +85,8 @@ class NcnnMobileClipNativeService {
   bool _modelInitialized = false;
 
   late final int Function() _isBackendAvailable;
-  late final int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>) _initModel;
+  late final int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)
+  _initModel;
   late final int Function() _releaseModel;
   late final int Function() _expectedInputLength;
   late final int Function() _expectedOutputLength;
@@ -95,14 +98,16 @@ class NcnnMobileClipNativeService {
     int,
     ffi.Pointer<ffi.Float>,
     int,
-  ) _encodePreprocessed;
+  )
+  _encodePreprocessed;
   late final int Function(
     ffi.Pointer<ffi.Uint8>,
     int,
     int,
     ffi.Pointer<ffi.Float>,
     int,
-  ) _encodeRgba8888;
+  )
+  _encodeRgba8888;
 
   bool get isLibraryLoaded => _library != null;
 
@@ -136,13 +141,15 @@ class NcnnMobileClipNativeService {
         .lookupFunction<ffi.Int32 Function(), int Function()>(
           'memoria_ncnn_is_backend_available',
         );
-    _initModel = library.lookupFunction<
-      ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>),
-      int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)
-    >('memoria_ncnn_init_model');
-    _releaseModel = library.lookupFunction<ffi.Int32 Function(), int Function()>(
-      'memoria_ncnn_release_model',
-    );
+    _initModel = library
+        .lookupFunction<
+          ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>),
+          int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)
+        >('memoria_ncnn_init_model');
+    _releaseModel = library
+        .lookupFunction<ffi.Int32 Function(), int Function()>(
+          'memoria_ncnn_release_model',
+        );
     _expectedInputLength = library
         .lookupFunction<ffi.Int32 Function(), int Function()>(
           'memoria_ncnn_expected_input_length',
@@ -154,44 +161,43 @@ class NcnnMobileClipNativeService {
     _warmup = library.lookupFunction<ffi.Int32 Function(), int Function()>(
       'memoria_ncnn_warmup',
     );
-    _getVersion = library.lookupFunction<
-      ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Int32),
-      int Function(ffi.Pointer<ffi.Char>, int)
-    >('memoria_ncnn_get_version');
-    _getLastError = library.lookupFunction<
-      ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Int32),
-      int Function(ffi.Pointer<ffi.Char>, int)
-    >('memoria_ncnn_get_last_error');
-    _encodePreprocessed = library.lookupFunction<
-      ffi.Int32 Function(
-        ffi.Pointer<ffi.Float>,
-        ffi.Int32,
-        ffi.Pointer<ffi.Float>,
-        ffi.Int32,
-      ),
-      int Function(
-        ffi.Pointer<ffi.Float>,
-        int,
-        ffi.Pointer<ffi.Float>,
-        int,
-      )
-    >('memoria_ncnn_encode_preprocessed_f32');
-    _encodeRgba8888 = library.lookupFunction<
-      ffi.Int32 Function(
-        ffi.Pointer<ffi.Uint8>,
-        ffi.Int32,
-        ffi.Int32,
-        ffi.Pointer<ffi.Float>,
-        ffi.Int32,
-      ),
-      int Function(
-        ffi.Pointer<ffi.Uint8>,
-        int,
-        int,
-        ffi.Pointer<ffi.Float>,
-        int,
-      )
-    >('memoria_ncnn_encode_rgba8888');
+    _getVersion = library
+        .lookupFunction<
+          ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Int32),
+          int Function(ffi.Pointer<ffi.Char>, int)
+        >('memoria_ncnn_get_version');
+    _getLastError = library
+        .lookupFunction<
+          ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Int32),
+          int Function(ffi.Pointer<ffi.Char>, int)
+        >('memoria_ncnn_get_last_error');
+    _encodePreprocessed = library
+        .lookupFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Float>,
+            ffi.Int32,
+            ffi.Pointer<ffi.Float>,
+            ffi.Int32,
+          ),
+          int Function(ffi.Pointer<ffi.Float>, int, ffi.Pointer<ffi.Float>, int)
+        >('memoria_ncnn_encode_preprocessed_f32');
+    _encodeRgba8888 = library
+        .lookupFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Uint8>,
+            ffi.Int32,
+            ffi.Int32,
+            ffi.Pointer<ffi.Float>,
+            ffi.Int32,
+          ),
+          int Function(
+            ffi.Pointer<ffi.Uint8>,
+            int,
+            int,
+            ffi.Pointer<ffi.Float>,
+            int,
+          )
+        >('memoria_ncnn_encode_rgba8888');
   }
 
   NcnnBackendStatus getStatus() {
@@ -232,17 +238,18 @@ class NcnnMobileClipNativeService {
     if (_modelInitialized) {
       return;
     }
+    await AiModelWeightService.instance.ensureWeightsAvailableForInference(
+      AiModelWeightId.mobileclipNcnn,
+    );
 
     final stagingDirectory = await getApplicationDocumentsDirectory();
     final stagedParam = await _stageAssetToFile(
       assetPath: paramAssetPath,
-      destinationPath:
-          '${stagingDirectory.path}/image_encoder.ncnn.param',
+      destinationPath: '${stagingDirectory.path}/image_encoder.ncnn.param',
     );
     final stagedBin = await _stageAssetToFile(
       assetPath: binAssetPath,
-      destinationPath:
-          '${stagingDirectory.path}/image_encoder.ncnn.bin',
+      destinationPath: '${stagingDirectory.path}/image_encoder.ncnn.bin',
     );
 
     final paramPtr = stagedParam.toNativeUtf8().cast<ffi.Char>();
@@ -301,7 +308,9 @@ class NcnnMobileClipNativeService {
       );
     }
 
-    final inputPtr = malloc.allocate<ffi.Float>(input.length * ffi.sizeOf<ffi.Float>());
+    final inputPtr = malloc.allocate<ffi.Float>(
+      input.length * ffi.sizeOf<ffi.Float>(),
+    );
     final outputPtr = malloc.allocate<ffi.Float>(
       status.expectedOutputLength * ffi.sizeOf<ffi.Float>(),
     );
@@ -333,7 +342,9 @@ class NcnnMobileClipNativeService {
     return profile.embedding;
   }
 
-  Future<NcnnEncodeProfile> profileEncodeImageBytes(Uint8List imageBytes) async {
+  Future<NcnnEncodeProfile> profileEncodeImageBytes(
+    Uint8List imageBytes,
+  ) async {
     await ensureModelInitialized();
     final status = getStatus();
     if (!status.canEncode) {

@@ -62,13 +62,21 @@ extension AIServicePhotoProcessing on AIService {
     final isarWriteWatch = Stopwatch()..start();
     final store = ObjectBoxService().store;
     final photoBox = store.box<PhotoEntity>();
+    var storeImageEmbedding = true;
     store.runInTransaction(TxMode.write, () {
       final p = photoBox.get(id);
       if (p != null) {
+        final mediaKind = MediaTypeHelper.fromStorageValue(
+          p.mediaKind,
+          path: p.path,
+        );
+        storeImageEmbedding = mediaKind == MemoriaMediaKind.image;
         p.aiTags = tags;
         p.isAiAnalyzed = true;
         p.aiCaption = aiCaption.isEmpty ? null : aiCaption;
-        p.imageEmbedding = imageEmbedding.isEmpty ? null : imageEmbedding;
+        p.imageEmbedding = storeImageEmbedding && imageEmbedding.isNotEmpty
+            ? imageEmbedding
+            : null;
         p.ocrText = ocrText.isEmpty ? null : ocrText;
         p.ocrTags = ocrTags;
         p.faceCount = faceCount;
@@ -82,7 +90,7 @@ extension AIServicePhotoProcessing on AIService {
     var objectBoxWriteMs = 0.0;
     if (!skipVectorIndexWrite) {
       final objectBoxWriteWatch = Stopwatch()..start();
-      if (imageEmbedding.isEmpty) {
+      if (imageEmbedding.isEmpty || !storeImageEmbedding) {
         _photoEmbeddingIndexRepository.deleteByPhotoIds(<int>[id]);
       } else {
         _photoEmbeddingIndexRepository.upsertEmbedding(

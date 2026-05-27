@@ -41,6 +41,7 @@ enum _ImportAction {
   importLatest100,
   rebuildAll,
   addMorePhotos,
+  requestFullAccess,
   managePermissions,
 }
 
@@ -293,7 +294,9 @@ class _AlbumPageState extends State<AlbumPage> {
                   ),
                 ),
               );
-              Navigator.pop(ctx, s.hasAccess);
+              if (ctx.mounted) {
+                Navigator.pop(ctx, s.hasAccess);
+              }
             },
             child: const Text('授予权限'),
           ),
@@ -401,6 +404,14 @@ class _AlbumPageState extends State<AlbumPage> {
                     onTap: () =>
                         Navigator.pop(context, _ImportAction.addMorePhotos),
                   ),
+                if (isLimited)
+                  ListTile(
+                    leading: const Icon(Icons.photo_library_outlined),
+                    title: const Text('重新申请全部照片访问'),
+                    subtitle: const Text('让系统再次尝试授权完整照片与视频范围'),
+                    onTap: () =>
+                        Navigator.pop(context, _ImportAction.requestFullAccess),
+                  ),
                 if (isLimited) const Divider(),
                 ListTile(
                   leading: const Icon(Icons.restart_alt_outlined),
@@ -436,6 +447,29 @@ class _AlbumPageState extends State<AlbumPage> {
         await _confirmAndRebuildAnalysis();
       case _ImportAction.addMorePhotos:
         await MediaAccessGrantService.instance.presentLimitedLibraryPicker();
+      case _ImportAction.requestFullAccess:
+        final state = await MediaAccessGrantService.instance
+            .requestFullLibraryAccess();
+        if (!mounted) return;
+        final text = state.isAuth
+            ? '已获得完整照片访问权限。'
+            : state.isLimited
+            ? '系统仍处于部分授权；可继续添加照片，或在系统设置改为全部照片。'
+            : '未获得照片访问权限。';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(text),
+            action: state.isLimited
+                ? SnackBarAction(
+                    label: '系统设置',
+                    onPressed: () {
+                      unawaited(PhotoManager.openSetting());
+                    },
+                  )
+                : null,
+          ),
+        );
       case _ImportAction.managePermissions:
         await Navigator.of(context).push<void>(
           MaterialPageRoute<void>(builder: (_) => const MediaAccessRangePage()),

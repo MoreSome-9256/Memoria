@@ -1,12 +1,16 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../storage/objectbox/entities/media_asset_entity.dart';
 import '../storage/objectbox/media_asset_repository.dart';
+import '../storage/vector_index/vector_index_constants.dart';
+import '../utils/media_type_helper.dart';
+import 'app_ai_settings_service.dart';
+import 'media_embedding_service.dart';
+import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_litert_service.dart';
 import 'semantic_matching_service.dart';
 
@@ -42,7 +46,6 @@ class MediaEmbeddingIndexService {
   factory MediaEmbeddingIndexService() => _instance;
 
   final MediaAssetRepository _repository = MediaAssetRepository();
-  final MobileClipLiteRtService _visionService = MobileClipLiteRtService();
   final SemanticMatchingService _semanticService = SemanticMatchingService();
 
   final ValueNotifier<MediaIndexProgress> progressNotifier =
@@ -54,8 +57,6 @@ class MediaEmbeddingIndexService {
           lastError: null,
         ),
       );
-
-  static const String _modelVersion = MobileClipLiteRtService.modelVersion;
 
   bool _running = false;
 
@@ -97,9 +98,7 @@ class MediaEmbeddingIndexService {
             .toList(growable: false);
 
         await Future.wait(
-          slice.map(
-            (entity) => _encodeOne(entity, inputSize: inputSize),
-          ),
+          slice.map((entity) => _encodeOne(entity, inputSize: inputSize)),
         );
 
         processed += slice.length;
@@ -140,15 +139,31 @@ class MediaEmbeddingIndexService {
   }) async {
     await _semanticService.warmUp();
     final vector = await _semanticService.embedText(query);
-    return _searchByVector(vector, topK);
+    final modelVersion = await _activePhotoModelVersion();
+    return _searchByVector(vector, topK, modelVersion: modelVersion);
   }
 
   Future<List<MediaSearchHit>> searchByImageBytes(
     Uint8List imageBytes, {
     int topK = 24,
   }) async {
-    final vector = await _visionService.embedImageBytes(imageBytes);
-    return _searchByVector(vector, topK);
+    final backend = await MobileClipBackendPreferenceService()
+        .getSelectedBackend();
+    final settings = await AppAiSettingsService.instance.load();
+    final result = await MediaEmbeddingService().embedImageBytes(
+      imageBytes,
+      backend: backend,
+      liteRt: MobileClipLiteRtService.withRuntimeOptions(
+        accelerator: settings.inferenceAccelerator,
+        xnnpackThreadCount: settings.xnnpackThreadCount,
+        modelBatchSize: settings.analysisBatchSize,
+      ),
+    );
+    return _searchByVector(
+      result.embedding,
+      topK,
+      modelVersion: result.modelVersion,
+    );
   }
 
   Future<void> _encodeOne(
@@ -173,9 +188,27 @@ class MediaEmbeddingIndexService {
         return;
       }
 
-      final embedding = await _visionService.embedImageBytes(bytes);
-      entity.embedding = _l2Normalize(embedding);
-      entity.modelVersion = _modelVersion;
+      final settings = await AppAiSettingsService.instance.load();
+      final backend = await MobileClipBackendPreferenceService()
+          .getSelectedBackend();
+      final kind = asset.type == AssetType.video
+          ? MemoriaMediaKind.video
+          : asset.isLivePhoto
+          ? MemoriaMediaKind.dynamicImage
+          : MemoriaMediaKind.image;
+      final embedding = await MediaEmbeddingService().embedPreparedMediaBytes(
+        kind: kind,
+        imageOrThumbnailBytes: bytes,
+        mobileViClipEnabled: settings.mobileViClipEnabled,
+        backend: backend,
+        liteRt: MobileClipLiteRtService.withRuntimeOptions(
+          accelerator: settings.inferenceAccelerator,
+          xnnpackThreadCount: settings.xnnpackThreadCount,
+          modelBatchSize: settings.analysisBatchSize,
+        ),
+      );
+      entity.embedding = _l2Normalize(embedding.embedding);
+      entity.modelVersion = embedding.modelVersion;
       entity.embeddingUpdatedAtMs = DateTime.now().millisecondsSinceEpoch;
       entity.setStatus(MediaAssetStatus.ready);
       entity.errorMessage = null;
@@ -187,9 +220,23 @@ class MediaEmbeddingIndexService {
     }
   }
 
-  List<MediaSearchHit> _searchByVector(List<double> vector, int k) {
+  Future<String> _activePhotoModelVersion() async {
+    final backend = await MobileClipBackendPreferenceService()
+        .getSelectedBackend();
+    return buildPhotoEmbeddingModelVersion(backend);
+  }
+
+  List<MediaSearchHit> _searchByVector(
+    List<double> vector,
+    int k, {
+    required String modelVersion,
+  }) {
     final normalized = _l2Normalize(vector);
-    final rows = _repository.queryNearest(normalized, k);
+    final rows = _repository.queryNearest(
+      normalized,
+      k,
+      modelVersion: modelVersion,
+    );
     return rows
         .map(
           (row) =>

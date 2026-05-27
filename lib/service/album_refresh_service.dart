@@ -103,16 +103,22 @@ class AlbumRefreshService {
     final runId = _progressRunId;
 
     debugPrint('[scan] ======== AlbumRefreshService 开始 ========');
-    debugPrint('[scan] runId=$runId clearCacheFirst=$clearCacheFirst recentPhotoLimit=$recentPhotoLimit');
+    debugPrint(
+      '[scan] runId=$runId clearCacheFirst=$clearCacheFirst recentPhotoLimit=$recentPhotoLimit',
+    );
 
     try {
       if (clearCacheFirst) {
         final result = await _runFullRebuild(recentPhotoLimit);
-        debugPrint('[scan] ✅ 全量重建完成: totalAfter=${result.scanSummary.totalAfter}');
+        debugPrint(
+          '[scan] ✅ 全量重建完成: totalAfter=${result.scanSummary.totalAfter}',
+        );
         return result;
       }
       final result = await _runIncrementalScan(recentPhotoLimit);
-      debugPrint('[scan] ✅ 增量扫描完成: inserted=${result.requeuedCount} aiAlreadyRunning=${result.aiAlreadyRunning}');
+      debugPrint(
+        '[scan] ✅ 增量扫描完成: inserted=${result.requeuedCount} aiAlreadyRunning=${result.aiAlreadyRunning}',
+      );
       return result;
     } catch (error) {
       debugPrint('[scan] ❌ 扫描失败: $error');
@@ -130,7 +136,9 @@ class AlbumRefreshService {
       await Future<void>.delayed(const Duration(milliseconds: 1800));
       _progressNotifier.value = AlbumRefreshProgress.idle();
       _isRunning = false;
-      debugPrint('[scan] ======== AlbumRefreshService 结束 (runId=$runId) ========');
+      debugPrint(
+        '[scan] ======== AlbumRefreshService 结束 (runId=$runId) ========',
+      );
     }
   }
 
@@ -140,7 +148,9 @@ class AlbumRefreshService {
     final isRemainingScan = batchSize >= 0x7fffffff;
     final scopeLabel = isRemainingScan ? '剩余所有照片' : '$batchSize 张新照片';
 
-    debugPrint('[scan] _runIncrementalScan: batchSize=$batchSize isRemainingScan=$isRemainingScan');
+    debugPrint(
+      '[scan] _runIncrementalScan: batchSize=$batchSize isRemainingScan=$isRemainingScan',
+    );
 
     _setProgress(
       AlbumRefreshStage.scanning,
@@ -170,17 +180,24 @@ class AlbumRefreshService {
                 scanProgress.acceptedFraction,
               );
         final progress = 0.08 + 0.52 * baseFraction.clamp(0, 1).toDouble();
+        final acceptedText = isRemainingScan
+            ? '${scanProgress.acceptedCount} 个'
+            : '${scanProgress.acceptedCount}/${scanProgress.targetNew} 个';
         _setProgress(
           AlbumRefreshStage.scanning,
           progress,
           '正在读取图片',
-          '已读取 ${scanProgress.scannedCount}/${scanProgress.totalCount} 项，找到 ${scanProgress.acceptedCount}/${scanProgress.targetNew} 个可加入 AI 的新项目。',
+          '已读取 ${scanProgress.scannedCount}/${scanProgress.totalCount} 项，找到 $acceptedText 可加入 AI 的新项目。',
         );
-        debugPrint('[scan]   扫描进度: scanned=${scanProgress.scannedCount}/${scanProgress.totalCount} accepted=${scanProgress.acceptedCount}/${scanProgress.targetNew} progress=${progress.toStringAsFixed(3)}');
+        debugPrint(
+          '[scan]   扫描进度: scanned=${scanProgress.scannedCount}/${scanProgress.totalCount} accepted=${scanProgress.acceptedCount}/${scanProgress.targetNew} progress=${progress.toStringAsFixed(3)}',
+        );
       },
     );
     final scanMs = DateTime.now().difference(scanStart).inMilliseconds;
-    debugPrint('[scan] scanBatchPhotos 完成: scannedCount=${scanResult.scannedCount} insertedCount=${scanResult.insertedCount} totalAfter=${scanResult.totalAfter} 耗时=${scanMs}ms');
+    debugPrint(
+      '[scan] scanBatchPhotos 完成: scannedCount=${scanResult.scannedCount} insertedCount=${scanResult.insertedCount} totalAfter=${scanResult.totalAfter} 耗时=${scanMs}ms',
+    );
 
     _setProgress(
       AlbumRefreshStage.queueing,
@@ -191,7 +208,10 @@ class AlbumRefreshService {
 
     // 构建兼容的 PhotoScanSummary
     final summary = PhotoScanSummary(
-      totalBefore: math.max(0, scanResult.totalAfter - scanResult.insertedCount),
+      totalBefore: math.max(
+        0,
+        scanResult.totalAfter - scanResult.insertedCount,
+      ),
       totalAfter: scanResult.totalAfter,
       removedCount: 0,
       insertedCount: scanResult.insertedCount,
@@ -207,7 +227,9 @@ class AlbumRefreshService {
       debugPrint('[scan] 没有新照片，直接触发 AI (aiRunning=${AIService().isAnalyzing})');
       final aiRunning = AIService().isAnalyzing;
       if (!aiRunning) {
-        unawaited(_runAiPipeline(maxPhotos: batchSize));
+        unawaited(
+          _runAiPipeline(maxPhotos: isRemainingScan ? null : batchSize),
+        );
       }
       _setProgress(
         AlbumRefreshStage.handoff,
@@ -228,7 +250,11 @@ class AlbumRefreshService {
     debugPrint('[scan] 有新照片 ${scanResult.insertedCount} 张，开始 requeue');
     // step 2: 有新照片 → requeue（标记为未分析）
     await PhotoService().requeuePhotosForAiByIds(scanResult.insertedPhotoIds);
-    _scheduleMediaIndexRefresh(batchSize: batchSize);
+    _scheduleMediaIndexRefresh(
+      batchSize: isRemainingScan
+          ? math.max(scanResult.insertedCount, 300)
+          : batchSize,
+    );
     debugPrint('[scan] requeue 完成');
 
     _setProgress(
@@ -279,6 +305,8 @@ class AlbumRefreshService {
   // ── 全量重建（"安全重建" 路径）───────────────────────────────────
   Future<AlbumRefreshResult> _runFullRebuild(int? recentPhotoLimit) async {
     debugPrint('[scan] _runFullRebuild: recentPhotoLimit=$recentPhotoLimit');
+    final isFullImport =
+        recentPhotoLimit == null || recentPhotoLimit >= 0x7fffffff;
     _setProgress(
       AlbumRefreshStage.scanning,
       0.04,
@@ -293,16 +321,18 @@ class AlbumRefreshService {
       AlbumRefreshStage.scanning,
       0.12,
       '正在读取系统相册',
-      recentPhotoLimit == null ? '范围：全部照片' : '范围：最近 $recentPhotoLimit 张',
+      isFullImport ? '范围：全部照片' : '范围：最近 $recentPhotoLimit 张',
     );
     debugPrint('[scan] ▶ stage=scanning (全量) progress=0.12');
 
     final rebuildStart = DateTime.now();
     final scanSummary = await PhotoService().rebuildAllCachedData(
-      maxAssets: recentPhotoLimit,
+      maxAssets: isFullImport ? null : recentPhotoLimit,
     );
     final rebuildMs = DateTime.now().difference(rebuildStart).inMilliseconds;
-    debugPrint('[scan] 全量重建完成: totalAfter=${scanSummary.totalAfter} 耗时=${rebuildMs}ms');
+    debugPrint(
+      '[scan] 全量重建完成: totalAfter=${scanSummary.totalAfter} 耗时=${rebuildMs}ms',
+    );
 
     _setProgress(
       AlbumRefreshStage.clustering,
@@ -314,13 +344,19 @@ class AlbumRefreshService {
 
     final clusterStart = DateTime.now();
     await EventService().runClustering();
-    debugPrint('[scan] 聚类完成 耗时=${DateTime.now().difference(clusterStart).inMilliseconds}ms');
-    _scheduleMediaIndexRefresh(batchSize: recentPhotoLimit ?? 300);
+    debugPrint(
+      '[scan] 聚类完成 耗时=${DateTime.now().difference(clusterStart).inMilliseconds}ms',
+    );
+    _scheduleMediaIndexRefresh(
+      batchSize: isFullImport ? 300 : recentPhotoLimit,
+    );
 
     final aiRunning = AIService().isAnalyzing;
     debugPrint('[scan] AI 状态: isAnalyzing=$aiRunning');
     if (!aiRunning) {
-      unawaited(_runAiPipeline(maxPhotos: recentPhotoLimit));
+      unawaited(
+        _runAiPipeline(maxPhotos: isFullImport ? null : recentPhotoLimit),
+      );
     }
     _setProgress(
       AlbumRefreshStage.handoff,
@@ -328,12 +364,14 @@ class AlbumRefreshService {
       '安全重建完成',
       aiRunning ? 'AI 队列正在继续处理' : '已交给后台 AI 队列',
     );
-    debugPrint('[scan] ▶ stage=handoff (全量) progress=0.95 aiRunning=$aiRunning');
+    debugPrint(
+      '[scan] ▶ stage=handoff (全量) progress=0.95 aiRunning=$aiRunning',
+    );
 
     return AlbumRefreshResult(
       scanSummary: scanSummary,
       requeuedCount: 0,
-      recentPhotoLimit: recentPhotoLimit,
+      recentPhotoLimit: isFullImport ? null : recentPhotoLimit,
       clearCacheFirst: true,
       aiAlreadyRunning: aiRunning,
     );
@@ -356,7 +394,9 @@ class AlbumRefreshService {
   }
 
   Future<void> _runAiPipeline({int? maxPhotos, List<int>? photoIds}) async {
-    debugPrint('[scan] _runAiPipeline: maxPhotos=$maxPhotos photoIds=${photoIds?.length}');
+    debugPrint(
+      '[scan] _runAiPipeline: maxPhotos=$maxPhotos photoIds=${photoIds?.length}',
+    );
     try {
       await Future.delayed(const Duration(milliseconds: 300));
       await AIService().analyzePhotosInBackground(

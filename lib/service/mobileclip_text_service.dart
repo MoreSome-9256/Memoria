@@ -27,8 +27,10 @@ class MobileClipTextService {
 
   Future<MobileClipLiteRtService> _resolveLiteRtService() async {
     final settings = await AppAiSettingsService.instance.load();
-    return MobileClipLiteRtService.withAccelerator(
-      settings.inferenceAccelerator,
+    return MobileClipLiteRtService.withRuntimeOptions(
+      accelerator: settings.inferenceAccelerator,
+      xnnpackThreadCount: settings.xnnpackThreadCount,
+      modelBatchSize: settings.analysisBatchSize,
     );
   }
 }

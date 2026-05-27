@@ -1,4 +1,4 @@
-/// MobileCLIP 基准测试页面，用于测试模型性能和资源占用。
+// MobileCLIP 基准测试页面，用于测试模型性能和资源占用。
 
 import 'dart:io';
 
@@ -20,7 +20,8 @@ class MobileClipBenchmarkPage extends StatefulWidget {
 class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
   final MobileClipBenchmarkService _benchmarkService =
       MobileClipBenchmarkService();
-  List<MobileClipBenchmarkSample> _samples = const <MobileClipBenchmarkSample>[];
+  List<MobileClipBenchmarkSample> _samples =
+      const <MobileClipBenchmarkSample>[];
   bool _isRunning = false;
   MobileClipBenchmarkReport? _report;
   String? _errorMessage;
@@ -36,14 +37,16 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
     );
     if (result == null || result.isEmpty || !mounted) return;
     setState(() {
-      _samples = result.map((item) {
-        return MobileClipBenchmarkSample(
-          photoId: 0,
-          assetId: item.assetId,
-          path: item.path,
-          timestamp: item.createdAt.millisecondsSinceEpoch,
-        );
-      }).toList(growable: false);
+      _samples = result
+          .map((item) {
+            return MobileClipBenchmarkSample(
+              photoId: 0,
+              assetId: item.assetId,
+              path: item.path,
+              timestamp: item.createdAt.millisecondsSinceEpoch,
+            );
+          })
+          .toList(growable: false);
       _report = null;
       _errorMessage = null;
     });
@@ -56,9 +59,7 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
     });
 
     try {
-      final report = await _benchmarkService.runBenchmark(
-        samples: _samples,
-      );
+      final report = await _benchmarkService.runBenchmark(samples: _samples);
       if (!mounted) {
         return;
       }
@@ -91,7 +92,7 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
         children: [
           Text(
             Platform.isAndroid
-                ? '从相册选择同一批图片，对比 MobileCLIP2 LiteRT 在 GPU、NPU、XNNPACK 与 CPU 路径上的 embedding、标签和速度。'
+                ? '从相册选择同一批图片，对比 MobileCLIP2 LiteRT XNNPACK、CPU 与 NCNN 路径上的 embedding、标签和速度。'
                 : '从相册选择同一批图片，对比当前平台可用的 LiteRT 后端 embedding、标签和速度。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
@@ -126,7 +127,9 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.speed_outlined),
                         label: Text(_isRunning ? '运行中...' : '开始 Benchmark'),

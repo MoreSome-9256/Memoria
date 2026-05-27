@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:onnxruntime/onnxruntime.dart';
 
+import '../storage/vector_index/vector_index_constants.dart';
+import 'ai_model_weight_service.dart';
 import 'onnx_session_provider_service.dart';
 
 class MobileViClipVideoService {
@@ -27,7 +29,8 @@ class MobileViClipVideoService {
   static const int frameCount = 8;
   static const int inputImageSize = 256;
   static const int embeddingDim = 512;
-  static const String modelVersion = 'mobileviclip_small_onnx_video_v1';
+  static const String modelVersion =
+      kMobileViClipSmallVideoEmbeddingModelVersion;
 
   static const String _modelAssetPath =
       'assets/mobileviclip/small/mobileviclip_small.onnx';
@@ -160,6 +163,9 @@ class MobileViClipVideoService {
     if (_session != null) {
       return _session!;
     }
+    await AiModelWeightService.instance.ensureWeightsAvailableForInference(
+      AiModelWeightId.mobileViClipSmall,
+    );
 
     OrtEnv.instance.init();
     final modelBytes = (await rootBundle.load(

@@ -18,7 +18,7 @@ extension MobileClipBackendX on MobileClipBackend {
 
   String get description => switch (this) {
     MobileClipBackend.mobileclip2LiteRt =>
-      'Android 默认 LiteRT GPU；iOS 默认 Metal/Core ML；CPU 仅作显式后备',
+      'LiteRT MobileCLIP2，默认使用 XNNPACK 以保证标签结果稳定',
     MobileClipBackend.ncnn => 'Android 原生 FFI 桥接，优先尝试 NCNN Vulkan GPU',
   };
 

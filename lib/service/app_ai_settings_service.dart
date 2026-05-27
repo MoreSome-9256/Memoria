@@ -13,6 +13,7 @@ class AppAiSettings {
     required this.requestUnrestrictedBatteryEnabled,
     required this.iosContinuedProcessingEnabled,
     required this.inferenceAccelerator,
+    required this.xnnpackThreadCount,
     required this.analysisBatchSize,
     required this.autoResumeAnalysis,
     required this.autoAnalyzeNewPhotos,
@@ -26,8 +27,9 @@ class AppAiSettings {
     androidForegroundServiceEnabled: true,
     requestUnrestrictedBatteryEnabled: true,
     iosContinuedProcessingEnabled: true,
-    inferenceAccelerator: LocalInferenceAccelerator.gpu,
-    analysisBatchSize: 24,
+    inferenceAccelerator: LocalInferenceAccelerator.xnnpack,
+    xnnpackThreadCount: 2,
+    analysisBatchSize: 1,
     autoResumeAnalysis: true,
     autoAnalyzeNewPhotos: true,
   );
@@ -40,6 +42,10 @@ class AppAiSettings {
   final bool requestUnrestrictedBatteryEnabled;
   final bool iosContinuedProcessingEnabled;
   final LocalInferenceAccelerator inferenceAccelerator;
+  final int xnnpackThreadCount;
+
+  /// AI model batch size. It no longer controls how many media items are
+  /// submitted as one analysis task.
   final int analysisBatchSize;
   final bool autoResumeAnalysis;
   final bool autoAnalyzeNewPhotos;
@@ -53,6 +59,7 @@ class AppAiSettings {
     bool? requestUnrestrictedBatteryEnabled,
     bool? iosContinuedProcessingEnabled,
     LocalInferenceAccelerator? inferenceAccelerator,
+    int? xnnpackThreadCount,
     int? analysisBatchSize,
     bool? autoResumeAnalysis,
     bool? autoAnalyzeNewPhotos,
@@ -71,6 +78,7 @@ class AppAiSettings {
       iosContinuedProcessingEnabled:
           iosContinuedProcessingEnabled ?? this.iosContinuedProcessingEnabled,
       inferenceAccelerator: inferenceAccelerator ?? this.inferenceAccelerator,
+      xnnpackThreadCount: xnnpackThreadCount ?? this.xnnpackThreadCount,
       analysisBatchSize: analysisBatchSize ?? this.analysisBatchSize,
       autoResumeAnalysis: autoResumeAnalysis ?? this.autoResumeAnalysis,
       autoAnalyzeNewPhotos: autoAnalyzeNewPhotos ?? this.autoAnalyzeNewPhotos,
@@ -95,7 +103,9 @@ class AppAiSettingsService {
   static const _iosContinuedProcessingKey =
       'ai_settings_ios_continued_processing_enabled';
   static const _inferenceAcceleratorKey = 'ai_settings_inference_accelerator';
+  static const _xnnpackThreadCountKey = 'ai_settings_xnnpack_thread_count';
   static const _analysisBatchSizeKey = 'ai_settings_analysis_batch_size';
+  static const _modelBatchSizeKey = 'ai_settings_model_batch_size';
   static const _autoResumeKey = 'ai_settings_auto_resume';
   static const _autoAnalyzeNewKey = 'ai_settings_auto_analyze_new';
 
@@ -143,9 +153,14 @@ class AppAiSettingsService {
       settings.inferenceAccelerator.storageValue,
     );
     await prefs.setInt(
-      _analysisBatchSizeKey,
-      _normalizeBatchSize(settings.analysisBatchSize),
+      _xnnpackThreadCountKey,
+      _normalizeXnnpackThreadCount(settings.xnnpackThreadCount),
     );
+    await prefs.setInt(
+      _modelBatchSizeKey,
+      _normalizeModelBatchSize(settings.analysisBatchSize),
+    );
+    await prefs.remove(_analysisBatchSizeKey);
     await prefs.setBool(_autoResumeKey, settings.autoResumeAnalysis);
     await prefs.setBool(_autoAnalyzeNewKey, settings.autoAnalyzeNewPhotos);
     notifier.value = settings;
@@ -177,8 +192,12 @@ class AppAiSettingsService {
           prefs.getString(_inferenceAcceleratorKey),
         ),
       ),
-      analysisBatchSize: _normalizeBatchSize(
-        prefs.getInt(_analysisBatchSizeKey) ??
+      xnnpackThreadCount: _normalizeXnnpackThreadCount(
+        prefs.getInt(_xnnpackThreadCountKey) ??
+            AppAiSettings.defaults.xnnpackThreadCount,
+      ),
+      analysisBatchSize: _normalizeModelBatchSize(
+        prefs.getInt(_modelBatchSizeKey) ??
             AppAiSettings.defaults.analysisBatchSize,
       ),
       autoResumeAnalysis:
@@ -191,22 +210,20 @@ class AppAiSettingsService {
   }
 
   LocalInferenceAccelerator _normalizeAcceleratorForPlatform(
-    LocalInferenceAccelerator accelerator,
+    LocalInferenceAccelerator _,
   ) {
-    if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.iOS ||
-        defaultTargetPlatform == TargetPlatform.macOS)) {
-      return switch (accelerator) {
-        LocalInferenceAccelerator.gpu => LocalInferenceAccelerator.metal,
-        LocalInferenceAccelerator.npu => LocalInferenceAccelerator.coreml,
-        _ => accelerator,
-      };
-    }
-    return accelerator;
+    return LocalInferenceAccelerator.xnnpack;
   }
 
-  static int _normalizeBatchSize(int value) {
+  static int _normalizeModelBatchSize(int value) {
     if (value < 1) return 1;
-    if (value > 200) return 200;
+    if (value > 16) return 16;
+    return value;
+  }
+
+  static int _normalizeXnnpackThreadCount(int value) {
+    if (value < 1) return 1;
+    if (value > 8) return 8;
     return value;
   }
 }

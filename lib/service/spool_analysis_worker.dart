@@ -1,17 +1,16 @@
-/// 基于 Spool 的纯计算 Worker — 在 foreground isolate 中运行，零 ObjectBox 依赖。
-///
-/// 读取 manifest → 加载图片 → MobileCLIP 推理 → 标签 → OCR → 人脸检测
-/// → 高德逆地理编码 → 写入 result/embedding/progress 到 spool 文件 → 写入 done.marker。
-///
-/// 以下功能在 main isolate 消费 spool 时完成，不在此处执行：
-/// - Face embedding 计算（使用 ONNX / MobileCLIP 模型，从边界框裁剪后）
-/// - Caption / VLM 描述生成（后续在 story_generation_orchestrator 中实现）
-/// - PhotoEntity / FaceEntity 写入 ObjectBox
+// 基于 Spool 的纯计算 Worker — 在 foreground isolate 中运行，零 ObjectBox 依赖。
+//
+// 读取 manifest → 加载图片 → MobileCLIP 推理 → 标签 → OCR → 人脸检测
+// → 高德逆地理编码 → 写入 result/embedding/progress 到 spool 文件 → 写入 done.marker。
+//
+// 以下功能在 main isolate 消费 spool 时完成，不在此处执行：
+// - Face embedding 计算（使用 ONNX / MobileCLIP 模型，从边界框裁剪后）
+// - Caption / VLM 描述生成（后续在 story_generation_orchestrator 中实现）
+// - PhotoEntity / FaceEntity 写入 ObjectBox
 
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
@@ -139,7 +138,7 @@ class SpoolAnalysisWorker {
   bool _stopRequested = false;
 
   // Junk filter 原型缓存（build 于 warmUp 中）
-  Map<String, List<double>> _junkPrototypes = <String, List<double>>{};
+  final Map<String, List<double>> _junkPrototypes = <String, List<double>>{};
   List<Map<String, Object?>> _junkDefinitions = <Map<String, Object?>>[];
 
   void requestStop() {
@@ -178,11 +177,20 @@ class SpoolAnalysisWorker {
       }
     }
     if (alreadyCompletedKeys.isNotEmpty) {
-      debugPrint('[spool-worker] 检测到已有完整结果 ${alreadyCompletedKeys.length} 个，将从未完成项继续');
+      debugPrint(
+        '[spool-worker] 检测到已有完整结果 ${alreadyCompletedKeys.length} 个，将从未完成项继续',
+      );
     }
     if (processed >= totalItems) {
-      await _finishJob(spool, jobId, totalItems, processed, succeeded, failed,
-          skipped);
+      await _finishJob(
+        spool,
+        jobId,
+        totalItems,
+        processed,
+        succeeded,
+        failed,
+        skipped,
+      );
       return;
     }
 
@@ -190,52 +198,86 @@ class SpoolAnalysisWorker {
     OcrPolicy.setRuntimeEnabled(settings.ocrEnabled);
     _settings = settings;
 
-    debugPrint('[spool-worker] 用户设置: '
-        'ocrEnabled=${settings.ocrEnabled} '
-        'faceAnalysisEnabled=${settings.faceAnalysisEnabled} '
-        'inferenceAccelerator=${settings.inferenceAccelerator} '
-        'autoResumeAnalysis=${settings.autoResumeAnalysis}');
+    debugPrint(
+      '[spool-worker] 用户设置: '
+      'ocrEnabled=${settings.ocrEnabled} '
+      'faceAnalysisEnabled=${settings.faceAnalysisEnabled} '
+      'inferenceAccelerator=${settings.inferenceAccelerator} '
+      'xnnpackThreads=${settings.xnnpackThreadCount} '
+      'modelBatchSize=${settings.analysisBatchSize} '
+      'autoResumeAnalysis=${settings.autoResumeAnalysis}',
+    );
 
     final backend = await MobileClipBackendPreferenceService()
         .getSelectedBackend();
     final enableFaceAnalysis = settings.faceAnalysisEnabled;
     final hasVideoItems = await _manifestMayContainVideo(manifest);
-    final enableVideoEmbedding =
-        settings.mobileViClipEnabled && hasVideoItems;
+    final enableVideoEmbedding = settings.mobileViClipEnabled && hasVideoItems;
     warmUpTotal = enableVideoEmbedding ? 4 : 3;
     var tagWarmUpUnits = 1;
 
-    debugPrint('[spool-worker] 选定后端: ${backend.label} '
-        'enableFaceAnalysis=$enableFaceAnalysis '
-        'enableVideoEmbedding=$enableVideoEmbedding');
+    debugPrint(
+      '[spool-worker] 选定后端: ${backend.label} '
+      'enableFaceAnalysis=$enableFaceAnalysis '
+      'enableVideoEmbedding=$enableVideoEmbedding',
+    );
 
     // 预热引擎
     debugPrint('[spool-worker] 开始预热引擎…');
     await _writeProgress(
-      spool, jobId, totalItems, processed, succeeded, failed,
-      skipped, '正在预热引擎 (1/$warmUpTotal)：加载图像模型…',
+      spool,
+      jobId,
+      totalItems,
+      processed,
+      succeeded,
+      failed,
+      skipped,
+      '正在预热引擎 (1/$warmUpTotal)：加载图像模型…',
       warmUpCompleted: warmUpCompleted,
       warmUpTotal: warmUpTotal,
     );
 
-    final liteRt = MobileClipLiteRtService.withAccelerator(
-      settings.inferenceAccelerator,
+    final liteRt = MobileClipLiteRtService.withRuntimeOptions(
+      accelerator: settings.inferenceAccelerator,
+      xnnpackThreadCount: settings.xnnpackThreadCount,
+      modelBatchSize: settings.analysisBatchSize,
     );
     final w0 = DateTime.now();
     await liteRt.warmUp();
     warmUpCompleted = 1;
     await _writeProgress(
-      spool, jobId, totalItems, processed, succeeded, failed,
-      skipped, '正在预热引擎 (2/$warmUpTotal)：加载标签语义模型…',
+      spool,
+      jobId,
+      totalItems,
+      processed,
+      succeeded,
+      failed,
+      skipped,
+      '正在预热引擎 (2/$warmUpTotal)：加载标签语义模型…',
       warmUpCompleted: warmUpCompleted,
       warmUpTotal: warmUpTotal,
     );
-    debugPrint('[spool-worker] LiteRT 预热耗时: ${DateTime.now().difference(w0).inMilliseconds}ms');
+    debugPrint(
+      '[spool-worker] LiteRT 预热耗时: ${DateTime.now().difference(w0).inMilliseconds}ms',
+    );
     if (!await _waitIfPausedOrStopped(
-      spool, jobId, totalItems, processed, succeeded, failed, skipped,
+      spool,
+      jobId,
+      totalItems,
+      processed,
+      succeeded,
+      failed,
+      skipped,
     )) {
-      await _finishJob(spool, jobId, totalItems, processed, succeeded, failed,
-          skipped);
+      await _finishJob(
+        spool,
+        jobId,
+        totalItems,
+        processed,
+        succeeded,
+        failed,
+        skipped,
+      );
       return;
     }
     final w1 = DateTime.now();
@@ -245,7 +287,13 @@ class SpoolAnalysisWorker {
         warmUpTotal = 2 + tagWarmUpUnits + (enableVideoEmbedding ? 1 : 0);
         warmUpCompleted = 1 + completed;
         await _writeProgress(
-          spool, jobId, totalItems, processed, succeeded, failed, skipped,
+          spool,
+          jobId,
+          totalItems,
+          processed,
+          succeeded,
+          failed,
+          skipped,
           '正在预热引擎：$message',
           warmUpCompleted: warmUpCompleted,
           warmUpTotal: warmUpTotal,
@@ -254,19 +302,38 @@ class SpoolAnalysisWorker {
     );
     warmUpCompleted = 1 + tagWarmUpUnits;
     await _writeProgress(
-      spool, jobId, totalItems, processed, succeeded, failed,
-      skipped, enableVideoEmbedding
-          ? '正在预热引擎：加载视频模型…'
-          : '正在预热引擎：加载低价值过滤模板…',
+      spool,
+      jobId,
+      totalItems,
+      processed,
+      succeeded,
+      failed,
+      skipped,
+      enableVideoEmbedding ? '正在预热引擎：加载视频模型…' : '正在预热引擎：加载低价值过滤模板…',
       warmUpCompleted: warmUpCompleted,
       warmUpTotal: warmUpTotal,
     );
-    debugPrint('[spool-worker] TagService 预热耗时: ${DateTime.now().difference(w1).inMilliseconds}ms');
+    debugPrint(
+      '[spool-worker] TagService 预热耗时: ${DateTime.now().difference(w1).inMilliseconds}ms',
+    );
     if (!await _waitIfPausedOrStopped(
-      spool, jobId, totalItems, processed, succeeded, failed, skipped,
+      spool,
+      jobId,
+      totalItems,
+      processed,
+      succeeded,
+      failed,
+      skipped,
     )) {
-      await _finishJob(spool, jobId, totalItems, processed, succeeded, failed,
-          skipped);
+      await _finishJob(
+        spool,
+        jobId,
+        totalItems,
+        processed,
+        succeeded,
+        failed,
+        skipped,
+      );
       return;
     }
     if (enableVideoEmbedding) {
@@ -274,17 +341,38 @@ class SpoolAnalysisWorker {
       await MobileViClipVideoService().warmUp();
       warmUpCompleted = 1 + tagWarmUpUnits + 1;
       await _writeProgress(
-        spool, jobId, totalItems, processed, succeeded, failed,
-        skipped, '正在预热引擎：加载低价值过滤模板…',
+        spool,
+        jobId,
+        totalItems,
+        processed,
+        succeeded,
+        failed,
+        skipped,
+        '正在预热引擎：加载低价值过滤模板…',
         warmUpCompleted: warmUpCompleted,
         warmUpTotal: warmUpTotal,
       );
-      debugPrint('[spool-worker] MobileViClip 预热耗时: ${DateTime.now().difference(wVideo).inMilliseconds}ms');
+      debugPrint(
+        '[spool-worker] MobileViClip 预热耗时: ${DateTime.now().difference(wVideo).inMilliseconds}ms',
+      );
       if (!await _waitIfPausedOrStopped(
-        spool, jobId, totalItems, processed, succeeded, failed, skipped,
+        spool,
+        jobId,
+        totalItems,
+        processed,
+        succeeded,
+        failed,
+        skipped,
       )) {
-        await _finishJob(spool, jobId, totalItems, processed, succeeded, failed,
-            skipped);
+        await _finishJob(
+          spool,
+          jobId,
+          totalItems,
+          processed,
+          succeeded,
+          failed,
+          skipped,
+        );
         return;
       }
     }
@@ -293,17 +381,38 @@ class SpoolAnalysisWorker {
     await _warmUpJunkFilter();
     warmUpCompleted = warmUpTotal;
     await _writeProgress(
-      spool, jobId, totalItems, processed, succeeded, failed,
-      skipped, '引擎预热完成，准备分析…',
+      spool,
+      jobId,
+      totalItems,
+      processed,
+      succeeded,
+      failed,
+      skipped,
+      '引擎预热完成，准备分析…',
       warmUpCompleted: warmUpCompleted,
       warmUpTotal: warmUpTotal,
     );
-    debugPrint('[spool-worker] JunkFilter 预热耗时: ${DateTime.now().difference(w2).inMilliseconds}ms');
+    debugPrint(
+      '[spool-worker] JunkFilter 预热耗时: ${DateTime.now().difference(w2).inMilliseconds}ms',
+    );
     if (!await _waitIfPausedOrStopped(
-      spool, jobId, totalItems, processed, succeeded, failed, skipped,
+      spool,
+      jobId,
+      totalItems,
+      processed,
+      succeeded,
+      failed,
+      skipped,
     )) {
-      await _finishJob(spool, jobId, totalItems, processed, succeeded, failed,
-          skipped);
+      await _finishJob(
+        spool,
+        jobId,
+        totalItems,
+        processed,
+        succeeded,
+        failed,
+        skipped,
+      );
       return;
     }
 
@@ -315,14 +424,24 @@ class SpoolAnalysisWorker {
             ),
           )
         : null;
-    debugPrint('[spool-worker] FaceDetector 创建: ${faceDetector != null ? "是" : "否（设置关闭）"}');
+    debugPrint(
+      '[spool-worker] FaceDetector 创建: ${faceDetector != null ? "是" : "否（设置关闭）"}',
+    );
 
     try {
       for (var index = 0; index < manifest.items.length; index++) {
         if (!await _waitIfPausedOrStopped(
-          spool, jobId, totalItems, processed, succeeded, failed, skipped,
+          spool,
+          jobId,
+          totalItems,
+          processed,
+          succeeded,
+          failed,
+          skipped,
         )) {
-          debugPrint('[spool-worker] ⛔ 收到控制文件停止请求，中断循环 index=$index/$totalItems');
+          debugPrint(
+            '[spool-worker] ⛔ 收到控制文件停止请求，中断循环 index=$index/$totalItems',
+          );
           break;
         }
 
@@ -334,20 +453,32 @@ class SpoolAnalysisWorker {
         final item = manifest.items[index];
         final photoKey = item.photoKey;
         if (alreadyCompletedKeys.contains(photoKey)) {
-          debugPrint('[spool-worker] ⏭️ 已有完整结果，跳过第 ${index + 1}/$totalItems 张 photoKey=$photoKey');
+          debugPrint(
+            '[spool-worker] ⏭️ 已有完整结果，跳过第 ${index + 1}/$totalItems 张 photoKey=$photoKey',
+          );
           continue;
         }
 
         debugPrint('[spool-worker] --- 开始处理第 ${index + 1}/$totalItems 张 ---');
-        debugPrint('[spool-worker] photoKey=$photoKey path=${item.path} contentUri=${item.contentUri}');
-        debugPrint('[spool-worker] GPS: lat=${item.latitude} lng=${item.longitude}');
+        debugPrint(
+          '[spool-worker] photoKey=$photoKey path=${item.path} contentUri=${item.contentUri}',
+        );
+        debugPrint(
+          '[spool-worker] GPS: lat=${item.latitude} lng=${item.longitude}',
+        );
 
-          await _writeProgress(
-            spool, jobId, totalItems, processed, succeeded, failed,
-            skipped, '正在分析第 ${index + 1} / $totalItems 张…',
-            warmUpCompleted: warmUpCompleted,
-            warmUpTotal: warmUpTotal,
-          );
+        await _writeProgress(
+          spool,
+          jobId,
+          totalItems,
+          processed,
+          succeeded,
+          failed,
+          skipped,
+          '正在分析第 ${index + 1} / $totalItems 张…',
+          warmUpCompleted: warmUpCompleted,
+          warmUpTotal: warmUpTotal,
+        );
 
         final startedAt = DateTime.now().millisecondsSinceEpoch;
         _SpoolComputeResult? computeResult;
@@ -375,23 +506,34 @@ class SpoolAnalysisWorker {
         final elapsed = finishedAt - startedAt;
 
         if (computeResult.didSucceed) {
-          debugPrint('[spool-worker] ✅ 计算成功: '
-              'elapsed=${elapsed}ms '
-              'tags=${computeResult.tags.length} '
-              'ocr=${computeResult.ocrText.isNotEmpty ? "${computeResult.ocrText.length}字" : "无"} '
-              'faces=${computeResult.faceResults.length} '
-              'junk=${computeResult.junkCandidate != null}');
+          debugPrint(
+            '[spool-worker] ✅ 计算成功: '
+            'elapsed=${elapsed}ms '
+            'tags=${computeResult.tags.length} '
+            'ocr=${computeResult.ocrText.isNotEmpty ? "${computeResult.ocrText.length}字" : "无"} '
+            'faces=${computeResult.faceResults.length} '
+            'junk=${computeResult.junkCandidate != null}',
+          );
 
           // 逆地理编码：有 GPS 坐标时查询高德
-          String? province, city, district, locationName, formattedAddress, adcode;
+          String? province,
+              city,
+              district,
+              locationName,
+              formattedAddress,
+              adcode;
           if (item.latitude != null && item.longitude != null) {
-            debugPrint('[spool-worker] 开始逆地理编码 lat=${item.latitude} lng=${item.longitude}');
+            debugPrint(
+              '[spool-worker] 开始逆地理编码 lat=${item.latitude} lng=${item.longitude}',
+            );
             final geoStart = DateTime.now();
             final addr = await AmapGeoService.reverseGeocode(
               latitude: item.latitude!,
               longitude: item.longitude!,
             );
-            final geoElapsed = DateTime.now().difference(geoStart).inMilliseconds;
+            final geoElapsed = DateTime.now()
+                .difference(geoStart)
+                .inMilliseconds;
             if (addr != null) {
               province = addr.province;
               city = addr.city;
@@ -399,10 +541,12 @@ class SpoolAnalysisWorker {
               locationName = addr.locationName;
               formattedAddress = addr.formattedAddress;
               adcode = addr.adcode;
-              debugPrint('[spool-worker] ✅ 逆地理编码成功: '
-                  'city=$city district=$district '
-                  'locationName=$locationName '
-                  '耗时=${geoElapsed}ms');
+              debugPrint(
+                '[spool-worker] ✅ 逆地理编码成功: '
+                'city=$city district=$district '
+                'locationName=$locationName '
+                '耗时=${geoElapsed}ms',
+              );
             } else {
               debugPrint('[spool-worker] ⚠️ 逆地理编码返回空 耗时=${geoElapsed}ms');
             }
@@ -434,7 +578,8 @@ class SpoolAnalysisWorker {
             faceAnalysisRequired: computeResult.faceAnalysisRequired,
             faceAnalysisCompleted: computeResult.faceAnalysisCompleted,
             isJunk: computeResult.junkCandidate != null,
-            junkCategoryId: computeResult.junkCandidate != null &&
+            junkCategoryId:
+                computeResult.junkCandidate != null &&
                     computeResult.junkCandidate!.reasons.isNotEmpty
                 ? computeResult.junkCandidate!.reasons.first.categoryId
                 : null,
@@ -447,23 +592,37 @@ class SpoolAnalysisWorker {
           );
 
           if (computeResult.embedding.isNotEmpty) {
-            await spool.writeEmbedding(jobId, photoKey, computeResult.embedding);
-            debugPrint('[spool-worker] 📝 Embedding 已写入 spool (dim=${computeResult.embedding.length})');
+            await spool.writeEmbedding(
+              jobId,
+              photoKey,
+              computeResult.embedding,
+            );
+            debugPrint(
+              '[spool-worker] 📝 Embedding 已写入 spool (dim=${computeResult.embedding.length})',
+            );
           } else {
             debugPrint('[spool-worker] ⚠️ 无 embedding 可写入');
           }
 
           if (computeResult.faceResults.isNotEmpty) {
-            await _writeFaceResults(spool, jobId, photoKey,
-                computeResult.faceResults);
-            debugPrint('[spool-worker] 📝 人脸检测结果已写入 spool (${computeResult.faceResults.length} 张脸)');
+            await _writeFaceResults(
+              spool,
+              jobId,
+              photoKey,
+              computeResult.faceResults,
+            );
+            debugPrint(
+              '[spool-worker] 📝 人脸检测结果已写入 spool (${computeResult.faceResults.length} 张脸)',
+            );
           }
 
           await spool.writeResult(jobId, result);
           debugPrint('[spool-worker] 📝 结果已写入 spool');
 
           succeeded++;
-          debugPrint('[spool-worker] ✅ 第 ${index + 1}/$totalItems 张完成，累计成功=$succeeded');
+          debugPrint(
+            '[spool-worker] ✅ 第 ${index + 1}/$totalItems 张完成，累计成功=$succeeded',
+          );
         } else if (computeResult.errorMessage != null) {
           debugPrint('[spool-worker] ❌ 计算失败: ${computeResult.errorMessage}');
           await spool.writeResult(
@@ -492,10 +651,19 @@ class SpoolAnalysisWorker {
     }
 
     debugPrint('[spool-worker] ======== Worker 运行结束 ========');
-    debugPrint('[spool-worker] 总计: processed=$processed succeeded=$succeeded failed=$failed skipped=$skipped');
+    debugPrint(
+      '[spool-worker] 总计: processed=$processed succeeded=$succeeded failed=$failed skipped=$skipped',
+    );
 
-    await _finishJob(spool, jobId, totalItems, processed, succeeded, failed,
-        skipped);
+    await _finishJob(
+      spool,
+      jobId,
+      totalItems,
+      processed,
+      succeeded,
+      failed,
+      skipped,
+    );
   }
 
   Future<void> _finishJob(
@@ -508,8 +676,14 @@ class SpoolAnalysisWorker {
     int skipped,
   ) async {
     await _writeProgress(
-      spool, jobId, totalItems, processed, succeeded, failed,
-      skipped, processed >= totalItems ? '分析完成' : '已中断',
+      spool,
+      jobId,
+      totalItems,
+      processed,
+      succeeded,
+      failed,
+      skipped,
+      processed >= totalItems ? '分析完成' : '已中断',
       status: processed >= totalItems ? 'finished' : 'stopped',
     );
     await spool.writeDoneMarker(jobId);
@@ -547,7 +721,13 @@ class SpoolAnalysisWorker {
       if (control.stopRequested || _stopRequested) {
         _stopRequested = true;
         await _writeProgress(
-          spool, jobId, total, processed, succeeded, failed, skipped,
+          spool,
+          jobId,
+          total,
+          processed,
+          succeeded,
+          failed,
+          skipped,
           '正在结束本轮，等待当前图片收尾',
           status: 'stopping',
         );
@@ -557,7 +737,13 @@ class SpoolAnalysisWorker {
         return true;
       }
       await _writeProgress(
-        spool, jobId, total, processed, succeeded, failed, skipped,
+        spool,
+        jobId,
+        total,
+        processed,
+        succeeded,
+        failed,
+        skipped,
         '后台分析已暂停',
         status: 'paused',
       );
@@ -573,14 +759,18 @@ class SpoolAnalysisWorker {
     int succeeded,
     int failed,
     int skipped,
-    String currentStep,
-    {
+    String currentStep, {
     String? status,
     int warmUpCompleted = 0,
     int warmUpTotal = 0,
   }) async {
     final resolvedStatus =
-        status ?? (_stopRequested ? 'stopped' : processed >= total ? 'finished' : 'running');
+        status ??
+        (_stopRequested
+            ? 'stopped'
+            : processed >= total
+            ? 'finished'
+            : 'running');
     await spool.writeProgress(
       AnalysisProgressSnapshot(
         jobId: jobId,
@@ -625,28 +815,25 @@ class SpoolAnalysisWorker {
       return const <String>[];
     }
     if (_tagService.isWarmedUp) {
-      return compute(
-        _spoolComputeTagRetrieval,
-        <String, Object?>{
-          'embedding': embedding,
-          'coarsePrototypes': _tagService.coarsePrototypes,
-          'finePrototypes': _tagService.finePrototypes,
-          'fineLabelToCoarse': memoriaFineLabelToCoarseId,
-          'dimThresholds': <String, double>{
-            'subject': 0.165,
-            'scene': 0.17,
-            'activity': 0.18,
-            'atmosphere': 0.19,
-            'media': 0.205,
-          },
-          'coarseThreshold': 0.16,
-          'coarseProbThreshold': 0.035,
-          'coarseMargin': 0.075,
-          'blockedTags': const <String>[],
-          'coarseTopK': 2,
-          'topK': 3,
+      return compute(_spoolComputeTagRetrieval, <String, Object?>{
+        'embedding': embedding,
+        'coarsePrototypes': _tagService.coarsePrototypes,
+        'finePrototypes': _tagService.finePrototypes,
+        'fineLabelToCoarse': memoriaFineLabelToCoarseId,
+        'dimThresholds': <String, double>{
+          'subject': 0.165,
+          'scene': 0.17,
+          'activity': 0.18,
+          'atmosphere': 0.19,
+          'media': 0.205,
         },
-      );
+        'coarseThreshold': 0.16,
+        'coarseProbThreshold': 0.035,
+        'coarseMargin': 0.075,
+        'blockedTags': const <String>[],
+        'coarseTopK': 2,
+        'topK': 3,
+      });
     }
     return _tagService.retrieveTags(embedding);
   }
@@ -815,7 +1002,9 @@ class SpoolAnalysisWorker {
     phaseLog.add('load=${loadMs}ms');
 
     if (input == null) {
-      debugPrint('[spool-worker] ❌ _computeSinglePhoto: 图片加载失败 path=${item.path} uri=${item.contentUri}');
+      debugPrint(
+        '[spool-worker] ❌ _computeSinglePhoto: 图片加载失败 path=${item.path} uri=${item.contentUri}',
+      );
       return _SpoolComputeResult(
         photoKey: item.photoKey,
         photoId: item.photoId ?? 0,
@@ -825,7 +1014,9 @@ class SpoolAnalysisWorker {
         finishedAt: DateTime.now().millisecondsSinceEpoch,
       );
     }
-    debugPrint('[spool-worker]   媒体加载成功: ${input.width}x${input.height} kind=${input.kind.name} path=${input.file.path}');
+    debugPrint(
+      '[spool-worker]   媒体加载成功: ${input.width}x${input.height} kind=${input.kind.name} path=${input.file.path}',
+    );
 
     // 2. Embedding（图片使用 MobileCLIP2，视频使用 MobileViClip）
     final t1 = DateTime.now();
@@ -861,7 +1052,9 @@ class SpoolAnalysisWorker {
         finishedAt: DateTime.now().millisecondsSinceEpoch,
       );
     }
-    debugPrint('[spool-worker]   Embedding 成功 dim=${embedding.length} model=$embeddingModelVersion');
+    debugPrint(
+      '[spool-worker]   Embedding 成功 dim=${embedding.length} model=$embeddingModelVersion',
+    );
 
     // 3. 标签推理。视频检索向量使用 MobileViCLIP；标签仍用封面图走
     // MobileCLIP2 文本空间，避免只得到“视频/其他”这类媒体类型标签。
@@ -885,13 +1078,17 @@ class SpoolAnalysisWorker {
     if (tagEmbedding.isNotEmpty) {
       tags = await _retrieveTagsForPhotoEmbedding(tagEmbedding);
     }
-    if (tags.isEmpty && input.kind == MemoriaMediaKind.video) {
+    if (tags.isEmpty &&
+        (input.kind == MemoriaMediaKind.video ||
+            input.kind == MemoriaMediaKind.dynamicImage)) {
       tags = const <String>['视频'];
     }
     final tagMs = DateTime.now().difference(t2).inMilliseconds;
     phaseLog.add('tag=${tagMs}ms');
     final visualTags = _sanitizeVisualTags(tags);
-    debugPrint('[spool-worker]   标签推理完成: ${visualTags.length} 个标签 tags=$visualTags');
+    debugPrint(
+      '[spool-worker]   标签推理完成: ${visualTags.length} 个标签 tags=$visualTags',
+    );
 
     SpoolJunkCandidate? junkCandidate;
 
@@ -922,7 +1119,9 @@ class SpoolAnalysisWorker {
     }
     final compressMs = DateTime.now().difference(t4).inMilliseconds;
     phaseLog.add('compress=${compressMs}ms');
-    debugPrint('[spool-worker]   压缩图片完成: ${compressedBytes?.length ?? 0}bytes 耗时=${compressMs}ms');
+    debugPrint(
+      '[spool-worker]   压缩图片完成: ${compressedBytes?.length ?? 0}bytes 耗时=${compressMs}ms',
+    );
 
     // 5. OCR
     final t5 = DateTime.now();
@@ -932,8 +1131,7 @@ class SpoolAnalysisWorker {
     final shouldRunOcr =
         _settings.ocrEnabled &&
         OcrService.shouldRunOcr(visualTags, aspectRatio: aspectRatio);
-    if (_settings.ocrEnabled &&
-        shouldRunOcr) {
+    if (_settings.ocrEnabled && shouldRunOcr) {
       try {
         ocrResult = await _ocrService.analyzeImageFile(analysisFile);
       } catch (error) {
@@ -944,7 +1142,9 @@ class SpoolAnalysisWorker {
     final ocrMs = DateTime.now().difference(t5).inMilliseconds;
     phaseLog.add('ocr=${ocrMs}ms');
     if (_settings.ocrEnabled) {
-      debugPrint('[spool-worker]   OCR: enabled=true shouldRun=$shouldRunOcr result=${ocrResult.text.length > 0 ? "${ocrResult.text.length}字" : "无"} tags=${ocrResult.tags} 耗时=${ocrMs}ms');
+      debugPrint(
+        '[spool-worker]   OCR: enabled=true shouldRun=$shouldRunOcr result=${ocrResult.text.isNotEmpty ? "${ocrResult.text.length}字" : "无"} tags=${ocrResult.tags} 耗时=${ocrMs}ms',
+      );
     } else {
       debugPrint('[spool-worker]   OCR: 跳过（设置关闭）');
     }
@@ -954,16 +1154,14 @@ class SpoolAnalysisWorker {
     if (item.photoId != null &&
         item.photoId! > 0 &&
         embeddingModelVersion == buildPhotoEmbeddingModelVersion(backend)) {
-      final junkResult = await compute(
-        _spoolComputeJunkFilter,
-        <String, Object?>{
-          'embedding': embedding,
-          'prototypes': _junkPrototypes,
-          'isProbablyScreenshot': false,
-          'ocrText': ocrResult.text,
-          'definitions': _junkDefinitions,
-        },
-      );
+      final junkResult =
+          await compute(_spoolComputeJunkFilter, <String, Object?>{
+            'embedding': embedding,
+            'prototypes': _junkPrototypes,
+            'isProbablyScreenshot': false,
+            'ocrText': ocrResult.text,
+            'definitions': _junkDefinitions,
+          });
       final shouldFilter = junkResult['shouldFilter'] as bool? ?? false;
       if (shouldFilter) {
         final rawHits =
@@ -971,13 +1169,15 @@ class SpoolAnalysisWorker {
                 ?.cast<Map<String, Object?>>() ??
             <Map<String, Object?>>[];
         final hits = rawHits
-            .map((h) => SpoolJunkHit(
-              categoryId: h['categoryId'] as String,
-              label: h['label'] as String,
-              description: h['description'] as String,
-              score: (h['score'] as num).toDouble(),
-              threshold: (h['threshold'] as num).toDouble(),
-            ))
+            .map(
+              (h) => SpoolJunkHit(
+                categoryId: h['categoryId'] as String,
+                label: h['label'] as String,
+                description: h['description'] as String,
+                score: (h['score'] as num).toDouble(),
+                threshold: (h['threshold'] as num).toDouble(),
+              ),
+            )
             .toList(growable: false);
         junkCandidate = SpoolJunkCandidate(
           photoId: item.photoId ?? 0,
@@ -992,7 +1192,9 @@ class SpoolAnalysisWorker {
     final junkMs = DateTime.now().difference(t3).inMilliseconds;
     phaseLog.add('junk=${junkMs}ms');
     if (junkCandidate != null) {
-      debugPrint('[spool-worker]   ⚠️ 垃圾照片过滤命中: ${junkCandidate.reasons.map((r) => r.label).join(", ")}');
+      debugPrint(
+        '[spool-worker]   ⚠️ 垃圾照片过滤命中: ${junkCandidate.reasons.map((r) => r.label).join(", ")}',
+      );
     }
 
     // 7. 人脸检测（仅检测，不计算 embedding）
@@ -1005,15 +1207,17 @@ class SpoolAnalysisWorker {
     final faceResults = <_SpoolWorkerFaceResult>[];
     if (faceDetector != null && input.width >= 32 && input.height >= 32) {
       faceAnalysisRequired = true;
-      debugPrint('[spool-worker]   开始人脸检测: image=${input.width}x${input.height}');
+      debugPrint(
+        '[spool-worker]   开始人脸检测: image=${input.width}x${input.height}',
+      );
       try {
         final inputImage = InputImage.fromFile(analysisFile);
         final faces = await faceDetector.processImage(inputImage);
         faceCount = faces.length;
         maxSmileProb = faces.isNotEmpty
             ? faces
-                .map((face) => face.smilingProbability ?? 0.0)
-                .reduce((a, b) => a > b ? a : b)
+                  .map((face) => face.smilingProbability ?? 0.0)
+                  .reduce((a, b) => a > b ? a : b)
             : 0.0;
         joyScore = AIScoreHelper.calculateJoyScore(
           faceCount: faceCount,
@@ -1021,33 +1225,41 @@ class SpoolAnalysisWorker {
           tags: visualTags,
         );
         final primaryIndex = _pickPrimaryFaceIndex(faces);
-        debugPrint('[spool-worker]   人脸检测结果: ${faces.length}张脸 maxSmileProb=$maxSmileProb joyScore=$joyScore');
+        debugPrint(
+          '[spool-worker]   人脸检测结果: ${faces.length}张脸 maxSmileProb=$maxSmileProb joyScore=$joyScore',
+        );
         for (var fi = 0; fi < faces.length; fi++) {
           final face = faces[fi];
           final qualityScore = _estimateFaceQuality(
-            face, input.width, input.height,
+            face,
+            input.width,
+            input.height,
           );
-          faceResults.add(_SpoolWorkerFaceResult(
-            faceIndex: fi,
-            left: face.boundingBox.left,
-            top: face.boundingBox.top,
-            right: face.boundingBox.right,
-            bottom: face.boundingBox.bottom,
-            roll: face.headEulerAngleZ,
-            yaw: face.headEulerAngleY,
-            smilingProbability: face.smilingProbability,
-            leftEyeOpenProbability: face.leftEyeOpenProbability,
-            rightEyeOpenProbability: face.rightEyeOpenProbability,
-            qualityScore: qualityScore,
-            isPrimaryFace: fi == primaryIndex,
-          ));
+          faceResults.add(
+            _SpoolWorkerFaceResult(
+              faceIndex: fi,
+              left: face.boundingBox.left,
+              top: face.boundingBox.top,
+              right: face.boundingBox.right,
+              bottom: face.boundingBox.bottom,
+              roll: face.headEulerAngleZ,
+              yaw: face.headEulerAngleY,
+              smilingProbability: face.smilingProbability,
+              leftEyeOpenProbability: face.leftEyeOpenProbability,
+              rightEyeOpenProbability: face.rightEyeOpenProbability,
+              qualityScore: qualityScore,
+              isPrimaryFace: fi == primaryIndex,
+            ),
+          );
         }
       } catch (error) {
         faceAnalysisCompleted = false;
         debugPrint('[spool-worker]   人脸检测跳过：插件处理失败 $error');
       }
     } else if (faceDetector != null) {
-      debugPrint('[spool-worker]   人脸检测跳过: 图片太小 ${input.width}x${input.height} (<32)');
+      debugPrint(
+        '[spool-worker]   人脸检测跳过: 图片太小 ${input.width}x${input.height} (<32)',
+      );
     } else {
       debugPrint('[spool-worker]   人脸检测跳过: 设置关闭');
     }
@@ -1055,13 +1267,16 @@ class SpoolAnalysisWorker {
     phaseLog.add('face=${faceMs}ms');
 
     // 清理临时文件
-    if (analysisFile.path != input.file.path &&
-        await analysisFile.exists()) {
-      try { await analysisFile.delete(); } catch (_) {}
+    if (analysisFile.path != input.file.path && await analysisFile.exists()) {
+      try {
+        await analysisFile.delete();
+      } catch (_) {}
     }
 
     final totalMs = DateTime.now().millisecondsSinceEpoch - startedAt;
-    debugPrint('[spool-worker]   🏁 _computeSinglePhoto 完成: ${phaseLog.join(" ")} total=${totalMs}ms');
+    debugPrint(
+      '[spool-worker]   🏁 _computeSinglePhoto 完成: ${phaseLog.join(" ")} total=${totalMs}ms',
+    );
 
     return _SpoolComputeResult(
       photoKey: item.photoKey,
@@ -1150,9 +1365,13 @@ class SpoolAnalysisWorker {
     var bestScore = -double.infinity;
     for (var i = 0; i < faces.length; i++) {
       final rect = faces[i].boundingBox;
-      final score = rect.width * rect.height +
+      final score =
+          rect.width * rect.height +
           (faces[i].smilingProbability ?? 0.0) * 1000;
-      if (score > bestScore) { bestScore = score; bestIndex = i; }
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = i;
+      }
     }
     return bestIndex;
   }
@@ -1162,8 +1381,10 @@ class SpoolAnalysisWorker {
         (face.boundingBox.width * face.boundingBox.height) /
         math.max(1, photoWidth * photoHeight);
     final smile = face.smilingProbability ?? 0.0;
-    final eyes = ((face.leftEyeOpenProbability ?? 0.0) +
-        (face.rightEyeOpenProbability ?? 0.0)) / 2;
+    final eyes =
+        ((face.leftEyeOpenProbability ?? 0.0) +
+            (face.rightEyeOpenProbability ?? 0.0)) /
+        2;
     final yawPenalty = (face.headEulerAngleY?.abs() ?? 0.0) / 90.0;
     final rollPenalty = (face.headEulerAngleZ?.abs() ?? 0.0) / 90.0;
     final raw = areaRatio * 2.5 + smile * 0.1 + eyes * 0.1;
@@ -1173,7 +1394,13 @@ class SpoolAnalysisWorker {
 
   List<String> _sanitizeVisualTags(List<String> source, {int maxTags = 5}) {
     const blocked = <String>{
-      'Screenshot', 'Cool', 'Glasses', 'Goggles', 'Selfie', '截图', '自拍',
+      'Screenshot',
+      'Cool',
+      'Glasses',
+      'Goggles',
+      'Selfie',
+      '截图',
+      '自拍',
     };
     final sanitized = <String>[];
     for (final tag in source) {
@@ -1222,19 +1449,6 @@ class SpoolJunkCandidate {
   });
 }
 
-/// 照片适配器 — 让 manifest item 能传给需要 PhotoEntity 接口的服务。
-/// 注意：本 worker 已不再使用 MobileClipEmbeddingService，但保留适配器以备扩展。
-class _ManifestPhotoAdapter {
-  _ManifestPhotoAdapter(this._item);
-  final AnalysisSpoolItem _item;
-
-  int get id => _item.photoId ?? 0;
-  String get path => _item.path ?? '';
-  String get assetId => _item.photoKey;
-  int get timestamp => _item.modifiedAt;
-  int get eventId => 0;
-}
-
 class _SpoolInputImage {
   final File file;
   final Uint8List mobileClipBytes;
@@ -1254,12 +1468,13 @@ class _SpoolInputImage {
 
 Map<String, Object?> _spoolComputeJunkFilter(Map<String, Object?> params) {
   final embedding = (params['embedding'] as List<Object?>).cast<double>();
-  final prototypes = (params['prototypes'] as Map<String, Object?>)
-      .map((k, v) => MapEntry(k, (v as List<Object?>).cast<double>()));
+  final prototypes = (params['prototypes'] as Map<String, Object?>).map(
+    (k, v) => MapEntry(k, (v as List<Object?>).cast<double>()),
+  );
   final isProbablyScreenshot = params['isProbablyScreenshot'] as bool? ?? false;
   final ocrText = params['ocrText'] as String? ?? '';
-  final definitions =
-      (params['definitions'] as List<Object?>).cast<Map<String, Object?>>();
+  final definitions = (params['definitions'] as List<Object?>)
+      .cast<Map<String, Object?>>();
 
   final hits = <Map<String, Object?>>[];
   for (final def in definitions) {
@@ -1292,16 +1507,23 @@ List<String> _spoolComputeTagRetrieval(Map<String, Object?> params) {
   final embedding = (params['embedding'] as List<Object?>).cast<double>();
   final coarsePrototypes = (params['coarsePrototypes'] as Map<String, Object?>)
       .map((k, v) => MapEntry(k, (v as List<Object?>).cast<double>()));
-  final finePrototypes = (params['finePrototypes'] as Map<String, Object?>)
-      .map((k, v) => MapEntry(k, (v as List<Object?>).cast<double>()));
-  final fineLabelToCoarse = (params['fineLabelToCoarse'] as Map<String, Object?>)
-      .map((k, v) => MapEntry(k, v as String));
-  final dimThresholds = (params['dimThresholds'] as Map<String, Object?>)
-      .map((k, v) => MapEntry(k, (v as num).toDouble()));
-  final coarseThreshold = (params['coarseThreshold'] as num?)?.toDouble() ?? 0.16;
-  final coarseProbThreshold = (params['coarseProbThreshold'] as num?)?.toDouble() ?? 0.035;
+  final finePrototypes = (params['finePrototypes'] as Map<String, Object?>).map(
+    (k, v) => MapEntry(k, (v as List<Object?>).cast<double>()),
+  );
+  final fineLabelToCoarse =
+      (params['fineLabelToCoarse'] as Map<String, Object?>).map(
+        (k, v) => MapEntry(k, v as String),
+      );
+  final dimThresholds = (params['dimThresholds'] as Map<String, Object?>).map(
+    (k, v) => MapEntry(k, (v as num).toDouble()),
+  );
+  final coarseThreshold =
+      (params['coarseThreshold'] as num?)?.toDouble() ?? 0.16;
+  final coarseProbThreshold =
+      (params['coarseProbThreshold'] as num?)?.toDouble() ?? 0.035;
   final coarseMargin = (params['coarseMargin'] as num?)?.toDouble() ?? 0.075;
-  final blockedTags = (params['blockedTags'] as List<Object?>?)?.cast<String>() ?? <String>[];
+  final blockedTags =
+      (params['blockedTags'] as List<Object?>?)?.cast<String>() ?? <String>[];
   final coarseTopK = (params['coarseTopK'] as num?)?.toInt() ?? 2;
   final topK = (params['topK'] as num?)?.toInt() ?? 3;
 
@@ -1313,27 +1535,37 @@ List<String> _spoolComputeTagRetrieval(Map<String, Object?> params) {
   coarseScored.sort((a, b) => (b['score'] as num).compareTo(a['score'] as num));
 
   final limitedCoarse = coarseScored.take(coarseTopK).toList();
-  final scores = limitedCoarse.map((e) => (e['score'] as num).toDouble()).toList();
-  final maxScore = scores.isEmpty ? 0.0 : scores.reduce((a, b) => a > b ? a : b);
-  final expScores = scores.map((s) => _spoolFastExp((s - maxScore) * 10)).toList();
+  final scores = limitedCoarse
+      .map((e) => (e['score'] as num).toDouble())
+      .toList();
+  final maxScore = scores.isEmpty
+      ? 0.0
+      : scores.reduce((a, b) => a > b ? a : b);
+  final expScores = scores
+      .map((s) => _spoolFastExp((s - maxScore) * 10))
+      .toList();
   final expSum = expScores.isEmpty ? 1.0 : expScores.reduce((a, b) => a + b);
   for (var i = 0; i < limitedCoarse.length; i++) {
     limitedCoarse[i] = <String, Object?>{
-      ...limitedCoarse[i], 'probability': expScores[i] / expSum,
+      ...limitedCoarse[i],
+      'probability': expScores[i] / expSum,
     };
   }
   final topScore = limitedCoarse.isNotEmpty
       ? (limitedCoarse.first['score'] as num).toDouble()
       : 0.0;
   limitedCoarse.retainWhere(
-    (e) => (e['score'] as num).toDouble() >= coarseThreshold &&
+    (e) =>
+        (e['score'] as num).toDouble() >= coarseThreshold &&
         (((e['probability'] as num).toDouble() >= coarseProbThreshold) ||
             topScore - (e['score'] as num).toDouble() <= coarseMargin),
   );
   final coarseSelected = limitedCoarse;
   if (coarseSelected.isEmpty) return <String>[memoriaOtherLabel];
 
-  final selectedCoarseIds = coarseSelected.map((e) => e['coarseId'] as String).toSet();
+  final selectedCoarseIds = coarseSelected
+      .map((e) => e['coarseId'] as String)
+      .toSet();
   final coarseProbById = <String, double>{
     for (final e in coarseSelected)
       e['coarseId'] as String: (e['probability'] as num).toDouble(),
@@ -1357,14 +1589,22 @@ List<String> _spoolComputeTagRetrieval(Map<String, Object?> params) {
       _ => 0.2,
     };
     if (score < dimThreshold) continue;
-    scored.add(_SpoolTagCandidate(label: label, score: score, weightedScore: weightedScore));
+    scored.add(
+      _SpoolTagCandidate(
+        label: label,
+        score: score,
+        weightedScore: weightedScore,
+      ),
+    );
   }
   if (scored.isEmpty) return <String>[memoriaOtherLabel];
   scored.sort((a, b) => b.weightedScore.compareTo(a.weightedScore));
   final selected = <String>[];
   final selectedSet = <String>{};
   for (final coarseId in selectedCoarseIds) {
-    final best = scored.where((c) => fineLabelToCoarse[c.label] == coarseId).toList();
+    final best = scored
+        .where((c) => fineLabelToCoarse[c.label] == coarseId)
+        .toList();
     if (best.isNotEmpty && !selectedSet.contains(best.first.label)) {
       selected.add(best.first.label);
       selectedSet.add(best.first.label);
@@ -1384,7 +1624,9 @@ List<int>? _spoolComputeCompressImage(String filePath) {
     final file = File(filePath);
     if (!file.existsSync()) return null;
     return _spoolCompressImageBytes(file.readAsBytesSync());
-  } catch (_) { return null; }
+  } catch (_) {
+    return null;
+  }
 }
 
 List<int>? _spoolComputeCompressImageBytes(Uint8List bytes) {
@@ -1412,7 +1654,9 @@ double _spoolCosineSimilarity(List<double> a, List<double> b) {
   final len = a.length;
   if (len == 0 || len != b.length) return 0.0;
   var dot = 0.0;
-  for (var i = 0; i < len; i++) { dot += a[i] * b[i]; }
+  for (var i = 0; i < len; i++) {
+    dot += a[i] * b[i];
+  }
   return dot.clamp(-1.0, 1.0);
 }
 
@@ -1428,6 +1672,3 @@ class _SpoolTagCandidate {
     required this.weightedScore,
   });
 }
-
-/// JSON 编码（用于 _writeFaceResults 中序列化 List）
-const _spoolJsonEncoder = JsonEncoder.withIndent(null);

@@ -26,8 +26,7 @@ extension LocalInferenceAcceleratorX on LocalInferenceAccelerator {
   String get description => switch (this) {
     LocalInferenceAccelerator.gpu =>
       'Android 使用 TFLite GPU delegate v2；Apple 平台请使用 Metal(GPU)',
-    LocalInferenceAccelerator.npu =>
-      'Android 预留厂商 NPU delegate 接入',
+    LocalInferenceAccelerator.npu => 'Android 预留厂商 NPU delegate 接入',
     LocalInferenceAccelerator.coreml => 'Apple Core ML delegate，优先使用系统加速',
     LocalInferenceAccelerator.metal => 'Apple Metal GPU delegate',
     LocalInferenceAccelerator.xnnpack =>
@@ -37,15 +36,16 @@ extension LocalInferenceAcceleratorX on LocalInferenceAccelerator {
 
   static LocalInferenceAccelerator fromStorageValue(String? value) {
     return switch (value) {
-      'gpu' => LocalInferenceAccelerator.gpu,
-      'npu' => LocalInferenceAccelerator.npu,
-      'coreml' => LocalInferenceAccelerator.coreml,
-      'metal' => LocalInferenceAccelerator.metal,
+      // Older builds persisted GPU/NPU/CoreML/Metal here. MobileCLIP tagging
+      // must prefer parity with CPU results, so runtime settings migrate those
+      // values to XNNPACK instead of reusing unsupported delegate paths.
+      'gpu' ||
+      'npu' ||
+      'coreml' ||
+      'metal' => LocalInferenceAccelerator.xnnpack,
       'xnnpack' => LocalInferenceAccelerator.xnnpack,
       'cpu' => LocalInferenceAccelerator.cpu,
-      _ => Platform.isIOS || Platform.isMacOS
-          ? LocalInferenceAccelerator.coreml
-          : LocalInferenceAccelerator.gpu,
+      _ => LocalInferenceAccelerator.xnnpack,
     };
   }
 }
@@ -54,12 +54,16 @@ class LiteRtSessionConfig {
   const LiteRtSessionConfig({
     required this.modelAssetPath,
     required this.modelToken,
-    this.accelerator = LocalInferenceAccelerator.gpu,
+    this.accelerator = LocalInferenceAccelerator.xnnpack,
+    this.xnnpackThreadCount = 2,
+    this.modelBatchSize = 1,
   });
 
   final String modelAssetPath;
   final String modelToken;
   final LocalInferenceAccelerator accelerator;
+  final int xnnpackThreadCount;
+  final int modelBatchSize;
 }
 
 class LiteRtSession {
@@ -91,7 +95,7 @@ class LiteRtInferenceService {
     for (final attempt in attempts) {
       try {
         final options = tfl.InterpreterOptions();
-        options.threads = 1;
+        options.threads = _normalizeThreadCount(config.xnnpackThreadCount);
         final delegates = await attempt.createDelegates();
         for (final delegate in delegates) {
           options.addDelegate(delegate);
@@ -122,18 +126,8 @@ class LiteRtInferenceService {
 
     if (Platform.isAndroid) {
       return switch (config.accelerator) {
-        LocalInferenceAccelerator.gpu => <_LiteRtProviderAttempt>[
-          _LiteRtProviderAttempt.androidGpu(),
-          ...fallback,
-        ],
-        LocalInferenceAccelerator.npu => <_LiteRtProviderAttempt>[
-          _LiteRtProviderAttempt.unsupported(
-            'Android NPU delegate',
-            '厂商 NPU delegate 尚未接入，等待 TFLite accelerator 分发后启用',
-          ),
-          _LiteRtProviderAttempt.androidGpu(),
-          ...fallback,
-        ],
+        LocalInferenceAccelerator.gpu => <_LiteRtProviderAttempt>[...fallback],
+        LocalInferenceAccelerator.npu => <_LiteRtProviderAttempt>[...fallback],
         LocalInferenceAccelerator.xnnpack => <_LiteRtProviderAttempt>[
           _LiteRtProviderAttempt.xnnpack(),
           _LiteRtProviderAttempt.cpu(),
@@ -141,27 +135,16 @@ class LiteRtInferenceService {
         LocalInferenceAccelerator.cpu => <_LiteRtProviderAttempt>[
           _LiteRtProviderAttempt.cpu(),
         ],
-        _ => <_LiteRtProviderAttempt>[
-          _LiteRtProviderAttempt.androidGpu(),
-          ...fallback,
-        ],
+        _ => <_LiteRtProviderAttempt>[...fallback],
       };
     }
 
     if (Platform.isIOS || Platform.isMacOS) {
       return switch (config.accelerator) {
-        LocalInferenceAccelerator.npu ||
-        LocalInferenceAccelerator.coreml => <_LiteRtProviderAttempt>[
-          _LiteRtProviderAttempt.coreMl(),
-          _LiteRtProviderAttempt.metal(),
-          ...fallback,
-        ],
-        LocalInferenceAccelerator.gpu ||
-        LocalInferenceAccelerator.metal => <_LiteRtProviderAttempt>[
-          _LiteRtProviderAttempt.metal(),
-          _LiteRtProviderAttempt.coreMl(),
-          ...fallback,
-        ],
+        LocalInferenceAccelerator.npu || LocalInferenceAccelerator.coreml =>
+          <_LiteRtProviderAttempt>[...fallback],
+        LocalInferenceAccelerator.gpu || LocalInferenceAccelerator.metal =>
+          <_LiteRtProviderAttempt>[...fallback],
         LocalInferenceAccelerator.xnnpack => <_LiteRtProviderAttempt>[
           _LiteRtProviderAttempt.xnnpack(),
           _LiteRtProviderAttempt.cpu(),
@@ -179,6 +162,12 @@ class LiteRtInferenceService {
       _ => fallback,
     };
   }
+
+  int _normalizeThreadCount(int value) {
+    if (value < 1) return 1;
+    if (value > 8) return 8;
+    return value;
+  }
 }
 
 class _LiteRtProviderAttempt {
@@ -186,45 +175,6 @@ class _LiteRtProviderAttempt {
     required this.label,
     required this.createDelegates,
   });
-
-  factory _LiteRtProviderAttempt.androidGpu() {
-    return _LiteRtProviderAttempt(
-      label: 'TFLite GPU v2',
-      createDelegates: () async => <tfl.Delegate>[
-        tfl.GpuDelegateV2(
-          options: tfl.GpuDelegateOptionsV2(
-            isPrecisionLossAllowed: false,
-            inferencePriority1: 2,
-            inferencePriority2: 0,
-            inferencePriority3: 0,
-            experimentalFlags: const <int>[1],
-          ),
-        ),
-      ],
-    );
-  }
-
-  factory _LiteRtProviderAttempt.coreMl() {
-    return _LiteRtProviderAttempt(
-      label: 'Core ML',
-      createDelegates: () async => <tfl.Delegate>[
-        tfl.CoreMlDelegate(
-          options: tfl.CoreMlDelegateOptions(maxDelegatedPartitions: 0),
-        ),
-      ],
-    );
-  }
-
-  factory _LiteRtProviderAttempt.metal() {
-    return _LiteRtProviderAttempt(
-      label: 'Metal GPU',
-      createDelegates: () async => <tfl.Delegate>[
-        tfl.GpuDelegate(
-          options: tfl.GpuDelegateOptions(allowPrecisionLoss: false),
-        ),
-      ],
-    );
-  }
 
   factory _LiteRtProviderAttempt.cpu() {
     return _LiteRtProviderAttempt(
@@ -236,16 +186,7 @@ class _LiteRtProviderAttempt {
   factory _LiteRtProviderAttempt.xnnpack() {
     return _LiteRtProviderAttempt(
       label: 'XNNPACK',
-      createDelegates: () async => <tfl.Delegate>[
-        tfl.XNNPackDelegate(),
-      ],
-    );
-  }
-
-  factory _LiteRtProviderAttempt.unsupported(String label, String reason) {
-    return _LiteRtProviderAttempt(
-      label: label,
-      createDelegates: () async => throw UnsupportedError(reason),
+      createDelegates: () async => <tfl.Delegate>[tfl.XNNPackDelegate()],
     );
   }
 

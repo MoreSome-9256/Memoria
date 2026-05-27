@@ -1,4 +1,4 @@
-/// 主题聚类服务，按语义特征把照片组织成可浏览的主题组。
+// 主题聚类服务，按语义特征把照片组织成可浏览的主题组。
 
 import 'dart:async';
 import 'dart:io';
@@ -470,7 +470,8 @@ class ThemeClusterService {
       return _photosLoader();
     }
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final q = photoBox.query()
+    final q = photoBox
+        .query()
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
     q.limit = maxPhotosToScan;
@@ -523,8 +524,11 @@ class ThemeClusterService {
 
         // Keep screenshot-like UI captures and video-model vectors out of
         // image visual-theme retrieval.
-        if (photo.isProbablyScreenshot ||
-            MediaTypeHelper.isVideoPath(photo.path)) {
+        final mediaKind = MediaTypeHelper.fromStorageValue(
+          photo.mediaKind,
+          path: photo.path,
+        );
+        if (photo.isProbablyScreenshot || mediaKind != MemoriaMediaKind.image) {
           skippedScreenshots++;
           _emitEmbeddingProgress(
             processed: processed,
@@ -633,7 +637,10 @@ class ThemeClusterService {
 
     if (updated.isNotEmpty) {
       final store = ObjectBoxService().store;
-      store.runInTransaction(TxMode.write, () => store.box<PhotoEntity>().putMany(updated));
+      store.runInTransaction(
+        TxMode.write,
+        () => store.box<PhotoEntity>().putMany(updated),
+      );
     }
 
     debugPrint(

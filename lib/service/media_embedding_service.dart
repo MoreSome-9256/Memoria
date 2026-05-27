@@ -28,15 +28,18 @@ class MediaEmbeddingService {
     MobileClipBackend? backend,
     MobileClipLiteRtService? liteRt,
   }) async {
-    final effectiveBackend = backend ??
+    final effectiveBackend =
+        backend ??
         await MobileClipBackendPreferenceService().getSelectedBackend();
     switch (effectiveBackend) {
       case MobileClipBackend.mobileclip2LiteRt:
+        final settings = await AppAiSettingsService.instance.load();
         final effectiveLiteRt =
             liteRt ??
-            MobileClipLiteRtService.withAccelerator(
-              (await AppAiSettingsService.instance.load())
-                  .inferenceAccelerator,
+            MobileClipLiteRtService.withRuntimeOptions(
+              accelerator: settings.inferenceAccelerator,
+              xnnpackThreadCount: settings.xnnpackThreadCount,
+              modelBatchSize: settings.analysisBatchSize,
             );
         final profile = await effectiveLiteRt.profileImageBytes(bytes);
         return MediaEmbeddingResult(
@@ -87,14 +90,19 @@ class MediaEmbeddingService {
     required MobileClipBackend backend,
     required MobileClipLiteRtService liteRt,
   }) async {
-    if (kind == MemoriaMediaKind.video && mobileViClipEnabled) {
-      return embedVideoFrameBytes(
+    final shouldUseVideoEncoder =
+        (kind == MemoriaMediaKind.video ||
+            kind == MemoriaMediaKind.dynamicImage) &&
+        mobileViClipEnabled;
+    if (shouldUseVideoEncoder) {
+      final result = await embedVideoFrameBytes(
         List<Uint8List>.filled(
           MobileViClipVideoService.frameCount,
           imageOrThumbnailBytes,
           growable: false,
         ),
       );
+      return result.copyWith(kind: kind);
     }
     final result = await embedImageBytes(
       imageOrThumbnailBytes,
@@ -125,10 +133,7 @@ class MediaEmbeddingService {
     return MediaTextSimilarityResult(
       text: text,
       textVector: textVector,
-      score: _semanticService.calculateSimilarity(
-        media.embedding,
-        textVector,
-      ),
+      score: _semanticService.calculateSimilarity(media.embedding, textVector),
       isSameEmbeddingSpace: media.isSameSpaceAsMobileClipText,
       unavailableReason: null,
     );
@@ -154,9 +159,7 @@ class MediaEmbeddingResult {
   final double inferenceMs;
   final bool isSameSpaceAsMobileClipText;
 
-  MediaEmbeddingResult copyWith({
-    MemoriaMediaKind? kind,
-  }) {
+  MediaEmbeddingResult copyWith({MemoriaMediaKind? kind}) {
     return MediaEmbeddingResult(
       kind: kind ?? this.kind,
       embedding: embedding,

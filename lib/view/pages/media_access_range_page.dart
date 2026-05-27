@@ -88,12 +88,16 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
       }
       _selectedIds = selectedIds;
 
-      _albums = allAlbums.map((a) => _AlbumItem(
-        id: a.id,
-        name: a.name,
-        assetCount: 0,
-        isAll: a.isAll,
-      )).toList();
+      _albums = allAlbums
+          .map(
+            (a) => _AlbumItem(
+              id: a.id,
+              name: a.name,
+              assetCount: 0,
+              isAll: a.isAll,
+            ),
+          )
+          .toList();
 
       // 加载计数
       for (var i = 0; i < _albums.length; i++) {
@@ -114,9 +118,9 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
     if (!mounted) return;
     setState(() => _batteryOptimized = result);
     if (!result) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('用户拒绝了电池优化权限')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('用户拒绝了电池优化权限')));
     }
   }
 
@@ -167,7 +171,10 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.photo_library, color: theme.colorScheme.primary),
+                      Icon(
+                        Icons.photo_library,
+                        color: theme.colorScheme.primary,
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text('系统相册', style: theme.textTheme.titleMedium),
@@ -176,15 +183,17 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                   ),
                   const SizedBox(height: 12),
                   if (_permState == null)
-                    const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                    const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   else ...[
                     Row(
                       children: [
                         Icon(
                           hasAccess
                               ? (isLimited
-                                  ? Icons.warning_amber_rounded
-                                  : Icons.check_circle)
+                                    ? Icons.warning_amber_rounded
+                                    : Icons.check_circle)
                               : Icons.error_outline,
                           color: hasAccess
                               ? (isLimited ? Colors.orange : Colors.green)
@@ -195,9 +204,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                         Expanded(
                           child: Text(
                             hasAccess
-                                ? (isLimited
-                                    ? '已授权（部分访问）'
-                                    : '已授权（全部访问）')
+                                ? (isLimited ? '已授权（部分访问）' : '已授权（全部访问）')
                                 : '未授权',
                             style: theme.textTheme.bodyMedium,
                           ),
@@ -206,16 +213,54 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                     ),
                     if (isLimited) ...[
                       const SizedBox(height: 8),
-                      TextButton.icon(
-                        onPressed: () async {
-                          await MediaAccessGrantService.instance
-                              .presentLimitedLibraryPicker();
-                          if (!mounted) return;
-                          setState(() => _loadingAlbums = true);
-                          await _loadPermissionAndAlbums();
-                        },
-                        icon: const Icon(Icons.add_photo_alternate, size: 18),
-                        label: const Text('选择更多照片'),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          TextButton.icon(
+                            onPressed: () async {
+                              await MediaAccessGrantService.instance
+                                  .presentLimitedLibraryPicker();
+                              if (!mounted) return;
+                              setState(() => _loadingAlbums = true);
+                              await _loadPermissionAndAlbums();
+                            },
+                            icon: const Icon(
+                              Icons.add_photo_alternate,
+                              size: 18,
+                            ),
+                            label: const Text('选择更多照片'),
+                          ),
+                          FilledButton.tonalIcon(
+                            onPressed: () async {
+                              final state = await MediaAccessGrantService
+                                  .instance
+                                  .requestFullLibraryAccess();
+                              if (!mounted) return;
+                              setState(() => _loadingAlbums = true);
+                              await _loadPermissionAndAlbums();
+                              if (!context.mounted) return;
+                              if (state.isLimited) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    behavior: SnackBarBehavior.floating,
+                                    content: const Text(
+                                      '系统仍处于部分授权；可以继续选择更多照片，或在系统设置改为全部照片。',
+                                    ),
+                                    action: SnackBarAction(
+                                      label: '系统设置',
+                                      onPressed: () {
+                                        unawaited(PhotoManager.openSetting());
+                                      },
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.photo_library, size: 18),
+                            label: const Text('申请全部访问'),
+                          ),
+                        ],
                       ),
                     ],
                     if (!hasAccess) ...[
@@ -243,7 +288,10 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.photo_album, color: theme.colorScheme.primary),
+                        Icon(
+                          Icons.photo_album,
+                          color: theme.colorScheme.primary,
+                        ),
                         const SizedBox(width: 12),
                         Text('分析范围', style: theme.textTheme.titleMedium),
                       ],
@@ -271,10 +319,8 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                             style: theme.textTheme.bodySmall,
                           ),
                           value: _selectedIds.contains(album.id),
-                          onChanged: (val) => _toggleAlbum(
-                            album.id,
-                            val ?? false,
-                          ),
+                          onChanged: (val) =>
+                              _toggleAlbum(album.id, val ?? false),
                         );
                       }),
                   ],
@@ -294,11 +340,16 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.battery_charging_full,
-                            color: theme.colorScheme.primary),
+                        Icon(
+                          Icons.battery_charging_full,
+                          color: theme.colorScheme.primary,
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: Text('电池优化', style: theme.textTheme.titleMedium),
+                          child: Text(
+                            '电池优化',
+                            style: theme.textTheme.titleMedium,
+                          ),
                         ),
                       ],
                     ),

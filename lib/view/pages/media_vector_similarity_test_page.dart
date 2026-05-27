@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
@@ -37,7 +36,7 @@ class _MediaVectorSimilarityTestPageState
   List<String> _cleanupPaths = const <String>[];
   MobileClipBackend _selectedBackend = MobileClipBackend.mobileclip2LiteRt;
   LocalInferenceAccelerator _selectedAccelerator =
-      LocalInferenceAccelerator.gpu;
+      LocalInferenceAccelerator.xnnpack;
 
   @override
   void initState() {
@@ -54,13 +53,12 @@ class _MediaVectorSimilarityTestPageState
   }
 
   Future<void> _loadInitialSettings() async {
-    final settings = await AppAiSettingsService.instance.load();
     final backend = await MobileClipBackendPreferenceService()
         .getSelectedBackend();
     if (!mounted) return;
     setState(() {
       _selectedBackend = backend;
-      _selectedAccelerator = settings.inferenceAccelerator;
+      _selectedAccelerator = LocalInferenceAccelerator.xnnpack;
     });
   }
 
@@ -121,20 +119,22 @@ class _MediaVectorSimilarityTestPageState
       }
 
       final settings = await AppAiSettingsService.instance.load();
-      final liteRt = MobileClipLiteRtService.detachedWithAccelerator(
-        _selectedAccelerator,
+      final liteRt = MobileClipLiteRtService.withRuntimeOptions(
+        accelerator: _selectedAccelerator,
+        xnnpackThreadCount: settings.xnnpackThreadCount,
+        modelBatchSize: settings.analysisBatchSize,
       );
-      final mediaResult = input.kind == MemoriaMediaKind.video &&
-              settings.mobileViClipEnabled
+      final mediaResult =
+          input.kind == MemoriaMediaKind.video &&
+              settings.mobileViClipEnabled &&
+              input.videoFrameBytes.isNotEmpty
           ? await _embeddingService.embedVideoFrameBytes(input.videoFrameBytes)
-          : await _embeddingService.embedImageBytes(
-              input.imageOrThumbnailBytes,
+          : await _embeddingService.embedPreparedMediaBytes(
+              kind: input.kind,
+              imageOrThumbnailBytes: input.imageOrThumbnailBytes,
+              mobileViClipEnabled: settings.mobileViClipEnabled,
               backend: _selectedBackend,
               liteRt: liteRt,
-            ).then(
-              (value) => input.kind == MemoriaMediaKind.image
-                  ? value
-                  : value.copyWith(kind: input.kind),
             );
       final query = _queryController.text.trim();
       final similarity = query.isEmpty
@@ -195,13 +195,9 @@ class _MediaVectorSimilarityTestPageState
         children: [
           _RuntimeOptionsCard(
             selectedBackend: _selectedBackend,
-            selectedAccelerator: _selectedAccelerator,
             isRunning: _isRunning,
             onBackendChanged: (backend) {
               setState(() => _selectedBackend = backend);
-            },
-            onAcceleratorChanged: (accelerator) {
-              setState(() => _selectedAccelerator = accelerator);
             },
           ),
           const SizedBox(height: 12),
@@ -235,7 +231,8 @@ class _MediaVectorSimilarityTestPageState
               borderRadius: BorderRadius.circular(8),
               child: AspectRatio(
                 aspectRatio: 16 / 9,
-                child: videoController != null &&
+                child:
+                    videoController != null &&
                         videoController.value.isInitialized
                     ? VideoPlayer(videoController)
                     : Image.file(File(path), fit: BoxFit.cover),
@@ -269,69 +266,16 @@ class _MediaVectorSimilarityTestPageState
 class _RuntimeOptionsCard extends StatelessWidget {
   const _RuntimeOptionsCard({
     required this.selectedBackend,
-    required this.selectedAccelerator,
     required this.isRunning,
     required this.onBackendChanged,
-    required this.onAcceleratorChanged,
   });
 
   final MobileClipBackend selectedBackend;
-  final LocalInferenceAccelerator selectedAccelerator;
   final bool isRunning;
   final ValueChanged<MobileClipBackend> onBackendChanged;
-  final ValueChanged<LocalInferenceAccelerator> onAcceleratorChanged;
 
   @override
   Widget build(BuildContext context) {
-    final isApple =
-        !kIsWeb &&
-        (defaultTargetPlatform == TargetPlatform.iOS ||
-            defaultTargetPlatform == TargetPlatform.macOS);
-    final acceleratorSegments = isApple
-        ? const <ButtonSegment<LocalInferenceAccelerator>>[
-            ButtonSegment<LocalInferenceAccelerator>(
-              value: LocalInferenceAccelerator.coreml,
-              label: Text('Core ML'),
-            ),
-            ButtonSegment<LocalInferenceAccelerator>(
-              value: LocalInferenceAccelerator.metal,
-              label: Text('Metal'),
-            ),
-            ButtonSegment<LocalInferenceAccelerator>(
-              value: LocalInferenceAccelerator.xnnpack,
-              label: Text('XNNPACK'),
-            ),
-            ButtonSegment<LocalInferenceAccelerator>(
-              value: LocalInferenceAccelerator.cpu,
-              label: Text('CPU'),
-            ),
-          ]
-        : const <ButtonSegment<LocalInferenceAccelerator>>[
-            ButtonSegment<LocalInferenceAccelerator>(
-              value: LocalInferenceAccelerator.gpu,
-              label: Text('GPU'),
-            ),
-            ButtonSegment<LocalInferenceAccelerator>(
-              value: LocalInferenceAccelerator.npu,
-              label: Text('NPU'),
-            ),
-            ButtonSegment<LocalInferenceAccelerator>(
-              value: LocalInferenceAccelerator.xnnpack,
-              label: Text('XNNPACK'),
-            ),
-            ButtonSegment<LocalInferenceAccelerator>(
-              value: LocalInferenceAccelerator.cpu,
-              label: Text('CPU'),
-            ),
-          ];
-    final normalizedAccelerator = acceleratorSegments.any(
-      (segment) => segment.value == selectedAccelerator,
-    )
-        ? selectedAccelerator
-        : (isApple
-              ? LocalInferenceAccelerator.coreml
-              : LocalInferenceAccelerator.gpu);
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -359,23 +303,19 @@ class _RuntimeOptionsCard extends StatelessWidget {
                   : (selection) => onBackendChanged(selection.first),
             ),
             const SizedBox(height: 12),
-            Text(
-              'LiteRT 推理方式',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
+            Text('LiteRT 推理方式', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
-            SegmentedButton<LocalInferenceAccelerator>(
-              segments: acceleratorSegments,
-              selected: <LocalInferenceAccelerator>{normalizedAccelerator},
-              onSelectionChanged: isRunning
-                  ? null
-                  : (selection) => onAcceleratorChanged(selection.first),
+            const ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.tune_outlined),
+              title: Text('XNNPACK'),
+              subtitle: Text('与主打标签路径保持一致，避免 GPU/NPU delegate 偏差。'),
             ),
             const SizedBox(height: 8),
             Text(
               selectedBackend == MobileClipBackend.ncnn
-                  ? 'NCNN 图像向量走原生 FFI；文本向量仍使用这里选择的 LiteRT 推理方式。'
-                  : '图片和文本都会使用这里选择的 LiteRT 推理方式；视频默认走 MobileViCLIP。',
+                  ? 'NCNN 图像向量走原生 FFI；文本向量仍使用 XNNPACK LiteRT。'
+                  : '图片和文本都会使用 XNNPACK LiteRT；视频默认走 MobileViCLIP。',
               style: TextStyle(color: Colors.grey[700], fontSize: 12),
             ),
           ],
@@ -409,7 +349,9 @@ class _EmbeddingCard extends StatelessWidget {
               'inference: ${result.inferenceMs.toStringAsFixed(1)} ms',
             ),
             const SizedBox(height: 8),
-            SelectableText('first16: ${_formatVectorPreview(result.embedding)}'),
+            SelectableText(
+              'first16: ${_formatVectorPreview(result.embedding)}',
+            ),
           ],
         ),
       ),

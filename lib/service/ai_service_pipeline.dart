@@ -20,14 +20,11 @@ extension AIServicePipeline on AIService {
     bool manageForegroundService = true,
   }) async {
     final appSettings = await AppAiSettingsService.instance.load();
-    final effectiveBatchSize = (batchSize ?? appSettings.analysisBatchSize)
-        .clamp(1, 200)
-        .toInt();
 
     if (!manageForegroundService) {
       await _AiPipelineRunner(
         service: this,
-        batchSize: effectiveBatchSize,
+        batchSize: batchSize ?? maxPhotos ?? 0x7fffffff,
         maxPhotos: maxPhotos,
         photoIds: photoIds,
         manageForegroundService: manageForegroundService,
@@ -48,11 +45,11 @@ extension AIServicePipeline on AIService {
           final processed = snapshot?.processed ?? 0;
           final failed = snapshot?.failed ?? 0;
           final control = await spool.readControl(existingJobId);
-          final paused =
-              control.pauseRequested || snapshot?.status == 'paused';
+          final paused = control.pauseRequested || snapshot?.status == 'paused';
           final stopping =
               control.stopRequested || snapshot?.status == 'stopping';
-          final serviceRunning = await AiBackgroundTaskService.instance.isRunning;
+          final serviceRunning =
+              await AiBackgroundTaskService.instance.isRunning;
           final manuallyStopped = await _readManualStopPending();
           final canAutoRestart =
               appSettings.autoResumeAnalysis && !manuallyStopped;
@@ -60,8 +57,8 @@ extension AIServicePipeline on AIService {
           final currentStep = serviceOffline && !canAutoRestart
               ? '后台服务未运行，任务已保留；点击继续后恢复'
               : snapshot != null && snapshot.currentStep.isNotEmpty
-                  ? snapshot.currentStep
-                  : '后台分析中 $processed/${manifest.totalItems}';
+              ? snapshot.currentStep
+              : '后台分析中 $processed/${manifest.totalItems}';
           _progressNotifier.value = AIAnalysisProgress(
             isRunning:
                 !paused && !stopping && (!serviceOffline || canAutoRestart),
@@ -95,23 +92,23 @@ extension AIServicePipeline on AIService {
 
     final q = requestedPhotoIds != null && requestedPhotoIds.isNotEmpty
         ? photoBox
-            .query(
-              PhotoEntity_.isAiAnalyzed
-                  .equals(false)
-                  .and(PhotoEntity_.id.oneOf(requestedPhotoIds)),
-            )
-            .order(PhotoEntity_.timestamp, flags: Order.descending)
-            .build()
+              .query(
+                PhotoEntity_.isAiAnalyzed
+                    .equals(false)
+                    .and(PhotoEntity_.id.oneOf(requestedPhotoIds)),
+              )
+              .order(PhotoEntity_.timestamp, flags: Order.descending)
+              .build()
         : photoBox
-            .query(PhotoEntity_.isAiAnalyzed.equals(false))
-            .order(PhotoEntity_.timestamp, flags: Order.descending)
-            .build();
+              .query(PhotoEntity_.isAiAnalyzed.equals(false))
+              .order(PhotoEntity_.timestamp, flags: Order.descending)
+              .build();
     final pendingPhotos = q.find();
     q.close();
 
     final limit = math.min(
       maxPhotos ?? pendingPhotos.length,
-      effectiveBatchSize,
+      pendingPhotos.length,
     );
     final batch = pendingPhotos.take(limit).toList(growable: false);
 
@@ -121,108 +118,8 @@ extension AIServicePipeline on AIService {
       return;
     }
 
-    final jobId = 'ai_${DateTime.now().millisecondsSinceEpoch}';
-    final items = await _prepareSpoolItems(jobId, batch);
-    if (items.isEmpty) {
-      debugPrint('[spool] 没有可交给前台服务的稳定输入文件');
-      _progressNotifier.value = AIAnalysisProgress.idle();
-      return;
-    }
-    final manifest = AnalysisJobManifest(
-      jobId: jobId,
-      createdAt: DateTime.now().millisecondsSinceEpoch,
-      mode: 'full',
-      items: items,
-    );
-
-    // 启动前台服务
-    await AiBackgroundTaskService.instance.startAnalysisWorker(
-      manifest: manifest,
-    );
-    debugPrint(
-      '[spool] manifest 已写入并提交前台服务 jobId=$jobId items=${items.length}',
-    );
-
-    _progressNotifier.value = AIAnalysisProgress.running(
-      total: items.length,
-      completed: 0,
-      failed: 0,
-      currentStep: '已提交 ${items.length} 张照片到后台分析服务',
-      elapsedMs: 0,
-    );
-    SpoolProgressNotifier.instance.startPolling(jobId);
-    unawaited(_persistRuntimeState(isActive: true, total: items.length));
   }
 
-  Future<List<AnalysisSpoolItem>> _prepareSpoolItems(
-    String jobId,
-    List<PhotoEntity> photos,
-  ) async {
-    final spool = AnalysisSpoolService.instance;
-    await spool.ensureJobDirs(jobId);
-
-    final items = <AnalysisSpoolItem>[];
-    for (final photo in photos) {
-      var path = photo.path;
-
-      if (path.startsWith('content://')) {
-        final copiedPath = await _copyContentUriToSpoolInput(jobId, photo);
-        if (copiedPath == null) {
-          debugPrint(
-            '[spool] 跳过无法复制到 spool 输入目录的 content uri photoId=${photo.id} uri=${photo.path}',
-          );
-          continue;
-        }
-        path = copiedPath;
-      } else {
-        final file = File(path);
-        if (!await file.exists()) {
-          debugPrint('[spool] 跳过不存在的输入文件 photoId=${photo.id} path=$path');
-          continue;
-        }
-      }
-
-      items.add(
-        AnalysisSpoolItem(
-          photoKey: photo.assetId,
-          contentUri: null,
-          path: path,
-          photoId: photo.id,
-          modifiedAt: photo.timestamp,
-          latitude: photo.latitude,
-          longitude: photo.longitude,
-          width: photo.width,
-          height: photo.height,
-        ),
-      );
-    }
-    return items;
-  }
-
-  Future<String?> _copyContentUriToSpoolInput(
-    String jobId,
-    PhotoEntity photo,
-  ) async {
-    try {
-      final bytes = await MediaAccessGrantService.instance
-          .readContentUriBytes(photo.path);
-      if (bytes == null || bytes.isEmpty) {
-        return null;
-      }
-      final inputFile = await AnalysisSpoolService.instance.inputFileFor(
-        jobId: jobId,
-        photoKey: photo.assetId,
-        extension: _analysisInputExtension(photo.path),
-      );
-      await inputFile.writeAsBytes(bytes, flush: true);
-      return inputFile.path;
-    } catch (error) {
-      debugPrint(
-        '[spool] content uri 输入复制失败 photoId=${photo.id} uri=${photo.path}: $error',
-      );
-      return null;
-    }
-  }
 
   String _analysisInputExtension(String source) {
     final path = Uri.tryParse(source)?.path ?? source;
@@ -301,9 +198,7 @@ extension AIServicePipeline on AIService {
         continue;
       }
 
-      final photo = result.photoId > 0
-          ? photoById[result.photoId]
-          : null;
+      final photo = result.photoId > 0 ? photoById[result.photoId] : null;
       if (photo == null) {
         await spool.moveToFailed(jobId, result.photoKey);
         failedCount++;
@@ -325,7 +220,11 @@ extension AIServicePipeline on AIService {
           continue;
         }
 
-        final faceResults = await _readFaceResults(spool, jobId, result.photoKey);
+        final faceResults = await _readFaceResults(
+          spool,
+          jobId,
+          result.photoKey,
+        );
 
         try {
           await _applySpoolResult(
@@ -547,7 +446,11 @@ extension AIServicePipeline on AIService {
       p.aiTags = result.tags;
       p.isAiAnalyzed = false;
       p.aiCaption = result.aiCaption.isEmpty ? null : result.aiCaption;
-      p.imageEmbedding = embedding.isEmpty ? null : embedding;
+      p.imageEmbedding =
+          isPhotoEmbeddingModelVersion(resultModelVersion) &&
+              embedding.isNotEmpty
+          ? embedding
+          : null;
       p.ocrText = result.ocrText.isEmpty ? null : result.ocrText;
       p.ocrTags = result.ocrTags;
       p.faceCount = result.faceCount;
@@ -560,8 +463,7 @@ extension AIServicePipeline on AIService {
       p.locationName = result.locationName;
       p.formattedAddress = result.formattedAddress;
       p.adcode = result.adcode;
-      p.isLocationProcessed =
-          result.province != null || result.city != null;
+      p.isLocationProcessed = result.province != null || result.city != null;
 
       photoBox.put(p);
     });
@@ -593,8 +495,8 @@ extension AIServicePipeline on AIService {
     if (value.isEmpty) {
       return fallback;
     }
-    if (value.startsWith(kPhotoEmbeddingModelFamily) ||
-        value == 'mobileviclip_small_onnx_video_v1') {
+    if (isPhotoEmbeddingModelVersion(value) ||
+        isVideoEmbeddingModelVersion(value)) {
       return value;
     }
     return fallback;
@@ -642,9 +544,7 @@ extension AIServicePipeline on AIService {
 
       if (decodedImage != null) {
         try {
-          final faceRect = Rect.fromLTRB(
-            fr.left, fr.top, fr.right, fr.bottom,
-          );
+          final faceRect = Rect.fromLTRB(fr.left, fr.top, fr.right, fr.bottom);
           final cropped = FaceCropUtil.cropFaceImage(
             sourceImage: decodedImage,
             boundingBox: faceRect,
@@ -663,26 +563,28 @@ extension AIServicePipeline on AIService {
         } catch (_) {}
       }
 
-      faces.add(FaceEntity()
-        ..photoId = photo.id
-        ..assetId = photo.assetId
-        ..faceIndex = fr.faceIndex
-        ..left = fr.left
-        ..top = fr.top
-        ..right = fr.right
-        ..bottom = fr.bottom
-        ..roll = fr.roll
-        ..yaw = fr.yaw
-        ..smilingProbability = fr.smilingProbability
-        ..leftEyeOpenProbability = fr.leftEyeOpenProbability
-        ..rightEyeOpenProbability = fr.rightEyeOpenProbability
-        ..embedding = embedding
-        ..embeddingModelVersion = modelVersion
-        ..qualityScore = fr.qualityScore
-        ..isPrimaryFace = fr.isPrimaryFace
-        ..clusterId = null
-        ..createdAt = now
-        ..updatedAt = now);
+      faces.add(
+        FaceEntity()
+          ..photoId = photo.id
+          ..assetId = photo.assetId
+          ..faceIndex = fr.faceIndex
+          ..left = fr.left
+          ..top = fr.top
+          ..right = fr.right
+          ..bottom = fr.bottom
+          ..roll = fr.roll
+          ..yaw = fr.yaw
+          ..smilingProbability = fr.smilingProbability
+          ..leftEyeOpenProbability = fr.leftEyeOpenProbability
+          ..rightEyeOpenProbability = fr.rightEyeOpenProbability
+          ..embedding = embedding
+          ..embeddingModelVersion = modelVersion
+          ..qualityScore = fr.qualityScore
+          ..isPrimaryFace = fr.isPrimaryFace
+          ..clusterId = null
+          ..createdAt = now
+          ..updatedAt = now,
+      );
     }
 
     store.runInTransaction(TxMode.write, () {
@@ -693,10 +595,7 @@ extension AIServicePipeline on AIService {
     });
 
     final faceIndexRepo = FaceEmbeddingIndexRepository();
-    faceIndexRepo.replaceForPhoto(
-      photoId: photo.id,
-      faces: faces,
-    );
+    faceIndexRepo.replaceForPhoto(photoId: photo.id, faces: faces);
   }
 
   Future<void> _runAsyncCaptionTask(_AsyncCaptionTask task) async {
@@ -773,7 +672,6 @@ extension AIServicePipeline on AIService {
     if (jobId == null || jobId.isEmpty) return null;
     return jobId;
   }
-
 }
 
 /// Spool 消费报告。
@@ -832,14 +730,12 @@ class _SpoolFaceFileResult {
       bottom: (json['bottom'] as num).toDouble(),
       roll: (json['roll'] as num?)?.toDouble(),
       yaw: (json['yaw'] as num?)?.toDouble(),
-      smilingProbability:
-          (json['smilingProbability'] as num?)?.toDouble(),
-      leftEyeOpenProbability:
-          (json['leftEyeOpenProbability'] as num?)?.toDouble(),
-      rightEyeOpenProbability:
-          (json['rightEyeOpenProbability'] as num?)?.toDouble(),
-      embedding: (json['embedding'] as List<Object?>?)
-          ?.cast<double>(),
+      smilingProbability: (json['smilingProbability'] as num?)?.toDouble(),
+      leftEyeOpenProbability: (json['leftEyeOpenProbability'] as num?)
+          ?.toDouble(),
+      rightEyeOpenProbability: (json['rightEyeOpenProbability'] as num?)
+          ?.toDouble(),
+      embedding: (json['embedding'] as List<Object?>?)?.cast<double>(),
       embeddingModelVersion: json['embeddingModelVersion'] as String?,
       qualityScore: (json['qualityScore'] as num).toDouble(),
       isPrimaryFace: (json['isPrimaryFace'] as bool?) ?? false,

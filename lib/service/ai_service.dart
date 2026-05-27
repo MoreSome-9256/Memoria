@@ -24,6 +24,7 @@ import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../storage/vector_index/vector_index_constants.dart';
 import '../utils/ai_score_helper.dart';
 import '../utils/face_crop_util.dart';
+import '../utils/media_type_helper.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 import 'ai_background_task_service.dart';
@@ -61,7 +62,9 @@ class AIService {
   AIService._internal() {
     if (uiIntegrationEnabled) {
       _progressNotifier.addListener(_syncProgressNotification);
-      AIProgressNotificationService().bindActionHandler(_handleForegroundAction);
+      AIProgressNotificationService().bindActionHandler(
+        _handleForegroundAction,
+      );
       _startRuntimeProgressPolling();
     }
   }

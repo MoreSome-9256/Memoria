@@ -1,4 +1,4 @@
-/// 个人资料页面，提供设置、调试入口和账户信息展示。
+// 个人资料页面，提供设置、调试入口和账户信息展示。
 
 import 'dart:async';
 import 'dart:io';
@@ -26,12 +26,20 @@ import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
 import '../../service/media_thumbnail_cache_service.dart';
 import '../../service/video_cache_service.dart';
+import 'ai_model_weights_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfileIdentity {
+  const _ProfileIdentity({required this.displayName, required this.isSignedIn});
+
+  final String displayName;
+  final bool isSignedIn;
 }
 
 class _ProfilePageState extends State<ProfilePage> {
@@ -51,6 +59,28 @@ class _ProfilePageState extends State<ProfilePage> {
     } catch (_) {
       return null;
     }
+  }
+
+  Future<_ProfileIdentity> _loadProfileIdentity() async {
+    final user = await _loadUser();
+    if (user == null) {
+      return const _ProfileIdentity(displayName: '未登录用户', isSignedIn: false);
+    }
+    final attributes = await _loadAttributes();
+    String? name;
+    if (attributes != null) {
+      for (final attr in attributes) {
+        if (attr.userAttributeKey.key == 'name' &&
+            attr.value.trim().isNotEmpty) {
+          name = attr.value.trim();
+          break;
+        }
+      }
+    }
+    return _ProfileIdentity(
+      displayName: name ?? user.username,
+      isSignedIn: true,
+    );
   }
 
   Future<List<AuthUserAttribute>?> _loadAttributes() async {
@@ -95,6 +125,7 @@ class _ProfilePageState extends State<ProfilePage> {
     };
     const minPixelOptions = <int?>[null, 300000, 1000000, 2000000, 4000000];
 
+    if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -224,7 +255,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                       excludeExtremeAspectRatios,
                                 );
                             PhotoService().invalidateScanSessionCache();
-                            if (!mounted) return;
+                            if (!context.mounted) return;
                             Navigator.pop(context);
                           },
                           child: const Text('保存'),
@@ -242,7 +273,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _refreshAlbumSelectionSummary() async {
-    final snapshot = await MediaAccessGrantService.instance.loadSnapshot();
+    await MediaAccessGrantService.instance.loadSnapshot();
     if (!mounted) {
       return;
     }
@@ -279,61 +310,12 @@ class _ProfilePageState extends State<ProfilePage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            final isApplePlatform = Platform.isIOS || Platform.isMacOS;
-            final acceleratorSegments = isApplePlatform
-                ? const <ButtonSegment<LocalInferenceAccelerator>>[
-                    ButtonSegment<LocalInferenceAccelerator>(
-                      value: LocalInferenceAccelerator.coreml,
-                      label: Text('Core ML'),
-                      icon: Icon(Icons.auto_awesome),
-                    ),
-                    ButtonSegment<LocalInferenceAccelerator>(
-                      value: LocalInferenceAccelerator.metal,
-                      label: Text('Metal'),
-                      icon: Icon(Icons.memory_outlined),
-                    ),
-                    ButtonSegment<LocalInferenceAccelerator>(
-                      value: LocalInferenceAccelerator.xnnpack,
-                      label: Text('XNNPACK'),
-                      icon: Icon(Icons.tune_outlined),
-                    ),
-                    ButtonSegment<LocalInferenceAccelerator>(
-                      value: LocalInferenceAccelerator.cpu,
-                      label: Text('Raw CPU'),
-                      icon: Icon(Icons.memory),
-                    ),
-                  ]
-                : const <ButtonSegment<LocalInferenceAccelerator>>[
-                    ButtonSegment<LocalInferenceAccelerator>(
-                      value: LocalInferenceAccelerator.gpu,
-                      label: Text('GPU'),
-                      icon: Icon(Icons.memory_outlined),
-                    ),
-                    ButtonSegment<LocalInferenceAccelerator>(
-                      value: LocalInferenceAccelerator.npu,
-                      label: Text('NPU'),
-                      icon: Icon(Icons.developer_board_outlined),
-                    ),
-                    ButtonSegment<LocalInferenceAccelerator>(
-                      value: LocalInferenceAccelerator.xnnpack,
-                      label: Text('XNNPACK'),
-                      icon: Icon(Icons.tune_outlined),
-                    ),
-                    ButtonSegment<LocalInferenceAccelerator>(
-                      value: LocalInferenceAccelerator.cpu,
-                      label: Text('CPU'),
-                      icon: Icon(Icons.memory),
-                    ),
-                  ];
-            final availableAccelerators = acceleratorSegments
-                .map((segment) => segment.value)
-                .toSet();
-            final selectedAccelerator =
-                availableAccelerators.contains(aiSettings.inferenceAccelerator)
-                ? aiSettings.inferenceAccelerator
-                : isApplePlatform
-                ? LocalInferenceAccelerator.coreml
-                : LocalInferenceAccelerator.gpu;
+            const selectedAccelerator = LocalInferenceAccelerator.xnnpack;
+            if (aiSettings.inferenceAccelerator != selectedAccelerator) {
+              aiSettings = aiSettings.copyWith(
+                inferenceAccelerator: selectedAccelerator,
+              );
+            }
             return SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -386,33 +368,38 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       const SizedBox(height: 20),
                       Text(
-                        '端侧加速器',
+                        '端侧推理',
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                       const SizedBox(height: 10),
-                      SegmentedButton<LocalInferenceAccelerator>(
-                        segments: acceleratorSegments,
-                        selected: <LocalInferenceAccelerator>{
-                          selectedAccelerator,
-                        },
-                        onSelectionChanged: (selection) {
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.tune_outlined),
+                        title: const Text('XNNPACK'),
+                        subtitle: Text(
+                          LocalInferenceAccelerator.xnnpack.description,
+                        ),
+                      ),
+                      Text(
+                        'XNNPACK 线程数：${aiSettings.xnnpackThreadCount}',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      Slider(
+                        value: aiSettings.xnnpackThreadCount.toDouble(),
+                        min: 1,
+                        max: 8,
+                        divisions: 7,
+                        label: '${aiSettings.xnnpackThreadCount}',
+                        onChanged: (value) {
                           setSheetState(() {
                             aiSettings = aiSettings.copyWith(
-                              inferenceAccelerator: selection.first,
+                              xnnpackThreadCount: value.round(),
                             );
                           });
                         },
                       ),
-                      const SizedBox(height: 8),
                       Text(
-                        '${selectedAccelerator.label} · ${selectedAccelerator.description}',
-                        style: TextStyle(color: Colors.grey[700], fontSize: 12),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        isApplePlatform
-                            ? 'Apple 平台建议先用 Core ML；如出问题可切 Metal(GPU)，再尝试 XNNPACK，最后使用 Raw CPU。'
-                            : '如果当前方案导致闪退或无法启动，请在这里切到兼容性更好的 XNNPACK；仍不稳定时再切 CPU。',
+                        'GPU / NPU 路径在 MobileCLIP2 打标签上存在结果偏差，当前不再作为用户可选运行方式。',
                         style: TextStyle(
                           color: Colors.orange[800],
                           fontSize: 12,
@@ -420,14 +407,14 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       const SizedBox(height: 20),
                       Text(
-                        '分析批大小：${aiSettings.analysisBatchSize}',
+                        'AI 模型 batch size：${aiSettings.analysisBatchSize}',
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                       Slider(
                         value: aiSettings.analysisBatchSize.toDouble(),
                         min: 1,
-                        max: 100,
-                        divisions: 99,
+                        max: 16,
+                        divisions: 15,
                         label: '${aiSettings.analysisBatchSize}',
                         onChanged: (value) {
                           setSheetState(() {
@@ -438,7 +425,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         },
                       ),
                       Text(
-                        '每次提交给后台服务的媒体数量；批内串行计算，不再使用手写 worker pool。',
+                        '控制模型内部 batch 参数；后台任务提交不再按 24 个项目切片，而是把本轮待分析项目一次性提交。',
                         style: TextStyle(color: Colors.grey[700], fontSize: 12),
                       ),
                       const SizedBox(height: 20),
@@ -706,6 +693,7 @@ class _ProfilePageState extends State<ProfilePage> {
     final videoStats = await VideoCacheService.instance.getCacheStats();
     final thumbnailStats = await MediaThumbnailCacheService.instance.getStats();
 
+    if (!mounted) return;
     showDialog(
       context: context,
       builder: (context) {
@@ -1033,19 +1021,19 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ),
           const SizedBox(height: 16),
-          FutureBuilder<AuthUser?>(
-            future: _loadUser(),
+          FutureBuilder<_ProfileIdentity>(
+            future: _loadProfileIdentity(),
             builder: (context, snapshot) {
-              final user = snapshot.data;
+              final identity = snapshot.data;
               return Column(
                 children: [
                   Text(
-                    user?.username ?? '未登录用户',
+                    identity?.displayName ?? '未登录用户',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    user == null ? '智能故事相册' : '已登录',
+                    identity?.isSignedIn == true ? '已登录' : '智能故事相册',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                 ],
@@ -1069,9 +1057,22 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           _buildSettingsTile(
             context,
+            Icons.storage_outlined,
+            'AI 模型权重',
+            '查看、删除或下载本地模型文件',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const AiModelWeightsPage(),
+                ),
+              );
+            },
+          ),
+          _buildSettingsTile(
+            context,
             Icons.folder_copy_outlined,
             '相册访问权限',
-            '查看系统相册授权状态',
+            _albumSelectionSummary,
             onTap: _showAlbumSelectionSettings,
           ),
           _buildSettingsTile(
@@ -1126,7 +1127,7 @@ class _ProfilePageState extends State<ProfilePage> {
                               leading: const Icon(Icons.analytics_outlined),
                               title: const Text('MobileCLIP Benchmark'),
                               subtitle: const Text(
-                                '对比 LiteRT 在 GPU / NPU / XNNPACK 路径上的速度',
+                                '对比 LiteRT/NCNN 路径，标签主路径默认使用 XNNPACK',
                               ),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () {
@@ -1170,7 +1171,7 @@ class _ProfilePageState extends State<ProfilePage> {
                               leading: const Icon(Icons.psychology_outlined),
                               title: const Text('Local VLM Test'),
                               subtitle: const Text(
-                                '调试本地 VLM caption / story 生成',
+                                'SmolVLM2 FFI 图片/视频描述，不做生成任务',
                               ),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () {
@@ -1185,7 +1186,7 @@ class _ProfilePageState extends State<ProfilePage> {
                             ListTile(
                               leading: const Icon(Icons.bug_report_outlined),
                               title: const Text('InternVL Lab'),
-                              subtitle: const Text('调试端侧视觉语言实验流程'),
+                              subtitle: const Text('SmolVLM2 描述实验入口'),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () {
                                 Navigator.of(context).push(

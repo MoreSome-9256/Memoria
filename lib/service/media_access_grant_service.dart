@@ -28,6 +28,18 @@ class MediaAccessGrantService {
     PhotoService().invalidateScanSessionCache();
   }
 
+  Future<PermissionState> requestFullLibraryAccess({
+    RequestType type = RequestType.common,
+  }) async {
+    final state = await PhotoManager.requestPermissionExtend(
+      requestOption: PermissionRequestOption(
+        androidPermission: AndroidPermission(type: type, mediaLocation: false),
+      ),
+    );
+    PhotoService().invalidateScanSessionCache();
+    return state;
+  }
+
   Future<bool> requestIgnoreBatteryOptimizations() async {
     if (!Platform.isAndroid) return false;
     final result = await _channel.invokeMethod<bool>(

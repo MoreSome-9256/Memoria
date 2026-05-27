@@ -15,6 +15,7 @@ import '../models/entity/photo_entity.dart';
 import '../models/entity/story_entity.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
+import '../storage/objectbox/media_asset_repository.dart';
 import '../storage/vector_index/face_embedding_index_repository.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../utils/photo_filter_helper.dart';
@@ -44,6 +45,7 @@ class PhotoService {
       PhotoEmbeddingIndexRepository();
   final FaceEmbeddingIndexRepository _faceEmbeddingIndexRepository =
       FaceEmbeddingIndexRepository();
+  final MediaAssetRepository _mediaAssetRepository = MediaAssetRepository();
   final Map<String, _PhotoAccessCacheEntry> _photoAccessCache =
       <String, _PhotoAccessCacheEntry>{};
 
@@ -78,8 +80,9 @@ class PhotoService {
     _photoAccessCache.clear();
     _photoEmbeddingIndexRepository.deleteAll();
     _faceEmbeddingIndexRepository.deleteAll();
+    _mediaAssetRepository.clearAll();
 
-    debugPrint('🗑️ 已清空缓存数据（照片/事件/故事）');
+    debugPrint('🗑️ 已清空缓存数据（照片/事件/故事/向量索引）');
   }
 
   Future<_ScanBuildResult> _buildPhotoEntities(

@@ -8,7 +8,8 @@ class MediaAssetRepository {
 
   final ObjectBoxService _objectBoxService;
 
-  Box<MediaAssetEntity>? get _box => _objectBoxService.tryBox<MediaAssetEntity>();
+  Box<MediaAssetEntity>? get _box =>
+      _objectBoxService.tryBox<MediaAssetEntity>();
 
   bool get isReady => _box != null;
 
@@ -21,7 +22,9 @@ class MediaAssetRepository {
   int countPending() {
     final box = _box;
     if (box == null) return 0;
-    final pending = MediaAssetEntity_.status.equals(MediaAssetStatus.pending.index);
+    final pending = MediaAssetEntity_.status.equals(
+      MediaAssetStatus.pending.index,
+    );
     final dirty = MediaAssetEntity_.status.equals(MediaAssetStatus.dirty.index);
     final query = box.query(pending.or(dirty)).build();
     try {
@@ -100,7 +103,9 @@ class MediaAssetRepository {
       return const <MediaAssetEntity>[];
     }
 
-    final pending = MediaAssetEntity_.status.equals(MediaAssetStatus.pending.index);
+    final pending = MediaAssetEntity_.status.equals(
+      MediaAssetStatus.pending.index,
+    );
     final dirty = MediaAssetEntity_.status.equals(MediaAssetStatus.dirty.index);
     final query = box.query(pending.or(dirty)).build();
     try {
@@ -117,16 +122,22 @@ class MediaAssetRepository {
 
   List<ObjectWithScore<MediaAssetEntity>> queryNearest(
     List<double> queryVector,
-    int k,
-  ) {
+    int k, {
+    String? modelVersion,
+  }) {
     final box = _box;
     if (box == null || queryVector.isEmpty || k <= 0) {
       return const <ObjectWithScore<MediaAssetEntity>>[];
     }
 
-    final condition = MediaAssetEntity_.embedding
+    var condition = MediaAssetEntity_.embedding
         .nearestNeighborsF32(queryVector, k)
         .and(MediaAssetEntity_.status.equals(MediaAssetStatus.ready.index));
+    if (modelVersion != null && modelVersion.isNotEmpty) {
+      condition = condition.and(
+        MediaAssetEntity_.modelVersion.equals(modelVersion),
+      );
+    }
     final query = box.query(condition).build();
     try {
       return query.findWithScores();

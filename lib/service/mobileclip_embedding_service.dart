@@ -1,4 +1,4 @@
-/// MobileCLIP 图像嵌入服务，负责提取图片语义向量。
+// MobileCLIP 图像嵌入服务，负责提取图片语义向量。
 
 import 'dart:async';
 import 'dart:io';
@@ -293,8 +293,10 @@ class MobileClipEmbeddingService {
 
   Future<MobileClipLiteRtService> _resolveLiteRtService() async {
     final settings = await AppAiSettingsService.instance.load();
-    return MobileClipLiteRtService.withAccelerator(
-      settings.inferenceAccelerator,
+    return MobileClipLiteRtService.withRuntimeOptions(
+      accelerator: settings.inferenceAccelerator,
+      xnnpackThreadCount: settings.xnnpackThreadCount,
+      modelBatchSize: settings.analysisBatchSize,
     );
   }
 }

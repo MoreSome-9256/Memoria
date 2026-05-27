@@ -6,19 +6,19 @@ import 'package:flutter/foundation.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../models/entity/photo_entity.dart';
+import '../storage/vector_index/photo_embedding_index_repository.dart';
+import '../storage/vector_index/vector_index_constants.dart';
 import 'analysis_pipeline_queue.dart';
 import 'unified_analysis_progress.dart';
 import 'ai_background_task_service.dart';
 import 'app_ai_settings_service.dart';
 import 'photo_service.dart';
 import 'album_selection_preference_service.dart';
-import 'junk_photo_filter_service.dart';
 import 'mobileclip_backend_preference_service.dart';
+import 'mobileclip_embedding_service.dart';
 import 'mobileclip_litert_service.dart';
 import 'mobileclip_tag_service.dart';
-import 'media_embedding_service.dart';
 import 'ocr_service.dart';
-import 'amap_geo_service.dart';
 import 'event_service.dart';
 import 'photo_attribute_background_service.dart';
 
@@ -29,12 +29,20 @@ class UnifiedAnalysisPipelineService {
       UnifiedAnalysisPipelineService._internal();
   factory UnifiedAnalysisPipelineService() => _instance;
 
-  final _progressNotifier =
-      ValueNotifier<UnifiedAnalysisProgress>(UnifiedAnalysisProgress.idle());
-  final _queue = AnalysisPipelineQueue(capacity: 50, highWaterMark: 40);
+  final _progressNotifier = ValueNotifier<UnifiedAnalysisProgress>(
+    UnifiedAnalysisProgress.idle(),
+  );
+  static const int _handoffBatchSize = 10;
+  static const Duration _consumerIdleGrace = Duration(seconds: 300);
+  AnalysisPipelineQueue _queue = AnalysisPipelineQueue(
+    capacity: 200,
+    highWaterMark: 160,
+  );
 
   bool _isRunning = false;
   bool _stopRequested = false;
+  bool _scanCompletedNormally = false;
+  bool _analysisEnabled = true;
   int _scanCompleted = 0;
   int _scanTotal = 0;
   int _aiCompleted = 0;
@@ -49,6 +57,7 @@ class UnifiedAnalysisPipelineService {
   Future<void> startUnifiedPipeline({
     int? maxPhotos,
     bool clearCacheFirst = false,
+    bool analyzeWithAi = true,
   }) async {
     if (_isRunning) {
       debugPrint('[pipeline] 流水线已在运行，忽略重复请求');
@@ -57,6 +66,9 @@ class UnifiedAnalysisPipelineService {
 
     _isRunning = true;
     _stopRequested = false;
+    _scanCompletedNormally = false;
+    _analysisEnabled = analyzeWithAi;
+    _queue = AnalysisPipelineQueue(capacity: 200, highWaterMark: 160);
     _scanCompleted = 0;
     _scanTotal = 0;
     _aiCompleted = 0;
@@ -65,7 +77,9 @@ class UnifiedAnalysisPipelineService {
     _startedAt = DateTime.now();
 
     debugPrint('[pipeline] ======== 统一流水线启动 ========');
-    debugPrint('[pipeline] maxPhotos=$maxPhotos clearCacheFirst=$clearCacheFirst');
+    debugPrint(
+      '[pipeline] maxPhotos=$maxPhotos clearCacheFirst=$clearCacheFirst analyzeWithAi=$analyzeWithAi',
+    );
 
     try {
       if (clearCacheFirst) {
@@ -79,7 +93,7 @@ class UnifiedAnalysisPipelineService {
       rethrow;
     } finally {
       _isRunning = false;
-      _queue.clear();
+      _queue.close();
       debugPrint('[pipeline] ======== 统一流水线结束 ========');
     }
   }
@@ -87,7 +101,7 @@ class UnifiedAnalysisPipelineService {
   void stopPipeline() {
     _stopRequested = true;
     _queue.close();
-    debugPrint('[pipeline] 已请求停止流水线');
+    debugPrint('[pipeline] 已请求停止扫描；AI 会继续处理已移交任务');
   }
 
   Future<void> _runIncrementalPipeline({int? maxPhotos}) async {
@@ -95,10 +109,15 @@ class UnifiedAnalysisPipelineService {
         .startAlbumCacheForeground(text: '正在准备分析流水线…');
 
     try {
-      await Future.wait([
-        _runProducer(maxPhotos: maxPhotos),
-        _runConsumer(),
-      ], eagerError: true);
+      if (_analysisEnabled) {
+        await Future.wait([
+          _runProducer(maxPhotos: maxPhotos),
+          _runConsumer(),
+        ], eagerError: true);
+      } else {
+        await _runProducer(maxPhotos: maxPhotos);
+        await _onPipelineCompleted();
+      }
     } finally {
       if (foregroundStarted) {
         await AiBackgroundTaskService.instance.stop();
@@ -154,7 +173,9 @@ class UnifiedAnalysisPipelineService {
         : albums.where((a) => _isSelectedAlbum(a, selectedIds)).toList();
 
     final totalCount = await _estimateTotalCount(targetAlbums);
-    _scanTotal = maxPhotos != null ? math.min(maxPhotos, totalCount) : totalCount;
+    _scanTotal = maxPhotos != null
+        ? math.min(maxPhotos, totalCount)
+        : totalCount;
 
     debugPrint('[pipeline] 预估总数=$_scanTotal');
 
@@ -165,6 +186,7 @@ class UnifiedAnalysisPipelineService {
 
     var scanned = 0;
     const pageSize = 50;
+    final handoffBatch = <PipelineQueueItem>[];
 
     for (final album in targetAlbums) {
       if (_stopRequested) break;
@@ -188,41 +210,49 @@ class UnifiedAnalysisPipelineService {
             scanned++;
             _scanCompleted = scanned;
 
-            if (!photo.isAiAnalyzed) {
-              await _queue.enqueue(PipelineQueueItem(
-                photoId: photo.id,
-                photo: photo,
-                enqueuedAt: DateTime.now(),
-              ));
-              _aiTotal++;
-
-              _updateProgress(
-                stage: UnifiedAnalysisStage.scanning,
-                message: '已扫描 $scanned/$_scanTotal，队列 ${_queue.size}',
+            if (_analysisEnabled && !photo.isAiAnalyzed) {
+              handoffBatch.add(
+                PipelineQueueItem(
+                  photoId: photo.id,
+                  photo: photo,
+                  enqueuedAt: DateTime.now(),
+                ),
               );
+              if (handoffBatch.length >= _handoffBatchSize) {
+                await _handoffBatchToAi(handoffBatch);
+              }
             }
+
+            _updateProgress(
+              stage: UnifiedAnalysisStage.scanning,
+              message: _analysisEnabled
+                  ? '正在更新相册缓存……($scanned/$_scanTotal)，已移交 $_aiTotal 张，队列 ${_queue.size}'
+                  : '正在更新相册缓存……($scanned/$_scanTotal)',
+            );
           }
         }
       }
     }
 
+    if (handoffBatch.isNotEmpty) {
+      await _handoffBatchToAi(handoffBatch);
+    }
+    _scanCompletedNormally = !_stopRequested;
     _queue.close();
-    debugPrint('[pipeline] 生产者结束: scanned=$scanned queued=$_aiTotal');
+    debugPrint(
+      '[pipeline] 生产者结束: scanned=$scanned queued=$_aiTotal stopped=$_stopRequested',
+    );
   }
 
   Future<void> _runConsumer() async {
-    if (_aiTotal <= 0) {
-      debugPrint('[pipeline] 没有待处理项目，消费者直接退出');
-      return;
-    }
-
     _updateProgress(
       stage: UnifiedAnalysisStage.warmingUp,
       message: '正在预热 AI 引擎…',
     );
 
     final settings = await AppAiSettingsService.instance.load();
-    final backend = await MobileClipBackendPreferenceService().getSelectedBackend();
+    final backend = await MobileClipBackendPreferenceService()
+        .getSelectedBackend();
 
     final liteRt = MobileClipLiteRtService.withRuntimeOptions(
       accelerator: settings.inferenceAccelerator,
@@ -237,17 +267,29 @@ class UnifiedAnalysisPipelineService {
 
     _updateProgress(
       stage: UnifiedAnalysisStage.processing,
-      message: '开始处理 $_aiTotal 张照片',
+      message: _aiTotal > 0 ? '开始处理 $_aiTotal 张照片' : 'AI 已预热，等待扫描移交任务…',
     );
 
+    var idleStartedAt = DateTime.now();
     while (!_queue.isClosed || _queue.isNotEmpty) {
-      if (_stopRequested) break;
-
-      final item = await _queue.dequeue();
-      if (item == null) break;
+      final item = await _dequeueWithIdleGrace(idleStartedAt);
+      if (item == null) {
+        if (_queue.isClosed) {
+          break;
+        }
+        debugPrint(
+          '[pipeline] AI 等待任务超过 ${_consumerIdleGrace.inSeconds}s，结束本轮',
+        );
+        break;
+      }
+      idleStartedAt = DateTime.now();
 
       try {
-        await _processSinglePhoto(item.photo, settings: settings, backend: backend);
+        await _processSinglePhoto(
+          item.photo,
+          settings: settings,
+          backend: backend,
+        );
         _aiCompleted++;
 
         _updateProgress(
@@ -257,6 +299,11 @@ class UnifiedAnalysisPipelineService {
       } catch (error) {
         debugPrint('[pipeline] 处理失败 photoId=${item.photoId}: $error');
         _aiFailed++;
+        _updateProgress(
+          stage: UnifiedAnalysisStage.processing,
+          message:
+              '已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed，队列 ${_queue.size}',
+        );
       }
     }
 
@@ -265,20 +312,54 @@ class UnifiedAnalysisPipelineService {
     await _onPipelineCompleted();
   }
 
+  Future<void> _handoffBatchToAi(List<PipelineQueueItem> batch) async {
+    if (batch.isEmpty || !_analysisEnabled) {
+      batch.clear();
+      return;
+    }
+    if (_queue.isClosed) {
+      batch.clear();
+      return;
+    }
+    final batchSize = batch.length;
+    _aiTotal += batchSize;
+    for (final item in batch) {
+      await _queue.enqueue(item);
+    }
+    debugPrint(
+      '[pipeline] 已按 $batchSize 张一组移交 AI，total=$_aiTotal queue=${_queue.size}',
+    );
+    batch.clear();
+  }
+
+  Future<PipelineQueueItem?> _dequeueWithIdleGrace(
+    DateTime idleStartedAt,
+  ) async {
+    if (_queue.isNotEmpty || _queue.isClosed) {
+      return _queue.dequeue();
+    }
+    while (!_queue.isClosed && _queue.isEmpty) {
+      final idleFor = DateTime.now().difference(idleStartedAt);
+      if (idleFor >= _consumerIdleGrace) {
+        return null;
+      }
+      final remaining = _consumerIdleGrace - idleFor;
+      _updateProgress(
+        stage: UnifiedAnalysisStage.processing,
+        message:
+            'AI 已预热，等待扫描移交任务…剩余等待 ${remaining.inSeconds.clamp(0, _consumerIdleGrace.inSeconds)} 秒',
+      );
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    return _queue.dequeue();
+  }
+
   Future<PhotoEntity?> _buildAndSavePhotoEntity(AssetEntity asset) async {
-    final result = await PhotoService()._buildSingleAssetPhoto(
+    return await PhotoService().buildAndSaveSinglePhoto(
       asset,
       filterProfile: await _resolveFilterProfile(),
-      resolveFile: false,
+      resolveFile: true,
     );
-
-    if (result.photo == null) return null;
-
-    final id = PhotoService()._photoBox.put(result.photo!);
-    if (id <= 0) return null;
-
-    result.photo!.id = id;
-    return result.photo!;
   }
 
   Future<void> _processSinglePhoto(
@@ -287,39 +368,36 @@ class UnifiedAnalysisPipelineService {
     required MobileClipBackend backend,
   }) async {
     final embeddingService = MobileClipEmbeddingService();
-    final embedding = await embeddingService.resolvePhotoEmbedding(
+    await embeddingService.resolvePhotoEmbedding(
       photo: photo,
       backend: backend,
     );
 
+    final embedding = photo.imageEmbedding;
     if (embedding == null || embedding.isEmpty) {
       throw StateError('embedding is empty');
     }
 
     final tagService = MobileClipTagService();
-    final tags = await tagService.retrieveTags(embedding, photo: photo);
+    final tags = await tagService.retrieveTags(embedding);
 
     String? ocrText;
     List<String> ocrTags = const [];
-    if (settings.ocrEnabled && OcrPolicy.shouldRunOcr(photo)) {
-      final ocrResult = await OcrService().extractText(photo);
+    if (settings.ocrEnabled &&
+        OcrService.shouldRunOcr(tags, aspectRatio: photo.aspectRatio)) {
+      final imageFile = File(photo.path);
+      final ocrResult = await OcrService().analyzeImageFile(imageFile);
       ocrText = ocrResult.text;
       ocrTags = ocrResult.tags;
     }
 
-    final store = PhotoService()._store;
-    final photoBox = store.box<PhotoEntity>();
-    store.runInTransaction(TxMode.write, () {
-      final p = photoBox.get(photo.id);
+    PhotoService().updatePhotoInTransaction(photo.id, (p) {
       if (p == null) return;
-
       p.imageEmbedding = embedding;
       p.aiTags = tags;
       p.ocrText = ocrText;
       p.ocrTags = ocrTags;
       p.isAiAnalyzed = true;
-
-      photoBox.put(p);
     });
 
     PhotoEmbeddingIndexRepository().upsertEmbedding(
@@ -329,7 +407,7 @@ class UnifiedAnalysisPipelineService {
     );
 
     unawaited(
-      PhotoAttributeBackgroundService.instance.enqueueAttributeTask(
+      PhotoAttributeBackgroundService.instance().enqueueAttributeTask(
         photoId: photo.id,
         types: {PhotoAttributeType.location},
       ),
@@ -339,14 +417,16 @@ class UnifiedAnalysisPipelineService {
   Future<void> _onPipelineCompleted() async {
     _updateProgress(
       stage: UnifiedAnalysisStage.flushing,
-      message: '正在刷新事件聚类…',
+      message: _analysisEnabled ? '正在刷新事件聚类…' : '相册缓存已更新',
     );
 
-    await EventService().runClustering();
+    if (_analysisEnabled) {
+      await EventService().runClustering();
+    }
 
     _updateProgress(
       stage: UnifiedAnalysisStage.completed,
-      message: '已完成 $_aiCompleted 张照片',
+      message: _analysisEnabled ? '已完成 $_aiCompleted 张照片' : '相册缓存已更新',
     );
 
     await Future.delayed(const Duration(milliseconds: 1800));
@@ -372,6 +452,9 @@ class UnifiedAnalysisPipelineService {
       queueSize: _queue.size,
       message: message,
       elapsedMs: elapsedMs,
+      scanDone: _scanCompletedNormally,
+      scanStopped: _queue.isClosed && !_scanCompletedNormally,
+      analysisEnabled: _analysisEnabled,
     );
 
     unawaited(

@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 enum UnifiedAnalysisStage {
   idle,
   warmingUp,
@@ -22,6 +20,9 @@ class UnifiedAnalysisProgress {
     required this.queueSize,
     required this.message,
     required this.elapsedMs,
+    this.scanDone = false,
+    this.scanStopped = false,
+    this.analysisEnabled = true,
   });
 
   factory UnifiedAnalysisProgress.idle() => const UnifiedAnalysisProgress(
@@ -35,6 +36,9 @@ class UnifiedAnalysisProgress {
     queueSize: 0,
     message: '',
     elapsedMs: 0,
+    scanDone: false,
+    scanStopped: false,
+    analysisEnabled: true,
   );
 
   factory UnifiedAnalysisProgress.warmingUp({
@@ -52,6 +56,9 @@ class UnifiedAnalysisProgress {
     queueSize: 0,
     message: message,
     elapsedMs: 0,
+    scanDone: false,
+    scanStopped: false,
+    analysisEnabled: true,
   );
 
   factory UnifiedAnalysisProgress.scanning({
@@ -71,6 +78,9 @@ class UnifiedAnalysisProgress {
     queueSize: queueSize,
     message: message,
     elapsedMs: elapsedMs,
+    scanDone: false,
+    scanStopped: false,
+    analysisEnabled: true,
   );
 
   factory UnifiedAnalysisProgress.processing({
@@ -93,6 +103,9 @@ class UnifiedAnalysisProgress {
     queueSize: queueSize,
     message: message,
     elapsedMs: elapsedMs,
+    scanDone: false,
+    scanStopped: false,
+    analysisEnabled: true,
   );
 
   final UnifiedAnalysisStage stage;
@@ -105,10 +118,24 @@ class UnifiedAnalysisProgress {
   final int queueSize;
   final String message;
   final int elapsedMs;
+  final bool scanDone;
+  final bool scanStopped;
+  final bool analysisEnabled;
 
   bool get isVisible => isRunning || stage == UnifiedAnalysisStage.completed;
   bool get isScanning => stage == UnifiedAnalysisStage.scanning;
   bool get isProcessing => stage == UnifiedAnalysisStage.processing;
+  bool get hasCacheWork =>
+      isRunning &&
+      scanTotal > 0 &&
+      !scanStopped &&
+      (!scanDone || scanCompleted < scanTotal);
+  bool get hasAiWork =>
+      analysisEnabled &&
+      isRunning &&
+      (stage == UnifiedAnalysisStage.warmingUp ||
+          stage == UnifiedAnalysisStage.processing ||
+          aiTotal > 0);
 
   double get scanFraction =>
       scanTotal > 0 ? (scanCompleted / scanTotal).clamp(0, 1) : 0;
@@ -135,6 +162,9 @@ class UnifiedAnalysisProgress {
     int? queueSize,
     String? message,
     int? elapsedMs,
+    bool? scanDone,
+    bool? scanStopped,
+    bool? analysisEnabled,
   }) {
     return UnifiedAnalysisProgress(
       stage: stage ?? this.stage,
@@ -147,6 +177,9 @@ class UnifiedAnalysisProgress {
       queueSize: queueSize ?? this.queueSize,
       message: message ?? this.message,
       elapsedMs: elapsedMs ?? this.elapsedMs,
+      scanDone: scanDone ?? this.scanDone,
+      scanStopped: scanStopped ?? this.scanStopped,
+      analysisEnabled: analysisEnabled ?? this.analysisEnabled,
     );
   }
 }

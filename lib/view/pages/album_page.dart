@@ -20,6 +20,8 @@ import '../../service/app_ai_settings_service.dart';
 import '../../service/media_access_grant_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_queue_service.dart';
+import '../../service/unified_analysis_pipeline_service.dart';
+import '../../service/unified_analysis_progress.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 import '../../utils/media_type_helper.dart';
 import '../widgets/event_card.dart';
@@ -39,6 +41,7 @@ const int _albumTagBrowserPhotoSoftLimit = 1200;
 enum _ImportAction {
   importAllNew,
   importLatest100,
+  updateCacheOnly,
   rebuildAll,
   addMorePhotos,
   requestFullAccess,
@@ -95,15 +98,21 @@ class _AlbumPageState extends State<AlbumPage> {
   late Stream<Map<String, List<Event>>> _uiEventsStream;
   late Stream<_AlbumTagBrowserData> _albumTagBrowserStream;
 
-  void _startRefresh({bool clearCacheFirst = false, int? recentPhotoLimit}) {
+  void _startRefresh({
+    bool clearCacheFirst = false,
+    int? recentPhotoLimit,
+    bool analyzeWithAi = true,
+  }) {
     if (_isClearingCache) {
       return;
     }
     setState(() => _isStartingImport = true);
 
-    final scopeLabel = recentPhotoLimit == null
-        ? '全部新的图片和视频'
-        : '最新的 $recentPhotoLimit 个未分析项目';
+    final scopeLabel = analyzeWithAi
+        ? (recentPhotoLimit == null
+              ? '全部新的图片和视频'
+              : '最新的 $recentPhotoLimit 个未分析项目')
+        : '相册缓存';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
@@ -115,6 +124,7 @@ class _AlbumPageState extends State<AlbumPage> {
         .startRefresh(
           clearCacheFirst: clearCacheFirst,
           recentPhotoLimit: recentPhotoLimit,
+          analyzeWithAi: analyzeWithAi,
         )
         .then((result) {
           if (result == null || !mounted) {
@@ -123,10 +133,14 @@ class _AlbumPageState extends State<AlbumPage> {
           final scan = result.scanSummary;
           final handoffText = result.aiAlreadyRunning
               ? '后台 AI 已在运行，新照片已并入当前队列。'
-              : 'AI 已转入后台继续打标。';
+              : analyzeWithAi
+              ? 'AI 已转入后台继续打标。'
+              : '未启动 AI 打标。';
 
           final String message;
-          if (result.clearCacheFirst) {
+          if (!analyzeWithAi) {
+            message = '相册缓存已更新，当前共有 ${scan.totalAfter} 张记录。';
+          } else if (result.clearCacheFirst) {
             message = result.recentPhotoLimit == null
                 ? '已安全重建缓存，恢复 ${scan.totalAfter} 张照片。$handoffText'
                 : '已安全重建最近 ${result.recentPhotoLimit} 张照片缓存。$handoffText';
@@ -395,6 +409,13 @@ class _AlbumPageState extends State<AlbumPage> {
                   onTap: () =>
                       Navigator.pop(context, _ImportAction.importLatest100),
                 ),
+                ListTile(
+                  leading: const Icon(Icons.inventory_2_outlined),
+                  title: const Text('仅更新相册缓存'),
+                  subtitle: const Text('只扫描并写入数据库，不预热 AI，不移交打标任务'),
+                  onTap: () =>
+                      Navigator.pop(context, _ImportAction.updateCacheOnly),
+                ),
                 if (isLimited)
                   ListTile(
                     leading: const Icon(Icons.add_photo_alternate_outlined),
@@ -442,6 +463,8 @@ class _AlbumPageState extends State<AlbumPage> {
         _startRefresh();
       case _ImportAction.importLatest100:
         _startRefresh(recentPhotoLimit: 100);
+      case _ImportAction.updateCacheOnly:
+        _startRefresh(analyzeWithAi: false);
       case _ImportAction.rebuildAll:
         await _confirmAndRebuildAnalysis();
       case _ImportAction.addMorePhotos:
@@ -861,13 +884,19 @@ class _AlbumPageState extends State<AlbumPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  _buildUnifiedWorkProgressSection(),
                   _buildAnalysisProgressSection(),
                   ValueListenableBuilder<AlbumRefreshProgress>(
                     valueListenable: AlbumRefreshService().progressListenable,
                     builder: (context, refreshProgress, _) {
+                      final unifiedProgress = UnifiedAnalysisPipelineService()
+                          .progressListenable
+                          .value;
                       return AnimatedSwitcher(
                         duration: const Duration(milliseconds: 250),
-                        child: refreshProgress.isVisible
+                        child:
+                            refreshProgress.isVisible &&
+                                !unifiedProgress.isVisible
                             ? _buildImportProgressBanner(refreshProgress)
                             : const SizedBox.shrink(),
                       );
@@ -913,13 +942,35 @@ class _AlbumPageState extends State<AlbumPage> {
   }
 
   Widget _buildAnalysisProgressSection() {
-    return ValueListenableBuilder<AIAnalysisProgress>(
-      valueListenable: AIService().progressListenable,
+    return ValueListenableBuilder<UnifiedAnalysisProgress>(
+      valueListenable: UnifiedAnalysisPipelineService().progressListenable,
+      builder: (context, unifiedProgress, _) {
+        if (unifiedProgress.isVisible) {
+          return const SizedBox.shrink();
+        }
+        return ValueListenableBuilder<AIAnalysisProgress>(
+          valueListenable: AIService().progressListenable,
+          builder: (context, progress, _) {
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              child: progress.isVisible
+                  ? _buildAnalysisProgressBanner(progress)
+                  : const SizedBox.shrink(),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildUnifiedWorkProgressSection() {
+    return ValueListenableBuilder<UnifiedAnalysisProgress>(
+      valueListenable: UnifiedAnalysisPipelineService().progressListenable,
       builder: (context, progress, _) {
         return AnimatedSwitcher(
           duration: const Duration(milliseconds: 250),
           child: progress.isVisible
-              ? _buildAnalysisProgressBanner(progress)
+              ? _buildUnifiedWorkProgressBanner(progress)
               : const SizedBox.shrink(),
         );
       },
@@ -1034,6 +1085,131 @@ class _AlbumPageState extends State<AlbumPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildUnifiedWorkProgressBanner(UnifiedAnalysisProgress progress) {
+    final cacheFraction = progress.scanFraction;
+    final aiFraction = progress.aiFraction;
+    final elapsedLabel = _formatDurationCompact(
+      Duration(milliseconds: progress.elapsedMs),
+    );
+    final cacheTitle = progress.scanDone
+        ? '相册缓存已更新 ${progress.scanCompleted}/${progress.scanTotal}'
+        : progress.scanStopped
+        ? '已停止扫描 ${progress.scanCompleted}/${progress.scanTotal}'
+        : '正在更新相册缓存 ${progress.scanCompleted}/${progress.scanTotal}';
+    final aiTitle = progress.analysisEnabled
+        ? 'AI 正在打标签 ${progress.aiCompleted}/${progress.aiTotal}'
+        : 'AI 打标签未启动';
+    final aiDetail = progress.analysisEnabled
+        ? '队列 ${progress.queueSize} · 失败 ${progress.aiFailed}'
+        : '仅更新缓存，不预热模型，不移交任务';
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.indigo.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.indigo.withValues(alpha: 0.16)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.sync, size: 18, color: Colors.indigo),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  progress.analysisEnabled ? '相册缓存与 AI 打标' : '相册缓存更新',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Text(
+                '已耗时 $elapsedLabel',
+                style: TextStyle(color: Colors.grey[700], fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildProgressRow(
+            icon: Icons.inventory_2_outlined,
+            title: cacheTitle,
+            detail: progress.scanDone
+                ? '缓存索引构建完成'
+                : progress.scanStopped
+                ? '已停止继续扫描；已移交的 AI 任务会继续处理'
+                : progress.message,
+            value: progress.scanTotal > 0 ? cacheFraction : null,
+            color: Colors.pinkAccent,
+          ),
+          if (progress.analysisEnabled) ...[
+            const SizedBox(height: 12),
+            _buildProgressRow(
+              icon: Icons.auto_awesome,
+              title: aiTitle,
+              detail: aiDetail,
+              value: progress.aiTotal > 0 ? aiFraction : null,
+              color: Colors.teal,
+            ),
+          ],
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: progress.scanDone || progress.scanStopped
+                  ? null
+                  : AlbumRefreshService().stopScanningOnly,
+              icon: const Icon(Icons.stop_circle_outlined),
+              label: const Text('停止扫描'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProgressRow({
+    required IconData icon,
+    required String title,
+    required String detail,
+    required double? value,
+    required Color color,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            if (value != null)
+              Text(
+                '${(value * 100).round()}%',
+                style: TextStyle(fontWeight: FontWeight.w700, color: color),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        LinearProgressIndicator(
+          value: value,
+          minHeight: 8,
+          borderRadius: BorderRadius.circular(999),
+          backgroundColor: color.withValues(alpha: 0.12),
+          valueColor: AlwaysStoppedAnimation<Color>(color),
+        ),
+        const SizedBox(height: 6),
+        Text(detail, style: TextStyle(color: Colors.grey[700], fontSize: 12)),
+      ],
     );
   }
 
@@ -1171,6 +1347,8 @@ class _AlbumPageState extends State<AlbumPage> {
         if (totalPhotoCount > 0 &&
             analyzedPhotoCount <= 0 &&
             !AIService().isAnalyzing &&
+            !AlbumRefreshService().isRunning &&
+            !UnifiedAnalysisPipelineService().isRunning &&
             !_tagBrowserAiRecoveryTriggered) {
           _tagBrowserAiRecoveryTriggered = true;
           unawaited(AIService().analyzePhotosInBackground());

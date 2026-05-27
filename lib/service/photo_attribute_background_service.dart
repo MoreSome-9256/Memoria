@@ -8,11 +8,7 @@ import '../storage/objectbox/objectbox_service.dart';
 import 'amap_geo_service.dart';
 import '../objectbox.g.dart';
 
-enum PhotoAttributeType {
-  location,
-  faceDetection,
-  caption,
-}
+enum PhotoAttributeType { location, faceDetection, caption }
 
 class PhotoAttributeTask {
   const PhotoAttributeTask({
@@ -31,7 +27,7 @@ class PhotoAttributeBackgroundService {
 
   static final PhotoAttributeBackgroundService _instance =
       PhotoAttributeBackgroundService._internal();
-  factory PhotoAttributeBackgroundService.instance => _instance;
+  factory PhotoAttributeBackgroundService.instance() => _instance;
 
   final Queue<PhotoAttributeTask> _queue = Queue<PhotoAttributeTask>();
   bool _isRunning = false;
@@ -41,11 +37,13 @@ class PhotoAttributeBackgroundService {
     required int photoId,
     required Set<PhotoAttributeType> types,
   }) async {
-    _queue.add(PhotoAttributeTask(
-      photoId: photoId,
-      types: types,
-      enqueuedAt: DateTime.now(),
-    ));
+    _queue.add(
+      PhotoAttributeTask(
+        photoId: photoId,
+        types: types,
+        enqueuedAt: DateTime.now(),
+      ),
+    );
 
     if (!_isRunning) {
       unawaited(_runBackgroundWorker());
@@ -58,11 +56,9 @@ class PhotoAttributeBackgroundService {
   }) async {
     final now = DateTime.now();
     for (final photoId in photoIds) {
-      _queue.add(PhotoAttributeTask(
-        photoId: photoId,
-        types: types,
-        enqueuedAt: now,
-      ));
+      _queue.add(
+        PhotoAttributeTask(photoId: photoId, types: types, enqueuedAt: now),
+      );
     }
 
     if (!_isRunning) {
@@ -136,7 +132,10 @@ class PhotoAttributeBackgroundService {
       return;
     }
 
-    final geoResult = await AMapGeoService().reverseGeocode(lat, lng);
+    final geoResult = await AmapGeoService.reverseGeocode(
+      latitude: lat,
+      longitude: lng,
+    );
 
     if (geoResult == null) {
       debugPrint('[attribute-worker] 逆地理编码失败 photoId=${photo.id}');

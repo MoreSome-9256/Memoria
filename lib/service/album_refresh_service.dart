@@ -11,6 +11,7 @@ import 'media_asset_sync_service.dart';
 import 'media_embedding_index_service.dart';
 import 'photo_service.dart';
 import 'unified_analysis_pipeline_service.dart';
+import 'unified_analysis_progress.dart';
 
 enum AlbumRefreshStage { idle, scanning, clustering, queueing, handoff, failed }
 
@@ -96,6 +97,7 @@ class AlbumRefreshService {
     bool clearCacheFirst = false,
     int? recentPhotoLimit,
     bool useUnifiedPipeline = true,
+    bool analyzeWithAi = true,
   }) async {
     if (_isRunning) {
       debugPrint('[scan] ⛔ 扫描已在运行，忽略重复请求');
@@ -107,7 +109,7 @@ class AlbumRefreshService {
 
     debugPrint('[scan] ======== AlbumRefreshService 开始 ========');
     debugPrint(
-      '[scan] runId=$runId clearCacheFirst=$clearCacheFirst recentPhotoLimit=$recentPhotoLimit useUnifiedPipeline=$useUnifiedPipeline',
+      '[scan] runId=$runId clearCacheFirst=$clearCacheFirst recentPhotoLimit=$recentPhotoLimit useUnifiedPipeline=$useUnifiedPipeline analyzeWithAi=$analyzeWithAi',
     );
 
     try {
@@ -115,6 +117,7 @@ class AlbumRefreshService {
         final result = await _runUnifiedPipeline(
           clearCacheFirst: clearCacheFirst,
           recentPhotoLimit: recentPhotoLimit,
+          analyzeWithAi: analyzeWithAi,
         );
         debugPrint('[scan] ✅ 统一流水线完成');
         return result;
@@ -154,40 +157,51 @@ class AlbumRefreshService {
     }
   }
 
+  void stopScanningOnly() {
+    if (!_isRunning) {
+      return;
+    }
+    UnifiedAnalysisPipelineService().stopPipeline();
+    _setProgress(
+      AlbumRefreshStage.handoff,
+      _progressNotifier.value.progress,
+      '正在停止扫描',
+      '已停止继续扫描；已移交的 AI 任务会继续处理。',
+    );
+  }
+
   // ── 统一流水线（扫描 + AI 并行）──────────────────────────────
   Future<AlbumRefreshResult> _runUnifiedPipeline({
     required bool clearCacheFirst,
     required int? recentPhotoLimit,
+    required bool analyzeWithAi,
   }) async {
     debugPrint('[scan] 启动统一流水线模式');
 
-    _setProgress(
-      AlbumRefreshStage.scanning,
-      0.0,
-      '正在启动统一流水线',
-      '扫描和AI处理将并行执行',
-    );
+    _setProgress(AlbumRefreshStage.scanning, 0.0, '正在启动统一流水线', '扫描和AI处理将并行执行');
 
     final pipelineService = UnifiedAnalysisPipelineService();
 
-    // 订阅进度
-    final progressSubscription = pipelineService.progressListenable.listen((progress) {
+    void onProgressChanged() {
+      final progress = pipelineService.progressListenable.value;
       _setProgress(
         _mapPipelineStageToRefreshStage(progress.stage),
         progress.overallFraction,
         _extractTitleFromPipelineProgress(progress),
         progress.message,
       );
-    });
+    }
+
+    pipelineService.progressListenable.addListener(onProgressChanged);
 
     try {
       await pipelineService.startUnifiedPipeline(
         maxPhotos: recentPhotoLimit,
         clearCacheFirst: clearCacheFirst,
+        analyzeWithAi: analyzeWithAi,
       );
 
-      final photoBox = PhotoService()._photoBox;
-      final totalAfter = photoBox.count();
+      final totalAfter = PhotoService().totalPhotoCount;
 
       return AlbumRefreshResult(
         scanSummary: PhotoScanSummary(
@@ -208,11 +222,13 @@ class AlbumRefreshService {
         aiAlreadyRunning: false,
       );
     } finally {
-      await progressSubscription.cancel();
+      pipelineService.progressListenable.removeListener(onProgressChanged);
     }
   }
 
-  AlbumRefreshStage _mapPipelineStageToRefreshStage(UnifiedAnalysisStage stage) {
+  AlbumRefreshStage _mapPipelineStageToRefreshStage(
+    UnifiedAnalysisStage stage,
+  ) {
     switch (stage) {
       case UnifiedAnalysisStage.idle:
         return AlbumRefreshStage.idle;

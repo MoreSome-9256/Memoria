@@ -59,6 +59,9 @@ class PhotoService {
   Box<CreateRecommendationEntity> get _recommendationBox =>
       _store.box<CreateRecommendationEntity>();
 
+  Store get store => _store;
+  int get totalPhotoCount => _photoBox.count();
+
   Future<void> init() async {
     if (_isInitialized) {
       return;
@@ -111,11 +114,69 @@ class PhotoService {
     );
   }
 
+  Future<PhotoEntity?> buildAndSaveSinglePhoto(
+    AssetEntity asset, {
+    PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
+    bool resolveFile = false,
+  }) async {
+    final existingQuery = _photoBox
+        .query(PhotoEntity_.assetId.equals(asset.id))
+        .build();
+    try {
+      final existing = existingQuery.findFirst();
+      if (existing != null) {
+        if (resolveFile) {
+          final refreshed = await _PhotoAssetBuilder(
+            this,
+          )._refreshIfChanged(existing, asset);
+          if (refreshed != null) {
+            _photoBox.put(refreshed);
+            return refreshed;
+          }
+        }
+        if (existing.thumbnailBytes == null ||
+            existing.thumbnailBytes!.isEmpty) {
+          final thumbnailBytes = await MediaThumbnailCacheService.instance
+              .generateCompressedBytes(asset);
+          if (thumbnailBytes != null && thumbnailBytes.isNotEmpty) {
+            existing.thumbnailBytes = thumbnailBytes;
+            _photoBox.put(existing);
+          }
+        }
+        return existing;
+      }
+    } finally {
+      existingQuery.close();
+    }
+
+    final result = await _buildSingleAssetPhoto(
+      asset,
+      filterProfile: filterProfile,
+      resolveFile: resolveFile,
+    );
+    if (result.photo == null) return null;
+    final id = _photoBox.put(result.photo!);
+    if (id <= 0) return null;
+    result.photo!.id = id;
+    return result.photo!;
+  }
+
   Future<File?> _resolveReadableFile(AssetEntity asset) {
     return _PhotoAssetBuilder(this).resolveReadableFile(asset);
   }
 
   int _resolveBestTimestampMs(AssetEntity asset, File file) {
     return _PhotoAssetBuilder(this).resolveBestTimestampMs(asset, file);
+  }
+
+  void updatePhotoInTransaction(
+    int photoId,
+    void Function(PhotoEntity?) update,
+  ) {
+    _store.runInTransaction(TxMode.write, () {
+      final p = _photoBox.get(photoId);
+      update(p);
+      if (p != null) _photoBox.put(p);
+    });
   }
 }

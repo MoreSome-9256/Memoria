@@ -341,7 +341,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     ),
                     ButtonSegment<LocalInferenceAccelerator>(
                       value: LocalInferenceAccelerator.npu,
-                      label: Text('NNAPI'),
+                      label: Text('NPU'),
                       icon: Icon(Icons.developer_board_outlined),
                     ),
                     ButtonSegment<LocalInferenceAccelerator>(
@@ -438,7 +438,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       if (selectedAccelerator == LocalInferenceAccelerator.npu)
                         Text(
-                          'NNAPI 目前通过 tflite_flutter 的 useNnApiForAndroid 接入，底层会打印 deprecation warning；先保留用于设备实测。',
+                          'Android NPU 不再走已弃用 NNAPI。官方 LiteRT NPU 需要 CompiledModel、PODAI/AI Pack 和厂商运行时；当前 Android 会回退到 XNNPACK，Apple 平台使用 Core ML。',
                           style: TextStyle(
                             color: Colors.orange[800],
                             fontSize: 12,
@@ -467,7 +467,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         ),
                       ],
                       Text(
-                        '默认建议 XNNPACK；GPU/NNAPI 保留用于定位 delegate 差异，不再隐藏。',
+                        '默认建议 XNNPACK；GPU 保留用于定位 delegate 差异，NPU 仅在已支持的平台走原生实现。',
                         style: TextStyle(
                           color: Colors.orange[800],
                           fontSize: 12,

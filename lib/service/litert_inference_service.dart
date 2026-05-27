@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:tflite_flutter/tflite_flutter.dart' as tfl;
+import 'package:flutter_litert/flutter_litert.dart' as tfl;
 
 enum LocalInferenceAccelerator { gpu, npu, coreml, metal, xnnpack, cpu }
 
@@ -28,7 +28,7 @@ extension LocalInferenceAcceleratorX on LocalInferenceAccelerator {
     LocalInferenceAccelerator.gpu =>
       'Android 使用 TFLite GPU delegate v2；Apple 平台请使用 Metal(GPU)',
     LocalInferenceAccelerator.npu =>
-      'Android 使用 NNAPI；当前 TFLite API 会打印 deprecation warning',
+      'Apple 平台映射到 Core ML；Android NPU 需要 LiteRT CompiledModel/PODAI，当前回退到 XNNPACK',
     LocalInferenceAccelerator.coreml => 'Apple Core ML delegate，优先使用系统加速',
     LocalInferenceAccelerator.metal => 'Apple Metal GPU delegate',
     LocalInferenceAccelerator.xnnpack =>
@@ -70,17 +70,20 @@ class LiteRtSession {
     required this.interpreter,
     required this.providerLabel,
     required this.delegates,
+    required this.options,
   });
 
   final tfl.Interpreter interpreter;
   final String providerLabel;
   final List<tfl.Delegate> delegates;
+  final tfl.InterpreterOptions options;
 
   void close() {
     interpreter.close();
     for (final delegate in delegates.reversed) {
       delegate.delete();
     }
+    options.delete();
   }
 }
 
@@ -92,11 +95,11 @@ class LiteRtInferenceService {
     final failures = <String>[];
 
     for (final attempt in attempts) {
+      final options = tfl.InterpreterOptions();
+      var delegates = const <tfl.Delegate>[];
       try {
-        final options = tfl.InterpreterOptions();
         options.threads = _normalizeThreadCount(config.xnnpackThreadCount);
-        attempt.configureOptions(options);
-        final delegates = await attempt.createDelegates();
+        delegates = await attempt.createDelegates();
         for (final delegate in delegates) {
           options.addDelegate(delegate);
         }
@@ -109,9 +112,18 @@ class LiteRtInferenceService {
           interpreter: interpreter,
           providerLabel: attempt.label,
           delegates: delegates,
+          options: options,
         );
       } catch (error) {
         failures.add('${attempt.label}: $error');
+        for (final delegate in delegates.reversed) {
+          try {
+            delegate.delete();
+          } catch (_) {}
+        }
+        try {
+          options.delete();
+        } catch (_) {}
       }
     }
 
@@ -131,7 +143,7 @@ class LiteRtInferenceService {
           ...fallback,
         ],
         LocalInferenceAccelerator.npu => <_LiteRtProviderAttempt>[
-          _LiteRtProviderAttempt.androidNnapi(),
+          _LiteRtProviderAttempt.androidNpuUnavailable(),
           ...fallback,
         ],
         LocalInferenceAccelerator.xnnpack => <_LiteRtProviderAttempt>[
@@ -183,7 +195,6 @@ class _LiteRtProviderAttempt {
   const _LiteRtProviderAttempt({
     required this.label,
     required this.createDelegates,
-    this.configureOptions = _noopConfigureOptions,
   });
 
   factory _LiteRtProviderAttempt.androidGpu() {
@@ -203,19 +214,19 @@ class _LiteRtProviderAttempt {
     );
   }
 
-  factory _LiteRtProviderAttempt.androidNnapi() {
+  factory _LiteRtProviderAttempt.androidNpuUnavailable() {
     return _LiteRtProviderAttempt(
-      label: 'NNAPI',
-      configureOptions: (options) {
+      label: 'Android NPU (CompiledModel required)',
+      createDelegates: () async {
         debugPrint(
-          '[LiteRT] NNAPI is requested through '
-          'InterpreterOptions.useNnApiForAndroid. tflite_flutter exposes this '
-          'through the deprecated Android NNAPI switch, so Android may print a '
-          'deprecation warning here.',
+          '[LiteRT] Android NPU requires LiteRT CompiledModel plus PODAI/'
+          'vendor runtime deployment. Flutter Interpreter delegate path does '
+          'not provide this; falling back to XNNPACK.',
         );
-        options.useNnApiForAndroid = true;
+        throw UnsupportedError(
+          'Android NPU requires LiteRT CompiledModel/PODAI integration.',
+        );
       },
-      createDelegates: () async => const <tfl.Delegate>[],
     );
   }
 
@@ -252,17 +263,17 @@ class _LiteRtProviderAttempt {
     final threads = threadCount.clamp(1, 8).toInt();
     return _LiteRtProviderAttempt(
       label: 'XNNPACK ($threads threads)',
-      createDelegates: () async => <tfl.Delegate>[
-        tfl.XNNPackDelegate(
-          options: tfl.XNNPackDelegateOptions(numThreads: threads),
-        ),
-      ],
+      createDelegates: () async {
+        final options = tfl.XNNPackDelegateOptions(numThreads: threads);
+        try {
+          return <tfl.Delegate>[tfl.XNNPackDelegate(options: options)];
+        } finally {
+          options.delete();
+        }
+      },
     );
   }
 
   final String label;
   final Future<List<tfl.Delegate>> Function() createDelegates;
-  final void Function(tfl.InterpreterOptions options) configureOptions;
 }
-
-void _noopConfigureOptions(tfl.InterpreterOptions options) {}

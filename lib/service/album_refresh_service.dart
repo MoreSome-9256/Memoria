@@ -10,6 +10,7 @@ import '../storage/objectbox/media_asset_repository.dart';
 import 'media_asset_sync_service.dart';
 import 'media_embedding_index_service.dart';
 import 'photo_service.dart';
+import 'unified_analysis_pipeline_service.dart';
 
 enum AlbumRefreshStage { idle, scanning, clustering, queueing, handoff, failed }
 
@@ -94,6 +95,7 @@ class AlbumRefreshService {
   Future<AlbumRefreshResult?> startRefresh({
     bool clearCacheFirst = false,
     int? recentPhotoLimit,
+    bool useUnifiedPipeline = true,
   }) async {
     if (_isRunning) {
       debugPrint('[scan] ⛔ 扫描已在运行，忽略重复请求');
@@ -105,10 +107,19 @@ class AlbumRefreshService {
 
     debugPrint('[scan] ======== AlbumRefreshService 开始 ========');
     debugPrint(
-      '[scan] runId=$runId clearCacheFirst=$clearCacheFirst recentPhotoLimit=$recentPhotoLimit',
+      '[scan] runId=$runId clearCacheFirst=$clearCacheFirst recentPhotoLimit=$recentPhotoLimit useUnifiedPipeline=$useUnifiedPipeline',
     );
 
     try {
+      if (useUnifiedPipeline) {
+        final result = await _runUnifiedPipeline(
+          clearCacheFirst: clearCacheFirst,
+          recentPhotoLimit: recentPhotoLimit,
+        );
+        debugPrint('[scan] ✅ 统一流水线完成');
+        return result;
+      }
+
       if (clearCacheFirst) {
         final result = await _runFullRebuild(recentPhotoLimit);
         debugPrint(
@@ -140,6 +151,102 @@ class AlbumRefreshService {
       debugPrint(
         '[scan] ======== AlbumRefreshService 结束 (runId=$runId) ========',
       );
+    }
+  }
+
+  // ── 统一流水线（扫描 + AI 并行）──────────────────────────────
+  Future<AlbumRefreshResult> _runUnifiedPipeline({
+    required bool clearCacheFirst,
+    required int? recentPhotoLimit,
+  }) async {
+    debugPrint('[scan] 启动统一流水线模式');
+
+    _setProgress(
+      AlbumRefreshStage.scanning,
+      0.0,
+      '正在启动统一流水线',
+      '扫描和AI处理将并行执行',
+    );
+
+    final pipelineService = UnifiedAnalysisPipelineService();
+
+    // 订阅进度
+    final progressSubscription = pipelineService.progressListenable.listen((progress) {
+      _setProgress(
+        _mapPipelineStageToRefreshStage(progress.stage),
+        progress.overallFraction,
+        _extractTitleFromPipelineProgress(progress),
+        progress.message,
+      );
+    });
+
+    try {
+      await pipelineService.startUnifiedPipeline(
+        maxPhotos: recentPhotoLimit,
+        clearCacheFirst: clearCacheFirst,
+      );
+
+      final photoBox = PhotoService()._photoBox;
+      final totalAfter = photoBox.count();
+
+      return AlbumRefreshResult(
+        scanSummary: PhotoScanSummary(
+          totalBefore: 0,
+          totalAfter: totalAfter,
+          removedCount: 0,
+          insertedCount: totalAfter,
+          insertedPhotoIds: const [],
+          scannedCount: totalAfter,
+          skippedInvalidTime: 0,
+          insertedNoGps: 0,
+          skippedNonCamera: 0,
+          skippedScreenshot: 0,
+        ),
+        requeuedCount: 0,
+        recentPhotoLimit: recentPhotoLimit,
+        clearCacheFirst: clearCacheFirst,
+        aiAlreadyRunning: false,
+      );
+    } finally {
+      await progressSubscription.cancel();
+    }
+  }
+
+  AlbumRefreshStage _mapPipelineStageToRefreshStage(UnifiedAnalysisStage stage) {
+    switch (stage) {
+      case UnifiedAnalysisStage.idle:
+        return AlbumRefreshStage.idle;
+      case UnifiedAnalysisStage.warmingUp:
+        return AlbumRefreshStage.scanning;
+      case UnifiedAnalysisStage.scanning:
+        return AlbumRefreshStage.scanning;
+      case UnifiedAnalysisStage.processing:
+        return AlbumRefreshStage.queueing;
+      case UnifiedAnalysisStage.flushing:
+        return AlbumRefreshStage.clustering;
+      case UnifiedAnalysisStage.completed:
+        return AlbumRefreshStage.handoff;
+      case UnifiedAnalysisStage.failed:
+        return AlbumRefreshStage.failed;
+    }
+  }
+
+  String _extractTitleFromPipelineProgress(UnifiedAnalysisProgress progress) {
+    switch (progress.stage) {
+      case UnifiedAnalysisStage.idle:
+        return '';
+      case UnifiedAnalysisStage.warmingUp:
+        return '正在预热引擎';
+      case UnifiedAnalysisStage.scanning:
+        return '正在扫描照片';
+      case UnifiedAnalysisStage.processing:
+        return '正在处理照片';
+      case UnifiedAnalysisStage.flushing:
+        return '正在刷新索引';
+      case UnifiedAnalysisStage.completed:
+        return '已完成';
+      case UnifiedAnalysisStage.failed:
+        return '处理失败';
     }
   }
 

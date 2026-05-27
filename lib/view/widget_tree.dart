@@ -5,6 +5,8 @@ import 'package:flutter/painting.dart';
 import '../service/ai_progress_notification_service.dart';
 import '../service/ai_service.dart';
 import '../service/album_refresh_service.dart';
+import '../service/unified_analysis_pipeline_service.dart';
+import '../service/unified_analysis_progress.dart';
 import 'pages/home_page.dart'; // 🌟 导入刚才新写的首页
 import 'pages/album_page.dart';
 import 'pages/create_hub_page.dart';
@@ -170,44 +172,82 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
   }
 
   Widget _buildTopProgressOverlay() {
-    return ValueListenableBuilder<AlbumRefreshProgress>(
-      valueListenable: AlbumRefreshService().progressListenable,
-      builder: (context, refreshProgress, _) {
-        return ValueListenableBuilder<AIAnalysisProgress>(
-          valueListenable: AIService().progressListenable,
-          builder: (context, aiProgress, child) {
-            if (refreshProgress.isVisible &&
-                _hiddenRefreshProgressRunId != refreshProgress.runId) {
-              return _TopProgressBanner(
-                key: const ValueKey<String>('album-refresh-progress'),
-                title: refreshProgress.title,
-                message: refreshProgress.message,
-                progress: refreshProgress.progress,
-                onHide: () {
-                  setState(() {
-                    _hiddenRefreshProgressRunId = refreshProgress.runId;
-                  });
-                },
-              );
-            }
-            if (_currentIndex == 1 || !aiProgress.isVisible || _progressBannerHidden) {
-              return const SizedBox.shrink();
-            }
-            return _TopProgressBanner(
-              key: const ValueKey<String>('global-ai-progress'),
-              title: '后台 AI 正在继续处理',
-              message: aiProgress.currentStep,
-              progress: aiProgress.fraction,
-              onHide: () {
-                setState(() {
-                  _progressBannerHidden = true;
-                });
+    return ValueListenableBuilder<UnifiedAnalysisProgress>(
+      valueListenable: UnifiedAnalysisPipelineService().progressListenable,
+      builder: (context, unifiedProgress, _) {
+        if (unifiedProgress.isVisible) {
+          return _TopProgressBanner(
+            key: const ValueKey<String>('unified-pipeline-progress'),
+            title: _extractUnifiedTitle(unifiedProgress),
+            message: unifiedProgress.message,
+            progress: unifiedProgress.overallFraction,
+            onHide: () {
+              setState(() {
+                _progressBannerHidden = true;
+              });
+            },
+          );
+        }
+
+        return ValueListenableBuilder<AlbumRefreshProgress>(
+          valueListenable: AlbumRefreshService().progressListenable,
+          builder: (context, refreshProgress, _) {
+            return ValueListenableBuilder<AIAnalysisProgress>(
+              valueListenable: AIService().progressListenable,
+              builder: (context, aiProgress, child) {
+                if (refreshProgress.isVisible &&
+                    _hiddenRefreshProgressRunId != refreshProgress.runId) {
+                  return _TopProgressBanner(
+                    key: const ValueKey<String>('album-refresh-progress'),
+                    title: refreshProgress.title,
+                    message: refreshProgress.message,
+                    progress: refreshProgress.progress,
+                    onHide: () {
+                      setState(() {
+                        _hiddenRefreshProgressRunId = refreshProgress.runId;
+                      });
+                    },
+                  );
+                }
+                if (_currentIndex == 1 || !aiProgress.isVisible || _progressBannerHidden) {
+                  return const SizedBox.shrink();
+                }
+                return _TopProgressBanner(
+                  key: const ValueKey<String>('global-ai-progress'),
+                  title: '后台 AI 正在继续处理',
+                  message: aiProgress.currentStep,
+                  progress: aiProgress.fraction,
+                  onHide: () {
+                    setState(() {
+                      _progressBannerHidden = true;
+                    });
+                  },
+                );
               },
             );
           },
         );
       },
     );
+  }
+
+  String _extractUnifiedTitle(UnifiedAnalysisProgress progress) {
+    switch (progress.stage) {
+      case UnifiedAnalysisStage.idle:
+        return '';
+      case UnifiedAnalysisStage.warmingUp:
+        return '正在预热引擎';
+      case UnifiedAnalysisStage.scanning:
+        return '正在扫描照片';
+      case UnifiedAnalysisStage.processing:
+        return '正在处理照片';
+      case UnifiedAnalysisStage.flushing:
+        return '正在刷新索引';
+      case UnifiedAnalysisStage.completed:
+        return '已完成';
+      case UnifiedAnalysisStage.failed:
+        return '处理失败';
+    }
   }
 
   // 🌟 底部导航栏子项的统一构建方法

@@ -517,17 +517,12 @@ extension AIServicePipeline on AIService {
     // 加载原图，用于人脸裁剪 -> 嵌入计算
     img.Image? decodedImage;
     try {
-      if (photo.path.startsWith('content://')) {
-        final bytes = await MediaAccessGrantService.instance
-            .readContentUriBytes(photo.path);
-        if (bytes != null && bytes.isNotEmpty) {
-          decodedImage = FaceCropUtil.decodeSourceImageBytes(bytes);
-        }
-      } else {
-        final imageFile = File(photo.path);
-        if (await imageFile.exists()) {
-          decodedImage = await FaceCropUtil.decodeSourceImage(imageFile);
-        }
+      final bytes = await PhotoService().readOriginalMediaBytes(
+        photo,
+        purpose: 'face_result_crop',
+      );
+      if (bytes.isNotEmpty) {
+        decodedImage = FaceCropUtil.decodeSourceImageBytes(bytes);
       }
     } catch (_) {}
 

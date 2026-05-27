@@ -11,6 +11,7 @@ import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_litert_service.dart';
 import 'app_ai_settings_service.dart';
 import 'ncnn_mobileclip_native_service.dart';
+import 'photo_service.dart';
 
 class MobileClipEmbeddingService {
   MobileClipEmbeddingService._internal();
@@ -82,9 +83,15 @@ class MobileClipEmbeddingService {
       );
     }
 
+    final imageBytes =
+        preferredImageBytes != null && preferredImageBytes.isNotEmpty
+        ? preferredImageBytes
+        : await PhotoService().readOriginalMediaBytes(
+            photo,
+            purpose: 'mobileclip_embedding',
+          );
     final profile = await _profileEmbedding(
-      preferredImageBytes: preferredImageBytes,
-      imageFile: File(photo.path),
+      imageBytes: imageBytes,
       backend: effectiveBackend,
     );
     final embedding = profile.embedding;
@@ -253,15 +260,9 @@ class MobileClipEmbeddingService {
   }
 
   Future<MobileClipEmbeddingProfile> _profileEmbedding({
-    required Uint8List? preferredImageBytes,
-    required File imageFile,
+    required Uint8List imageBytes,
     required MobileClipBackend backend,
   }) async {
-    final imageBytes =
-        preferredImageBytes != null && preferredImageBytes.isNotEmpty
-        ? preferredImageBytes
-        : await imageFile.readAsBytes();
-
     switch (backend) {
       case MobileClipBackend.mobileclip2LiteRt:
         _mobileclip2LiteRtService = await _resolveLiteRtService();

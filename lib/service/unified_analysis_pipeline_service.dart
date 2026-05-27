@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -22,7 +21,10 @@ import 'mobileclip_tag_service.dart';
 import 'ocr_service.dart';
 import 'event_service.dart';
 import 'junk_photo_filter_service.dart';
+import 'media_embedding_service.dart';
+import 'media_thumbnail_cache_service.dart';
 import 'photo_attribute_background_service.dart';
+import '../utils/media_type_helper.dart';
 
 class UnifiedAnalysisPipelineService {
   UnifiedAnalysisPipelineService._internal();
@@ -363,6 +365,7 @@ class UnifiedAnalysisPipelineService {
           item.photo,
           settings: settings,
           backend: backend,
+          liteRt: liteRt,
         );
         _aiCompleted++;
         _activeCandidatePhotoIds.remove(item.photoId);
@@ -454,27 +457,79 @@ class UnifiedAnalysisPipelineService {
     PhotoEntity photo, {
     required AppAiSettings settings,
     required MobileClipBackend backend,
+    required MobileClipLiteRtService liteRt,
   }) async {
-    final embeddingService = MobileClipEmbeddingService();
-    await embeddingService.resolvePhotoEmbedding(
-      photo: photo,
-      backend: backend,
+    final originalFile = await PhotoService().openOriginalMediaFile(
+      photo,
+      purpose: 'unified_ai_analysis',
     );
-
-    final embedding = photo.imageEmbedding;
-    if (embedding == null || embedding.isEmpty) {
+    final mediaKind = MediaTypeHelper.fromStorageValue(
+      photo.mediaKind,
+      path: originalFile.path,
+    );
+    final embeddingService = MobileClipEmbeddingService();
+    late final List<double> embedding;
+    late final String embeddingModelVersion;
+    late final List<double> tagEmbedding;
+    if (mediaKind == MemoriaMediaKind.image) {
+      final originalBytes = await PhotoService().readOriginalMediaBytes(
+        photo,
+        purpose: 'unified_ai_analysis_bytes',
+      );
+      await embeddingService.resolvePhotoEmbedding(
+        photo: photo,
+        preferredImageBytes: originalBytes,
+        backend: backend,
+      );
+      embedding = photo.imageEmbedding ?? const <double>[];
+      embeddingModelVersion = buildPhotoEmbeddingModelVersion(backend);
+      tagEmbedding = embedding;
+    } else {
+      final thumbnailBytes = await MediaThumbnailCacheService.instance
+          .decompressBytes(photo.thumbnailBytes);
+      final visualBytes = thumbnailBytes != null && thumbnailBytes.isNotEmpty
+          ? thumbnailBytes
+          : mediaKind == MemoriaMediaKind.dynamicImage
+          ? await PhotoService().readOriginalMediaBytes(
+              photo,
+              purpose: 'unified_dynamic_image_bytes',
+            )
+          : throw StateError('video thumbnail is empty');
+      final mediaEmbedding = await MediaEmbeddingService()
+          .embedPreparedMediaBytes(
+            kind: mediaKind,
+            imageOrThumbnailBytes: visualBytes,
+            mobileViClipEnabled: settings.mobileViClipEnabled,
+            backend: backend,
+            liteRt: liteRt,
+          );
+      embedding = mediaEmbedding.embedding;
+      embeddingModelVersion = mediaEmbedding.modelVersion;
+      if (mediaEmbedding.isSameSpaceAsMobileClipText) {
+        tagEmbedding = embedding;
+      } else {
+        tagEmbedding = (await MediaEmbeddingService().embedImageBytes(
+          visualBytes,
+          backend: backend,
+          liteRt: liteRt,
+        )).embedding;
+      }
+    }
+    if (embedding.isEmpty) {
       throw StateError('embedding is empty');
     }
 
     final tagService = MobileClipTagService();
-    final tags = await tagService.retrieveTags(embedding);
+    final tags = tagEmbedding.isEmpty
+        ? <String>['视频']
+        : await tagService.retrieveTags(tagEmbedding);
 
     String? ocrText;
     List<String> ocrTags = const [];
-    if (settings.ocrEnabled &&
+    if (mediaKind != MemoriaMediaKind.video &&
+        settings.ocrEnabled &&
         OcrService.shouldRunOcr(tags, aspectRatio: photo.aspectRatio)) {
-      final imageFile = File(photo.path);
-      final ocrResult = await OcrService().analyzeImageFile(imageFile);
+      final ocrResult = await OcrService().analyzeImageFile(originalFile);
       ocrText = ocrResult.text;
       ocrTags = ocrResult.tags;
     }
@@ -514,7 +569,7 @@ class UnifiedAnalysisPipelineService {
     PhotoEmbeddingIndexRepository().upsertEmbedding(
       photoId: photo.id,
       vector: embedding,
-      modelVersion: buildPhotoEmbeddingModelVersion(backend),
+      modelVersion: embeddingModelVersion,
     );
 
     unawaited(

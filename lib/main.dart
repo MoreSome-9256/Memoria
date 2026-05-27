@@ -13,6 +13,7 @@ import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:photo_album/service/amplify_cognito_config.dart';
+import 'package:photo_album/service/album_refresh_service.dart';
 import 'package:photo_album/service/app_ai_settings_service.dart';
 import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
@@ -134,7 +135,16 @@ class _AppStartupCoordinator {
       debugPrint(
         'OCR policy: ml_kit_enabled=${OcrPolicy.mlKitEnabled} (runtime setting)',
       );
-      unawaited(AIService().resumePendingAnalysisIfNeeded());
+      if (aiSettings.autoAnalyzeNewPhotos) {
+        unawaited(
+          AlbumRefreshService().startRefresh(
+            clearCacheFirst: false,
+            analyzeWithAi: true,
+          ),
+        );
+      } else {
+        unawaited(AIService().resumePendingAnalysisIfNeeded());
+      }
     });
     return _startupFuture!;
   }

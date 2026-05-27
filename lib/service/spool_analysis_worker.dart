@@ -1335,44 +1335,40 @@ class SpoolAnalysisWorker {
   // ── 图片输入加载 ──
 
   Future<_SpoolInputImage?> _loadImageInput(AnalysisSpoolItem item) async {
-    final path = item.path;
     Uint8List bytes;
-    File file;
-    var width = item.width;
-    var height = item.height;
-    var kind = MediaTypeHelper.fromPath(path);
-
-    if (path != null && path.isNotEmpty) {
-      file = File(path);
-      if (!await file.exists()) return null;
-      final asset = await AssetEntity.fromId(item.photoKey);
-      if (asset != null) {
-        width = width > 0 ? width : asset.width;
-        height = height > 0 ? height : asset.height;
-        if (asset.type == AssetType.video) {
-          kind = MemoriaMediaKind.video;
-        } else if (asset.isLivePhoto) {
-          kind = MemoriaMediaKind.dynamicImage;
-        }
-        try {
-          final thumb = await asset.thumbnailDataWithSize(
-            const ThumbnailSize.square(384),
-          );
-          if (thumb != null && thumb.isNotEmpty) {
-            return _SpoolInputImage(
-              file: file,
-              mobileClipBytes: thumb,
-              kind: kind,
-              width: width,
-              height: height,
-            );
-          }
-        } catch (_) {}
-      }
-      bytes = await file.readAsBytes();
-    } else {
+    final asset = await AssetEntity.fromId(item.photoKey);
+    if (asset == null) {
       return null;
     }
+    final file = await asset.file ?? await asset.originFile;
+    if (file == null || file.path.isEmpty || !await file.exists()) {
+      return null;
+    }
+    var width = item.width;
+    var height = item.height;
+    var kind = asset.type == AssetType.video
+        ? MemoriaMediaKind.video
+        : asset.isLivePhoto
+        ? MemoriaMediaKind.dynamicImage
+        : MediaTypeHelper.fromPath(file.path);
+    width = width > 0 ? width : asset.width;
+    height = height > 0 ? height : asset.height;
+
+    try {
+      final thumb = await asset.thumbnailDataWithSize(
+        const ThumbnailSize.square(384),
+      );
+      if (thumb != null && thumb.isNotEmpty) {
+        return _SpoolInputImage(
+          file: file,
+          mobileClipBytes: thumb,
+          kind: kind,
+          width: width,
+          height: height,
+        );
+      }
+    } catch (_) {}
+    bytes = await file.readAsBytes();
 
     if (width <= 0 || height <= 0) {
       final decoded = img.decodeImage(bytes);

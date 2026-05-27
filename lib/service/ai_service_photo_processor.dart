@@ -17,7 +17,8 @@ Map<String, Object?> _computeJunkFilter(Map<String, Object?> params) {
   );
   final isProbablyScreenshot = params['isProbablyScreenshot'] as bool? ?? false;
   final ocrText = params['ocrText'] as String? ?? '';
-  final definitions = (params['definitions'] as List<Object?>).cast<Map<String, Object?>>();
+  final definitions = (params['definitions'] as List<Object?>)
+      .cast<Map<String, Object?>>();
 
   final hits = <Map<String, Object?>>[];
   for (final def in definitions) {
@@ -45,29 +46,31 @@ Map<String, Object?> _computeJunkFilter(Map<String, Object?> params) {
     }
   }
   hits.sort((a, b) => (b['score'] as num).compareTo(a['score'] as num));
-  return <String, Object?>{
-    'shouldFilter': hits.isNotEmpty,
-    'hits': hits,
-  };
+  return <String, Object?>{'shouldFilter': hits.isNotEmpty, 'hits': hits};
 }
 
 /// 后台 isolate：标签匹配（coarse → fine 两级余弦相似度）
 List<String> _computeTagRetrieval(Map<String, Object?> params) {
   final embedding = (params['embedding'] as List<Object?>).cast<double>();
-  final coarsePrototypes = (params['coarsePrototypes'] as Map<String, Object?>).map(
-    (k, v) => MapEntry(k, (v as List<Object?>).cast<double>()),
-  );
+  final coarsePrototypes = (params['coarsePrototypes'] as Map<String, Object?>)
+      .map((k, v) => MapEntry(k, (v as List<Object?>).cast<double>()));
   final finePrototypes = (params['finePrototypes'] as Map<String, Object?>).map(
     (k, v) => MapEntry(k, (v as List<Object?>).cast<double>()),
   );
-  final fineLabelToCoarse = (params['fineLabelToCoarse'] as Map<String, Object?>)
-      .map((k, v) => MapEntry(k, v as String));
-  final dimThresholds = (params['dimThresholds'] as Map<String, Object?>)
-      .map((k, v) => MapEntry(k, (v as num).toDouble()));
-  final coarseThreshold = (params['coarseThreshold'] as num?)?.toDouble() ?? 0.16;
-  final coarseProbThreshold = (params['coarseProbThreshold'] as num?)?.toDouble() ?? 0.035;
+  final fineLabelToCoarse =
+      (params['fineLabelToCoarse'] as Map<String, Object?>).map(
+        (k, v) => MapEntry(k, v as String),
+      );
+  final dimThresholds = (params['dimThresholds'] as Map<String, Object?>).map(
+    (k, v) => MapEntry(k, (v as num).toDouble()),
+  );
+  final coarseThreshold =
+      (params['coarseThreshold'] as num?)?.toDouble() ?? 0.16;
+  final coarseProbThreshold =
+      (params['coarseProbThreshold'] as num?)?.toDouble() ?? 0.035;
   final coarseMargin = (params['coarseMargin'] as num?)?.toDouble() ?? 0.075;
-  final blockedTags = (params['blockedTags'] as List<Object?>?)?.cast<String>() ?? <String>[];
+  final blockedTags =
+      (params['blockedTags'] as List<Object?>?)?.cast<String>() ?? <String>[];
   final coarseTopK = (params['coarseTopK'] as num?)?.toInt() ?? 2;
   final topK = (params['topK'] as num?)?.toInt() ?? 3;
 
@@ -85,32 +88,48 @@ List<String> _computeTagRetrieval(Map<String, Object?> params) {
   coarseScored.sort((a, b) => (b['score'] as num).compareTo(a['score'] as num));
 
   // softmax normalized probabilities
-  final scores = coarseScored.map((e) => (e['score'] as num).toDouble()).toList();
-  final maxScore = scores.isEmpty ? 0.0 : scores.reduce((a, b) => a > b ? a : b);
+  final scores = coarseScored
+      .map((e) => (e['score'] as num).toDouble())
+      .toList();
+  final maxScore = scores.isEmpty
+      ? 0.0
+      : scores.reduce((a, b) => a > b ? a : b);
   final expScores = scores.map((s) => _fastExp(s - maxScore)).toList();
   final expSum = expScores.isEmpty ? 1.0 : expScores.reduce((a, b) => a + b);
 
   // enrich scored with probability
   for (var i = 0; i < coarseScored.length; i++) {
-    coarseScored[i] = <String, Object?>{...coarseScored[i], 'probability': expScores[i] / expSum};
+    coarseScored[i] = <String, Object?>{
+      ...coarseScored[i],
+      'probability': expScores[i] / expSum,
+    };
   }
 
   // filter by probability threshold
-  coarseScored.retainWhere((e) => (e['probability'] as num).toDouble() >= coarseProbThreshold);
+  coarseScored.retainWhere(
+    (e) => (e['probability'] as num).toDouble() >= coarseProbThreshold,
+  );
 
   // max-topK & margin filter
   coarseScored.sort((a, b) => (b['score'] as num).compareTo(a['score'] as num));
-  final topScore = coarseScored.isNotEmpty ? (coarseScored.first['score'] as num).toDouble() : 0.0;
-  coarseScored.retainWhere((e) => topScore - (e['score'] as num).toDouble() <= coarseMargin);
+  final topScore = coarseScored.isNotEmpty
+      ? (coarseScored.first['score'] as num).toDouble()
+      : 0.0;
+  coarseScored.retainWhere(
+    (e) => topScore - (e['score'] as num).toDouble() <= coarseMargin,
+  );
   final coarseSelected = coarseScored.take(coarseTopK).toList();
 
   if (coarseSelected.isEmpty) {
     return <String>['照片', '其他'];
   }
 
-  final selectedCoarseIds = coarseSelected.map((e) => e['coarseId'] as String).toSet();
+  final selectedCoarseIds = coarseSelected
+      .map((e) => e['coarseId'] as String)
+      .toSet();
   final coarseProbById = <String, double>{
-    for (final e in coarseSelected) e['coarseId'] as String: (e['probability'] as num).toDouble(),
+    for (final e in coarseSelected)
+      e['coarseId'] as String: (e['probability'] as num).toDouble(),
   };
 
   // ── 细粒度匹配（~200 个标签）──────────────────────────
@@ -133,7 +152,9 @@ List<String> _computeTagRetrieval(Map<String, Object?> params) {
       _ => 0.2,
     };
     if (score < dimThreshold) continue;
-    scored.add(_TagCandidate(label: label, score: score, weightedScore: weightedScore));
+    scored.add(
+      _TagCandidate(label: label, score: score, weightedScore: weightedScore),
+    );
   }
 
   if (scored.isEmpty) return <String>['照片', '其他'];
@@ -144,7 +165,9 @@ List<String> _computeTagRetrieval(Map<String, Object?> params) {
   final selectedSet = <String>{};
   // 每个 coarse 至少选一个最佳标签
   for (final coarseId in selectedCoarseIds) {
-    final best = scored.where((c) => fineLabelToCoarse[c.label] == coarseId).toList();
+    final best = scored
+        .where((c) => fineLabelToCoarse[c.label] == coarseId)
+        .toList();
     if (best.isNotEmpty && !selectedSet.contains(best.first.label)) {
       selected.add(best.first.label);
       selectedSet.add(best.first.label);
@@ -164,7 +187,11 @@ class _TagCandidate {
   final String label;
   final double score;
   final double weightedScore;
-  const _TagCandidate({required this.label, required this.score, required this.weightedScore});
+  const _TagCandidate({
+    required this.label,
+    required this.score,
+    required this.weightedScore,
+  });
 }
 
 /// 后台 isolate：将图像压缩为 1024×1024 JPEG（质量 80）
@@ -290,14 +317,21 @@ class _AiPhotoProcessor {
         profile.junkFilterMs = junkWatch.elapsedMicroseconds / 1000.0;
         final shouldFilter = junkResult['shouldFilter'] as bool? ?? false;
         if (shouldFilter) {
-          final rawHits = (junkResult['hits'] as List<Object?>?)?.cast<Map<String, Object?>>() ?? <Map<String, Object?>>[];
-          final hits = rawHits.map((h) => JunkPhotoHit(
-            categoryId: h['categoryId'] as String,
-            label: h['label'] as String,
-            description: h['description'] as String,
-            score: (h['score'] as num).toDouble(),
-            threshold: (h['threshold'] as num).toDouble(),
-          )).toList(growable: false);
+          final rawHits =
+              (junkResult['hits'] as List<Object?>?)
+                  ?.cast<Map<String, Object?>>() ??
+              <Map<String, Object?>>[];
+          final hits = rawHits
+              .map(
+                (h) => JunkPhotoHit(
+                  categoryId: h['categoryId'] as String,
+                  label: h['label'] as String,
+                  description: h['description'] as String,
+                  score: (h['score'] as num).toDouble(),
+                  threshold: (h['threshold'] as num).toDouble(),
+                ),
+              )
+              .toList(growable: false);
           profile.outcome = 'junk_filtered';
           return _PhotoProcessResult.success(
             eventId: request.photo.eventId,
@@ -349,7 +383,9 @@ class _AiPhotoProcessor {
           'topK': 3,
         });
       } else {
-        mobileClipTags = await request.mobileClipTagService.retrieveTags(embedding);
+        mobileClipTags = await request.mobileClipTagService.retrieveTags(
+          embedding,
+        );
       }
       tagWatch.stop();
       profile.tagRetrievalMs = tagWatch.elapsedMicroseconds / 1000.0;
@@ -565,30 +601,30 @@ class _AiPhotoProcessor {
     }
   }
 
-List<String> _sanitizeVisualTags(List<String> source, {int maxTags = 5}) {
-  final sanitized = <String>[];
-  for (final tag in source) {
-    final normalized = TagSanitizer.sanitizeVisualTag(tag);
-    if (normalized == null || sanitized.contains(normalized)) {
-      continue;
+  List<String> _sanitizeVisualTags(List<String> source, {int maxTags = 5}) {
+    final sanitized = <String>[];
+    for (final tag in source) {
+      final normalized = TagSanitizer.sanitizeVisualTag(tag);
+      if (normalized == null || sanitized.contains(normalized)) {
+        continue;
+      }
+      if (AIService._blockedVisualTags.contains(normalized)) {
+        continue;
+      }
+      if (RegExp(r'^\d{1,2}:\d{2}$').hasMatch(normalized)) {
+        continue;
+      }
+      if (normalized.contains('\u667a\u80fd\u5f71\u8bb0') ||
+          normalized.contains('\u6211\u7684\u76f8\u518c')) {
+        continue;
+      }
+      sanitized.add(normalized);
+      if (sanitized.length >= maxTags) {
+        break;
+      }
     }
-    if (AIService._blockedVisualTags.contains(normalized)) {
-      continue;
-    }
-    if (RegExp(r'^\d{1,2}:\d{2}$').hasMatch(normalized)) {
-      continue;
-    }
-    if (normalized.contains('\u667a\u80fd\u5f71\u8bb0') ||
-        normalized.contains('\u6211\u7684\u76f8\u518c')) {
-      continue;
-    }
-    sanitized.add(normalized);
-    if (sanitized.length >= maxTags) {
-      break;
-    }
+    return TagSanitizer.sanitizeVisualTags(sanitized, maxTags: maxTags);
   }
-  return TagSanitizer.sanitizeVisualTags(sanitized, maxTags: maxTags);
-}
 
   Future<_PreparedAnalysisInput?> _prepareAnalysisInputConfigured(
     PhotoEntity photo,
@@ -606,23 +642,10 @@ List<String> _sanitizeVisualTags(List<String> source, {int maxTags = 5}) {
   Future<_PreparedAnalysisInput?> _prepareAnalysisInput(
     PhotoEntity photo,
   ) async {
-    final path = photo.path;
-    if (path.isEmpty) return null;
-
-    File file;
-    if (path.startsWith('content://')) {
-      final bytes = await MediaAccessGrantService.instance.readContentUriBytes(
-        path,
-      );
-      if (bytes == null || bytes.isEmpty) return null;
-      final ext = _inferExtension(path);
-      final tempDir = await getTemporaryDirectory();
-      file = File('${tempDir.path}/memoria_input_${photo.id}.$ext');
-      await file.writeAsBytes(bytes);
-    } else {
-      file = File(path);
-      if (!await file.exists()) return null;
-    }
+    final file = await PhotoService().openOriginalMediaFile(
+      photo,
+      purpose: 'ai_photo_processor',
+    );
 
     final loadWatch = Stopwatch()..start();
     Uint8List? mobileClipBytes;
@@ -676,14 +699,6 @@ List<String> _sanitizeVisualTags(List<String> source, {int maxTags = 5}) {
       thumbnailReadMs: thumbnailReadMs,
       fileReadMs: fileReadMs,
     );
-  }
-
-  /// 从文件路径推断扩展名
-  String _inferExtension(String? path) {
-    if (path == null) return 'jpg';
-    final dot = path.lastIndexOf('.');
-    if (dot == -1 || dot >= path.length - 1) return 'jpg';
-    return path.substring(dot + 1);
   }
 
   Future<_CreatedAnalysisFile> _createAuxiliaryAnalysisFile(

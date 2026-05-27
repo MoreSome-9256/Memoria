@@ -147,12 +147,15 @@ class _PhotoAssetBuilder {
     }
 
     final latLong = asset.latLng;
-    final timestamp = asset.createDateTime.millisecondsSinceEpoch;
     final mimeType = asset.mimeType;
     final isLivePhoto = asset.isLivePhoto;
+    final file = resolveFile ? await resolveReadableFile(asset) : null;
+    final timestamp = file == null
+        ? asset.createDateTime.millisecondsSinceEpoch
+        : resolveBestTimestampMs(asset, file);
     final mediaKind = _resolveMediaKind(
       asset: asset,
-      path: '',
+      path: file?.path ?? '',
       mimeType: mimeType,
       isLivePhoto: isLivePhoto,
     );
@@ -166,7 +169,7 @@ class _PhotoAssetBuilder {
     final photo = PhotoEntity()
       ..assetId = asset.id
       ..timestamp = timestamp
-      ..path = ''
+      ..path = file?.path ?? ''
       ..width = width
       ..height = height
       ..mediaKind = MediaTypeHelper.toStorageValue(mediaKind)

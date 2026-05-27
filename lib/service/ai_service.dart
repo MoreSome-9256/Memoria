@@ -37,7 +37,6 @@ import 'face_embedding_service.dart';
 import 'face_pipeline_service.dart';
 import 'junk_photo_filter_service.dart';
 import 'onnx_face_embedding_service.dart';
-import 'media_access_grant_service.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_embedding_service.dart';
 import 'mobileclip_tag_service.dart';

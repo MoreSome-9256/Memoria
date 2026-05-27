@@ -310,12 +310,59 @@ class _ProfilePageState extends State<ProfilePage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            const selectedAccelerator = LocalInferenceAccelerator.xnnpack;
-            if (aiSettings.inferenceAccelerator != selectedAccelerator) {
-              aiSettings = aiSettings.copyWith(
-                inferenceAccelerator: selectedAccelerator,
-              );
-            }
+            final isApplePlatform = Platform.isIOS || Platform.isMacOS;
+            final acceleratorSegments = isApplePlatform
+                ? const <ButtonSegment<LocalInferenceAccelerator>>[
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.coreml,
+                      label: Text('Core ML'),
+                      icon: Icon(Icons.auto_awesome),
+                    ),
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.metal,
+                      label: Text('Metal'),
+                      icon: Icon(Icons.memory_outlined),
+                    ),
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.xnnpack,
+                      label: Text('XNNPACK'),
+                      icon: Icon(Icons.tune_outlined),
+                    ),
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.cpu,
+                      label: Text('CPU'),
+                      icon: Icon(Icons.memory),
+                    ),
+                  ]
+                : const <ButtonSegment<LocalInferenceAccelerator>>[
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.gpu,
+                      label: Text('GPU'),
+                      icon: Icon(Icons.memory_outlined),
+                    ),
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.npu,
+                      label: Text('NNAPI'),
+                      icon: Icon(Icons.developer_board_outlined),
+                    ),
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.xnnpack,
+                      label: Text('XNNPACK'),
+                      icon: Icon(Icons.tune_outlined),
+                    ),
+                    ButtonSegment<LocalInferenceAccelerator>(
+                      value: LocalInferenceAccelerator.cpu,
+                      label: Text('CPU'),
+                      icon: Icon(Icons.memory),
+                    ),
+                  ];
+            final availableAccelerators = acceleratorSegments
+                .map((segment) => segment.value)
+                .toSet();
+            final selectedAccelerator =
+                availableAccelerators.contains(aiSettings.inferenceAccelerator)
+                ? aiSettings.inferenceAccelerator
+                : LocalInferenceAccelerator.xnnpack;
             return SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -368,38 +415,60 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       const SizedBox(height: 20),
                       Text(
-                        '端侧推理',
+                        '端侧加速器',
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                       const SizedBox(height: 10),
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.tune_outlined),
-                        title: const Text('XNNPACK'),
-                        subtitle: Text(
-                          LocalInferenceAccelerator.xnnpack.description,
-                        ),
-                      ),
-                      Text(
-                        'XNNPACK 线程数：${aiSettings.xnnpackThreadCount}',
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      Slider(
-                        value: aiSettings.xnnpackThreadCount.toDouble(),
-                        min: 1,
-                        max: 8,
-                        divisions: 7,
-                        label: '${aiSettings.xnnpackThreadCount}',
-                        onChanged: (value) {
+                      SegmentedButton<LocalInferenceAccelerator>(
+                        segments: acceleratorSegments,
+                        selected: <LocalInferenceAccelerator>{
+                          selectedAccelerator,
+                        },
+                        onSelectionChanged: (selection) {
                           setSheetState(() {
                             aiSettings = aiSettings.copyWith(
-                              xnnpackThreadCount: value.round(),
+                              inferenceAccelerator: selection.first,
                             );
                           });
                         },
                       ),
+                      const SizedBox(height: 8),
                       Text(
-                        'GPU / NPU 路径在 MobileCLIP2 打标签上存在结果偏差，当前不再作为用户可选运行方式。',
+                        '${selectedAccelerator.label} · ${selectedAccelerator.description}',
+                        style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                      ),
+                      if (selectedAccelerator == LocalInferenceAccelerator.npu)
+                        Text(
+                          'NNAPI 目前通过 tflite_flutter 的 useNnApiForAndroid 接入，底层会打印 deprecation warning；先保留用于设备实测。',
+                          style: TextStyle(
+                            color: Colors.orange[800],
+                            fontSize: 12,
+                          ),
+                        ),
+                      if (selectedAccelerator ==
+                          LocalInferenceAccelerator.xnnpack) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          'XNNPACK 线程数：${aiSettings.xnnpackThreadCount}',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        Slider(
+                          value: aiSettings.xnnpackThreadCount.toDouble(),
+                          min: 1,
+                          max: 8,
+                          divisions: 7,
+                          label: '${aiSettings.xnnpackThreadCount}',
+                          onChanged: (value) {
+                            setSheetState(() {
+                              aiSettings = aiSettings.copyWith(
+                                xnnpackThreadCount: value.round(),
+                              );
+                            });
+                          },
+                        ),
+                      ],
+                      Text(
+                        '默认建议 XNNPACK；GPU/NNAPI 保留用于定位 delegate 差异，不再隐藏。',
                         style: TextStyle(
                           color: Colors.orange[800],
                           fontSize: 12,

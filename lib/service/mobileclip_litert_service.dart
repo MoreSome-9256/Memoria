@@ -150,6 +150,113 @@ class MobileClipLiteRtService {
     return profile.embedding;
   }
 
+  Future<List<MobileClipLiteRtRunProfile>> profilePreprocessedImageInputs(
+    List<Float32List> inputs,
+  ) async {
+    if (inputs.isEmpty) {
+      return const <MobileClipLiteRtRunProfile>[];
+    }
+    if (inputs.length == 1) {
+      return <MobileClipLiteRtRunProfile>[
+        await profilePreprocessedImageInput(inputs.first),
+      ];
+    }
+    final maxBatchSize = math.max(1, _modelBatchSize);
+    if (inputs.length > maxBatchSize) {
+      final profiles = <MobileClipLiteRtRunProfile>[];
+      for (var offset = 0; offset < inputs.length; offset += maxBatchSize) {
+        profiles.addAll(
+          await profilePreprocessedImageInputs(
+            inputs.sublist(
+              offset,
+              math.min(inputs.length, offset + maxBatchSize),
+            ),
+          ),
+        );
+      }
+      return profiles;
+    }
+    final expectedLength = 3 * inputImageSize * inputImageSize;
+    for (final input in inputs) {
+      if (input.length != expectedLength) {
+        throw ArgumentError(
+          'MobileCLIP2 LiteRT 图像输入长度应为 $expectedLength，实际为 ${input.length}',
+        );
+      }
+    }
+
+    final session = await _loadImageSession();
+    final tensorWatch = Stopwatch()..start();
+    final batchSize = inputs.length;
+    final batchedInput = Float32List(expectedLength * batchSize);
+    for (var i = 0; i < inputs.length; i++) {
+      batchedInput.setRange(
+        i * expectedLength,
+        (i + 1) * expectedLength,
+        inputs[i],
+      );
+    }
+    final output = List<List<double>>.generate(
+      batchSize,
+      (_) => List<double>.filled(embeddingDim, 0),
+      growable: false,
+    );
+    tensorWatch.stop();
+
+    final inferenceWatch = Stopwatch()..start();
+    try {
+      session.interpreter.resizeInputTensor(0, <int>[
+        batchSize,
+        3,
+        inputImageSize,
+        inputImageSize,
+      ]);
+      session.interpreter.allocateTensors();
+      session.interpreter.run(batchedInput.buffer, output);
+    } catch (error) {
+      debugPrint('MobileCLIP2 image batch=$batchSize 推理失败，回退单张推理: $error');
+      try {
+        session.interpreter.resizeInputTensor(0, const <int>[
+          1,
+          3,
+          inputImageSize,
+          inputImageSize,
+        ]);
+        session.interpreter.allocateTensors();
+      } catch (_) {}
+      final profiles = <MobileClipLiteRtRunProfile>[];
+      for (final input in inputs) {
+        profiles.add(await profilePreprocessedImageInput(input));
+      }
+      return profiles;
+    } finally {
+      if (batchSize != 1) {
+        try {
+          session.interpreter.resizeInputTensor(0, const <int>[
+            1,
+            3,
+            inputImageSize,
+            inputImageSize,
+          ]);
+          session.interpreter.allocateTensors();
+        } catch (_) {}
+      }
+    }
+    inferenceWatch.stop();
+
+    final tensorBuildMs = tensorWatch.elapsedMicroseconds / 1000.0;
+    final inferenceMs = inferenceWatch.elapsedMicroseconds / 1000.0;
+    return output
+        .map(
+          (embedding) => MobileClipLiteRtRunProfile(
+            embedding: _l2Normalize(embedding),
+            tensorBuildMs: tensorBuildMs / batchSize,
+            inferenceMs: inferenceMs / batchSize,
+          ),
+        )
+        .toList(growable: false);
+  }
+
   Future<MobileClipLiteRtRunProfile> profilePreprocessedImageInput(
     Float32List input,
   ) async {

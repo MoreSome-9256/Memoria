@@ -111,32 +111,37 @@ extension AIServiceLifecycle on AIService {
                 !isStopping &&
                 !serviceRunning &&
                 await _shouldAutoRestartSpoolWorker();
-            final serviceOffline =
-                !isPaused && !isStopping && !serviceRunning;
+            final serviceOffline = !isPaused && !isStopping && !serviceRunning;
             final currentStep = serviceOffline && !shouldRestartWorker
                 ? '后台服务未运行，任务已保留；点击继续后恢复'
                 : snapshot != null && snapshot.currentStep.isNotEmpty
-                    ? snapshot.currentStep
-                    : isStopping
-                        ? '正在结束本轮，等待当前图片收尾'
-                        : isPaused
-                            ? '后台分析已暂停'
-                            : '后台分析中 $processed/${manifest.totalItems}';
-            _publishProgressIfChanged(AIAnalysisProgress(
-              isRunning:
-                  !isPaused && !isStopping && (!serviceOffline || shouldRestartWorker),
-              isPaused: isPaused || (serviceOffline && !shouldRestartWorker),
-              isStopping: isStopping,
-              total: manifest.totalItems,
-              completed: processed,
-              failed: snapshot?.failed ?? 0,
-              currentStep: currentStep,
-              elapsedMs: _elapsedMsForSpoolProgress(manifest, snapshot),
-              warmUpCompleted: snapshot?.warmUpCompleted ?? 0,
-              warmUpTotal: snapshot?.warmUpTotal ?? 0,
-            ));
+                ? snapshot.currentStep
+                : isStopping
+                ? '正在结束本轮，等待当前图片收尾'
+                : isPaused
+                ? '后台分析已暂停'
+                : '后台分析中 $processed/${manifest.totalItems}';
+            _publishProgressIfChanged(
+              AIAnalysisProgress(
+                isRunning:
+                    !isPaused &&
+                    !isStopping &&
+                    (!serviceOffline || shouldRestartWorker),
+                isPaused: isPaused || (serviceOffline && !shouldRestartWorker),
+                isStopping: isStopping,
+                total: manifest.totalItems,
+                completed: processed,
+                failed: snapshot?.failed ?? 0,
+                currentStep: currentStep,
+                elapsedMs: _elapsedMsForSpoolProgress(manifest, snapshot),
+                warmUpCompleted: snapshot?.warmUpCompleted ?? 0,
+                warmUpTotal: snapshot?.warmUpTotal ?? 0,
+              ),
+            );
             if (shouldRestartWorker) {
-              debugPrint('[spool] runtime poll 检测到前台服务离线，重新拉起 job=$pendingJobId');
+              debugPrint(
+                '[spool] runtime poll 检测到前台服务离线，重新拉起 job=$pendingJobId',
+              );
               await AiBackgroundTaskService.instance.startAnalysisWorker();
             }
             return;
@@ -153,18 +158,20 @@ extension AIServiceLifecycle on AIService {
       }
       return;
     }
-    _publishProgressIfChanged(AIAnalysisProgress(
-      isRunning: !snapshot.isPaused && !snapshot.isStopping,
-      isPaused: snapshot.isPaused,
-      isStopping: snapshot.isStopping,
-      total: snapshot.total,
-      completed: snapshot.completed,
-      failed: snapshot.failed,
-      currentStep: snapshot.currentStep,
-      elapsedMs: snapshot.elapsedMs,
-      warmUpCompleted: snapshot.warmUpCompleted,
-      warmUpTotal: snapshot.warmUpTotal,
-    ));
+    _publishProgressIfChanged(
+      AIAnalysisProgress(
+        isRunning: !snapshot.isPaused && !snapshot.isStopping,
+        isPaused: snapshot.isPaused,
+        isStopping: snapshot.isStopping,
+        total: snapshot.total,
+        completed: snapshot.completed,
+        failed: snapshot.failed,
+        currentStep: snapshot.currentStep,
+        elapsedMs: snapshot.elapsedMs,
+        warmUpCompleted: snapshot.warmUpCompleted,
+        warmUpTotal: snapshot.warmUpTotal,
+      ),
+    );
   }
 
   Future<bool> getAutoResumePreference() async {
@@ -384,33 +391,38 @@ extension AIServiceLifecycle on AIService {
                 !isStopping &&
                 !serviceRunning &&
                 await _shouldAutoRestartSpoolWorker();
-            final serviceOffline =
-                !isPaused && !isStopping && !serviceRunning;
+            final serviceOffline = !isPaused && !isStopping && !serviceRunning;
             final currentStep = serviceOffline && !shouldRestartWorker
                 ? '后台服务未运行，任务已保留；点击继续后恢复'
                 : snapshot != null && snapshot.currentStep.isNotEmpty
-                    ? snapshot.currentStep
-                    : isStopping
-                        ? '正在结束本轮，等待当前图片收尾'
-                        : isPaused
-                            ? '后台分析已暂停'
-                            : '后台分析中 $processed/${manifest.totalItems}';
-            _publishProgressIfChanged(AIAnalysisProgress(
-              isRunning:
-                  !isPaused && !isStopping && (!serviceOffline || shouldRestartWorker),
-              isPaused: isPaused || (serviceOffline && !shouldRestartWorker),
-              isStopping: isStopping,
-              total: manifest.totalItems,
-              completed: processed,
-              failed: snapshot?.failed ?? 0,
-              currentStep: currentStep,
-              elapsedMs: _elapsedMsForSpoolProgress(manifest, snapshot),
-              warmUpCompleted: snapshot?.warmUpCompleted ?? 0,
-              warmUpTotal: snapshot?.warmUpTotal ?? 0,
-            ));
+                ? snapshot.currentStep
+                : isStopping
+                ? '正在结束本轮，等待当前图片收尾'
+                : isPaused
+                ? '后台分析已暂停'
+                : '后台分析中 $processed/${manifest.totalItems}';
+            _publishProgressIfChanged(
+              AIAnalysisProgress(
+                isRunning:
+                    !isPaused &&
+                    !isStopping &&
+                    (!serviceOffline || shouldRestartWorker),
+                isPaused: isPaused || (serviceOffline && !shouldRestartWorker),
+                isStopping: isStopping,
+                total: manifest.totalItems,
+                completed: processed,
+                failed: snapshot?.failed ?? 0,
+                currentStep: currentStep,
+                elapsedMs: _elapsedMsForSpoolProgress(manifest, snapshot),
+                warmUpCompleted: snapshot?.warmUpCompleted ?? 0,
+                warmUpTotal: snapshot?.warmUpTotal ?? 0,
+              ),
+            );
             SpoolProgressNotifier.instance.startPolling(pendingJobId);
             if (shouldRestartWorker) {
-              debugPrint('[spool] pending job=$pendingJobId 未完成且前台服务不在线，重新拉起 worker');
+              debugPrint(
+                '[spool] pending job=$pendingJobId 未完成且前台服务不在线，重新拉起 worker',
+              );
               await AiBackgroundTaskService.instance.startAnalysisWorker();
             }
             return;
@@ -457,22 +469,9 @@ extension AIServiceLifecycle on AIService {
       total: pending,
       completed: restoredCompleted,
       failed: runtimeSnapshot.failed,
-      currentStep: manuallyStopped
-          ? '有未完成任务，点击继续开始'
-          : '检测到上次任务，点击继续后恢复',
+      currentStep: manuallyStopped ? '有未完成任务，点击继续开始' : '检测到上次任务，点击继续后恢复',
       elapsedMs: 0,
     );
-  }
-
-  Future<void> _runFullAiPipelineInBackground() async {
-    try {
-      await analyzePhotosInBackground();
-    } catch (error) {
-      debugPrint('❌ 自动续跑 AI 管线失败: $error');
-      await stopAnalysisAndWait();
-      debugPrint('⚠️ 自动续跑 AI 管线失败，已停止分析任务');
-      debugPrint('⚠️ 请重新启动 AI 打标任务');
-    }
   }
 
   Future<void> _startForegroundTaskAndRun() async {
@@ -515,9 +514,7 @@ extension AIServiceLifecycle on AIService {
     await AiBackgroundTaskService.instance.startAnalysisWorker();
   }
 
-  Future<bool> _waitForCurrentSpoolDone({
-    required Duration timeout,
-  }) async {
+  Future<bool> _waitForCurrentSpoolDone({required Duration timeout}) async {
     final jobId = await _readPendingSpoolJobId();
     if (jobId == null) return true;
     final spool = AnalysisSpoolService.instance;
@@ -625,10 +622,7 @@ extension AIServiceLifecycle on AIService {
       await prefs.setInt(AIService._runtimeElapsedMsKey, elapsedMs);
     }
     if (warmUpCompleted != null) {
-      await prefs.setInt(
-        AIService._runtimeWarmUpCompletedKey,
-        warmUpCompleted,
-      );
+      await prefs.setInt(AIService._runtimeWarmUpCompletedKey, warmUpCompleted);
     }
     if (warmUpTotal != null) {
       await prefs.setInt(AIService._runtimeWarmUpTotalKey, warmUpTotal);
@@ -653,11 +647,9 @@ extension AIServiceLifecycle on AIService {
       total: prefs.getInt(AIService._runtimeTotalKey) ?? 0,
       completed: prefs.getInt(AIService._runtimeCompletedKey) ?? 0,
       failed: prefs.getInt(AIService._runtimeFailedKey) ?? 0,
-      currentStep:
-          prefs.getString(AIService._runtimeStepKey) ?? '后台 AI 正在处理',
+      currentStep: prefs.getString(AIService._runtimeStepKey) ?? '后台 AI 正在处理',
       elapsedMs: prefs.getInt(AIService._runtimeElapsedMsKey) ?? 0,
-      warmUpCompleted:
-          prefs.getInt(AIService._runtimeWarmUpCompletedKey) ?? 0,
+      warmUpCompleted: prefs.getInt(AIService._runtimeWarmUpCompletedKey) ?? 0,
       warmUpTotal: prefs.getInt(AIService._runtimeWarmUpTotalKey) ?? 0,
       isPaused: prefs.getBool(AIService._runtimePausedKey) ?? false,
       isStopping: prefs.getBool(AIService._runtimeStoppingKey) ?? false,
@@ -670,7 +662,6 @@ extension AIServiceLifecycle on AIService {
     }
     return !_stopRequested;
   }
-
 }
 
 int _elapsedMsForSpoolProgress(
@@ -678,13 +669,18 @@ int _elapsedMsForSpoolProgress(
   AnalysisProgressSnapshot? snapshot,
 ) {
   final status = snapshot?.status;
-  final endMs = status == 'paused' ||
+  final endMs =
+      status == 'paused' ||
           status == 'finished' ||
           status == 'stopped' ||
           status == 'failed'
       ? snapshot?.updatedAt ?? DateTime.now().millisecondsSinceEpoch
       : DateTime.now().millisecondsSinceEpoch;
-  final elapsedMs = endMs - manifest.createdAt;
+  final startedAt = snapshot?.processingStartedAt;
+  if (startedAt == null || startedAt <= 0) {
+    return 0;
+  }
+  final elapsedMs = endMs - startedAt;
   if (elapsedMs <= 0) {
     return 0;
   }

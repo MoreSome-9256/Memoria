@@ -127,6 +127,8 @@ class _SpoolWorkerFaceResult {
   };
 }
 
+enum _SpoolItemStatus { succeeded, failed, skipped }
+
 /// Spool 纯计算 Worker。
 class SpoolAnalysisWorker {
   SpoolAnalysisWorker();
@@ -136,6 +138,7 @@ class SpoolAnalysisWorker {
   final SemanticMatchingService _semanticService = SemanticMatchingService();
   late final AppAiSettings _settings;
   bool _stopRequested = false;
+  int? _processingStartedAt;
 
   // Junk filter 原型缓存（build 于 warmUp 中）
   final Map<String, List<double>> _junkPrototypes = <String, List<double>>{};
@@ -416,18 +419,11 @@ class SpoolAnalysisWorker {
       return;
     }
 
-    final faceDetector = enableFaceAnalysis
-        ? FaceDetector(
-            options: FaceDetectorOptions(
-              enableClassification: true,
-              enableTracking: false,
-            ),
-          )
-        : null;
+    final faceDetector = enableFaceAnalysis ? _createFaceDetector() : null;
     debugPrint(
       '[spool-worker] FaceDetector 创建: ${faceDetector != null ? "是" : "否（设置关闭）"}',
     );
-
+    _processingStartedAt = DateTime.now().millisecondsSinceEpoch;
     try {
       for (var index = 0; index < manifest.items.length; index++) {
         if (!await _waitIfPausedOrStopped(
@@ -439,33 +435,17 @@ class SpoolAnalysisWorker {
           failed,
           skipped,
         )) {
-          debugPrint(
-            '[spool-worker] ⛔ 收到控制文件停止请求，中断循环 index=$index/$totalItems',
-          );
-          break;
-        }
-
-        if (_stopRequested) {
           debugPrint('[spool-worker] ⛔ 收到停止请求，中断循环 index=$index/$totalItems');
           break;
         }
 
         final item = manifest.items[index];
-        final photoKey = item.photoKey;
-        if (alreadyCompletedKeys.contains(photoKey)) {
+        if (alreadyCompletedKeys.contains(item.photoKey)) {
           debugPrint(
-            '[spool-worker] ⏭️ 已有完整结果，跳过第 ${index + 1}/$totalItems 张 photoKey=$photoKey',
+            '[spool-worker] ⏭️ 已有完整结果，跳过第 ${index + 1}/$totalItems 张 photoKey=${item.photoKey}',
           );
           continue;
         }
-
-        debugPrint('[spool-worker] --- 开始处理第 ${index + 1}/$totalItems 张 ---');
-        debugPrint(
-          '[spool-worker] photoKey=$photoKey path=${item.path} contentUri=${item.contentUri}',
-        );
-        debugPrint(
-          '[spool-worker] GPS: lat=${item.latitude} lng=${item.longitude}',
-        );
 
         await _writeProgress(
           spool,
@@ -480,173 +460,29 @@ class SpoolAnalysisWorker {
           warmUpTotal: warmUpTotal,
         );
 
-        final startedAt = DateTime.now().millisecondsSinceEpoch;
-        _SpoolComputeResult? computeResult;
-        try {
-          computeResult = await _computeSinglePhoto(
-            item: item,
-            liteRt: liteRt,
-            backend: backend,
-            faceDetector: faceDetector,
-          );
-        } catch (error) {
-          debugPrint('[spool-worker] ❌ _computeSinglePhoto 抛出异常: $error');
-          debugPrint('[spool-worker] ❌ 堆栈: ${StackTrace.current}');
-          computeResult = _SpoolComputeResult(
-            photoKey: photoKey,
-            photoId: item.photoId ?? 0,
-            didSucceed: false,
-            errorMessage: error.toString(),
-            startedAt: startedAt,
-            finishedAt: DateTime.now().millisecondsSinceEpoch,
-          );
+        final status = await _processSpoolItem(
+          index: index,
+          item: item,
+          spool: spool,
+          manifest: manifest,
+          backend: backend,
+          liteRt: liteRt,
+          faceDetector: faceDetector,
+        );
+        switch (status) {
+          case _SpoolItemStatus.succeeded:
+            succeeded++;
+            break;
+          case _SpoolItemStatus.failed:
+            failed++;
+            break;
+          case _SpoolItemStatus.skipped:
+            skipped++;
+            break;
         }
-
-        final finishedAt = DateTime.now().millisecondsSinceEpoch;
-        final elapsed = finishedAt - startedAt;
-
-        if (computeResult.didSucceed) {
-          debugPrint(
-            '[spool-worker] ✅ 计算成功: '
-            'elapsed=${elapsed}ms '
-            'tags=${computeResult.tags.length} '
-            'ocr=${computeResult.ocrText.isNotEmpty ? "${computeResult.ocrText.length}字" : "无"} '
-            'faces=${computeResult.faceResults.length} '
-            'junk=${computeResult.junkCandidate != null}',
-          );
-
-          // 逆地理编码：有 GPS 坐标时查询高德
-          String? province,
-              city,
-              district,
-              locationName,
-              formattedAddress,
-              adcode;
-          if (item.latitude != null && item.longitude != null) {
-            debugPrint(
-              '[spool-worker] 开始逆地理编码 lat=${item.latitude} lng=${item.longitude}',
-            );
-            final geoStart = DateTime.now();
-            final addr = await AmapGeoService.reverseGeocode(
-              latitude: item.latitude!,
-              longitude: item.longitude!,
-            );
-            final geoElapsed = DateTime.now()
-                .difference(geoStart)
-                .inMilliseconds;
-            if (addr != null) {
-              province = addr.province;
-              city = addr.city;
-              district = addr.district;
-              locationName = addr.locationName;
-              formattedAddress = addr.formattedAddress;
-              adcode = addr.adcode;
-              debugPrint(
-                '[spool-worker] ✅ 逆地理编码成功: '
-                'city=$city district=$district '
-                'locationName=$locationName '
-                '耗时=${geoElapsed}ms',
-              );
-            } else {
-              debugPrint('[spool-worker] ⚠️ 逆地理编码返回空 耗时=${geoElapsed}ms');
-            }
-          } else {
-            debugPrint('[spool-worker] ⏭️ 跳过逆地理编码：无 GPS 坐标');
-          }
-
-          final result = AnalysisSpoolResult(
-            jobId: jobId,
-            photoKey: photoKey,
-            photoId: computeResult.photoId,
-            status: 'succeeded',
-            embeddingFile: computeResult.embedding.isNotEmpty
-                ? '$photoKey.f32'
-                : null,
-            embeddingDim: computeResult.embedding.length,
-            modelVersion: computeResult.embeddingModelVersion,
-            startedAt: startedAt,
-            finishedAt: finishedAt,
-            tags: computeResult.tags,
-            aiCaption: '',
-            ocrText: computeResult.ocrText,
-            ocrTags: computeResult.ocrTags,
-            ocrRequired: computeResult.ocrRequired,
-            ocrCompleted: computeResult.ocrCompleted,
-            faceCount: computeResult.faceCount,
-            smileProb: computeResult.smileProb,
-            joyScore: computeResult.joyScore,
-            faceAnalysisRequired: computeResult.faceAnalysisRequired,
-            faceAnalysisCompleted: computeResult.faceAnalysisCompleted,
-            isJunk: computeResult.junkCandidate != null,
-            junkCategoryId:
-                computeResult.junkCandidate != null &&
-                    computeResult.junkCandidate!.reasons.isNotEmpty
-                ? computeResult.junkCandidate!.reasons.first.categoryId
-                : null,
-            province: province,
-            city: city,
-            district: district,
-            locationName: locationName,
-            formattedAddress: formattedAddress,
-            adcode: adcode,
-          );
-
-          if (computeResult.embedding.isNotEmpty) {
-            await spool.writeEmbedding(
-              jobId,
-              photoKey,
-              computeResult.embedding,
-            );
-            debugPrint(
-              '[spool-worker] 📝 Embedding 已写入 spool (dim=${computeResult.embedding.length})',
-            );
-          } else {
-            debugPrint('[spool-worker] ⚠️ 无 embedding 可写入');
-          }
-
-          if (computeResult.faceResults.isNotEmpty) {
-            await _writeFaceResults(
-              spool,
-              jobId,
-              photoKey,
-              computeResult.faceResults,
-            );
-            debugPrint(
-              '[spool-worker] 📝 人脸检测结果已写入 spool (${computeResult.faceResults.length} 张脸)',
-            );
-          }
-
-          await spool.writeResult(jobId, result);
-          debugPrint('[spool-worker] 📝 结果已写入 spool');
-
-          succeeded++;
-          debugPrint(
-            '[spool-worker] ✅ 第 ${index + 1}/$totalItems 张完成，累计成功=$succeeded',
-          );
-        } else if (computeResult.errorMessage != null) {
-          debugPrint('[spool-worker] ❌ 计算失败: ${computeResult.errorMessage}');
-          await spool.writeResult(
-            jobId,
-            AnalysisSpoolResult(
-              jobId: jobId,
-              photoKey: photoKey,
-              photoId: computeResult.photoId,
-              status: 'failed',
-              errorMessage: computeResult.errorMessage,
-              startedAt: startedAt,
-              finishedAt: finishedAt,
-            ),
-          );
-          failed++;
-        } else {
-          debugPrint('[spool-worker] ⏭️ 跳过（无错误信息）');
-          skipped++;
-        }
-
         processed++;
       }
     } finally {
-      debugPrint('[spool-worker] finally: 关闭 faceDetector');
       await faceDetector?.close();
     }
 
@@ -664,6 +500,183 @@ class SpoolAnalysisWorker {
       failed,
       skipped,
     );
+  }
+
+  FaceDetector _createFaceDetector() {
+    return FaceDetector(
+      options: FaceDetectorOptions(
+        enableClassification: true,
+        enableTracking: false,
+      ),
+    );
+  }
+
+  Future<_SpoolItemStatus> _processSpoolItem({
+    required int index,
+    required AnalysisSpoolItem item,
+    required AnalysisSpoolService spool,
+    required AnalysisJobManifest manifest,
+    required MobileClipBackend backend,
+    required MobileClipLiteRtService liteRt,
+    required FaceDetector? faceDetector,
+  }) async {
+    final jobId = manifest.jobId;
+    final totalItems = manifest.items.length;
+    final photoKey = item.photoKey;
+
+    debugPrint('[spool-worker] --- 开始处理第 ${index + 1}/$totalItems 张 ---');
+    debugPrint(
+      '[spool-worker] photoKey=$photoKey path=${item.path} contentUri=${item.contentUri}',
+    );
+    debugPrint(
+      '[spool-worker] GPS: lat=${item.latitude} lng=${item.longitude}',
+    );
+
+    final startedAt = DateTime.now().millisecondsSinceEpoch;
+    _SpoolComputeResult computeResult;
+    try {
+      computeResult = await _computeSinglePhoto(
+        item: item,
+        liteRt: liteRt,
+        backend: backend,
+        faceDetector: faceDetector,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('[spool-worker] ❌ _computeSinglePhoto 抛出异常: $error');
+      debugPrint('[spool-worker] ❌ 堆栈: $stackTrace');
+      computeResult = _SpoolComputeResult(
+        photoKey: photoKey,
+        photoId: item.photoId ?? 0,
+        didSucceed: false,
+        errorMessage: error.toString(),
+        startedAt: startedAt,
+        finishedAt: DateTime.now().millisecondsSinceEpoch,
+      );
+    }
+
+    final finishedAt = DateTime.now().millisecondsSinceEpoch;
+    final elapsed = finishedAt - startedAt;
+
+    if (computeResult.didSucceed) {
+      debugPrint(
+        '[spool-worker] ✅ 计算成功: '
+        'elapsed=${elapsed}ms '
+        'tags=${computeResult.tags.length} '
+        'ocr=${computeResult.ocrText.isNotEmpty ? "${computeResult.ocrText.length}字" : "无"} '
+        'faces=${computeResult.faceResults.length} '
+        'junk=${computeResult.junkCandidate != null}',
+      );
+
+      String? province, city, district, locationName, formattedAddress, adcode;
+      if (item.latitude != null && item.longitude != null) {
+        debugPrint(
+          '[spool-worker] 开始逆地理编码 lat=${item.latitude} lng=${item.longitude}',
+        );
+        final geoStart = DateTime.now();
+        final addr = await AmapGeoService.reverseGeocode(
+          latitude: item.latitude!,
+          longitude: item.longitude!,
+        );
+        final geoElapsed = DateTime.now().difference(geoStart).inMilliseconds;
+        if (addr != null) {
+          province = addr.province;
+          city = addr.city;
+          district = addr.district;
+          locationName = addr.locationName;
+          formattedAddress = addr.formattedAddress;
+          adcode = addr.adcode;
+          debugPrint(
+            '[spool-worker] ✅ 逆地理编码成功: '
+            'city=$city district=$district locationName=$locationName '
+            '耗时=${geoElapsed}ms',
+          );
+        } else {
+          debugPrint('[spool-worker] ⚠️ 逆地理编码返回空 耗时=${geoElapsed}ms');
+        }
+      } else {
+        debugPrint('[spool-worker] ⏭️ 跳过逆地理编码：无 GPS 坐标');
+      }
+
+      final result = AnalysisSpoolResult(
+        jobId: jobId,
+        photoKey: photoKey,
+        photoId: computeResult.photoId,
+        status: 'succeeded',
+        embeddingFile: computeResult.embedding.isNotEmpty
+            ? '$photoKey.f32'
+            : null,
+        embeddingDim: computeResult.embedding.length,
+        modelVersion: computeResult.embeddingModelVersion,
+        startedAt: startedAt,
+        finishedAt: finishedAt,
+        tags: computeResult.tags,
+        aiCaption: '',
+        ocrText: computeResult.ocrText,
+        ocrTags: computeResult.ocrTags,
+        ocrRequired: computeResult.ocrRequired,
+        ocrCompleted: computeResult.ocrCompleted,
+        faceCount: computeResult.faceCount,
+        smileProb: computeResult.smileProb,
+        joyScore: computeResult.joyScore,
+        faceAnalysisRequired: computeResult.faceAnalysisRequired,
+        faceAnalysisCompleted: computeResult.faceAnalysisCompleted,
+        isJunk: computeResult.junkCandidate != null,
+        junkCategoryId:
+            computeResult.junkCandidate != null &&
+                computeResult.junkCandidate!.reasons.isNotEmpty
+            ? computeResult.junkCandidate!.reasons.first.categoryId
+            : null,
+        province: province,
+        city: city,
+        district: district,
+        locationName: locationName,
+        formattedAddress: formattedAddress,
+        adcode: adcode,
+      );
+
+      if (computeResult.embedding.isNotEmpty) {
+        await spool.writeEmbedding(jobId, photoKey, computeResult.embedding);
+        debugPrint(
+          '[spool-worker] 📝 Embedding 已写入 spool (dim=${computeResult.embedding.length})',
+        );
+      } else {
+        debugPrint('[spool-worker] ⚠️ 无 embedding 可写入');
+      }
+
+      if (computeResult.faceResults.isNotEmpty) {
+        await _writeFaceResults(
+          spool,
+          jobId,
+          photoKey,
+          computeResult.faceResults,
+        );
+        debugPrint(
+          '[spool-worker] 📝 人脸检测结果已写入 spool (${computeResult.faceResults.length} 张脸)',
+        );
+      }
+
+      await spool.writeResult(jobId, result);
+      debugPrint('[spool-worker] ✅ 第 ${index + 1}/$totalItems 张完成');
+      return _SpoolItemStatus.succeeded;
+    } else if (computeResult.errorMessage != null) {
+      debugPrint('[spool-worker] ❌ 计算失败: ${computeResult.errorMessage}');
+      await spool.writeResult(
+        jobId,
+        AnalysisSpoolResult(
+          jobId: jobId,
+          photoKey: photoKey,
+          photoId: computeResult.photoId,
+          status: 'failed',
+          errorMessage: computeResult.errorMessage,
+          startedAt: startedAt,
+          finishedAt: finishedAt,
+        ),
+      );
+      return _SpoolItemStatus.failed;
+    } else {
+      debugPrint('[spool-worker] ⏭️ 跳过（无错误信息）');
+      return _SpoolItemStatus.skipped;
+    }
   }
 
   Future<void> _finishJob(
@@ -782,6 +795,7 @@ class SpoolAnalysisWorker {
         skipped: skipped,
         warmUpCompleted: warmUpCompleted,
         warmUpTotal: warmUpTotal,
+        processingStartedAt: _processingStartedAt,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
         currentStep: currentStep,
       ),

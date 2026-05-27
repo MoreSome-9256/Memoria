@@ -24,7 +24,7 @@ extension AIServicePipeline on AIService {
     if (!manageForegroundService) {
       await _AiPipelineRunner(
         service: this,
-        batchSize: batchSize ?? maxPhotos ?? 0x7fffffff,
+        batchSize: batchSize ?? maxPhotos ?? 0,
         maxPhotos: maxPhotos,
         photoIds: photoIds,
         manageForegroundService: manageForegroundService,
@@ -117,21 +117,6 @@ extension AIServicePipeline on AIService {
       _progressNotifier.value = AIAnalysisProgress.idle();
       return;
     }
-
-  }
-
-
-  String _analysisInputExtension(String source) {
-    final path = Uri.tryParse(source)?.path ?? source;
-    final slash = path.lastIndexOf('/');
-    final dot = path.lastIndexOf('.');
-    if (dot > slash && dot < path.length - 1) {
-      final ext = path.substring(dot + 1).toLowerCase();
-      if (ext.length <= 8 && RegExp(r'^[a-z0-9]+$').hasMatch(ext)) {
-        return ext;
-      }
-    }
-    return 'bin';
   }
 
   /// 消费 spool 结果：检测 done.marker → 读取所有 pending result → 写入 ObjectBox。

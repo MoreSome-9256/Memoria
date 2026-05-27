@@ -210,9 +210,18 @@ class AppAiSettingsService {
   }
 
   LocalInferenceAccelerator _normalizeAcceleratorForPlatform(
-    LocalInferenceAccelerator _,
+    LocalInferenceAccelerator accelerator,
   ) {
-    return LocalInferenceAccelerator.xnnpack;
+    if (!kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.iOS ||
+            defaultTargetPlatform == TargetPlatform.macOS)) {
+      return switch (accelerator) {
+        LocalInferenceAccelerator.gpu => LocalInferenceAccelerator.metal,
+        LocalInferenceAccelerator.npu => LocalInferenceAccelerator.coreml,
+        _ => accelerator,
+      };
+    }
+    return accelerator;
   }
 
   static int _normalizeModelBatchSize(int value) {

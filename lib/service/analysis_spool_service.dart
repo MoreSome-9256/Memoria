@@ -1,7 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -231,7 +229,8 @@ class AnalysisSpoolResult {
       tags: (json['tags'] as List<Object?>?)?.cast<String>() ?? <String>[],
       aiCaption: (json['aiCaption'] as String?) ?? '',
       ocrText: (json['ocrText'] as String?) ?? '',
-      ocrTags: (json['ocrTags'] as List<Object?>?)?.cast<String>() ?? <String>[],
+      ocrTags:
+          (json['ocrTags'] as List<Object?>?)?.cast<String>() ?? <String>[],
       ocrRequired: (json['ocrRequired'] as bool?) ?? false,
       ocrCompleted: (json['ocrCompleted'] as bool?) ?? true,
       faceCount: (json['faceCount'] as num?)?.toInt() ?? 0,
@@ -267,6 +266,7 @@ class AnalysisProgressSnapshot {
   final int warmUpCompleted;
   final int warmUpTotal;
   final int updatedAt;
+  final int? processingStartedAt;
   final String currentStep;
 
   const AnalysisProgressSnapshot({
@@ -280,6 +280,7 @@ class AnalysisProgressSnapshot {
     this.warmUpCompleted = 0,
     this.warmUpTotal = 0,
     required this.updatedAt,
+    this.processingStartedAt,
     this.currentStep = '',
   });
 
@@ -294,6 +295,7 @@ class AnalysisProgressSnapshot {
     'warmUpCompleted': warmUpCompleted,
     'warmUpTotal': warmUpTotal,
     'updatedAt': updatedAt,
+    'processingStartedAt': processingStartedAt,
     'currentStep': currentStep,
   };
 
@@ -309,12 +311,12 @@ class AnalysisProgressSnapshot {
       warmUpCompleted: (json['warmUpCompleted'] as num?)?.toInt() ?? 0,
       warmUpTotal: (json['warmUpTotal'] as num?)?.toInt() ?? 0,
       updatedAt: (json['updatedAt'] as num).toInt(),
+      processingStartedAt: (json['processingStartedAt'] as num?)?.toInt(),
       currentStep: (json['currentStep'] as String?) ?? '',
     );
   }
 
-  double get fraction =>
-      total > 0 ? (processed / total).clamp(0.0, 1.0) : 0.0;
+  double get fraction => total > 0 ? (processed / total).clamp(0.0, 1.0) : 0.0;
 }
 
 /// 主进程写入、前台服务读取的控制快照。
@@ -354,10 +356,7 @@ class AnalysisJobControl {
     );
   }
 
-  AnalysisJobControl copyWith({
-    bool? pauseRequested,
-    bool? stopRequested,
-  }) {
+  AnalysisJobControl copyWith({bool? pauseRequested, bool? stopRequested}) {
     return AnalysisJobControl(
       jobId: jobId,
       pauseRequested: pauseRequested ?? this.pauseRequested,
@@ -467,7 +466,8 @@ class AnalysisSpoolService {
     final file = File(_manifestPath(jobId));
     if (!await file.exists()) return null;
     try {
-      final json = jsonDecode(await file.readAsString()) as Map<String, Object?>;
+      final json =
+          jsonDecode(await file.readAsString()) as Map<String, Object?>;
       return AnalysisJobManifest.fromJson(json);
     } catch (e) {
       debugPrint('[spool] manifest 读取失败 jobId=$jobId: $e');
@@ -495,7 +495,8 @@ class AnalysisSpoolService {
     final file = File(_progressPath(jobId));
     if (!await file.exists()) return null;
     try {
-      final json = jsonDecode(await file.readAsString()) as Map<String, Object?>;
+      final json =
+          jsonDecode(await file.readAsString()) as Map<String, Object?>;
       return AnalysisProgressSnapshot.fromJson(json);
     } catch (e) {
       debugPrint('[spool] progress 读取失败 jobId=$jobId: $e');
@@ -567,7 +568,8 @@ class AnalysisSpoolService {
     final file = File(_controlPath(jobId));
     if (!await file.exists()) return AnalysisJobControl.running(jobId);
     try {
-      final json = jsonDecode(await file.readAsString()) as Map<String, Object?>;
+      final json =
+          jsonDecode(await file.readAsString()) as Map<String, Object?>;
       return AnalysisJobControl.fromJson(json);
     } catch (e) {
       debugPrint('[spool] control 读取失败 jobId=$jobId: $e');
@@ -673,7 +675,8 @@ class AnalysisSpoolService {
   Future<AnalysisSpoolResult?> readResultFile(String filePath) async {
     try {
       final json =
-          jsonDecode(await File(filePath).readAsString()) as Map<String, Object?>;
+          jsonDecode(await File(filePath).readAsString())
+              as Map<String, Object?>;
       return AnalysisSpoolResult.fromJson(json);
     } catch (e) {
       debugPrint('[spool] result 读取失败 $filePath: $e');
@@ -743,7 +746,8 @@ class AnalysisSpoolService {
     final file = File(_versionPath);
     if (!await file.exists()) return null;
     try {
-      final json = jsonDecode(await file.readAsString()) as Map<String, Object?>;
+      final json =
+          jsonDecode(await file.readAsString()) as Map<String, Object?>;
       return SpoolVersion.fromJson(json);
     } catch (_) {
       return null;

@@ -100,7 +100,9 @@ class _AiPipelineRunner {
         .toList(growable: false);
     final pendingCount = _countPending(photoBox, requestedPhotoIds);
     final targetTotal = math.min(pendingCount, maxPhotos ?? pendingCount);
-    final effectiveBatchSize = math.max(1, batchSize);
+    final effectiveBatchSize = batchSize > 0
+        ? math.min(math.max(1, batchSize), targetTotal)
+        : math.max(1, targetTotal);
     int? processingStartedAtMs;
     int elapsedMs() {
       final startedAtMs = processingStartedAtMs;
@@ -313,26 +315,26 @@ class _AiPipelineRunner {
                   warmUpTotal: warmUpTotal,
                 )
               : _pauseRequested
-                  ? AIAnalysisProgress.paused(
-                      total: targetTotal,
-                      completed: processedCount,
-                      failed: failedCount,
-                      currentStep: '已暂停，随时可以继续',
-                      elapsedMs: elapsedMs(),
-                      warmUpCompleted: warmUpCompleted,
-                      warmUpTotal: warmUpTotal,
-                    )
-                  : AIAnalysisProgress.running(
-                      total: targetTotal,
-                      completed: processedCount,
-                      failed: failedCount,
-                      currentStep: processedCount >= targetTotal
-                          ? '正在收尾整理结果'
-                          : '已完成 $processedCount / $targetTotal 张',
-                      elapsedMs: elapsedMs(),
-                      warmUpCompleted: warmUpCompleted,
-                      warmUpTotal: warmUpTotal,
-                    );
+              ? AIAnalysisProgress.paused(
+                  total: targetTotal,
+                  completed: processedCount,
+                  failed: failedCount,
+                  currentStep: '已暂停，随时可以继续',
+                  elapsedMs: elapsedMs(),
+                  warmUpCompleted: warmUpCompleted,
+                  warmUpTotal: warmUpTotal,
+                )
+              : AIAnalysisProgress.running(
+                  total: targetTotal,
+                  completed: processedCount,
+                  failed: failedCount,
+                  currentStep: processedCount >= targetTotal
+                      ? '正在收尾整理结果'
+                      : '已完成 $processedCount / $targetTotal 张',
+                  elapsedMs: elapsedMs(),
+                  warmUpCompleted: warmUpCompleted,
+                  warmUpTotal: warmUpTotal,
+                );
 
           if (_stopRequested) break;
         }
@@ -386,12 +388,12 @@ class _AiPipelineRunner {
   int _countPending(dynamic photoBox, List<int>? requestedPhotoIds) {
     final query = requestedPhotoIds != null && requestedPhotoIds.isNotEmpty
         ? photoBox
-            .query(
-              PhotoEntity_.isAiAnalyzed
-                  .equals(false)
-                  .and(PhotoEntity_.id.oneOf(requestedPhotoIds)),
-            )
-            .build()
+              .query(
+                PhotoEntity_.isAiAnalyzed
+                    .equals(false)
+                    .and(PhotoEntity_.id.oneOf(requestedPhotoIds)),
+              )
+              .build()
         : photoBox.query(PhotoEntity_.isAiAnalyzed.equals(false)).build();
     try {
       return query.count();
@@ -411,18 +413,21 @@ class _AiPipelineRunner {
     while (true) {
       final query = requestedPhotoIds != null && requestedPhotoIds.isNotEmpty
           ? photoBox
-              .query(
-                PhotoEntity_.isAiAnalyzed
-                    .equals(false)
-                    .and(PhotoEntity_.id.oneOf(requestedPhotoIds)),
-              )
-              .order(PhotoEntity_.timestamp, flags: Order.descending)
-              .build()
+                .query(
+                  PhotoEntity_.isAiAnalyzed
+                      .equals(false)
+                      .and(PhotoEntity_.id.oneOf(requestedPhotoIds)),
+                )
+                .order(PhotoEntity_.timestamp, flags: Order.descending)
+                .build()
           : photoBox
-              .query(PhotoEntity_.isAiAnalyzed.equals(false))
-              .order(PhotoEntity_.timestamp, flags: Order.descending)
-              .build();
-      final candidates = query.find().take(candidateLimit).toList(growable: false);
+                .query(PhotoEntity_.isAiAnalyzed.equals(false))
+                .order(PhotoEntity_.timestamp, flags: Order.descending)
+                .build();
+      final candidates = query
+          .find()
+          .take(candidateLimit)
+          .toList(growable: false);
       query.close();
 
       final selected = candidates
@@ -432,7 +437,10 @@ class _AiPipelineRunner {
       if (selected.isNotEmpty || candidates.length < candidateLimit) {
         return selected;
       }
-      candidateLimit = math.min(candidateLimit * 2, math.max(targetTotal * 2, 32));
+      candidateLimit = math.min(
+        candidateLimit * 2,
+        math.max(targetTotal * 2, 32),
+      );
     }
   }
 }

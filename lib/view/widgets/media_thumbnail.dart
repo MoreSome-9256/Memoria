@@ -11,7 +11,7 @@ class MediaThumbnail extends StatefulWidget {
     required this.path,
     this.assetId,
     this.kind,
-    this.thumbnailPath,
+    this.thumbnailBytes,
     this.fit = BoxFit.cover,
     this.onFirstFrame,
     this.showBadge = true,
@@ -20,7 +20,7 @@ class MediaThumbnail extends StatefulWidget {
   final String path;
   final String? assetId;
   final MemoriaMediaKind? kind;
-  final String? thumbnailPath;
+  final Uint8List? thumbnailBytes;
   final BoxFit fit;
   final VoidCallback? onFirstFrame;
   final bool showBadge;
@@ -50,7 +50,7 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
     if (oldWidget.path != widget.path ||
         oldWidget.assetId != widget.assetId ||
         oldWidget.kind != widget.kind ||
-        oldWidget.thumbnailPath != widget.thumbnailPath) {
+        oldWidget.thumbnailBytes != widget.thumbnailBytes) {
       _frameReported = false;
       _future = _load();
     }
@@ -66,18 +66,7 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
             data?.kind ?? widget.kind ?? MediaTypeHelper.fromPath(widget.path);
         final thumb = data?.thumbnailBytes;
         final child = thumb != null && thumb.isNotEmpty
-            ? Image.memory(
-                thumb,
-                fit: widget.fit,
-                width: double.infinity,
-                height: double.infinity,
-                cacheWidth: _thumbnailSize,
-                cacheHeight: _thumbnailSize,
-                filterQuality: FilterQuality.low,
-                frameBuilder: _frameBuilder,
-                gaplessPlayback: true,
-                errorBuilder: (_, _, _) => _fallbackForKind(kind),
-              )
+            ? _buildImage(thumb, kind)
             : _fallbackForKind(kind);
 
         if (!widget.showBadge ||
@@ -112,6 +101,56 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildImage(Uint8List thumb, MemoriaMediaKind kind) {
+    final image = Image.memory(
+      thumb,
+      fit: widget.fit,
+      width: double.infinity,
+      height: double.infinity,
+      cacheWidth: _thumbnailSize,
+      cacheHeight: _thumbnailSize,
+      filterQuality: FilterQuality.medium,
+      frameBuilder: _frameBuilder,
+      gaplessPlayback: true,
+      errorBuilder: (_, _, _) => _fallbackForKind(kind),
+    );
+    if (widget.fit != BoxFit.cover) {
+      return image;
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(color: Colors.grey.shade100),
+      child: ClipRect(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.memory(
+              thumb,
+              fit: BoxFit.cover,
+              cacheWidth: _thumbnailSize,
+              cacheHeight: _thumbnailSize,
+              filterQuality: FilterQuality.low,
+              gaplessPlayback: true,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
+            ColoredBox(color: Colors.black.withValues(alpha: 0.08)),
+            Image.memory(
+              thumb,
+              fit: BoxFit.contain,
+              width: double.infinity,
+              height: double.infinity,
+              cacheWidth: _thumbnailSize,
+              cacheHeight: _thumbnailSize,
+              filterQuality: FilterQuality.medium,
+              frameBuilder: _frameBuilder,
+              gaplessPlayback: true,
+              errorBuilder: (_, _, _) => _fallbackForKind(kind),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -152,8 +191,9 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
 
   Future<_MediaThumbnailData> _load() async {
     final indexedKind = widget.kind ?? MediaTypeHelper.fromPath(widget.path);
+    final thumbLength = widget.thumbnailBytes?.lengthInBytes ?? 0;
     final cacheKey =
-        '${widget.assetId ?? ''}|${widget.path}|${widget.thumbnailPath ?? ''}|${indexedKind.name}';
+        '${widget.assetId ?? ''}|${widget.path}|$thumbLength|${indexedKind.name}';
     final cached = _memoryCache[cacheKey];
     if (cached != null) {
       return cached;
@@ -166,7 +206,7 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
           assetId: widget.assetId,
         );
     final indexedThumbBytes = await MediaThumbnailCacheService.instance
-        .readBytes(widget.thumbnailPath);
+        .decompressBytes(widget.thumbnailBytes);
     if (indexedThumbBytes != null && indexedThumbBytes.isNotEmpty) {
       return _remember(
         cacheKey,

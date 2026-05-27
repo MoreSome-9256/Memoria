@@ -1,5 +1,7 @@
 /// 面向 UI 展示的照片值对象，整合标签、描述和人脸信息。
 
+import 'dart:typed_data';
+
 class Photo {
   final String id;
   String? location;
@@ -14,7 +16,7 @@ class Photo {
   final int width;
   final int height;
   final String mediaKind;
-  final String? thumbnailPath;
+  final Uint8List? thumbnailBytes;
   final List<dynamic>? faces; // 存放人脸数据 (可以兼容传入 FaceEntity)
 
   Photo({
@@ -32,7 +34,7 @@ class Photo {
     this.width = 0,
     this.height = 0,
     this.mediaKind = 'image',
-    this.thumbnailPath,
+    this.thumbnailBytes,
     this.faces,
   });
 
@@ -50,7 +52,7 @@ class Photo {
     int? width,
     int? height,
     String? mediaKind,
-    String? thumbnailPath,
+    Uint8List? thumbnailBytes,
     List<dynamic>? faces,
   }) {
     return Photo(
@@ -67,7 +69,7 @@ class Photo {
       width: width ?? this.width,
       height: height ?? this.height,
       mediaKind: mediaKind ?? this.mediaKind,
-      thumbnailPath: thumbnailPath ?? this.thumbnailPath,
+      thumbnailBytes: thumbnailBytes ?? this.thumbnailBytes,
       faces: faces ?? this.faces,
     );
   }

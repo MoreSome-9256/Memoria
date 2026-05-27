@@ -182,7 +182,7 @@ class _CreatePageState extends State<CreatePage> {
       ocrTags: OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]),
       isSelected: true,
       mediaKind: photo.mediaKind,
-      thumbnailPath: photo.thumbnailPath,
+      thumbnailBytes: photo.thumbnailBytes,
     );
   }
 

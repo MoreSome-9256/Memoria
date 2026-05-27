@@ -605,7 +605,7 @@ class _HomePageState extends State<HomePage> {
                             currentPhoto.mediaKind,
                             path: currentPhoto.path,
                           ),
-                          thumbnailPath: currentPhoto.thumbnailPath,
+                          thumbnailBytes: currentPhoto.thumbnailBytes,
                           fit: BoxFit.cover,
                         ),
                         Container(color: Colors.black.withValues(alpha: 0.35)),
@@ -753,7 +753,7 @@ class _HomePageState extends State<HomePage> {
                 dateTaken: DateTime.fromMillisecondsSinceEpoch(p.timestamp),
                 isSelected: true,
                 mediaKind: p.mediaKind,
-                thumbnailPath: p.thumbnailPath,
+                thumbnailBytes: p.thumbnailBytes,
               ),
             )
             .toList();
@@ -825,7 +825,7 @@ class _HomePageState extends State<HomePage> {
                           firstPhoto.mediaKind,
                           path: firstPhoto.path,
                         ),
-                        thumbnailPath: firstPhoto.thumbnailPath,
+                        thumbnailBytes: firstPhoto.thumbnailBytes,
                         fit: BoxFit.cover,
                       )
                     : Icon(

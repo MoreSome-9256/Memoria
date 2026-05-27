@@ -104,7 +104,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
               entity.city ??
               entity.province,
           mediaKind: entity.mediaKind,
-          thumbnailPath: entity.thumbnailPath,
+          thumbnailBytes: entity.thumbnailBytes,
         ),
       );
     }
@@ -182,7 +182,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
                           photo.mediaKind,
                           path: photo.path,
                         ),
-                        thumbnailPath: photo.thumbnailPath,
+                        thumbnailBytes: photo.thumbnailBytes,
                         fit: BoxFit.cover,
                       ),
                     ),
@@ -748,7 +748,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
                               photo.mediaKind,
                               path: photo.path,
                             ),
-                            thumbnailPath: photo.thumbnailPath,
+                            thumbnailBytes: photo.thumbnailBytes,
                             fit: BoxFit.cover,
                           ),
                         ),

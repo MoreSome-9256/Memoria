@@ -501,18 +501,16 @@ class _PhotoScanCoordinator {
     PhotoEntity existing,
     AssetEntity asset,
   ) async {
-    final currentPath = existing.thumbnailPath;
-    if (currentPath != null &&
-        currentPath.isNotEmpty &&
-        await File(currentPath).exists()) {
+    if (existing.thumbnailBytes != null &&
+        existing.thumbnailBytes!.isNotEmpty) {
       return;
     }
-    final thumbnailPath = await MediaThumbnailCacheService.instance
-        .ensureForAsset(asset);
-    if (thumbnailPath == null || thumbnailPath.isEmpty) {
+    final thumbnailBytes = await MediaThumbnailCacheService.instance
+        .generateCompressedBytes(asset);
+    if (thumbnailBytes == null || thumbnailBytes.isEmpty) {
       return;
     }
-    existing.thumbnailPath = thumbnailPath;
+    existing.thumbnailBytes = thumbnailBytes;
     _service._photoBox.put(existing);
   }
 

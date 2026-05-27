@@ -112,7 +112,7 @@ class _AlbumTagPhotoTile extends StatelessWidget {
                     photo.mediaKind,
                     path: photo.path,
                   ),
-                  thumbnailPath: photo.thumbnailPath,
+                  thumbnailBytes: photo.thumbnailBytes,
                   fit: BoxFit.cover,
                 ),
               ),
@@ -164,14 +164,14 @@ class _DeferredPathImage extends StatefulWidget {
     required this.path,
     this.assetId,
     this.kind,
-    this.thumbnailPath,
+    this.thumbnailBytes,
     this.fit = BoxFit.cover,
   });
 
   final String path;
   final String? assetId;
   final MemoriaMediaKind? kind;
-  final String? thumbnailPath;
+  final Uint8List? thumbnailBytes;
   final BoxFit fit;
 
   @override
@@ -225,7 +225,7 @@ class _DeferredPathImageState extends State<_DeferredPathImage> {
         path: widget.path,
         assetId: widget.assetId,
         kind: widget.kind,
-        thumbnailPath: widget.thumbnailPath,
+        thumbnailBytes: widget.thumbnailBytes,
         fit: widget.fit,
         onFirstFrame: _onFirstFrame,
       );

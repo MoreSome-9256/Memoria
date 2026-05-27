@@ -1,6 +1,7 @@
 /// 延迟加载路径图片组件，适合在列表或相册中按需解码。
 
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../utils/media_type_helper.dart';
@@ -12,14 +13,14 @@ class DeferredPathImage extends StatefulWidget {
     required this.path,
     this.assetId,
     this.kind,
-    this.thumbnailPath,
+    this.thumbnailBytes,
     this.fit = BoxFit.cover,
   });
 
   final String path;
   final String? assetId;
   final MemoriaMediaKind? kind;
-  final String? thumbnailPath;
+  final Uint8List? thumbnailBytes;
   final BoxFit fit;
 
   @override
@@ -42,7 +43,7 @@ class _DeferredPathImageState extends State<DeferredPathImage> {
     if (oldWidget.path != widget.path ||
         oldWidget.assetId != widget.assetId ||
         oldWidget.kind != widget.kind ||
-        oldWidget.thumbnailPath != widget.thumbnailPath) {
+        oldWidget.thumbnailBytes != widget.thumbnailBytes) {
       _ready = false;
       _timer?.cancel();
       _scheduleLoad();
@@ -74,7 +75,7 @@ class _DeferredPathImageState extends State<DeferredPathImage> {
         path: widget.path,
         assetId: widget.assetId,
         kind: widget.kind,
-        thumbnailPath: widget.thumbnailPath,
+        thumbnailBytes: widget.thumbnailBytes,
         fit: widget.fit,
       );
     }

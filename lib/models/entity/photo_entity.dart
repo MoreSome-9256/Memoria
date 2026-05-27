@@ -1,5 +1,7 @@
 /// 照片元数据的核心 ObjectBox 实体，保存尺寸、位置、标签和向量信息。
 
+import 'dart:typed_data';
+
 import 'package:objectbox/objectbox.dart';
 
 @Entity()
@@ -23,7 +25,8 @@ class PhotoEntity {
   String mediaKind = 'image'; // image / dynamicImage / video
   String? mimeType;
   bool isLivePhoto = false;
-  String? thumbnailPath;
+  @Property(type: PropertyType.byteVector)
+  Uint8List? thumbnailBytes;
 
   // 📍 地理坐标 (WGS84 标准坐标)
   double? latitude;

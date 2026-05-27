@@ -1,4 +1,4 @@
-﻿/// 事件聚合的 ObjectBox 实体，保存时间、地点和分析后的事件信息。
+/// 事件聚合的 ObjectBox 实体，保存时间、地点和分析后的事件信息。
 
 import 'dart:io';
 
@@ -71,8 +71,7 @@ class EventEntity {
   }
 
   // 位置描述（优先使用 locationName/district/city/province）
-  String get location =>
-      locationName ?? district ?? city ?? province ?? '未知地点';
+  String get location => locationName ?? district ?? city ?? province ?? '未知地点';
 
   // 格式化日期范围
   String get dateRangeText {
@@ -89,7 +88,8 @@ class EventEntity {
 
   // 转换为 UI 层的 Event 模型
   Future<Event> toUIModel({
-    required Future<List<PhotoEntity>> Function(List<int> ids) loadPhotoEntities,
+    required Future<List<PhotoEntity>> Function(List<int> ids)
+    loadPhotoEntities,
   }) async {
     final photoEntities = await loadPhotoEntities(photoIds);
     final photos = await _mapEntitiesToPhotos(photoEntities, resolvePath: true);
@@ -101,7 +101,8 @@ class EventEntity {
   }
 
   Future<Event> toPreviewModel({
-    required Future<List<PhotoEntity>> Function(List<int> ids) loadPhotoEntities,
+    required Future<List<PhotoEntity>> Function(List<int> ids)
+    loadPhotoEntities,
   }) async {
     final coverIds = photoIds.take(3).toList(growable: false);
     final coverEntities = await loadPhotoEntities(coverIds);
@@ -131,7 +132,7 @@ class EventEntity {
           path: resolvedPath,
           dateTaken: DateTime.fromMillisecondsSinceEpoch(entity.timestamp),
           mediaKind: entity.mediaKind,
-          thumbnailPath: entity.thumbnailPath,
+          thumbnailBytes: entity.thumbnailBytes,
           tags: TagSanitizer.sanitizeVisualTags(
             entity.aiTags ?? const <String>[],
           ),

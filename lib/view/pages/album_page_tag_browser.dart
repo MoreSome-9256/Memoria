@@ -79,7 +79,7 @@ class _AlbumTagClusterCoverMosaic extends StatelessWidget {
           photos.first.mediaKind,
           path: photos.first.path,
         ),
-        thumbnailPath: photos.first.thumbnailPath,
+        thumbnailBytes: photos.first.thumbnailBytes,
         fit: BoxFit.cover,
       );
     }
@@ -102,7 +102,7 @@ class _AlbumTagClusterCoverMosaic extends StatelessWidget {
             visible[index].mediaKind,
             path: visible[index].path,
           ),
-          thumbnailPath: visible[index].thumbnailPath,
+          thumbnailBytes: visible[index].thumbnailBytes,
           fit: BoxFit.cover,
         );
       },

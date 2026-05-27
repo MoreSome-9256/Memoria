@@ -1,6 +1,7 @@
 // 相册页面，负责照片浏览、事件查看和标签筛选。
 
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'dart:collection';
 import 'package:photo_manager/photo_manager.dart';

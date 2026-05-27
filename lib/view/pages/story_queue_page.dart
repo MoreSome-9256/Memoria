@@ -245,7 +245,7 @@ class _QueuePhotoTileState extends State<_QueuePhotoTile> {
                             photo.mediaKind,
                             path: photo.path,
                           ),
-                          thumbnailPath: photo.thumbnailPath,
+                          thumbnailBytes: photo.thumbnailBytes,
                           fit: BoxFit.cover,
                         ),
                       ),

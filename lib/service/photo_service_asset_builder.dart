@@ -165,8 +165,8 @@ class _PhotoAssetBuilder {
       mimeType: mimeType,
       isLivePhoto: isLivePhoto,
     );
-    final thumbnailPath = await MediaThumbnailCacheService.instance
-        .ensureForAsset(asset);
+    final thumbnailBytes = await MediaThumbnailCacheService.instance
+        .generateCompressedBytes(asset);
 
     final hasGps = PhotoFilterHelper.hasValidGps(
       latLong?.latitude,
@@ -181,7 +181,7 @@ class _PhotoAssetBuilder {
       ..mediaKind = MediaTypeHelper.toStorageValue(mediaKind)
       ..mimeType = mimeType
       ..isLivePhoto = isLivePhoto
-      ..thumbnailPath = thumbnailPath
+      ..thumbnailBytes = thumbnailBytes
       ..latitude = hasGps ? latLong!.latitude : null
       ..longitude = hasGps ? latLong!.longitude : null
       ..isLocationProcessed = false;
@@ -286,12 +286,10 @@ class _PhotoAssetBuilder {
       existing.isLivePhoto = isLivePhoto;
       changed = true;
     }
-    final thumbnailPath = await MediaThumbnailCacheService.instance
-        .ensureForAsset(asset);
-    if (thumbnailPath != null &&
-        thumbnailPath.isNotEmpty &&
-        existing.thumbnailPath != thumbnailPath) {
-      existing.thumbnailPath = thumbnailPath;
+    final thumbnailBytes = await MediaThumbnailCacheService.instance
+        .generateCompressedBytes(asset);
+    if (thumbnailBytes != null && thumbnailBytes.isNotEmpty) {
+      existing.thumbnailBytes = thumbnailBytes;
       changed = true;
     }
     return changed ? existing : null;

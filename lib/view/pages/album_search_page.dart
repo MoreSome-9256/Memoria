@@ -984,7 +984,7 @@ class _SearchPhotoTile extends StatelessWidget {
                   photo.mediaKind,
                   path: photo.path,
                 ),
-                thumbnailPath: photo.thumbnailPath,
+                thumbnailBytes: photo.thumbnailBytes,
                 fit: BoxFit.cover,
               ),
             ),

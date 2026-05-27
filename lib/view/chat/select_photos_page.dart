@@ -53,7 +53,7 @@ class _SelectPhotosPageState extends State<SelectPhotosPage> {
       ocrTags: OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]),
       isSelected: true,
       mediaKind: photo.mediaKind,
-      thumbnailPath: photo.thumbnailPath,
+      thumbnailBytes: photo.thumbnailBytes,
     );
   }
 
@@ -163,7 +163,7 @@ class _SelectPhotosPageState extends State<SelectPhotosPage> {
                       photo.mediaKind,
                       path: photo.path,
                     ),
-                    thumbnailPath: photo.thumbnailPath,
+                    thumbnailBytes: photo.thumbnailBytes,
                     fit: BoxFit.cover,
                   ),
                 ),

@@ -185,7 +185,7 @@ class StoryResultPage extends StatefulWidget {
       width: photoEntity.width,
       height: photoEntity.height,
       mediaKind: photoEntity.mediaKind,
-      thumbnailPath: photoEntity.thumbnailPath,
+      thumbnailBytes: photoEntity.thumbnailBytes,
     );
   }
 
@@ -255,7 +255,7 @@ class StoryResultPage extends StatefulWidget {
           ? overridePhoto.height
           : basePhoto.height,
       mediaKind: overridePhoto.mediaKind,
-      thumbnailPath: overridePhoto.thumbnailPath ?? basePhoto.thumbnailPath,
+      thumbnailBytes: overridePhoto.thumbnailBytes ?? basePhoto.thumbnailBytes,
       faces: overridePhoto.faces ?? basePhoto.faces,
     );
   }

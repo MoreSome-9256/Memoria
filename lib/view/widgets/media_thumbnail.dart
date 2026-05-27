@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:photo_manager/photo_manager.dart';
 
 import '../../service/media_thumbnail_cache_service.dart';
 import '../../utils/media_type_helper.dart';
@@ -175,32 +174,7 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
       );
     }
 
-    final assetId = widget.assetId;
-    if (assetId == null || assetId.isEmpty) {
-      return _remember(cacheKey, _MediaThumbnailData(kind: kind));
-    }
-
-    try {
-      final asset = await AssetEntity.fromId(assetId);
-      if (asset == null) {
-        return _remember(cacheKey, _MediaThumbnailData(kind: kind));
-      }
-      final cachedPath = await MediaThumbnailCacheService.instance
-          .ensureForAsset(asset);
-      final bytes = await MediaThumbnailCacheService.instance.readBytes(
-        cachedPath,
-      );
-      if (bytes != null &&
-          bytes.lengthInBytes > MediaThumbnailCacheService.maxThumbnailBytes) {
-        return _remember(cacheKey, _MediaThumbnailData(kind: kind));
-      }
-      return _remember(
-        cacheKey,
-        _MediaThumbnailData(kind: kind, thumbnailBytes: bytes),
-      );
-    } catch (_) {
-      return _remember(cacheKey, _MediaThumbnailData(kind: kind));
-    }
+    return _remember(cacheKey, _MediaThumbnailData(kind: kind));
   }
 
   _MediaThumbnailData _remember(String key, _MediaThumbnailData data) {

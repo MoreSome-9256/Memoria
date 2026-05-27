@@ -155,6 +155,21 @@ extension PhotoServiceAiReset on PhotoService {
     return updatedCount;
   }
 
+  List<int> loadPendingAiPhotoIds({int? limit}) {
+    final q = _photoBox
+        .query(PhotoEntity_.isAiAnalyzed.equals(false))
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    try {
+      final ids = q.find().map((p) => p.id).where((id) => id > 0);
+      return limit == null
+          ? ids.toList(growable: false)
+          : ids.take(limit).toList(growable: false);
+    } finally {
+      q.close();
+    }
+  }
+
   Future<void> migrateToMobileClip() async {
     debugPrint("🔄 开始执行 Memoria 2.0 AI 数据迁移...");
 

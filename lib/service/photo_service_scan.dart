@@ -1,8 +1,8 @@
 /// 照片扫描服务 — 提供增量发现和全量重建两种入口。
 ///
 /// 【增量发现（推荐）】scanBatchPhotos
-///   stop-early 策略：从最新照片开始扫描，收集到 batchSize 张新照片后立即停止。
-///   适合 "下一批 N 张" 场景。
+///   先完整更新授权相册缓存，再由刷新服务从数据库筛选交给 AI 的项目。
+///   适合 "全部新项目" 与 "下一批 N 张" 场景。
 ///
 /// 【全量重建】rebuildAllCachedData
 ///   扫描所有照片。仅适合首次初始化或 "安全重建" 场景。
@@ -50,9 +50,9 @@ extension PhotoServiceScan on PhotoService {
     );
   }
 
-  // ── ★ 推荐入口：增量收集新照片，收够即停 ────────────────────────
-  /// 从系统相册最新照片开始扫描，收集到 [batchSize] 张新照片后停止。
-  /// [batchSize] 为 null 时扫描完整授权范围。
+  // ── ★ 推荐入口：预扫描系统相册并更新本地缓存 ─────────────────────
+  /// 扫描完整授权范围并更新本地数据库缓存。
+  /// [batchSize] 只影响后续 AI 交接数量，不截断缓存扫描。
   /// 返回 [BatchScanResult]，包含新照片列表和统计信息。
   Future<BatchScanResult> scanBatchPhotos({
     required int? batchSize,
@@ -62,7 +62,7 @@ extension PhotoServiceScan on PhotoService {
       this,
     ).prepareIncremental(maxAssets: batchSize, onProgress: onProgress);
 
-    var insertedPhotoIds = const <int>[];
+    var insertedPhotoIds = plan.insertedPhotoIds;
     if (plan.built.photos.isNotEmpty) {
       final storedIds = _store.runInTransaction(
         TxMode.write,

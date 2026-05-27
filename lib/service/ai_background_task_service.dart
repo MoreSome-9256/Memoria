@@ -1,7 +1,7 @@
-/// AI 前台任务处理器 — Spool 模式。
-///
-/// 主进程写 manifest 到 spool → 启动前台服务 → 本 isolate 只做纯计算
-/// → result/embedding/progress 写入 spool → done.marker → 主进程消费写库。
+// AI 前台任务处理器 — Spool 模式。
+//
+// 主进程写 manifest 到 spool → 启动前台服务 → 本 isolate 只做纯计算
+// → result/embedding/progress 写入 spool → done.marker → 主进程消费写库。
 
 import 'dart:io';
 import 'dart:async';
@@ -17,6 +17,22 @@ import 'spool_analysis_worker.dart';
 @pragma('vm:entry-point')
 void foregroundTaskCallback() {
   FlutterForegroundTask.setTaskHandler(_SpoolTaskHandler());
+}
+
+@pragma('vm:entry-point')
+void albumCacheForegroundTaskCallback() {
+  FlutterForegroundTask.setTaskHandler(_AlbumCacheTaskHandler());
+}
+
+class _AlbumCacheTaskHandler extends TaskHandler {
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
+
+  @override
+  void onRepeatEvent(DateTime timestamp) {}
+
+  @override
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {}
 }
 
 class _SpoolTaskHandler extends TaskHandler {
@@ -110,10 +126,7 @@ class AiBackgroundTaskService {
       debugPrint('[spool] 非 Android/iOS 平台暂不支持前台服务');
       return;
     }
-    await startService(
-      title: 'Memoria 正在分析媒体',
-      text: '只处理你加入分析队列的照片和视频',
-    );
+    await startService(title: 'Memoria 正在分析媒体', text: '只处理你加入分析队列的照片和视频');
   }
 
   /// 获取并认领下一个待处理的 manifest。
@@ -143,16 +156,12 @@ class AiBackgroundTaskService {
     await prefs.setString(_pendingManifestJobIdKey, jobId);
   }
 
-  Future<void> _clearPendingJobId() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_pendingManifestJobIdKey);
-  }
-
   // ── 前台服务生命周期 ──
 
   Future<void> startService({
     required String title,
     required String text,
+    void Function()? callback,
   }) async {
     if (!Platform.isAndroid && !Platform.isIOS) return;
     await _ensureInitialized();
@@ -168,8 +177,20 @@ class AiBackgroundTaskService {
       notificationTitle: title,
       notificationText: text,
       notificationIcon: null,
-      callback: foregroundTaskCallback,
+      callback: callback ?? foregroundTaskCallback,
     );
+  }
+
+  Future<bool> startAlbumCacheForeground({required String text}) async {
+    if (!Platform.isAndroid && !Platform.isIOS) return false;
+    await _ensureInitialized();
+    final wasRunning = await FlutterForegroundTask.isRunningService;
+    await startService(
+      title: 'Memoria 正在更新相册缓存',
+      text: text,
+      callback: albumCacheForegroundTaskCallback,
+    );
+    return !wasRunning;
   }
 
   Future<void> updateNotification({

@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import 'ai_service.dart';
+import 'ai_background_task_service.dart';
 import 'event_service.dart';
 import '../storage/objectbox/media_asset_repository.dart';
 import 'media_asset_sync_service.dart';
@@ -160,55 +161,78 @@ class AlbumRefreshService {
     );
     debugPrint('[scan] ▶ stage=scanning progress=0.04');
 
-    // step 1: stop-early 扫描，只找新照片
-    var lastProgressUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+    // step 1: 预扫描完整授权相册，边构建边写入缓存数据库。
     final scanStart = DateTime.now();
+    var cacheForegroundStarted = false;
     debugPrint('[scan] 开始调用 scanBatchPhotos…');
-    final scanResult = await PhotoService().scanBatchPhotos(
-      batchSize: batchSize,
-      onProgress: (scanProgress) {
-        final now = DateTime.now();
-        if (now.difference(lastProgressUpdate).inMilliseconds < 220 &&
-            scanProgress.scannedCount < scanProgress.totalCount) {
-          return;
-        }
-        lastProgressUpdate = now;
-        final baseFraction = isFullImport
-            ? scanProgress.scannedFraction
-            : math.max(
-                scanProgress.scannedFraction * 0.35,
-                scanProgress.acceptedFraction,
-              );
-        final progress = 0.08 + 0.52 * baseFraction.clamp(0, 1).toDouble();
-        final acceptedText = isFullImport
-            ? '${scanProgress.acceptedCount} 个'
-            : '${scanProgress.acceptedCount}/${scanProgress.targetNew} 个';
-        final scannedText = scanProgress.totalCount > 0
-            ? '${scanProgress.scannedCount}/${scanProgress.totalCount}'
-            : '${scanProgress.scannedCount}';
-        _setProgress(
-          AlbumRefreshStage.scanning,
-          progress,
-          '正在读取图片',
-          '已读取 $scannedText 项，找到 $acceptedText 可加入 AI 的新项目。',
-        );
-        debugPrint(
-          isFullImport
-              ? '[scan]   扫描进度: scanned=$scannedText accepted=${scanProgress.acceptedCount} progress=${progress.toStringAsFixed(3)}'
-              : '[scan]   扫描进度: scanned=$scannedText accepted=${scanProgress.acceptedCount}/${scanProgress.targetNew} progress=${progress.toStringAsFixed(3)}',
-        );
-      },
-    );
+    try {
+      cacheForegroundStarted = await AiBackgroundTaskService.instance
+          .startAlbumCacheForeground(text: '正在更新相册缓存……');
+      final scanResult = await PhotoService().scanBatchPhotos(
+        batchSize: batchSize,
+        onProgress: (scanProgress) {
+          final progress = 0.08 + 0.52 * scanProgress.scannedFraction;
+          final scannedText = scanProgress.totalCount > 0
+              ? '${scanProgress.scannedCount}/${scanProgress.totalCount}'
+              : '${scanProgress.scannedCount}';
+          final eta = _formatRemainingTime(
+            startedAt: scanStart,
+            completed: scanProgress.scannedCount,
+            total: scanProgress.totalCount,
+          );
+          final message = eta.isEmpty
+              ? '正在更新相册缓存……($scannedText)'
+              : '正在更新相册缓存……($scannedText)，预计剩余 $eta';
+          _setProgress(
+            AlbumRefreshStage.scanning,
+            progress,
+            '正在更新相册缓存',
+            message,
+          );
+          unawaited(
+            AiBackgroundTaskService.instance.updateNotification(
+              title: 'Memoria 正在更新相册缓存',
+              text: message,
+            ),
+          );
+          debugPrint(
+            '[scan]   缓存进度: scanned=$scannedText inserted=${scanProgress.acceptedCount} progress=${progress.toStringAsFixed(3)}',
+          );
+        },
+      );
+      return await _finishIncrementalScan(
+        scanResult: scanResult,
+        scanStart: scanStart,
+        batchSize: batchSize,
+        isFullImport: isFullImport,
+      );
+    } finally {
+      if (cacheForegroundStarted) {
+        await AiBackgroundTaskService.instance.stop();
+      }
+    }
+  }
+
+  Future<AlbumRefreshResult> _finishIncrementalScan({
+    required BatchScanResult scanResult,
+    required DateTime scanStart,
+    required int? batchSize,
+    required bool isFullImport,
+  }) async {
     final scanMs = DateTime.now().difference(scanStart).inMilliseconds;
     debugPrint(
       '[scan] scanBatchPhotos 完成: scannedCount=${scanResult.scannedCount} insertedCount=${scanResult.insertedCount} totalAfter=${scanResult.totalAfter} 耗时=${scanMs}ms',
     );
 
+    final handoffPhotoIds = PhotoService().loadPendingAiPhotoIds(
+      limit: batchSize,
+    );
+
     _setProgress(
       AlbumRefreshStage.queueing,
       0.64,
-      '正在整理图片列表',
-      '读取完成：检查 ${scanResult.scannedCount} 项，整理出 ${scanResult.insertedCount} 个新项目，正在写入 AI 队列。',
+      '正在移交 AI',
+      '筛选出 ${handoffPhotoIds.length} 个图片正在移交给AI处理',
     );
 
     // 构建兼容的 PhotoScanSummary
@@ -228,17 +252,14 @@ class AlbumRefreshService {
       skippedScreenshot: scanResult.skippedScreenshot,
     );
 
-    if (!scanResult.hasNewPhotos) {
-      debugPrint('[scan] 没有新照片，直接触发 AI (aiRunning=${AIService().isAnalyzing})');
+    if (handoffPhotoIds.isEmpty) {
+      debugPrint('[scan] 没有待移交 AI 的照片 (aiRunning=${AIService().isAnalyzing})');
       final aiRunning = AIService().isAnalyzing;
-      if (!aiRunning) {
-        unawaited(_runAiPipeline(maxPhotos: batchSize));
-      }
       _setProgress(
         AlbumRefreshStage.handoff,
         aiRunning ? 0.95 : 1.0,
-        '本轮没有可入库新照片',
-        aiRunning ? 'AI 队列正在运行' : '已转去检查未完成的后台 AI 队列',
+        '没有待处理图片',
+        aiRunning ? 'AI 队列正在运行' : '相册缓存已更新',
       );
       debugPrint('[scan] ▶ stage=handoff (无新照片) aiRunning=$aiRunning');
       return AlbumRefreshResult(
@@ -250,12 +271,12 @@ class AlbumRefreshService {
       );
     }
 
-    debugPrint('[scan] 有新照片 ${scanResult.insertedCount} 张，开始 requeue');
+    debugPrint('[scan] 筛选出 ${handoffPhotoIds.length} 张待 AI 处理照片，开始 requeue');
     // step 2: 有新照片 → requeue（标记为未分析）
-    await PhotoService().requeuePhotosForAiByIds(scanResult.insertedPhotoIds);
+    await PhotoService().requeuePhotosForAiByIds(handoffPhotoIds);
     _scheduleMediaIndexRefresh(
       batchSize: isFullImport
-          ? math.max(scanResult.insertedCount, 300)
+          ? math.max(handoffPhotoIds.length, 300)
           : batchSize!,
     );
     debugPrint('[scan] requeue 完成');
@@ -280,8 +301,8 @@ class AlbumRefreshService {
     if (!aiRunning) {
       unawaited(
         _runAiPipeline(
-          maxPhotos: scanResult.insertedPhotoIds.length,
-          photoIds: scanResult.insertedPhotoIds,
+          maxPhotos: handoffPhotoIds.length,
+          photoIds: handoffPhotoIds,
         ),
       );
       debugPrint('[scan] _runAiPipeline 已触发 (unawaited)');
@@ -298,7 +319,7 @@ class AlbumRefreshService {
 
     return AlbumRefreshResult(
       scanSummary: summary,
-      requeuedCount: scanResult.insertedCount,
+      requeuedCount: handoffPhotoIds.length,
       recentPhotoLimit: batchSize,
       clearCacheFirst: false,
       aiAlreadyRunning: aiRunning,
@@ -410,6 +431,36 @@ class AlbumRefreshService {
       debugPrint('[scan] ❌ 后台 AI 管线执行失败: $error');
       debugPrint('[scan] ❌ 堆栈: $stackTrace');
     }
+  }
+
+  String _formatRemainingTime({
+    required DateTime startedAt,
+    required int completed,
+    required int total,
+  }) {
+    if (completed <= 0 || total <= 0 || completed >= total) {
+      return '';
+    }
+    final elapsedMs = DateTime.now().difference(startedAt).inMilliseconds;
+    if (elapsedMs <= 0) {
+      return '';
+    }
+    final remainingMs = (elapsedMs / completed * (total - completed)).round();
+    if (remainingMs < 1000) {
+      return '不到 1 秒';
+    }
+    final seconds = (remainingMs / 1000).round();
+    if (seconds < 60) {
+      return '$seconds 秒';
+    }
+    final minutes = seconds ~/ 60;
+    final restSeconds = seconds % 60;
+    if (minutes < 60) {
+      return restSeconds == 0 ? '$minutes 分钟' : '$minutes 分 $restSeconds 秒';
+    }
+    final hours = minutes ~/ 60;
+    final restMinutes = minutes % 60;
+    return restMinutes == 0 ? '$hours 小时' : '$hours 小时 $restMinutes 分钟';
   }
 
   void _scheduleMediaIndexRefresh({required int batchSize}) {

@@ -5,7 +5,7 @@
 ///   2. 小批量分页（50张/页），从最新开始遍历
 ///   3. 每页查询 ObjectBox 批量过滤已存在的 assetId
 ///   4. 对真正新增的照片并行构建实体
-///   5. 收集到目标数量后立即停止（stop-early）
+///   5. 增量路径完整更新本地缓存，再从数据库筛选交给 AI 的项目
 ///   6. 增量路径跳过 `_removeUnavailablePhotos`（全量旧照片校验）
 ///
 /// 消除的问题：
@@ -65,7 +65,7 @@ class _PhotoScanCoordinator {
     );
   }
 
-  // ── 增量扫描：收集 [maxAssets] 张新照片后停止 ─────────────────────
+  // ── 增量扫描：完整预扫描授权相册并更新本地缓存 ─────────────────
   Future<_PhotoSyncPlan> prepareIncremental({
     int? maxAssets,
     int offsetFromNewest = 0,
@@ -91,14 +91,13 @@ class _PhotoScanCoordinator {
 
     final filterProfile = await _resolveFilterProfile();
 
-    final targetNew = maxAssets == null ? null : math.max(1, maxAssets);
-    final progressTarget = targetNew ?? scanSource.totalCount;
     const pageSize = 50;
 
-    final collectedPhotos = <PhotoEntity>[];
+    final insertedPhotoIds = <int>[];
     var totalScanned = 0;
     var candidateCount = 0;
     var stats = _ScanStats();
+    final startedAt = DateTime.now();
 
     onProgress?.call(
       BatchScanProgress(
@@ -106,7 +105,7 @@ class _PhotoScanCoordinator {
         candidateCount: 0,
         acceptedCount: 0,
         totalCount: scanSource.totalCount,
-        targetNew: progressTarget,
+        targetNew: scanSource.totalCount,
       ),
     );
 
@@ -115,26 +114,30 @@ class _PhotoScanCoordinator {
       pageSize: pageSize,
       offsetFromNewest: offsetFromNewest,
     )) {
-      if (targetNew != null && collectedPhotos.length >= targetNew) break;
       if (assets.isEmpty) break;
-      totalScanned += assets.length;
 
-      // 批量过滤已存在
-      final skipIds = _existingAssetIdSet(assets);
+      // 批量过滤已存在；已有记录只补齐数据库中的缩略图路径。
+      final existingByAssetId = _existingAssetMap(assets);
       final newAssets = <AssetEntity>[];
       for (final asset in assets) {
-        if (!skipIds.contains(asset.id)) newAssets.add(asset);
-      }
-      if (newAssets.isEmpty) {
+        totalScanned++;
+        final existing = existingByAssetId[asset.id];
+        if (existing == null) {
+          newAssets.add(asset);
+        } else {
+          await _refreshExistingThumbnailIfNeeded(existing, asset);
+        }
         onProgress?.call(
           BatchScanProgress(
             scannedCount: totalScanned,
             candidateCount: candidateCount,
-            acceptedCount: collectedPhotos.length,
+            acceptedCount: insertedPhotoIds.length,
             totalCount: scanSource.totalCount,
-            targetNew: progressTarget,
+            targetNew: scanSource.totalCount,
           ),
         );
+      }
+      if (newAssets.isEmpty) {
         continue;
       }
 
@@ -144,47 +147,40 @@ class _PhotoScanCoordinator {
         BatchScanProgress(
           scannedCount: totalScanned,
           candidateCount: candidateCount,
-          acceptedCount: collectedPhotos.length,
+          acceptedCount: insertedPhotoIds.length,
           totalCount: scanSource.totalCount,
-          targetNew: progressTarget,
+          targetNew: scanSource.totalCount,
         ),
       );
 
-      // 并行构建（扫描阶段跳过 file 解析，GPS 从缓存读取）
-      final results = await Future.wait(
-        buildAssets.map(
-          (a) => _service._buildSingleAssetPhoto(
-            a,
-            filterProfile: filterProfile,
-            resolveFile: false,
-          ),
-        ),
-      );
-      for (final r in results) {
+      for (final asset in buildAssets) {
+        final r = await _service._buildSingleAssetPhoto(
+          asset,
+          filterProfile: filterProfile,
+          resolveFile: false,
+        );
         if (r.photo != null) {
-          if (targetNew == null || collectedPhotos.length < targetNew) {
-            collectedPhotos.add(r.photo!);
-            stats = stats.merge(r);
-          }
-          continue;
+          final id = _service._photoBox.put(r.photo!);
+          if (id > 0) insertedPhotoIds.add(id);
+          stats = stats.merge(r);
         } else {
           stats = stats.merge(r);
         }
+        onProgress?.call(
+          BatchScanProgress(
+            scannedCount: totalScanned,
+            candidateCount: candidateCount,
+            acceptedCount: insertedPhotoIds.length,
+            totalCount: scanSource.totalCount,
+            targetNew: scanSource.totalCount,
+          ),
+        );
       }
-      onProgress?.call(
-        BatchScanProgress(
-          scannedCount: totalScanned,
-          candidateCount: candidateCount,
-          acceptedCount: collectedPhotos.length,
-          totalCount: scanSource.totalCount,
-          targetNew: progressTarget,
-        ),
-      );
     }
 
     final built = _ScanBuildResult(
-      photos: collectedPhotos,
-      insertedCount: collectedPhotos.length,
+      photos: const <PhotoEntity>[],
+      insertedCount: insertedPhotoIds.length,
       insertedNoGps: stats.insertedNoGps,
       skippedInvalidTime: stats.skippedInvalidTime,
       skippedNonCamera: stats.skippedNonCamera,
@@ -192,11 +188,12 @@ class _PhotoScanCoordinator {
     );
 
     debugPrint(
-      '增量扫描: scan=$totalScanned new=${collectedPhotos.length} '
+      '增量扫描: scan=$totalScanned new=${insertedPhotoIds.length} '
       'noGps=${stats.insertedNoGps} badTime=${stats.skippedInvalidTime} '
       'nonCam=${stats.skippedNonCamera} ss=${stats.skippedScreenshot} '
       'small=${stats.skippedSmallResolution} '
-      'wide=${stats.skippedExtremeAspectRatio}',
+      'wide=${stats.skippedExtremeAspectRatio} '
+      'elapsed=${DateTime.now().difference(startedAt).inMilliseconds}ms',
     );
 
     return _PhotoSyncPlan(
@@ -209,6 +206,7 @@ class _PhotoScanCoordinator {
         startOffset: offsetFromNewest,
       ),
       built: built,
+      insertedPhotoIds: insertedPhotoIds,
     );
   }
 
@@ -480,18 +478,42 @@ class _PhotoScanCoordinator {
     return _AlbumBundle(assets: assets);
   }
 
-  // ── 批量查 ObjectBox，返回已存在的 assetId 集合 ──────────────────
-  Set<String> _existingAssetIdSet(List<AssetEntity> assets) {
+  // ── 批量查 ObjectBox，返回已存在的 assetId 映射 ─────────────────
+  Map<String, PhotoEntity> _existingAssetMap(List<AssetEntity> assets) {
     final ids = assets
         .map((a) => a.id)
         .where((id) => id.isNotEmpty)
         .toList(growable: false);
-    if (ids.isEmpty) return {};
+    if (ids.isEmpty) return const <String, PhotoEntity>{};
 
     final q = _service._photoBox.query(PhotoEntity_.assetId.oneOf(ids)).build();
-    final existing = q.find().map((e) => e.assetId).toSet();
-    q.close();
-    return existing;
+    try {
+      return <String, PhotoEntity>{
+        for (final photo in q.find())
+          if (photo.assetId.isNotEmpty) photo.assetId: photo,
+      };
+    } finally {
+      q.close();
+    }
+  }
+
+  Future<void> _refreshExistingThumbnailIfNeeded(
+    PhotoEntity existing,
+    AssetEntity asset,
+  ) async {
+    final currentPath = existing.thumbnailPath;
+    if (currentPath != null &&
+        currentPath.isNotEmpty &&
+        await File(currentPath).exists()) {
+      return;
+    }
+    final thumbnailPath = await MediaThumbnailCacheService.instance
+        .ensureForAsset(asset);
+    if (thumbnailPath == null || thumbnailPath.isEmpty) {
+      return;
+    }
+    existing.thumbnailPath = thumbnailPath;
+    _service._photoBox.put(existing);
   }
 
   // ── 全量重建用：兼容原 _prepareScan（简化版）─────────────────────

@@ -24,7 +24,6 @@ import 'media_access_range_page.dart';
 import 'media_vector_similarity_test_page.dart';
 import 'mobileclip_benchmark_page.dart';
 import 'mobileclip_vector_probe_page.dart';
-import '../../service/media_thumbnail_cache_service.dart';
 import '../../service/video_cache_service.dart';
 import 'ai_model_weights_page.dart';
 
@@ -760,7 +759,6 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _showCacheManagement() async {
     // 获取缓存统计信息
     final videoStats = await VideoCacheService.instance.getCacheStats();
-    final thumbnailStats = await MediaThumbnailCacheService.instance.getStats();
 
     if (!mounted) return;
     showDialog(
@@ -776,11 +774,6 @@ class _ProfilePageState extends State<ProfilePage> {
               children: [
                 const Text('缓存统计信息:'),
                 const SizedBox(height: 12),
-                _buildStatItem('缩略图缓存数量', '${thumbnailStats['count']} 个'),
-                _buildStatItem(
-                  '缩略图缓存大小',
-                  '${thumbnailStats['formattedBytes']}',
-                ),
                 _buildStatItem('视频缓存数量', '${videoStats['cacheFileCount']} 个'),
                 _buildStatItem('视频缓存大小', videoStats['cacheSizeFormatted']),
                 _buildStatItem('导出文件数量', '${videoStats['exportFileCount']} 个'),
@@ -795,9 +788,9 @@ class _ProfilePageState extends State<ProfilePage> {
                   ),
                 ),
                 const Text(
-                  '• 清理缓存会删除缩略图和缓存的视频文件\n'
+                  '• 缩略图路径随相册缓存写入数据库，不在这里清理\n'
+                  '• 清理缓存只会删除缓存的视频文件\n'
                   '• 清理导出文件会删除所有导出的视频\n'
-                  '• 缩略图会在扫描或显示时按需重建\n'
                   '• 这些操作不可恢复，请谨慎操作',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
@@ -847,14 +840,13 @@ class _ProfilePageState extends State<ProfilePage> {
     final confirmed = await _showConfirmationDialog(
       '清理缓存',
       '确定要清理所有缓存文件吗？\n\n'
-          '这将删除缩略图缓存和视频缓存，但不会影响已导出的视频。\n'
-          '下次显示缩略图或导出相同内容时需要重新生成缓存。',
+          '这将删除视频缓存，但不会清理相册缩略图。\n'
+          '下次导出相同内容时需要重新生成视频缓存。',
     );
 
     if (!confirmed) return;
 
     try {
-      await MediaThumbnailCacheService.instance.clear();
       await VideoCacheService.instance.clearAllCache();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -879,7 +871,6 @@ class _ProfilePageState extends State<ProfilePage> {
       '清理全部',
       '确定要清理所有缓存和导出文件吗？\n\n'
           '这将删除：\n'
-          '• 所有缓存的缩略图文件\n'
           '• 所有缓存的视频文件\n'
           '• 所有已导出的视频文件\n\n'
           '这个操作不可恢复！',
@@ -889,7 +880,6 @@ class _ProfilePageState extends State<ProfilePage> {
 
     try {
       // 清理缓存
-      await MediaThumbnailCacheService.instance.clear();
       await VideoCacheService.instance.clearAllCache();
 
       // 清理导出目录

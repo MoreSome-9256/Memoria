@@ -52,12 +52,14 @@ class _PhotoSyncPlan {
     required this.prepared,
     required this.removedCount,
     required this.built,
+    this.insertedPhotoIds = const <int>[],
   });
 
   final int totalBefore;
   final _PreparedScanData prepared;
   final int removedCount;
   final _ScanBuildResult built;
+  final List<int> insertedPhotoIds;
 }
 
 class _SingleAssetBuildResult {

@@ -137,12 +137,14 @@ class _AiPipelineRunner {
     );
     var junkReportPublished = false;
 
-    void publishJunkReportIfNeeded() {
-      if (junkReportPublished || junkCandidates.isEmpty) return;
+    bool publishJunkReportIfNeeded() {
+      if (junkReportPublished) return true;
+      if (junkCandidates.isEmpty) return false;
       junkReportPublished = true;
       replacePendingJunkCleanupReport(
         JunkPhotoCleanupReport.fromCandidates(junkCandidates),
       );
+      return true;
     }
 
     FaceDetector? sharedFaceDetector;
@@ -354,7 +356,10 @@ class _AiPipelineRunner {
       pipelineProfiler.logFinalSummary();
       await mobileClipTagService.endWorkflowSession();
       await mobileClipEmbeddingService.endWorkflowSession();
-      publishJunkReportIfNeeded();
+      final publishedJunkReport = publishJunkReportIfNeeded();
+      if (!publishedJunkReport) {
+        await _service.refreshJunkCleanupReportFromDatabase();
+      }
 
       final remainingPending = _countPending(photoBox, null);
       if (remainingPending > 0 && !_stopRequested) {

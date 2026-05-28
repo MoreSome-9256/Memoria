@@ -1,10 +1,18 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/entity/photo_entity.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../storage/vector_index/vector_index_constants.dart';
 import 'analysis_pipeline_queue.dart';
@@ -21,10 +29,46 @@ import 'mobileclip_tag_service.dart';
 import 'ocr_service.dart';
 import 'event_service.dart';
 import 'junk_photo_filter_service.dart';
+import 'media_analysis_image_reader.dart';
 import 'media_embedding_service.dart';
-import 'media_thumbnail_cache_service.dart';
 import 'photo_attribute_background_service.dart';
 import '../utils/media_type_helper.dart';
+
+const String _foregroundProducerRunningKey =
+    'foreground_unified_pipeline_producer_running';
+const String _foregroundStopRequestedKey =
+    'foreground_unified_pipeline_stop_requested';
+
+Future<void> _foregroundProducerIsolateEntry(
+  Map<String, Object?> config,
+) async {
+  _ensureBackgroundMessenger(config);
+  _attachObjectBoxStore(config);
+  await PhotoService().init();
+  final service = UnifiedAnalysisPipelineService();
+  await service._runForegroundProducerOnly(
+    clearCacheFirst: config['clearCacheFirst'] == true,
+    analyzeWithAi: config['analyzeWithAi'] != false,
+  );
+}
+
+void _ensureBackgroundMessenger(Map<String, Object?> config) {
+  final rootIsolateToken = config['rootIsolateToken'];
+  if (rootIsolateToken is! RootIsolateToken) {
+    throw StateError('Foreground worker missing root isolate token');
+  }
+  WidgetsFlutterBinding.ensureInitialized();
+  BackgroundIsolateBinaryMessenger.ensureInitialized(rootIsolateToken);
+  DartPluginRegistrant.ensureInitialized();
+}
+
+void _attachObjectBoxStore(Map<String, Object?> config) {
+  final referenceBytes = config['storeReferenceBytes'];
+  if (referenceBytes is! Uint8List || referenceBytes.isEmpty) {
+    throw StateError('Foreground worker missing ObjectBox store reference');
+  }
+  ObjectBoxService().attachReferenceBytes(referenceBytes);
+}
 
 class UnifiedAnalysisPipelineService {
   UnifiedAnalysisPipelineService._internal();
@@ -47,6 +91,7 @@ class UnifiedAnalysisPipelineService {
   bool _stopRequested = false;
   bool _scanCompletedNormally = false;
   bool _analysisEnabled = true;
+  bool _suppressForegroundTaskChannelCalls = false;
   int _scanCompleted = 0;
   int _scanTotal = 0;
   int _aiCompleted = 0;
@@ -90,11 +135,29 @@ class UnifiedAnalysisPipelineService {
     );
 
     try {
-      if (clearCacheFirst) {
-        await _runFullRebuildPipeline();
-      } else {
-        await _runIncrementalPipeline();
+      final settings = await AppAiSettingsService.instance.load();
+      if (settings.androidForegroundServiceEnabled &&
+          (Platform.isAndroid || Platform.isIOS)) {
+
+        _updateProgress(
+          stage: UnifiedAnalysisStage.scanning,
+          message: analyzeWithAi
+              ? '已交给前台服务：正在缓存并串行分析媒体'
+              : '已交给前台服务：正在更新相册缓存',
+        );
+        await AiBackgroundTaskService.instance.startUnifiedPipelineWorker(
+          clearCacheFirst: clearCacheFirst,
+          analyzeWithAi: analyzeWithAi,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+        _progressNotifier.value = UnifiedAnalysisProgress.idle();
+        return;
       }
+
+      await runInsideForegroundService(
+        clearCacheFirst: clearCacheFirst,
+        analyzeWithAi: analyzeWithAi,
+      );
     } catch (error) {
       debugPrint('[pipeline] ❌ 流水线失败: $error');
       _progressNotifier.value = UnifiedAnalysisProgress.idle();
@@ -106,8 +169,159 @@ class UnifiedAnalysisPipelineService {
     }
   }
 
+  Future<void> runInsideForegroundService({
+    bool clearCacheFirst = false,
+    bool analyzeWithAi = true,
+    Uint8List? storeReferenceBytes,
+    RootIsolateToken? rootIsolateToken,
+  }) async {
+    _isRunning = true;
+    _stopRequested = false;
+    _scanCompletedNormally = false;
+    _analysisEnabled = analyzeWithAi;
+    _suppressForegroundTaskChannelCalls = storeReferenceBytes != null;
+    _queue = AnalysisPipelineQueue(capacity: 200, highWaterMark: 160);
+    _scanCompleted = 0;
+    _scanTotal = 0;
+    _aiCompleted = 0;
+    _aiTotal = 0;
+    _aiFailed = 0;
+    _activeCandidatePhotoIds.clear();
+    _junkCandidates.clear();
+    _startedAt = DateTime.now();
+
+    try {
+      if (analyzeWithAi) {
+        await _runForegroundProducerConsumerIsolates(
+          clearCacheFirst: clearCacheFirst,
+          analyzeWithAi: analyzeWithAi,
+          storeReferenceBytes: storeReferenceBytes,
+          rootIsolateToken: rootIsolateToken,
+        );
+      } else if (clearCacheFirst) {
+        if (storeReferenceBytes != null) {
+          ObjectBoxService().attachReferenceBytes(storeReferenceBytes);
+        }
+        await PhotoService().init();
+        await _runFullRebuildPipeline(
+          requestPermission: storeReferenceBytes == null,
+        );
+      } else {
+        if (storeReferenceBytes != null) {
+          ObjectBoxService().attachReferenceBytes(storeReferenceBytes);
+        }
+        await PhotoService().init();
+        await _runIncrementalPipeline(
+          requestPermission: storeReferenceBytes == null,
+        );
+      }
+    } catch (error) {
+      debugPrint('[pipeline] ❌ 流水线失败: $error');
+      _progressNotifier.value = UnifiedAnalysisProgress.idle();
+      rethrow;
+    } finally {
+      _isRunning = false;
+      _queue.close();
+      debugPrint('[pipeline] ======== 前台服务流水线结束 ========');
+    }
+  }
+
+  Future<void> _runForegroundProducerConsumerIsolates({
+    required bool clearCacheFirst,
+    required bool analyzeWithAi,
+    Uint8List? storeReferenceBytes,
+    RootIsolateToken? rootIsolateToken,
+  }) async {
+    final referenceBytes =
+        storeReferenceBytes ?? ObjectBoxService().storeReferenceBytes;
+    final token = rootIsolateToken ?? RootIsolateToken.instance;
+    if (token == null) {
+      throw StateError('Foreground pipeline missing root isolate token');
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_foregroundProducerRunningKey, true);
+    await prefs.setBool(_foregroundStopRequestedKey, false);
+    final config = <String, Object?>{
+      'clearCacheFirst': clearCacheFirst,
+      'analyzeWithAi': analyzeWithAi,
+      'storeReferenceBytes': referenceBytes,
+      'rootIsolateToken': token,
+    };
+
+    await Future.wait(<Future<void>>[
+      Isolate.run(() => _foregroundProducerIsolateEntry(config)),
+      _runForegroundConsumerOnly(),
+    ]);
+  }
+
+  Future<void> _runForegroundProducerOnly({
+    required bool clearCacheFirst,
+    required bool analyzeWithAi,
+  }) async {
+    _isRunning = true;
+    _stopRequested = false;
+    _scanCompletedNormally = false;
+    _analysisEnabled = analyzeWithAi;
+    _suppressForegroundTaskChannelCalls = true;
+    _queue = AnalysisPipelineQueue(capacity: 1, highWaterMark: 1);
+    _scanCompleted = 0;
+    _scanTotal = 0;
+    _aiCompleted = 0;
+    _aiTotal = 0;
+    _aiFailed = 0;
+    _activeCandidatePhotoIds.clear();
+    _junkCandidates.clear();
+    _startedAt = DateTime.now();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_foregroundProducerRunningKey, true);
+    try {
+      if (clearCacheFirst) {
+        _updateProgress(
+          stage: UnifiedAnalysisStage.scanning,
+          message: '正在清空缓存…',
+        );
+        await PhotoService().clearAllCachedData();
+      }
+      await _runProducer(
+        enqueueForConsumer: false,
+        requestPermission: false,
+      );
+    } finally {
+      await prefs.setBool(_foregroundProducerRunningKey, false);
+      _isRunning = false;
+      _queue.close();
+    }
+  }
+
+  Future<void> _runForegroundConsumerOnly() async {
+    _isRunning = true;
+    _stopRequested = false;
+    _scanCompletedNormally = true;
+    _analysisEnabled = true;
+    _suppressForegroundTaskChannelCalls = true;
+    _queue = AnalysisPipelineQueue(capacity: 1, highWaterMark: 1);
+    _scanCompleted = 0;
+    _scanTotal = 0;
+    _aiCompleted = 0;
+    _aiTotal = PhotoService().countPendingAnalysisCandidates();
+    _aiFailed = 0;
+    _activeCandidatePhotoIds.clear();
+    _junkCandidates.clear();
+    _startedAt = DateTime.now();
+
+    try {
+      await _runSerialConsumerFromDatabase();
+      await _onPipelineCompleted();
+    } finally {
+      _isRunning = false;
+      _queue.close();
+    }
+  }
+
   void stopPipeline() {
     _stopRequested = true;
+    unawaited(_writeForegroundStopRequested(true));
     _queue.clear();
     _clearStoppedCandidates();
     debugPrint('[pipeline] 已请求停止扫描和 AI 消费者');
@@ -139,83 +353,66 @@ class UnifiedAnalysisPipelineService {
       _aiTotal = photos.length;
       _updateProgress(
         stage: UnifiedAnalysisStage.processing,
-        message: '正在恢复 $_aiTotal 张未完成图片的 AI 分析',
+        message: '正在串行处理 $_aiTotal 张未完成图片',
       );
-      for (final photo in photos) {
-        _activeCandidatePhotoIds.add(photo.id);
-        await _queue.enqueue(
-          PipelineQueueItem(
-            photoId: photo.id,
-            photo: photo,
-            enqueuedAt: DateTime.now(),
-          ),
-        );
+      if (_aiTotal > 0) {
+        for (final photo in photos) {
+          await _queue.enqueue(
+            PipelineQueueItem(
+              photoId: photo.id,
+              photo: photo,
+              enqueuedAt: DateTime.now(),
+            ),
+          );
+          _activeCandidatePhotoIds.add(photo.id);
+        }
+        _queue.close();
+        await _runConsumer();
+        await _onPipelineCompleted();
       }
-      _queue.close();
-      await _runConsumer();
     } finally {
       if (_stopRequested) {
         _clearStoppedCandidates();
       }
       _isRunning = false;
       _queue.close();
+      _progressNotifier.value = UnifiedAnalysisProgress.idle();
       debugPrint('[pipeline] ======== 恢复残余 AI 任务结束 ========');
     }
   }
 
-  Future<void> _runIncrementalPipeline() async {
-    final settings = await AppAiSettingsService.instance.load();
-    final foregroundStarted = settings.androidForegroundServiceEnabled
-        ? await AiBackgroundTaskService.instance.startAlbumCacheForeground(
-            text: '正在准备分析流水线…',
-          )
-        : false;
-
-    try {
-      if (_analysisEnabled) {
-        await Future.wait([
-          _runProducer(),
-          _runConsumer(),
-        ], eagerError: true);
-      } else {
-        await _runProducer();
-        await _onPipelineCompleted();
-      }
-    } finally {
-      if (foregroundStarted) {
-        await AiBackgroundTaskService.instance.stop();
-      }
+  Future<void> _runIncrementalPipeline({bool requestPermission = true}) async {
+    if (_analysisEnabled) {
+      await Future.wait(<Future<void>>[
+        _runProducer(requestPermission: requestPermission),
+        _runConsumer(),
+      ]);
+    } else {
+      await _runProducer(requestPermission: requestPermission);
     }
+    await _onPipelineCompleted();
   }
 
-  Future<void> _runFullRebuildPipeline() async {
+  Future<void> _runFullRebuildPipeline({bool requestPermission = true}) async {
     debugPrint('[pipeline] 全量重建模式：先清空再重建');
 
     _updateProgress(stage: UnifiedAnalysisStage.scanning, message: '正在清空缓存…');
     await PhotoService().clearAllCachedData();
 
-    await _runIncrementalPipeline();
+    await _runIncrementalPipeline(requestPermission: requestPermission);
   }
 
-  Future<void> _runProducer() async {
+  Future<void> _runProducer({
+    bool enqueueForConsumer = true,
+    bool requestPermission = true,
+  }) async {
     final settings = await AppAiSettingsService.instance.load();
-    final requestType = settings.includeVideos
-        ? RequestType.common
-        : RequestType.image;
+    final requestType = _resolveRequestType(settings);
 
-    final state = await PhotoManager.requestPermissionExtend(
-      requestOption: PermissionRequestOption(
-        androidPermission: AndroidPermission(
-          type: requestType,
-          mediaLocation: false,
-        ),
-      ),
-    );
-
-    if (!state.hasAccess) {
-      debugPrint('[pipeline] 没有相册权限');
-      _queue.close();
-      return;
+    if (requestPermission) {
+      debugPrint("[pipeline] 请求相册权限 has been deprecated. Ask for permission earlier.");
+    } else {
+      await PhotoManager.setIgnorePermissionCheck(true);
     }
 
     final albSel = await AlbumSelectionPreferenceService().loadSelection();
@@ -250,11 +447,11 @@ class UnifiedAnalysisPipelineService {
     final handoffBatch = <PipelineQueueItem>[];
 
     for (final album in targetAlbums) {
-      if (_stopRequested) break;
+      if (_stopRequested || await _readForegroundStopRequested()) break;
 
       final albumCount = await album.assetCountAsync;
       for (var offset = 0; offset < albumCount; offset += pageSize) {
-        if (_stopRequested) break;
+        if (_stopRequested || await _readForegroundStopRequested()) break;
 
         final end = math.min(albumCount, offset + pageSize);
         final page = await album.getAssetListRange(start: offset, end: end);
@@ -262,7 +459,7 @@ class UnifiedAnalysisPipelineService {
         if (page.isEmpty) continue;
 
         for (final asset in page) {
-          if (_stopRequested) break;
+          if (_stopRequested || await _readForegroundStopRequested()) break;
           scanned++;
           _scanCompleted = scanned;
 
@@ -277,14 +474,17 @@ class UnifiedAnalysisPipelineService {
                 ),
               );
               if (handoffBatch.length >= _handoffBatchSize) {
-                await _handoffBatchToAi(handoffBatch);
+                await _handoffBatchToAi(
+                  handoffBatch,
+                  enqueueForConsumer: enqueueForConsumer,
+                );
               }
             }
 
             _updateProgress(
               stage: UnifiedAnalysisStage.scanning,
               message: _analysisEnabled
-                  ? '正在更新相册缓存……($scanned/$_scanTotal)，已移交 $_aiTotal 张，队列 ${_queue.size}'
+                  ? '正在更新相册缓存……($scanned/$_scanTotal)，已加入 $_aiTotal 张待处理'
                   : '正在更新相册缓存……($scanned/$_scanTotal)',
             );
           }
@@ -292,7 +492,7 @@ class UnifiedAnalysisPipelineService {
             _updateProgress(
               stage: UnifiedAnalysisStage.scanning,
               message: _analysisEnabled
-                  ? '正在更新相册缓存……($scanned/$_scanTotal)，已移交 $_aiTotal 张，队列 ${_queue.size}'
+                  ? '正在更新相册缓存……($scanned/$_scanTotal)，已加入 $_aiTotal 张待处理'
                   : '正在更新相册缓存……($scanned/$_scanTotal)',
             );
           }
@@ -301,12 +501,15 @@ class UnifiedAnalysisPipelineService {
     }
 
     if (handoffBatch.isNotEmpty) {
-      await _handoffBatchToAi(handoffBatch);
+      await _handoffBatchToAi(
+        handoffBatch,
+        enqueueForConsumer: enqueueForConsumer,
+      );
     }
     _scanCompletedNormally = !_stopRequested;
     _queue.close();
     debugPrint(
-      '[pipeline] 生产者结束: scanned=$scanned queued=$_aiTotal stopped=$_stopRequested',
+      '[pipeline] 生产者结束: scanned=$scanned pendingAi=$_aiTotal stopped=$_stopRequested',
     );
   }
 
@@ -384,15 +587,84 @@ class UnifiedAnalysisPipelineService {
     if (_stopRequested) {
       _clearStoppedCandidates();
     }
-    await _onPipelineCompleted();
   }
 
-  Future<void> _handoffBatchToAi(List<PipelineQueueItem> batch) async {
-    if (batch.isEmpty || !_analysisEnabled) {
-      batch.clear();
-      return;
+  Future<void> _runSerialConsumerFromDatabase() async {
+    _updateProgress(
+      stage: UnifiedAnalysisStage.warmingUp,
+      message: '正在预热 AI 引擎…',
+    );
+
+    final settings = await AppAiSettingsService.instance.load();
+    final backend = await MobileClipBackendPreferenceService()
+        .getSelectedBackend();
+    final liteRt = MobileClipLiteRtService.withRuntimeOptions(
+      accelerator: settings.inferenceAccelerator,
+      xnnpackThreadCount: settings.xnnpackThreadCount,
+      modelBatchSize: settings.analysisBatchSize,
+    );
+
+    await liteRt.warmUp();
+    await MobileClipTagService().warmUp();
+    await JunkPhotoFilterService().warmUp();
+
+    while (!_stopRequested && !await _readForegroundStopRequested()) {
+      final pending = PhotoService().loadPendingAnalysisCandidatePhotos(
+        limit: 1,
+      );
+      if (pending.isEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        final producerRunning =
+            prefs.getBool(_foregroundProducerRunningKey) ?? false;
+        if (!producerRunning) {
+          break;
+        }
+        _aiTotal = math.max(
+          _aiTotal,
+          PhotoService().countPendingAnalysisCandidates() + _aiCompleted,
+        );
+        _updateProgress(
+          stage: UnifiedAnalysisStage.processing,
+          message: 'AI 已预热，等待扫描线程移交任务…',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        continue;
+      }
+
+      final photo = pending.first;
+      _aiTotal = math.max(
+        _aiTotal,
+        PhotoService().countPendingAnalysisCandidates() + _aiCompleted,
+      );
+      try {
+        await _processSinglePhoto(
+          photo,
+          settings: settings,
+          backend: backend,
+          liteRt: liteRt,
+        );
+        _aiCompleted++;
+        _updateProgress(
+          stage: UnifiedAnalysisStage.processing,
+          message: '已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed',
+        );
+      } catch (error) {
+        debugPrint('[pipeline] 串行处理失败 photoId=${photo.id}: $error');
+        _aiFailed++;
+        PhotoService().clearAiAnalysisCandidatesByIds(<int>[photo.id]);
+        _updateProgress(
+          stage: UnifiedAnalysisStage.processing,
+          message: '已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed',
+        );
+      }
     }
-    if (_queue.isClosed) {
+  }
+
+  Future<void> _handoffBatchToAi(
+    List<PipelineQueueItem> batch, {
+    bool enqueueForConsumer = true,
+  }) async {
+    if (batch.isEmpty || !_analysisEnabled) {
       batch.clear();
       return;
     }
@@ -401,11 +673,15 @@ class UnifiedAnalysisPipelineService {
     final photoIds = batch.map((item) => item.photoId).toList(growable: false);
     PhotoService().markAiAnalysisCandidatesByIds(photoIds);
     _activeCandidatePhotoIds.addAll(photoIds);
-    for (final item in batch) {
-      await _queue.enqueue(item);
+    if (enqueueForConsumer) {
+      for (final item in batch) {
+        await _queue.enqueue(item);
+      }
     }
     debugPrint(
-      '[pipeline] 已按 $batchSize 张一组移交 AI，total=$_aiTotal queue=${_queue.size}',
+      enqueueForConsumer
+          ? '[pipeline] 已按 $batchSize 张一组移交前台服务串行 AI，total=$_aiTotal queue=${_queue.size}'
+          : '[pipeline] 已按 $batchSize 张一组标记 AI 候选，total=$_aiTotal',
     );
     batch.clear();
   }
@@ -446,23 +722,19 @@ class UnifiedAnalysisPipelineService {
     required MobileClipBackend backend,
     required MobileClipLiteRtService liteRt,
   }) async {
-    final originalFile = await PhotoService().openOriginalMediaFile(
-      photo,
-      purpose: 'unified_ai_analysis',
-    );
     final mediaKind = MediaTypeHelper.fromStorageValue(
       photo.mediaKind,
-      path: originalFile.path,
+      path: photo.path,
     );
+    File? sourceFileForOcr;
     final embeddingService = MobileClipEmbeddingService();
     late final List<double> embedding;
     late final String embeddingModelVersion;
     late final List<double> tagEmbedding;
     if (mediaKind == MemoriaMediaKind.image) {
-      final originalBytes = await PhotoService().readOriginalMediaBytes(
-        photo,
-        purpose: 'unified_ai_analysis_bytes',
-      );
+      final originalInput = await _readAnalysisImageInputFromAsset(photo);
+      final originalBytes = originalInput.analysisImageBytes;
+      sourceFileForOcr = originalInput.sourceFile;
       await embeddingService.resolvePhotoEmbedding(
         photo: photo,
         preferredImageBytes: originalBytes,
@@ -472,20 +744,19 @@ class UnifiedAnalysisPipelineService {
       embeddingModelVersion = buildPhotoEmbeddingModelVersion(backend);
       tagEmbedding = embedding;
     } else {
-      final thumbnailBytes = await MediaThumbnailCacheService.instance
-          .decompressBytes(photo.thumbnailBytes);
-      final visualBytes = thumbnailBytes != null && thumbnailBytes.isNotEmpty
-          ? thumbnailBytes
-          : mediaKind == MemoriaMediaKind.dynamicImage
-          ? await PhotoService().readOriginalMediaBytes(
-              photo,
-              purpose: 'unified_dynamic_image_bytes',
+      final mediaInput = await _readAnalysisImageInputFromAsset(photo);
+      sourceFileForOcr = mediaInput.sourceFile;
+      final mediaEmbedding =
+          settings.mobileViClipEnabled &&
+              (mediaKind == MemoriaMediaKind.video ||
+                  mediaKind == MemoriaMediaKind.dynamicImage) &&
+              mediaInput.videoFrameBytes.isNotEmpty
+          ? await MediaEmbeddingService().embedVideoFrameBytes(
+              mediaInput.videoFrameBytes,
             )
-          : throw StateError('video thumbnail is empty');
-      final mediaEmbedding = await MediaEmbeddingService()
-          .embedPreparedMediaBytes(
+          : await MediaEmbeddingService().embedPreparedMediaBytes(
             kind: mediaKind,
-            imageOrThumbnailBytes: visualBytes,
+            imageOrThumbnailBytes: mediaInput.imageBytes,
             mobileViClipEnabled: settings.mobileViClipEnabled,
             backend: backend,
             liteRt: liteRt,
@@ -507,8 +778,9 @@ class UnifiedAnalysisPipelineService {
     List<String> ocrTags = const [];
     if (mediaKind != MemoriaMediaKind.video &&
         settings.ocrEnabled &&
+        sourceFileForOcr != null &&
         OcrService.shouldRunOcr(tags, aspectRatio: photo.aspectRatio)) {
-      final ocrResult = await OcrService().analyzeImageFile(originalFile);
+      final ocrResult = await OcrService().analyzeImageFile(sourceFileForOcr);
       ocrText = ocrResult.text;
       ocrTags = ocrResult.tags;
     }
@@ -559,6 +831,23 @@ class UnifiedAnalysisPipelineService {
     );
   }
 
+  Future<MediaAnalysisImageInput> _readAnalysisImageInputFromAsset(
+    PhotoEntity photo,
+  ) async {
+    final asset = await AssetEntity.fromId(photo.assetId);
+    if (asset == null) {
+      throw StateError('asset unavailable for image photoId=${photo.id}');
+    }
+    final input = await MediaAnalysisImageReader.instance.readAsset(
+      asset,
+      allowFileFallback: false,
+    );
+    if (input == null || input.analysisImageBytes.isEmpty) {
+      throw StateError('image reader returned empty data photoId=${photo.id}');
+    }
+    return input;
+  }
+
   Future<void> _onPipelineCompleted() async {
     _updateProgress(
       stage: UnifiedAnalysisStage.flushing,
@@ -567,20 +856,28 @@ class UnifiedAnalysisPipelineService {
 
     if (_analysisEnabled) {
       await EventService().runClustering();
-      if (_junkCandidates.isNotEmpty) {
-        AIService().replacePendingJunkCleanupReport(
-          JunkPhotoCleanupReport.fromCandidates(_junkCandidates),
-        );
-      }
+      await _publishPostFilterJunkReport();
     }
 
     _updateProgress(
       stage: UnifiedAnalysisStage.completed,
-      message: _analysisEnabled ? '已完成 $_aiCompleted 张照片' : '相册缓存已更新',
+      message: _analysisEnabled
+          ? '已完成 $_aiCompleted/$_aiTotal 张照片，失败 $_aiFailed'
+          : '相册缓存已更新',
     );
 
     await Future.delayed(const Duration(milliseconds: 1800));
     _progressNotifier.value = UnifiedAnalysisProgress.idle();
+  }
+
+  Future<void> _publishPostFilterJunkReport() async {
+    if (_junkCandidates.isNotEmpty) {
+      AIService().replacePendingJunkCleanupReport(
+        JunkPhotoCleanupReport.fromCandidates(_junkCandidates),
+      );
+      return;
+    }
+    await AIService().refreshJunkCleanupReportFromDatabase();
   }
 
   void _clearStoppedCandidates() {
@@ -589,6 +886,16 @@ class UnifiedAnalysisPipelineService {
     }
     PhotoService().clearAiAnalysisCandidatesByIds(_activeCandidatePhotoIds);
     _activeCandidatePhotoIds.clear();
+  }
+
+  Future<void> _writeForegroundStopRequested(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_foregroundStopRequestedKey, value);
+  }
+
+  Future<bool> _readForegroundStopRequested() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_foregroundStopRequestedKey) ?? false;
   }
 
   void _updateProgress({
@@ -615,12 +922,14 @@ class UnifiedAnalysisPipelineService {
       analysisEnabled: _analysisEnabled,
     );
 
-    unawaited(
-      AiBackgroundTaskService.instance.updateNotification(
-        title: 'Memoria 正在分析照片',
-        text: message,
-      ),
-    );
+    if (!_suppressForegroundTaskChannelCalls) {
+      unawaited(
+        AiBackgroundTaskService.instance.updateNotification(
+          title: 'Memoria 正在分析照片',
+          text: message,
+        ),
+      );
+    }
   }
 
   Future<int> _estimateTotalCount(List<AssetPathEntity> albums) async {
@@ -629,6 +938,10 @@ class UnifiedAnalysisPipelineService {
       total += await album.assetCountAsync;
     }
     return total;
+  }
+
+  RequestType _resolveRequestType(AppAiSettings settings) {
+    return settings.includeVideos ? RequestType.common : RequestType.image;
   }
 
   bool _isSelectedAlbum(AssetPathEntity album, Set<String> selectedIds) {

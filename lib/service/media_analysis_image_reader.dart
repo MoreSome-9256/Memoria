@@ -60,9 +60,12 @@ class MediaAnalysisImageReader {
     int analysisSize = defaultAnalysisSize,
     int frameCount = defaultFrameCount,
     File? fallbackFile,
+    bool allowFileFallback = true,
   }) async {
     final kind = _kindForAsset(asset, fallbackFile?.path);
-    final sourceFile = fallbackFile ?? await _bestReadableAssetFile(asset);
+    final sourceFile = allowFileFallback
+        ? fallbackFile ?? await _bestReadableAssetFile(asset)
+        : null;
     final dims = _boundedSize(
       width: asset.width,
       height: asset.height,

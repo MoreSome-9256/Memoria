@@ -225,6 +225,9 @@ class _AlbumPageState extends State<AlbumPage> {
     try {
       await UnifiedAnalysisPipelineService().startPendingAnalysisCandidates();
     } finally {
+      await AIService().refreshJunkCleanupReportFromDatabase(
+        replaceExisting: false,
+      );
       if (mounted) {
         await _refreshPendingAnalysisPrompt();
       }

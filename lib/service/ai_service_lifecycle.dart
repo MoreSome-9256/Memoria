@@ -11,6 +11,35 @@ extension AIServiceLifecycle on AIService {
     replacePendingJunkCleanupReport(null);
   }
 
+  Future<JunkPhotoCleanupReport?> refreshJunkCleanupReportFromDatabase({
+    bool replaceExisting = true,
+  }) async {
+    final current = latestJunkCleanupReport;
+    if (!replaceExisting && current != null && current.hasCandidates) {
+      return current;
+    }
+    final photos = await PhotoService().loadJunkCandidatePhotos();
+    if (photos.isEmpty) {
+      clearPendingJunkCleanupReport();
+      return null;
+    }
+    final report = JunkPhotoCleanupReport.fromCandidates(
+      photos
+          .map(
+            (photo) => JunkPhotoCleanupCandidate(
+              photoId: photo.id,
+              assetId: photo.assetId,
+              path: photo.path,
+              timestamp: photo.timestamp,
+              reasons: const <JunkPhotoHit>[],
+            ),
+          )
+          .toList(growable: false),
+    );
+    replacePendingJunkCleanupReport(report);
+    return report;
+  }
+
   Future<void> setAutoResume(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(AIService._autoResumeKey, enabled);
@@ -436,6 +465,7 @@ extension AIServiceLifecycle on AIService {
     final pendingIds = PhotoService().loadPendingAnalysisCandidateIds();
     final pending = pendingIds.length;
     if (pending <= 0) {
+      await refreshJunkCleanupReportFromDatabase();
       await AIProgressNotificationService().clearProgressNotificationSurfaces();
       await _persistRuntimeState(isActive: false);
       return;

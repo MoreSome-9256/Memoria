@@ -151,6 +151,45 @@ class UnifiedAnalysisProgress {
     return weighted.clamp(0, 1);
   }
 
+  double? get averageSecondsPerItem {
+    final scanAvg = _averageSeconds(completed: scanCompleted);
+    final aiAvg = _averageSeconds(completed: aiCompleted);
+    if (scanAvg == null) return aiAvg;
+    if (aiAvg == null) return scanAvg;
+    return scanAvg > aiAvg ? scanAvg : aiAvg;
+  }
+
+  Duration? get estimatedRemainingDuration {
+    final scanRemaining = _estimatedRemaining(
+      completed: scanCompleted,
+      total: scanTotal,
+    );
+    final aiRemaining = _estimatedRemaining(
+      completed: aiCompleted,
+      total: aiTotal,
+    );
+    if (scanRemaining == null) return aiRemaining;
+    if (aiRemaining == null) return scanRemaining;
+    return scanRemaining > aiRemaining ? scanRemaining : aiRemaining;
+  }
+
+  Duration get elapsed => Duration(milliseconds: elapsedMs);
+
+  double? _averageSeconds({required int completed}) {
+    if (completed <= 0 || elapsedMs <= 0) return null;
+    return elapsedMs / 1000.0 / completed;
+  }
+
+  Duration? _estimatedRemaining({
+    required int completed,
+    required int total,
+  }) {
+    final avg = _averageSeconds(completed: completed);
+    final remaining = total - completed;
+    if (avg == null || remaining <= 0) return null;
+    return Duration(milliseconds: (avg * remaining * 1000).round());
+  }
+
   UnifiedAnalysisProgress copyWith({
     UnifiedAnalysisStage? stage,
     bool? isRunning,

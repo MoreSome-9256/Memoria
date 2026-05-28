@@ -5,34 +5,78 @@
 
 import 'dart:io';
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'dart:ui';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'analysis_spool_service.dart';
 
+import '../storage/objectbox/objectbox_service.dart';
 import 'spool_analysis_worker.dart';
+import 'unified_analysis_pipeline_service.dart';
 
 /// 前台任务回调入口，在后台 isolate 中运行。
 @pragma('vm:entry-point')
 void foregroundTaskCallback() {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
   FlutterForegroundTask.setTaskHandler(_SpoolTaskHandler());
 }
 
 @pragma('vm:entry-point')
 void albumCacheForegroundTaskCallback() {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
   FlutterForegroundTask.setTaskHandler(_AlbumCacheTaskHandler());
 }
 
 class _AlbumCacheTaskHandler extends TaskHandler {
+  bool _started = false;
+
   @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    if (_started) return;
+    _started = true;
+    unawaited(_runPipeline());
+  }
 
   @override
   void onRepeatEvent(DateTime timestamp) {}
 
   @override
-  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {}
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
+    UnifiedAnalysisPipelineService().stopPipeline();
+  }
+
+  Future<void> _runPipeline() async {
+    try {
+      final request = await AiBackgroundTaskService.instance
+          .takePendingUnifiedPipelineRequest();
+      if (request == null) {
+        debugPrint('[foreground-pipeline] 没有待执行的缓存/AI 任务');
+        return;
+      }
+      await UnifiedAnalysisPipelineService().runInsideForegroundService(
+        clearCacheFirst: request.clearCacheFirst,
+        analyzeWithAi: request.analyzeWithAi,
+        storeReferenceBytes: request.storeReferenceBytes,
+        rootIsolateToken: RootIsolateToken.instance,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('[foreground-pipeline] 执行失败: $error');
+      debugPrint('[foreground-pipeline] 堆栈: $stackTrace');
+    } finally {
+      await AiBackgroundTaskService.instance.clearPendingUnifiedPipelineRequest();
+      // Do not stop the foreground service from inside its own task isolate.
+      // flutter_foreground_task answers stopService over a MethodChannel; if
+      // that call races with FlutterEngine teardown, Flutter can abort with
+      // platform_message_response_dart_port.cc did_send.
+    }
+  }
 }
 
 class _SpoolTaskHandler extends TaskHandler {
@@ -64,7 +108,8 @@ class _SpoolTaskHandler extends TaskHandler {
     } catch (error) {
       debugPrint('❌ Spool worker 执行失败: $error');
     } finally {
-      await AiBackgroundTaskService.instance.stop();
+      // See _AlbumCacheTaskHandler._runPipeline: stopping from the foreground
+      // task isolate can race with the MethodChannel response port teardown.
     }
   }
 
@@ -81,6 +126,14 @@ class AiBackgroundTaskService {
 
   static bool _initialized = false;
   static const _pendingManifestJobIdKey = 'spool_pending_manifest_job_id';
+  static const _pendingUnifiedPipelineKey =
+      'foreground_pending_unified_pipeline';
+  static const _pendingUnifiedClearCacheKey =
+      'foreground_pending_unified_clear_cache';
+  static const _pendingUnifiedAnalyzeKey =
+      'foreground_pending_unified_analyze_ai';
+  static const _pendingUnifiedStoreReferenceKey =
+      'foreground_pending_unified_store_reference';
 
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
@@ -195,6 +248,57 @@ class AiBackgroundTaskService {
     return !wasRunning;
   }
 
+  Future<void> startUnifiedPipelineWorker({
+    required bool clearCacheFirst,
+    required bool analyzeWithAi,
+  }) async {
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      return;
+    }
+    await _ensureInitialized();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_pendingUnifiedPipelineKey, true);
+    await prefs.setBool(_pendingUnifiedClearCacheKey, clearCacheFirst);
+    await prefs.setBool(_pendingUnifiedAnalyzeKey, analyzeWithAi);
+    await prefs.setString(
+      _pendingUnifiedStoreReferenceKey,
+      base64Encode(ObjectBoxService().storeReferenceBytes),
+    );
+    if (await FlutterForegroundTask.isRunningService) {
+      await FlutterForegroundTask.stopService();
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    await startService(
+      title: analyzeWithAi ? 'Memoria 正在缓存并分析媒体' : 'Memoria 正在更新相册缓存',
+      text: analyzeWithAi ? '正在读取授权范围，并串行执行本地 AI 分析' : '正在读取授权范围并更新相册缓存',
+      callback: albumCacheForegroundTaskCallback,
+    );
+  }
+
+  Future<_UnifiedPipelineForegroundRequest?>
+      takePendingUnifiedPipelineRequest() async {
+    final prefs = await SharedPreferences.getInstance();
+    final pending = prefs.getBool(_pendingUnifiedPipelineKey) ?? false;
+    if (!pending) return null;
+    final encodedReference = prefs.getString(_pendingUnifiedStoreReferenceKey);
+    if (encodedReference == null || encodedReference.isEmpty) {
+      throw StateError('Foreground pipeline missing ObjectBox store reference');
+    }
+    return _UnifiedPipelineForegroundRequest(
+      clearCacheFirst: prefs.getBool(_pendingUnifiedClearCacheKey) ?? false,
+      analyzeWithAi: prefs.getBool(_pendingUnifiedAnalyzeKey) ?? true,
+      storeReferenceBytes: Uint8List.fromList(base64Decode(encodedReference)),
+    );
+  }
+
+  Future<void> clearPendingUnifiedPipelineRequest() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_pendingUnifiedPipelineKey);
+    await prefs.remove(_pendingUnifiedClearCacheKey);
+    await prefs.remove(_pendingUnifiedAnalyzeKey);
+    await prefs.remove(_pendingUnifiedStoreReferenceKey);
+  }
+
   Future<void> updateNotification({
     required String title,
     required String text,
@@ -216,4 +320,16 @@ class AiBackgroundTaskService {
     if (!Platform.isAndroid && !Platform.isIOS) return;
     await FlutterForegroundTask.stopService();
   }
+}
+
+class _UnifiedPipelineForegroundRequest {
+  const _UnifiedPipelineForegroundRequest({
+    required this.clearCacheFirst,
+    required this.analyzeWithAi,
+    required this.storeReferenceBytes,
+  });
+
+  final bool clearCacheFirst;
+  final bool analyzeWithAi;
+  final Uint8List storeReferenceBytes;
 }

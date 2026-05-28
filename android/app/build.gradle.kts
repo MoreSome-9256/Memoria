@@ -30,7 +30,7 @@ android {
         applicationId = "com.example.photo_album"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        minSdk = 27
         targetSdk = 35
         // minSdk = flutter.minSdkVersion  // Required for photo_manager
         // targetSdk = flutter.targetSdkVersion

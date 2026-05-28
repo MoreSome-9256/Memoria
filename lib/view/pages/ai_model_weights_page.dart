@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../service/ai_model_weight_service.dart';
@@ -11,6 +13,7 @@ class AiModelWeightsPage extends StatefulWidget {
 
 class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
   late Future<List<AiModelWeightStatus>> _future;
+  final Map<AiModelWeightId, DownloadProgress> _downloadProgress = {};
 
   @override
   void initState() {
@@ -37,16 +40,54 @@ class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
   }
 
   Future<void> _download(AiModelWeightId id) async {
-    try {
-      await AiModelWeightService.instance.downloadWeights(id);
-    } catch (error) {
-      if (!mounted) return;
+    setState(() {
+      _downloadProgress[id] = const DownloadProgress(
+        state: DownloadState.downloading,
+        progress: 0.0,
+        currentFile: 0,
+        totalFiles: 1,
+      );
+    });
+
+    await AiModelWeightService.instance.downloadWeights(
+      id,
+      onProgress: (progress) {
+        if (mounted) {
+          setState(() {
+            _downloadProgress[id] = progress;
+          });
+        }
+      },
+    );
+
+    if (!mounted) return;
+    _reload();
+
+    final progress = _downloadProgress[id];
+    if (progress?.state == DownloadState.completed) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text(error.toString()),
+          content: Text('已下载 ${id.label}'),
         ),
       );
+    } else if (progress?.state == DownloadState.failed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('下载失败: ${progress?.error ?? "未知错误"}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _cancelDownload(AiModelWeightId id) async {
+    await AiModelWeightService.instance.cancelDownload(id);
+    if (mounted) {
+      setState(() {
+        _downloadProgress.remove(id);
+      });
     }
   }
 
@@ -83,20 +124,62 @@ class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
                   '${status.hasDownloadedFiles ? ' · 已下载 ${status.presentFiles.length} 个文件' : ''}',
                 ),
                 isThreeLine: true,
-                trailing: status.hasDownloadedFiles
-                    ? TextButton(
-                        onPressed: () => _delete(id),
-                        child: const Text('删除'),
-                      )
-                    : TextButton(
-                        onPressed: () => _download(id),
-                        child: const Text('下载'),
-                      ),
+                trailing: _buildTrailing(context, id, status),
               );
             },
           );
         },
       ),
+    );
+  }
+
+  Widget _buildTrailing(BuildContext context, AiModelWeightId id, AiModelWeightStatus status) {
+    final progress = _downloadProgress[id];
+    final isDownloading = AiModelWeightService.instance.isDownloading(id);
+
+    if (isDownloading || progress != null) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                LinearProgressIndicator(
+                  value: progress?.overallProgress ?? 0.0,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${((progress?.overallProgress ?? 0.0) * 100).toStringAsFixed(0)}% '
+                  '(${progress?.currentFile ?? 0}/${progress?.totalFiles ?? 1})',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (progress?.state == DownloadState.downloading)
+            IconButton(
+              onPressed: () => _cancelDownload(id),
+              icon: const Icon(Icons.cancel),
+              tooltip: '取消',
+            ),
+        ],
+      );
+    }
+
+    if (status.hasDownloadedFiles) {
+      return TextButton(
+        onPressed: () => _delete(id),
+        child: const Text('删除'),
+      );
+    }
+
+    return TextButton(
+      onPressed: () => _download(id),
+      child: const Text('下载'),
     );
   }
 }

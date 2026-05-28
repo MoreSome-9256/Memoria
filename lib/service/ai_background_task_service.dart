@@ -111,8 +111,6 @@ class AiBackgroundTaskService {
 
   /// 写入 manifest → 启动前台服务。
   Future<void> startAnalysisWorker({
-    int? maxPhotos,
-    List<int>? photoIds,
     AnalysisJobManifest? manifest,
   }) async {
     if (manifest != null) {
@@ -169,16 +167,20 @@ class AiBackgroundTaskService {
       await updateNotification(title: title, text: text);
       return;
     }
-    await FlutterForegroundTask.startService(
+    final result = await FlutterForegroundTask.startService(
       serviceId: 43021,
       serviceTypes: const <ForegroundServiceTypes>[
         ForegroundServiceTypes.dataSync,
+        ForegroundServiceTypes.mediaProcessing,
       ],
       notificationTitle: title,
       notificationText: text,
       notificationIcon: null,
       callback: callback ?? foregroundTaskCallback,
     );
+    if (result is ServiceRequestFailure) {
+      debugPrint('[foreground] startService failed: ${result.error}');
+    }
   }
 
   Future<bool> startAlbumCacheForeground({required String text}) async {

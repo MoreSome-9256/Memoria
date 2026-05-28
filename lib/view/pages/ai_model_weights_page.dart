@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:background_downloader/background_downloader.dart';
 import 'package:flutter/material.dart';
 
 import '../../service/ai_model_weight_service.dart';
@@ -13,7 +14,8 @@ class AiModelWeightsPage extends StatefulWidget {
 
 class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
   late Future<List<AiModelWeightStatus>> _future;
-  final Map<AiModelWeightId, DownloadProgress> _downloadProgress = {};
+  final Map<AiModelWeightId, double> _downloadProgress = {};
+  final Map<AiModelWeightId, TaskStatus> _downloadStatus = {};
 
   @override
   void initState() {
@@ -41,52 +43,59 @@ class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
 
   Future<void> _download(AiModelWeightId id) async {
     setState(() {
-      _downloadProgress[id] = const DownloadProgress(
-        state: DownloadState.downloading,
-        progress: 0.0,
-        currentFile: 0,
-        totalFiles: 1,
-      );
+      _downloadProgress[id] = 0.0;
+      _downloadStatus[id] = TaskStatus.running;
     });
-
+    
     await AiModelWeightService.instance.downloadWeights(
       id,
-      onProgress: (progress) {
+      onProgress: (progress, status) {
         if (mounted) {
           setState(() {
             _downloadProgress[id] = progress;
+            _downloadStatus[id] = status;
           });
         }
       },
     );
-
+    
     if (!mounted) return;
     _reload();
-
-    final progress = _downloadProgress[id];
-    if (progress?.state == DownloadState.completed) {
+    
+    if (_downloadStatus[id] == TaskStatus.complete) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
           content: Text('已下载 ${id.label}'),
         ),
       );
-    } else if (progress?.state == DownloadState.failed) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text('下载失败: ${progress?.error ?? "未知错误"}'),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
   }
-
+  
+  Future<void> _pauseDownload(AiModelWeightId id) async {
+    await AiModelWeightService.instance.pauseDownload(id);
+    if (mounted) {
+      setState(() {
+        _downloadStatus[id] = TaskStatus.paused;
+      });
+    }
+  }
+  
+  Future<void> _resumeDownload(AiModelWeightId id) async {
+    await AiModelWeightService.instance.resumeDownload(id);
+    if (mounted) {
+      setState(() {
+        _downloadStatus[id] = TaskStatus.running;
+      });
+    }
+  }
+  
   Future<void> _cancelDownload(AiModelWeightId id) async {
     await AiModelWeightService.instance.cancelDownload(id);
     if (mounted) {
       setState(() {
         _downloadProgress.remove(id);
+        _downloadStatus.remove(id);
       });
     }
   }
@@ -132,35 +141,47 @@ class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
       ),
     );
   }
-
+  
   Widget _buildTrailing(BuildContext context, AiModelWeightId id, AiModelWeightStatus status) {
-    final progress = _downloadProgress[id];
     final isDownloading = AiModelWeightService.instance.isDownloading(id);
-
-    if (isDownloading || progress != null) {
+    final progress = _downloadProgress[id] ?? 0.0;
+    final downloadStatus = _downloadStatus[id];
+    
+    if (isDownloading || downloadStatus != null) {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            width: 120,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                LinearProgressIndicator(
-                  value: progress?.overallProgress ?? 0.0,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${((progress?.overallProgress ?? 0.0) * 100).toStringAsFixed(0)}% '
-                  '(${progress?.currentFile ?? 0}/${progress?.totalFiles ?? 1})',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
+          if (downloadStatus == TaskStatus.running ||
+              downloadStatus == TaskStatus.paused)
+            SizedBox(
+              width: 100,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  LinearProgressIndicator(value: progress),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${(progress * 100).toStringAsFixed(0)}%',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
             ),
-          ),
           const SizedBox(width: 8),
-          if (progress?.state == DownloadState.downloading)
+          if (downloadStatus == TaskStatus.running)
+            IconButton(
+              onPressed: () => _pauseDownload(id),
+              icon: const Icon(Icons.pause),
+              tooltip: '暂停',
+            ),
+          if (downloadStatus == TaskStatus.paused)
+            IconButton(
+              onPressed: () => _resumeDownload(id),
+              icon: const Icon(Icons.play_arrow),
+              tooltip: '继续',
+            ),
+          if (downloadStatus == TaskStatus.running ||
+              downloadStatus == TaskStatus.paused)
             IconButton(
               onPressed: () => _cancelDownload(id),
               icon: const Icon(Icons.cancel),
@@ -169,14 +190,14 @@ class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
         ],
       );
     }
-
+    
     if (status.hasDownloadedFiles) {
       return TextButton(
         onPressed: () => _delete(id),
         child: const Text('删除'),
       );
     }
-
+    
     return TextButton(
       onPressed: () => _download(id),
       child: const Text('下载'),

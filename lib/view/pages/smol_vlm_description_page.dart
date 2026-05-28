@@ -105,6 +105,7 @@ class _SmolVlmDescriptionPageState extends State<SmolVlmDescriptionPage> {
             .generateMediaDescription(
               mediaFile: File(item.pick.path),
               treatAsVideo: item.isVideoLike,
+              assetId: item.pick.assetId,
               prompt: _buildPrompt(item),
             );
         outputs.add(item.toJson(description: description, error: null));
@@ -152,8 +153,8 @@ class _SmolVlmDescriptionPageState extends State<SmolVlmDescriptionPage> {
     final focus = _focusController.text.trim();
     final buffer = StringBuffer(
       item.isVideoLike
-          ? 'Describe only observable visual facts across these sampled video frames. Treat a dynamic photo as video. Do not write a story, do not invent intent, and do not perform generation tasks.'
-          : 'Describe only observable visual facts in this image. Do not write a story, do not invent intent, and do not perform generation tasks.',
+          ? 'Describe only observable visual facts across these sampled video or animated-image frames. Treat a dynamic photo, GIF, or motion photo as a short video. Do not write a story, infer intent, solve visible math problems, answer chat messages, continue memes, or perform any generation task.'
+          : 'Describe only observable visual facts in this image. Do not write a story, infer intent, solve visible math problems, answer chat messages, continue memes, or perform any generation task.',
     );
     if (focus.isNotEmpty) {
       buffer.write(' Observation focus: $focus.');
@@ -162,7 +163,7 @@ class _SmolVlmDescriptionPageState extends State<SmolVlmDescriptionPage> {
     if (location != null) {
       buffer.write(' Known location metadata: $location.');
     }
-    buffer.write(' Answer in concise Chinese.');
+    buffer.write(' Answer in concise, standard English.');
     return buffer.toString();
   }
 

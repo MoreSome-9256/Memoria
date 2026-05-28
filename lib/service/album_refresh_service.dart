@@ -66,14 +66,12 @@ class AlbumRefreshResult {
   const AlbumRefreshResult({
     required this.scanSummary,
     required this.requeuedCount,
-    required this.recentPhotoLimit,
     required this.clearCacheFirst,
     required this.aiAlreadyRunning,
   });
 
   final PhotoScanSummary scanSummary;
   final int requeuedCount;
-  final int? recentPhotoLimit;
   final bool clearCacheFirst;
   final bool aiAlreadyRunning;
 }
@@ -96,7 +94,6 @@ class AlbumRefreshService {
   // ── ★ 唯一入口 ──────────────────────────────────────────────────
   Future<AlbumRefreshResult?> startRefresh({
     bool clearCacheFirst = false,
-    int? recentPhotoLimit,
     bool useUnifiedPipeline = true,
     bool analyzeWithAi = true,
   }) async {
@@ -110,14 +107,13 @@ class AlbumRefreshService {
 
     debugPrint('[scan] ======== AlbumRefreshService 开始 ========');
     debugPrint(
-      '[scan] runId=$runId clearCacheFirst=$clearCacheFirst recentPhotoLimit=$recentPhotoLimit useUnifiedPipeline=$useUnifiedPipeline analyzeWithAi=$analyzeWithAi',
+      '[scan] runId=$runId clearCacheFirst=$clearCacheFirst useUnifiedPipeline=$useUnifiedPipeline analyzeWithAi=$analyzeWithAi',
     );
 
     try {
       if (useUnifiedPipeline) {
         final result = await _runUnifiedPipeline(
           clearCacheFirst: clearCacheFirst,
-          recentPhotoLimit: recentPhotoLimit,
           analyzeWithAi: analyzeWithAi,
         );
         debugPrint('[scan] ✅ 统一流水线完成');
@@ -125,13 +121,13 @@ class AlbumRefreshService {
       }
 
       if (clearCacheFirst) {
-        final result = await _runFullRebuild(recentPhotoLimit);
+        final result = await _runFullRebuild();
         debugPrint(
           '[scan] ✅ 全量重建完成: totalAfter=${result.scanSummary.totalAfter}',
         );
         return result;
       }
-      final result = await _runIncrementalScan(recentPhotoLimit);
+      final result = await _runIncrementalScan();
       debugPrint(
         '[scan] ✅ 增量扫描完成: inserted=${result.requeuedCount} aiAlreadyRunning=${result.aiAlreadyRunning}',
       );
@@ -174,7 +170,6 @@ class AlbumRefreshService {
   // ── 统一流水线（扫描 + AI 并行）──────────────────────────────
   Future<AlbumRefreshResult> _runUnifiedPipeline({
     required bool clearCacheFirst,
-    required int? recentPhotoLimit,
     required bool analyzeWithAi,
   }) async {
     debugPrint('[scan] 启动统一流水线模式');
@@ -197,7 +192,6 @@ class AlbumRefreshService {
 
     try {
       await pipelineService.startUnifiedPipeline(
-        maxPhotos: recentPhotoLimit,
         clearCacheFirst: clearCacheFirst,
         analyzeWithAi: analyzeWithAi,
       );
@@ -218,7 +212,6 @@ class AlbumRefreshService {
           skippedScreenshot: 0,
         ),
         requeuedCount: 0,
-        recentPhotoLimit: recentPhotoLimit,
         clearCacheFirst: clearCacheFirst,
         aiAlreadyRunning: false,
       );
@@ -267,21 +260,19 @@ class AlbumRefreshService {
     }
   }
 
-  // ── 增量扫描（"下一批 N 张" 路径）───────────────────────────────
-  Future<AlbumRefreshResult> _runIncrementalScan(int? recentPhotoLimit) async {
-    final isFullImport = recentPhotoLimit == null;
-    final batchSize = isFullImport ? null : math.max(10, recentPhotoLimit);
-    final scopeLabel = isFullImport ? '剩余所有照片' : '$batchSize 张新照片';
+  // ── 增量扫描（已授权范围内的全部新项目）───────────────────────────────
+  Future<AlbumRefreshResult> _runIncrementalScan() async {
+    const int? batchSize = null;
 
     debugPrint(
-      '[scan] _runIncrementalScan: batchSize=$batchSize isFullImport=$isFullImport',
+      '[scan] _runIncrementalScan: full authorized scope',
     );
 
     _setProgress(
       AlbumRefreshStage.scanning,
       0.04,
       '正在读取图片',
-      '从最新项目开始读取，目标：$scopeLabel；读到目标数量或没有更多新项目后交给 AI。',
+      '从当前授权范围读取全部新项目；如需子集，请先在系统照片权限中选择子集。',
     );
     debugPrint('[scan] ▶ stage=scanning progress=0.04');
 
@@ -331,8 +322,6 @@ class AlbumRefreshService {
       return await _finishIncrementalScan(
         scanResult: scanResult,
         scanStart: scanStart,
-        batchSize: batchSize,
-        isFullImport: isFullImport,
       );
     } finally {
       if (cacheForegroundStarted) {
@@ -344,17 +333,13 @@ class AlbumRefreshService {
   Future<AlbumRefreshResult> _finishIncrementalScan({
     required BatchScanResult scanResult,
     required DateTime scanStart,
-    required int? batchSize,
-    required bool isFullImport,
   }) async {
     final scanMs = DateTime.now().difference(scanStart).inMilliseconds;
     debugPrint(
       '[scan] scanBatchPhotos 完成: scannedCount=${scanResult.scannedCount} insertedCount=${scanResult.insertedCount} totalAfter=${scanResult.totalAfter} 耗时=${scanMs}ms',
     );
 
-    final handoffPhotoIds = PhotoService().loadPendingAiPhotoIds(
-      limit: batchSize,
-    );
+    final handoffPhotoIds = PhotoService().loadPendingAiPhotoIds();
 
     _setProgress(
       AlbumRefreshStage.queueing,
@@ -393,7 +378,6 @@ class AlbumRefreshService {
       return AlbumRefreshResult(
         scanSummary: summary,
         requeuedCount: 0,
-        recentPhotoLimit: batchSize,
         clearCacheFirst: false,
         aiAlreadyRunning: aiRunning,
       );
@@ -402,11 +386,7 @@ class AlbumRefreshService {
     debugPrint('[scan] 筛选出 ${handoffPhotoIds.length} 张待 AI 处理照片，开始 requeue');
     // step 2: 有新照片 → requeue（标记为未分析）
     await PhotoService().requeuePhotosForAiByIds(handoffPhotoIds);
-    _scheduleMediaIndexRefresh(
-      batchSize: isFullImport
-          ? math.max(handoffPhotoIds.length, 300)
-          : batchSize!,
-    );
+    _scheduleMediaIndexRefresh(batchSize: math.max(handoffPhotoIds.length, 300));
     debugPrint('[scan] requeue 完成');
 
     _setProgress(
@@ -428,10 +408,7 @@ class AlbumRefreshService {
     debugPrint('[scan] AI 状态: isAnalyzing=$aiRunning');
     if (!aiRunning) {
       unawaited(
-        _runAiPipeline(
-          maxPhotos: handoffPhotoIds.length,
-          photoIds: handoffPhotoIds,
-        ),
+        _runAiPipeline(),
       );
       debugPrint('[scan] _runAiPipeline 已触发 (unawaited)');
     }
@@ -448,16 +425,14 @@ class AlbumRefreshService {
     return AlbumRefreshResult(
       scanSummary: summary,
       requeuedCount: handoffPhotoIds.length,
-      recentPhotoLimit: batchSize,
       clearCacheFirst: false,
       aiAlreadyRunning: aiRunning,
     );
   }
 
   // ── 全量重建（"安全重建" 路径）───────────────────────────────────
-  Future<AlbumRefreshResult> _runFullRebuild(int? recentPhotoLimit) async {
-    debugPrint('[scan] _runFullRebuild: recentPhotoLimit=$recentPhotoLimit');
-    final isFullImport = recentPhotoLimit == null;
+  Future<AlbumRefreshResult> _runFullRebuild() async {
+    debugPrint('[scan] _runFullRebuild: full authorized scope');
     _setProgress(
       AlbumRefreshStage.scanning,
       0.04,
@@ -472,14 +447,12 @@ class AlbumRefreshService {
       AlbumRefreshStage.scanning,
       0.12,
       '正在读取系统相册',
-      isFullImport ? '范围：全部照片' : '范围：最近 $recentPhotoLimit 张',
+      '范围：当前授权范围内的全部照片',
     );
     debugPrint('[scan] ▶ stage=scanning (全量) progress=0.12');
 
     final rebuildStart = DateTime.now();
-    final scanSummary = await PhotoService().rebuildAllCachedData(
-      maxAssets: isFullImport ? null : recentPhotoLimit,
-    );
+    final scanSummary = await PhotoService().rebuildAllCachedData();
     final rebuildMs = DateTime.now().difference(rebuildStart).inMilliseconds;
     debugPrint(
       '[scan] 全量重建完成: totalAfter=${scanSummary.totalAfter} 耗时=${rebuildMs}ms',
@@ -498,16 +471,12 @@ class AlbumRefreshService {
     debugPrint(
       '[scan] 聚类完成 耗时=${DateTime.now().difference(clusterStart).inMilliseconds}ms',
     );
-    _scheduleMediaIndexRefresh(
-      batchSize: isFullImport ? 300 : recentPhotoLimit,
-    );
+    _scheduleMediaIndexRefresh(batchSize: 300);
 
     final aiRunning = AIService().isAnalyzing;
     debugPrint('[scan] AI 状态: isAnalyzing=$aiRunning');
     if (!aiRunning) {
-      unawaited(
-        _runAiPipeline(maxPhotos: isFullImport ? null : recentPhotoLimit),
-      );
+      unawaited(_runAiPipeline());
     }
     _setProgress(
       AlbumRefreshStage.handoff,
@@ -522,7 +491,6 @@ class AlbumRefreshService {
     return AlbumRefreshResult(
       scanSummary: scanSummary,
       requeuedCount: 0,
-      recentPhotoLimit: isFullImport ? null : recentPhotoLimit,
       clearCacheFirst: true,
       aiAlreadyRunning: aiRunning,
     );
@@ -544,16 +512,11 @@ class AlbumRefreshService {
     );
   }
 
-  Future<void> _runAiPipeline({int? maxPhotos, List<int>? photoIds}) async {
-    debugPrint(
-      '[scan] _runAiPipeline: maxPhotos=$maxPhotos photoIds=${photoIds?.length}',
-    );
+  Future<void> _runAiPipeline() async {
+    debugPrint('[scan] _runAiPipeline: full pending queue');
     try {
       await Future.delayed(const Duration(milliseconds: 300));
-      await AIService().analyzePhotosInBackground(
-        maxPhotos: maxPhotos,
-        photoIds: photoIds,
-      );
+      await AIService().analyzePhotosInBackground();
       debugPrint('[scan] ✅ _runAiPipeline 完成');
     } catch (error, stackTrace) {
       debugPrint('[scan] ❌ 后台 AI 管线执行失败: $error');

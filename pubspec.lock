@@ -1004,11 +1004,11 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: "v0.9.0-dev.6"
-      resolved-ref: "0e17c5cdd5bad526346e06f6fe6da05b6e707ef0"
+      ref: main
+      resolved-ref: e4d3bae3d5fd66c53b29e56646c8cb9da273c6d5
       url: "https://github.com/netdur/llama_cpp_dart.git"
     source: git
-    version: "0.9.0-dev.6"
+    version: "0.9.0-dev.7"
   logger:
     dependency: transitive
     description:

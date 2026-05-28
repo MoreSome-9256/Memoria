@@ -471,11 +471,10 @@ extension AIServiceLifecycle on AIService {
   }
 
   Future<void> _startForegroundTaskAndRun() async {
-    final pendingIds = PhotoService().loadPendingAnalysisCandidateIds();
-    if (pendingIds.isEmpty) {
+    if (PhotoService().countPendingAnalysisCandidates() <= 0) {
       return;
     }
-    await analyzePhotosInBackground(photoIds: pendingIds);
+    await analyzePhotosInBackground();
   }
 
   Future<void> _requestCurrentSpoolPause() async {

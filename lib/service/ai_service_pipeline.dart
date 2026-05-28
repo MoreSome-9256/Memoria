@@ -14,9 +14,6 @@ extension AIServicePipeline on AIService {
   /// [manageForegroundService] = false：在调用方 isolate 中直接运行完整管线
   /// （仅供旧路径兼容，新代码应走 spool 模式）。
   Future<void> analyzePhotosInBackground({
-    int? batchSize,
-    int? maxPhotos,
-    List<int>? photoIds,
     bool manageForegroundService = true,
   }) async {
     final appSettings = await AppAiSettingsService.instance.load();
@@ -24,9 +21,8 @@ extension AIServicePipeline on AIService {
     if (!manageForegroundService) {
       await _AiPipelineRunner(
         service: this,
-        batchSize: batchSize ?? maxPhotos ?? 0,
-        maxPhotos: maxPhotos,
-        photoIds: photoIds,
+        batchSize: 0,
+        photoIds: null,
         manageForegroundService: manageForegroundService,
       ).run();
       return;
@@ -85,42 +81,71 @@ extension AIServicePipeline on AIService {
     final store = ObjectBoxService().store;
     final photoBox = store.box<PhotoEntity>();
 
-    final requestedPhotoIds = photoIds
-        ?.where((id) => id > 0)
-        .toSet()
-        .toList(growable: false);
-
-    final q = requestedPhotoIds != null && requestedPhotoIds.isNotEmpty
-        ? photoBox
-              .query(
-                PhotoEntity_.isAiAnalyzed
-                    .equals(false)
-                    .and(PhotoEntity_.id.oneOf(requestedPhotoIds)),
-              )
-              .order(PhotoEntity_.timestamp, flags: Order.descending)
-              .build()
-        : photoBox
-              .query(
-                PhotoEntity_.isAiAnalysisCandidate
-                    .equals(true)
-                    .and(PhotoEntity_.isAiAnalyzed.equals(false)),
-              )
-              .order(PhotoEntity_.timestamp, flags: Order.descending)
-              .build();
+    final q = photoBox
+        .query(
+          PhotoEntity_.isAiAnalysisCandidate
+              .equals(true)
+              .and(PhotoEntity_.isAiAnalyzed.equals(false)),
+        )
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
     final pendingPhotos = q.find();
     q.close();
 
-    final limit = math.min(
-      maxPhotos ?? pendingPhotos.length,
-      pendingPhotos.length,
-    );
-    final batch = pendingPhotos.take(limit).toList(growable: false);
+    final batch = pendingPhotos;
 
     if (batch.isEmpty) {
       debugPrint('[spool] 没有待分析的照片');
       _progressNotifier.value = AIAnalysisProgress.idle();
       return;
     }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final jobId = 'ai_$now';
+    final manifest = AnalysisJobManifest(
+      jobId: jobId,
+      createdAt: now,
+      mode: 'full',
+      items: batch
+          .map(
+            (photo) => AnalysisSpoolItem(
+              photoKey: photo.assetId,
+              contentUri: photo.path.startsWith('content://')
+                  ? photo.path
+                  : null,
+              path: photo.path.startsWith('content://') ? null : photo.path,
+              photoId: photo.id,
+              modifiedAt: photo.timestamp,
+              latitude: photo.latitude,
+              longitude: photo.longitude,
+              width: photo.width,
+              height: photo.height,
+            ),
+          )
+          .toList(growable: false),
+    );
+    _progressNotifier.value = AIAnalysisProgress.running(
+      total: manifest.totalItems,
+      completed: 0,
+      failed: 0,
+      currentStep: '正在启动后台 AI 分析',
+    );
+    await _persistRuntimeState(
+      isActive: true,
+      total: manifest.totalItems,
+      completed: 0,
+      failed: 0,
+      currentStep: '正在启动后台 AI 分析',
+      elapsedMs: 0,
+      warmUpCompleted: 0,
+      warmUpTotal: 0,
+      isPaused: false,
+      isStopping: false,
+    );
+    SpoolProgressNotifier.instance.startPolling(jobId);
+    await AiBackgroundTaskService.instance.startAnalysisWorker(
+      manifest: manifest,
+    );
   }
 
   /// 消费 spool 结果：检测 done.marker → 读取所有 pending result → 写入 ObjectBox。
@@ -312,7 +337,7 @@ extension AIServicePipeline on AIService {
       return;
     }
     debugPrint('[spool] 检测到 ${pendingPhotoIds.length} 张新增待分析照片，自动提交下一轮 spool');
-    unawaited(analyzePhotosInBackground(photoIds: pendingPhotoIds));
+    unawaited(analyzePhotosInBackground());
   }
 
   Future<void> _resetUnfinishedSpoolItems({

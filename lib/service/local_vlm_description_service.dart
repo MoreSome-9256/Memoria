@@ -1,13 +1,11 @@
-import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/return_code.dart';
-import 'package:flutter/foundation.dart';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'ai_model_weight_service.dart';
+import 'media_analysis_image_reader.dart';
 
 class LocalVlmDescriptionService {
   LocalVlmDescriptionService._();
@@ -20,11 +18,13 @@ class LocalVlmDescriptionService {
 
   Future<String> generateImageDescription({
     required File imageFile,
+    String? assetId,
     String prompt = 'Describe this image in one concise, concrete sentence.',
   }) async {
     return generateMediaDescription(
       mediaFile: imageFile,
       treatAsVideo: false,
+      assetId: assetId,
       prompt: prompt,
     );
   }
@@ -32,6 +32,7 @@ class LocalVlmDescriptionService {
   Future<String> generateMediaDescription({
     required File mediaFile,
     required bool treatAsVideo,
+    String? assetId,
     String prompt =
         'Describe the visible content in one concise, concrete paragraph.',
   }) async {
@@ -40,31 +41,47 @@ class LocalVlmDescriptionService {
     }
     final engine = await _ensureEngine();
     final chat = await engine.createChat();
-    final cleanupFiles = <File>[];
+    final cleanupPaths = <String>[];
     try {
-      final media = <LlamaMedia>[];
-      if (treatAsVideo) {
-        final frames = await _extractVideoFrameFiles(mediaFile);
-        cleanupFiles.addAll(frames);
-        if (frames.isNotEmpty) {
-          media.addAll(frames.map((file) => LlamaMedia.imageFile(file.path)));
-        }
+      final frameResult =
+          assetId != null && assetId.trim().isNotEmpty
+              ? await MediaAnalysisImageReader.instance.readFrameFilesFromAsset(
+                  assetId.trim(),
+                  fallbackFile: mediaFile,
+                  videoLike: treatAsVideo,
+                  maxFrames: treatAsVideo ? 8 : 1,
+                )
+              : await MediaAnalysisImageReader.instance.readFrameFilesFromFile(
+                  mediaFile,
+                  videoLike: treatAsVideo,
+                  maxFrames: treatAsVideo ? 8 : 1,
+                );
+      cleanupPaths.addAll(frameResult.cleanupPaths);
+      final frameBytes = await _readFrameBytes(frameResult.frames);
+      if (frameBytes.isEmpty) {
+        throw StateError('No readable visual frames were extracted.');
       }
-      if (media.isEmpty) {
-        media.add(LlamaMedia.imageFile(mediaFile.path));
-      }
+      final media = treatAsVideo
+          ? LlamaMedia.videoFrames(frameBytes, idPrefix: 'frame')
+          : <LlamaMedia>[LlamaMedia.imageBytes(frameBytes.first, id: 'image')];
       chat.addUser(prompt, media: media);
       final buffer = StringBuffer();
-      await for (final event in chat.generate(maxTokens: 96)) {
+      await for (final event in chat.generate(
+        sampler: const SamplerParams(temperature: 0.2, topP: 0.9),
+        maxTokens: 160,
+      )) {
         if (event is TokenEvent) {
           buffer.write(event.text);
+        } else if (event is DoneEvent && event.trailingText.isNotEmpty) {
+          buffer.write(event.trailingText);
         }
       }
       return buffer.toString().trim();
     } finally {
       await chat.dispose();
-      for (final file in cleanupFiles) {
+      for (final path in cleanupPaths) {
         try {
+          final file = File(path);
           if (await file.exists()) {
             await file.delete();
           }
@@ -110,35 +127,18 @@ class LocalVlmDescriptionService {
     return engine;
   }
 
-  Future<List<File>> _extractVideoFrameFiles(File mediaFile) async {
-    if (!await mediaFile.exists()) {
-      return const <File>[];
-    }
-    final dir = await getTemporaryDirectory();
-    final runId = DateTime.now().microsecondsSinceEpoch;
-    final framePattern = '${dir.path}/memoria_smolvlm2_${runId}_%02d.jpg';
-    final command =
-        '-y -i ${_quote(mediaFile.path)} -vf fps=1,scale=512:-1 -frames:v 6 ${_quote(framePattern)}';
-    final session = await FFmpegKit.execute(command);
-    final returnCode = await session.getReturnCode();
-    if (!ReturnCode.isSuccess(returnCode)) {
-      final logs = await session.getAllLogsAsString();
-      debugPrint('SmolVLM2 video frame extraction failed: $logs');
-    }
-
-    final frames = <File>[];
-    for (var i = 1; i <= 6; i++) {
-      final framePath =
-          '${dir.path}/memoria_smolvlm2_${runId}_${i.toString().padLeft(2, '0')}.jpg';
-      final file = File(framePath);
-      if (await file.exists()) {
-        frames.add(file);
+  Future<List<Uint8List>> _readFrameBytes(List<File> frames) async {
+    final bytes = <Uint8List>[];
+    for (final frame in frames) {
+      if (await frame.exists()) {
+        final data = await frame.readAsBytes();
+        if (data.isNotEmpty) {
+          bytes.add(data);
+        }
       }
     }
-    return frames;
+    return bytes;
   }
-
-  String _quote(String value) => "'${value.replaceAll("'", "'\\''")}'";
 
   Future<void> dispose() async {
     final engine = _engine;

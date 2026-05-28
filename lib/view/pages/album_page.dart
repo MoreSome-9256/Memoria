@@ -40,7 +40,6 @@ const int _albumTagBrowserPhotoSoftLimit = 1200;
 
 enum _ImportAction {
   importAllNew,
-  importLatest100,
   updateCacheOnly,
   rebuildAll,
   addMorePhotos,
@@ -104,7 +103,6 @@ class _AlbumPageState extends State<AlbumPage> {
 
   void _startRefresh({
     bool clearCacheFirst = false,
-    int? recentPhotoLimit,
     bool analyzeWithAi = true,
   }) {
     if (_isClearingCache) {
@@ -112,11 +110,7 @@ class _AlbumPageState extends State<AlbumPage> {
     }
     setState(() => _isStartingImport = true);
 
-    final scopeLabel = analyzeWithAi
-        ? (recentPhotoLimit == null
-              ? '全部新的图片和视频'
-              : '最新的 $recentPhotoLimit 个未分析项目')
-        : '相册缓存';
+    final scopeLabel = analyzeWithAi ? '全部新的图片和视频' : '相册缓存';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
@@ -127,7 +121,6 @@ class _AlbumPageState extends State<AlbumPage> {
     final refreshFuture = AlbumRefreshService()
         .startRefresh(
           clearCacheFirst: clearCacheFirst,
-          recentPhotoLimit: recentPhotoLimit,
           analyzeWithAi: analyzeWithAi,
         )
         .then((result) {
@@ -145,9 +138,7 @@ class _AlbumPageState extends State<AlbumPage> {
           if (!analyzeWithAi) {
             message = '相册缓存已更新，当前共有 ${scan.totalAfter} 张记录。';
           } else if (result.clearCacheFirst) {
-            message = result.recentPhotoLimit == null
-                ? '已安全重建缓存，恢复 ${scan.totalAfter} 张照片。$handoffText'
-                : '已安全重建最近 ${result.recentPhotoLimit} 张照片缓存。$handoffText';
+            message = '已安全重建缓存，恢复 ${scan.totalAfter} 张照片。$handoffText';
           } else if (result.requeuedCount > 0) {
             message = '新增 ${result.requeuedCount} 张可入库照片，已加入打标队列。$handoffText';
           } else {
@@ -460,13 +451,6 @@ class _AlbumPageState extends State<AlbumPage> {
                       Navigator.pop(context, _ImportAction.importAllNew),
                 ),
                 ListTile(
-                  leading: const Icon(Icons.flash_on_outlined),
-                  title: const Text('导入最新 100 张未分析图片'),
-                  subtitle: const Text('按创建时间或修改时间倒序加入最新一批'),
-                  onTap: () =>
-                      Navigator.pop(context, _ImportAction.importLatest100),
-                ),
-                ListTile(
                   leading: const Icon(Icons.inventory_2_outlined),
                   title: const Text('仅更新相册缓存'),
                   subtitle: const Text('只扫描并写入数据库，不预热 AI，不移交打标任务'),
@@ -518,8 +502,6 @@ class _AlbumPageState extends State<AlbumPage> {
     switch (selected) {
       case _ImportAction.importAllNew:
         _startRefresh();
-      case _ImportAction.importLatest100:
-        _startRefresh(recentPhotoLimit: 100);
       case _ImportAction.updateCacheOnly:
         _startRefresh(analyzeWithAi: false);
       case _ImportAction.rebuildAll:

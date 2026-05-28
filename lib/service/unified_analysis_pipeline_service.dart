@@ -62,7 +62,6 @@ class UnifiedAnalysisPipelineService {
   bool get isRunning => _isRunning;
 
   Future<void> startUnifiedPipeline({
-    int? maxPhotos,
     bool clearCacheFirst = false,
     bool analyzeWithAi = true,
   }) async {
@@ -87,14 +86,14 @@ class UnifiedAnalysisPipelineService {
 
     debugPrint('[pipeline] ======== 统一流水线启动 ========');
     debugPrint(
-      '[pipeline] maxPhotos=$maxPhotos clearCacheFirst=$clearCacheFirst analyzeWithAi=$analyzeWithAi',
+      '[pipeline] clearCacheFirst=$clearCacheFirst analyzeWithAi=$analyzeWithAi',
     );
 
     try {
       if (clearCacheFirst) {
-        await _runFullRebuildPipeline(maxPhotos: maxPhotos);
+        await _runFullRebuildPipeline();
       } else {
-        await _runIncrementalPipeline(maxPhotos: maxPhotos);
+        await _runIncrementalPipeline();
       }
     } catch (error) {
       debugPrint('[pipeline] ❌ 流水线失败: $error');
@@ -164,7 +163,7 @@ class UnifiedAnalysisPipelineService {
     }
   }
 
-  Future<void> _runIncrementalPipeline({int? maxPhotos}) async {
+  Future<void> _runIncrementalPipeline() async {
     final settings = await AppAiSettingsService.instance.load();
     final foregroundStarted = settings.androidForegroundServiceEnabled
         ? await AiBackgroundTaskService.instance.startAlbumCacheForeground(
@@ -175,11 +174,11 @@ class UnifiedAnalysisPipelineService {
     try {
       if (_analysisEnabled) {
         await Future.wait([
-          _runProducer(maxPhotos: maxPhotos),
+          _runProducer(),
           _runConsumer(),
         ], eagerError: true);
       } else {
-        await _runProducer(maxPhotos: maxPhotos);
+        await _runProducer();
         await _onPipelineCompleted();
       }
     } finally {
@@ -189,16 +188,16 @@ class UnifiedAnalysisPipelineService {
     }
   }
 
-  Future<void> _runFullRebuildPipeline({int? maxPhotos}) async {
+  Future<void> _runFullRebuildPipeline() async {
     debugPrint('[pipeline] 全量重建模式：先清空再重建');
 
     _updateProgress(stage: UnifiedAnalysisStage.scanning, message: '正在清空缓存…');
     await PhotoService().clearAllCachedData();
 
-    await _runIncrementalPipeline(maxPhotos: maxPhotos);
+    await _runIncrementalPipeline();
   }
 
-  Future<void> _runProducer({int? maxPhotos}) async {
+  Future<void> _runProducer() async {
     final settings = await AppAiSettingsService.instance.load();
     final requestType = settings.includeVideos
         ? RequestType.common
@@ -269,12 +268,7 @@ class UnifiedAnalysisPipelineService {
 
           final photo = await _buildAndSavePhotoEntity(asset);
           if (photo != null) {
-            if (_analysisEnabled &&
-                !photo.isAiAnalyzed &&
-                _canHandoffMore(
-                  maxPhotos,
-                  pendingBatchCount: handoffBatch.length,
-                )) {
+            if (_analysisEnabled && !photo.isAiAnalyzed) {
               handoffBatch.add(
                 PipelineQueueItem(
                   photoId: photo.id,
@@ -436,13 +430,6 @@ class UnifiedAnalysisPipelineService {
       await Future<void>.delayed(const Duration(seconds: 1));
     }
     return _queue.dequeue();
-  }
-
-  bool _canHandoffMore(int? maxPhotos, {int pendingBatchCount = 0}) {
-    if (maxPhotos == null) {
-      return true;
-    }
-    return _aiTotal + pendingBatchCount < maxPhotos;
   }
 
   Future<PhotoEntity?> _buildAndSavePhotoEntity(AssetEntity asset) async {

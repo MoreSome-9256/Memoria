@@ -20,18 +20,15 @@ extension PhotoServiceAiReset on PhotoService {
     return reconcileAccessiblePhotos(junkPhotos);
   }
 
-  Future<int> requeueLatestPhotosForAi({int? maxPhotos}) async {
+  Future<int> requeueAllPhotosForAi() async {
     final query = _photoBox
         .query()
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
     final photos = query.find();
     query.close();
-    final scopedPhotos = maxPhotos == null
-        ? photos
-        : photos.take(maxPhotos).toList(growable: false);
 
-    if (scopedPhotos.isEmpty) {
+    if (photos.isEmpty) {
       return 0;
     }
 
@@ -46,7 +43,7 @@ extension PhotoServiceAiReset on PhotoService {
     var updatedCount = 0;
     final updatedPhotos = <PhotoEntity>[];
     final updatedPhotoIds = <int>[];
-    for (final photo in scopedPhotos) {
+    for (final photo in photos) {
       final aiTags = photo.aiTags ?? const <String>[];
       final isJunkCandidate = aiTags.contains(
         JunkPhotoFilterService.junkCandidateTag,
@@ -113,10 +110,7 @@ extension PhotoServiceAiReset on PhotoService {
     _photoEmbeddingIndexRepository.deleteByPhotoIds(resetPhotoIds);
     _faceEmbeddingIndexRepository.deleteByPhotoIds(resetPhotoIds);
 
-    final scopeText = maxPhotos == null
-        ? '${scopedPhotos.length} 张照片'
-        : '最近 $maxPhotos 张照片';
-    debugPrint('🔁 已将 $scopeText 中的 $updatedCount 张重新加入 AI 打标队列');
+    debugPrint('🔁 已将 ${photos.length} 张照片中的 $updatedCount 张重新加入 AI 打标队列');
     return updatedCount;
   }
 

@@ -6,14 +6,12 @@ class _AiPipelineRunner {
   _AiPipelineRunner({
     required AIService service,
     required this.batchSize,
-    required this.maxPhotos,
     required this.photoIds,
     required this.manageForegroundService,
   }) : _service = service;
 
   final AIService _service;
   final int batchSize;
-  final int? maxPhotos;
   final List<int>? photoIds;
   final bool manageForegroundService;
 
@@ -99,7 +97,7 @@ class _AiPipelineRunner {
         .toSet()
         .toList(growable: false);
     final pendingCount = _countPending(photoBox, requestedPhotoIds);
-    final targetTotal = math.min(pendingCount, maxPhotos ?? pendingCount);
+    final targetTotal = pendingCount;
     final effectiveBatchSize = batchSize > 0
         ? math.min(math.max(1, batchSize), targetTotal)
         : math.max(1, targetTotal);

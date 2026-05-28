@@ -473,31 +473,6 @@ class _ProfilePageState extends State<ProfilePage> {
                           fontSize: 12,
                         ),
                       ),
-                      const SizedBox(height: 20),
-                      Text(
-                        'AI 模型 batch size：${aiSettings.analysisBatchSize}',
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      Slider(
-                        value: aiSettings.analysisBatchSize.toDouble(),
-                        min: 1,
-                        max: 16,
-                        divisions: 15,
-                        label: '${aiSettings.analysisBatchSize}',
-                        onChanged: (value) {
-                          setSheetState(() {
-                            aiSettings = aiSettings.copyWith(
-                              analysisBatchSize: value.round(),
-                            );
-                          });
-                        },
-                      ),
-                      Text(
-                        '控制模型内部 batch 参数；后台任务提交不再按 24 个项目切片，而是把本轮待分析项目一次性提交。',
-                        style: TextStyle(color: Colors.grey[700], fontSize: 12),
-                      ),
-                      const SizedBox(height: 20),
-
                       Divider(color: Colors.grey[300]),
                       const SizedBox(height: 12),
                       Text(

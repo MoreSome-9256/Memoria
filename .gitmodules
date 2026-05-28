@@ -7,3 +7,6 @@
 [submodule "third_party/flutter_foreground_task"]
 	path = third_party/flutter_foreground_task
 	url = https://github.com/szw0407/flutter_foreground_task.git
+[submodule "third_party/llama_cpp_dart"]
+	path = third_party/llama_cpp_dart
+	url = https://github.com/szw0407/llama_cpp_dart.git

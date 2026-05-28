@@ -299,6 +299,7 @@ extension AIServicePipeline on AIService {
     SpoolProgressNotifier.instance.stopPolling();
     _progressNotifier.value = AIAnalysisProgress.idle();
     await _persistRuntimeState(isActive: false);
+    await refreshJunkCleanupReportFromDatabase();
 
     if (startNextPending) {
       await _startNextPendingSpoolBatchIfNeeded(

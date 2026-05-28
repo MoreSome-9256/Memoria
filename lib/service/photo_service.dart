@@ -24,6 +24,8 @@ import 'album_selection_preference_service.dart';
 import 'app_ai_settings_service.dart';
 import 'junk_photo_filter_service.dart';
 import 'media_thumbnail_cache_service.dart';
+import 'mobileclip_tag_service.dart';
+import 'semantic_matching_service.dart';
 
 part 'photo_service_models.dart';
 part 'photo_service_scan.dart';
@@ -84,8 +86,22 @@ class PhotoService {
     _photoEmbeddingIndexRepository.deleteAll();
     _faceEmbeddingIndexRepository.deleteAll();
     _mediaAssetRepository.clearAll();
+    
+    await MobileClipTagService().dispose();
+    await SemanticMatchingService().dispose();
+    
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final tagCacheFile = File('${tempDir.path}/tag_prototype_cache.json');
+      if (await tagCacheFile.exists()) {
+        await tagCacheFile.delete();
+        debugPrint('🗑️ 已删除标签原型缓存文件');
+      }
+    } catch (e) {
+      debugPrint('⚠️ 删除标签原型缓存文件失败: $e');
+    }
 
-    debugPrint('🗑️ 已清空缓存数据（照片/事件/故事/向量索引）');
+    debugPrint('🗑️ 已清空缓存数据（照片/事件/故事/向量索引/语义标签）');
   }
 
   Future<_ScanBuildResult> _buildPhotoEntities(

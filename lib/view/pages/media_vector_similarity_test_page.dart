@@ -55,10 +55,11 @@ class _MediaVectorSimilarityTestPageState
   Future<void> _loadInitialSettings() async {
     final backend = await MobileClipBackendPreferenceService()
         .getSelectedBackend();
+    final settings = await AppAiSettingsService.instance.load();
     if (!mounted) return;
     setState(() {
       _selectedBackend = backend;
-      _selectedAccelerator = LocalInferenceAccelerator.xnnpack;
+      _selectedAccelerator = settings.inferenceAccelerator;
     });
   }
 
@@ -195,9 +196,13 @@ class _MediaVectorSimilarityTestPageState
         children: [
           _RuntimeOptionsCard(
             selectedBackend: _selectedBackend,
+            selectedAccelerator: _selectedAccelerator,
             isRunning: _isRunning,
             onBackendChanged: (backend) {
               setState(() => _selectedBackend = backend);
+            },
+            onAcceleratorChanged: (accelerator) {
+              setState(() => _selectedAccelerator = accelerator);
             },
           ),
           const SizedBox(height: 12),
@@ -266,16 +271,58 @@ class _MediaVectorSimilarityTestPageState
 class _RuntimeOptionsCard extends StatelessWidget {
   const _RuntimeOptionsCard({
     required this.selectedBackend,
+    required this.selectedAccelerator,
     required this.isRunning,
     required this.onBackendChanged,
+    required this.onAcceleratorChanged,
   });
 
   final MobileClipBackend selectedBackend;
+  final LocalInferenceAccelerator selectedAccelerator;
   final bool isRunning;
   final ValueChanged<MobileClipBackend> onBackendChanged;
+  final ValueChanged<LocalInferenceAccelerator> onAcceleratorChanged;
 
   @override
   Widget build(BuildContext context) {
+    final isApplePlatform = Platform.isIOS || Platform.isMacOS;
+    final acceleratorSegments = isApplePlatform
+        ? const <ButtonSegment<LocalInferenceAccelerator>>[
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.coreml,
+              label: Text('Core ML'),
+            ),
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.metal,
+              label: Text('Metal'),
+            ),
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.xnnpack,
+              label: Text('XNNPACK'),
+            ),
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.cpu,
+              label: Text('CPU'),
+            ),
+          ]
+        : const <ButtonSegment<LocalInferenceAccelerator>>[
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.gpu,
+              label: Text('GPU'),
+            ),
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.npu,
+              label: Text('NPU'),
+            ),
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.xnnpack,
+              label: Text('XNNPACK'),
+            ),
+            ButtonSegment<LocalInferenceAccelerator>(
+              value: LocalInferenceAccelerator.cpu,
+              label: Text('CPU'),
+            ),
+          ];
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -305,17 +352,18 @@ class _RuntimeOptionsCard extends StatelessWidget {
             const SizedBox(height: 12),
             Text('LiteRT 推理方式', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
-            const ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.tune_outlined),
-              title: Text('XNNPACK'),
-              subtitle: Text('与主打标签路径保持一致，避免 GPU/NPU delegate 偏差。'),
+            SegmentedButton<LocalInferenceAccelerator>(
+              segments: acceleratorSegments,
+              selected: <LocalInferenceAccelerator>{selectedAccelerator},
+              onSelectionChanged: isRunning
+                  ? null
+                  : (selection) => onAcceleratorChanged(selection.first),
             ),
             const SizedBox(height: 8),
             Text(
               selectedBackend == MobileClipBackend.ncnn
-                  ? 'NCNN 图像向量走原生 FFI；文本向量仍使用 XNNPACK LiteRT。'
-                  : '图片和文本都会使用 XNNPACK LiteRT；视频默认走 MobileViCLIP。',
+                  ? 'NCNN 图像向量走原生 FFI；文本向量仍使用 ${selectedAccelerator.label} LiteRT。'
+                  : '图片和文本都会使用 ${selectedAccelerator.label} LiteRT；视频默认走 MobileViCLIP。',
               style: TextStyle(color: Colors.grey[700], fontSize: 12),
             ),
           ],

@@ -1087,27 +1087,11 @@ class SpoolAnalysisWorker {
       '[spool-worker]   Embedding 成功 dim=${embedding.length} model=$embeddingModelVersion',
     );
 
-    // 3. 标签推理。视频检索向量使用 MobileViCLIP；标签仍用封面图走
-    // MobileCLIP2 文本空间，避免只得到“视频/其他”这类媒体类型标签。
+    // 3. 标签推理。视频和图片都直接使用其嵌入向量检索标签。
     final t2 = DateTime.now();
     List<String> tags = const <String>[];
-    final photoModelVersion = buildPhotoEmbeddingModelVersion(backend);
-    var tagEmbedding = embedding;
-    if (embeddingModelVersion != photoModelVersion) {
-      try {
-        final tagMediaEmbedding = await MediaEmbeddingService().embedImageBytes(
-          input.mobileClipBytes,
-          backend: backend,
-          liteRt: liteRt,
-        );
-        tagEmbedding = tagMediaEmbedding.embedding;
-      } catch (error) {
-        debugPrint('[spool-worker]   视频封面标签向量失败，回退媒体标签: $error');
-        tagEmbedding = const <double>[];
-      }
-    }
-    if (tagEmbedding.isNotEmpty) {
-      tags = await _retrieveTagsForPhotoEmbedding(tagEmbedding);
+    if (embedding.isNotEmpty) {
+      tags = await _retrieveTagsForPhotoEmbedding(embedding);
     }
     if (tags.isEmpty &&
         (input.kind == MemoriaMediaKind.video ||

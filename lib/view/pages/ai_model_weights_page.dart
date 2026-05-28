@@ -83,21 +83,15 @@ class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
                   '${status.hasDownloadedFiles ? ' · 已下载 ${status.presentFiles.length} 个文件' : ''}',
                 ),
                 isThreeLine: true,
-                trailing: Wrap(
-                  spacing: 8,
-                  children: [
-                    TextButton(
-                      onPressed: () => _download(id),
-                      child: const Text('下载'),
-                    ),
-                    TextButton(
-                      onPressed: status.hasDownloadedFiles
-                          ? () => _delete(id)
-                          : null,
-                      child: const Text('删除'),
-                    ),
-                  ],
-                ),
+                trailing: status.hasDownloadedFiles
+                    ? TextButton(
+                        onPressed: () => _delete(id),
+                        child: const Text('删除'),
+                      )
+                    : TextButton(
+                        onPressed: () => _download(id),
+                        child: const Text('下载'),
+                      ),
               );
             },
           );

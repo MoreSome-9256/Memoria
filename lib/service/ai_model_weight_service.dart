@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 enum AiModelWeightId {
@@ -50,6 +52,26 @@ extension AiModelWeightIdX on AiModelWeightId {
       'smolvlm2/mmproj.gguf',
     ],
   };
+
+  List<String> get downloadUrls => switch (this) {
+    AiModelWeightId.mobileclip2LiteRt => const <String>[
+      'https://memoria-static-ai-models.earthnpc.online/MobileCLIP2/mobileclip2_s2_image.tflite',
+      'https://memoria-static-ai-models.earthnpc.online/MobileCLIP2/mobileclip2_s2_text.tflite',
+    ],
+    AiModelWeightId.mobileclipNcnn => const <String>[
+      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/image.param',
+      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/image.bin',
+      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/text.param',
+      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/text.bin',
+    ],
+    AiModelWeightId.mobileViClipSmall => const <String>[
+      'https://memoria-static-ai-models.earthnpc.online/MobileViCLIP/mobileviclip_small.onnx',
+    ],
+    AiModelWeightId.smolVlm2 => const <String>[
+      'https://memoria-static-ai-models.earthnpc.online/SmolVLM2/SmolVLM2-256M-Video-Instruct-Q8_0.gguf',
+      'https://memoria-static-ai-models.earthnpc.online/SmolVLM2/mmproj-SmolVLM2-256M-Video-Instruct-Q8_0.gguf',
+    ],
+  };
 }
 
 class AiModelWeightStatus {
@@ -73,9 +95,13 @@ class AiModelWeightService {
   static final AiModelWeightService instance = AiModelWeightService._();
 
   Future<bool> ensureWeightsAvailableForInference(AiModelWeightId id) async {
-    // Current release still ships model assets with the app or relies on local
-    // developer files. The future downloader will replace this stub with a real
-    // filesystem check and user-facing remediation path.
+    final root = await modelRootDirectory();
+    for (final relativePath in id.relativePaths) {
+      final file = File(_join(root.path, relativePath));
+      if (!await file.exists()) {
+        return false;
+      }
+    }
     return true;
   }
 
@@ -121,7 +147,35 @@ class AiModelWeightService {
   }
 
   Future<void> downloadWeights(AiModelWeightId id) async {
-    throw UnimplementedError('模型互联网下载将在后续版本启用: ${id.label}');
+    final root = await modelRootDirectory();
+    final dio = Dio();
+    final urls = id.downloadUrls;
+    final paths = id.relativePaths;
+    
+    if (urls.length != paths.length) {
+      throw StateError('URL count does not match path count for ${id.label}');
+    }
+    
+    for (var i = 0; i < urls.length; i++) {
+      final url = urls[i];
+      final relativePath = paths[i];
+      final file = File(_join(root.path, relativePath));
+      
+      if (await file.exists()) {
+        debugPrint('Model file already exists: ${file.path}');
+        continue;
+      }
+      
+      await file.parent.create(recursive: true);
+      
+      debugPrint('Downloading model from $url to ${file.path}');
+      await dio.download(url, file.path, onReceiveProgress: (received, total) {
+        if (total != -1) {
+          debugPrint('Download progress: ${(received / total * 100).toStringAsFixed(0)}%');
+        }
+      });
+      debugPrint('Download completed: ${file.path}');
+    }
   }
 
   String _join(String root, String relativePath) {

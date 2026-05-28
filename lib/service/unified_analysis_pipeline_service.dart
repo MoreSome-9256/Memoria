@@ -505,15 +505,7 @@ class UnifiedAnalysisPipelineService {
           );
       embedding = mediaEmbedding.embedding;
       embeddingModelVersion = mediaEmbedding.modelVersion;
-      if (mediaEmbedding.isSameSpaceAsMobileClipText) {
-        tagEmbedding = embedding;
-      } else {
-        tagEmbedding = (await MediaEmbeddingService().embedImageBytes(
-          visualBytes,
-          backend: backend,
-          liteRt: liteRt,
-        )).embedding;
-      }
+      tagEmbedding = embedding;
     }
     if (embedding.isEmpty) {
       throw StateError('embedding is empty');

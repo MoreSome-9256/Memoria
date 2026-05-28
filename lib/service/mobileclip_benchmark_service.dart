@@ -264,24 +264,37 @@ class MobileClipBenchmarkService {
               LocalInferenceAccelerator.xnnpack,
             ),
             ('litert_cpu', 'LiteRT CPU', LocalInferenceAccelerator.cpu),
+            ('litert_gpu', 'LiteRT GPU', LocalInferenceAccelerator.gpu),
+            ('litert_npu', 'LiteRT NPU', LocalInferenceAccelerator.npu),
           ]
         : (Platform.isIOS || Platform.isMacOS)
-        ? const <(String, String, LocalInferenceAccelerator)>[
-            (
-              'litert_xnnpack',
-              'LiteRT XNNPACK',
-              LocalInferenceAccelerator.xnnpack,
-            ),
-            ('litert_cpu', 'LiteRT CPU', LocalInferenceAccelerator.cpu),
-          ]
-        : const <(String, String, LocalInferenceAccelerator)>[
-            (
-              'litert_xnnpack',
-              'LiteRT XNNPACK',
-              LocalInferenceAccelerator.xnnpack,
-            ),
-            ('litert_cpu', 'LiteRT CPU', LocalInferenceAccelerator.cpu),
-          ];
+            ? const <(String, String, LocalInferenceAccelerator)>[
+                (
+                  'litert_xnnpack',
+                  'LiteRT XNNPACK',
+                  LocalInferenceAccelerator.xnnpack,
+                ),
+                ('litert_cpu', 'LiteRT CPU', LocalInferenceAccelerator.cpu),
+                (
+                  'litert_coreml',
+                  'LiteRT CoreML',
+                  LocalInferenceAccelerator.coreml,
+                ),
+                (
+                  'litert_metal',
+                  'LiteRT Metal',
+                  LocalInferenceAccelerator.metal,
+                ),
+              ]
+            : const <(String, String, LocalInferenceAccelerator)>[
+                (
+                  'litert_xnnpack',
+                  'LiteRT XNNPACK',
+                  LocalInferenceAccelerator.xnnpack,
+                ),
+                ('litert_cpu', 'LiteRT CPU', LocalInferenceAccelerator.cpu),
+                ('litert_gpu', 'LiteRT GPU', LocalInferenceAccelerator.gpu),
+              ];
 
     final adapters = accelerators
         .map<MobileClipBenchmarkAdapter>((entry) {

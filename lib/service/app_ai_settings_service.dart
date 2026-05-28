@@ -30,8 +30,8 @@ class AppAiSettings {
     inferenceAccelerator: LocalInferenceAccelerator.xnnpack,
     xnnpackThreadCount: 2,
     analysisBatchSize: 1,
-    autoResumeAnalysis: true,
-    autoAnalyzeNewPhotos: true,
+    autoResumeAnalysis: false,
+    autoAnalyzeNewPhotos: false,
   );
 
   final bool ocrEnabled;

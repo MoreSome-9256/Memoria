@@ -78,9 +78,13 @@ class LocalVlmDescriptionService {
     if (existing != null) {
       return existing;
     }
-    await AiModelWeightService.instance.ensureWeightsAvailableForInference(
-      AiModelWeightId.smolVlm2,
-    );
+    final isAvailable = await AiModelWeightService.instance
+        .ensureWeightsAvailableForInference(AiModelWeightId.smolVlm2);
+    if (!isAvailable) {
+      throw StateError(
+        'SmolVLM2 model weights not found. Please download the model first using AiModelWeightService.instance.downloadWeights(AiModelWeightId.smolVlm2).',
+      );
+    }
     final docs = await getApplicationDocumentsDirectory();
     final modelDir = Directory('${docs.path}/models/smolvlm2');
     final modelFile = File('${modelDir.path}/smolvlm2.gguf');
@@ -90,12 +94,18 @@ class LocalVlmDescriptionService {
         'SmolVLM2 model assets are missing. Expected ${modelFile.path} and ${mmprojFile.path}.',
       );
     }
-    final engine = await LlamaEngine.spawn(
-      libraryPath: Platform.isAndroid ? 'libllama.so' : '',
-      modelParams: ModelParams(path: modelFile.path, gpuLayers: 0),
-      contextParams: const ContextParams(nCtx: 2048),
-      multimodalParams: MultimodalParams(mmprojPath: mmprojFile.path),
-    );
+    final engine = await (Platform.isAndroid
+        ? LlamaEngine.spawn(
+            libraryPath: 'libllama.so',
+            modelParams: ModelParams(path: modelFile.path, gpuLayers: 0),
+            contextParams: const ContextParams(nCtx: 2048),
+            multimodalParams: MultimodalParams(mmprojPath: mmprojFile.path),
+          )
+        : LlamaEngine.spawnFromProcess(
+            modelParams: ModelParams(path: modelFile.path, gpuLayers: 99),
+            contextParams: const ContextParams(nCtx: 4096),
+            multimodalParams: MultimodalParams(mmprojPath: mmprojFile.path),
+          ));
     _engine = engine;
     return engine;
   }

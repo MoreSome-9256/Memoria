@@ -7,9 +7,14 @@ import '../models/vo/semantic_search_models.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
+import '../storage/vector_index/vector_index_constants.dart';
 import '../utils/media_type_helper.dart';
 import '../utils/tag_sanitizer.dart';
+import 'clip_tokenizer_service.dart';
+import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_embedding_service.dart';
+import 'mobileviclip_video_service.dart';
+import 'ncnn_mobileclip_native_service.dart';
 import 'semantic_matching_service.dart';
 import 'semantic_query_parser_service.dart';
 
@@ -27,6 +32,9 @@ class SemanticPhotoSearchService {
       MobileClipEmbeddingService();
   final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
       PhotoEmbeddingIndexRepository();
+  final ClipTokenizerService _tokenizer = ClipTokenizerService();
+  final NcnnMobileClipNativeService _ncnnService =
+      NcnnMobileClipNativeService();
 
   static const double _positiveSemanticParticipationThreshold = 0.20;
   static const double _exactPositiveThreshold = 0.24;
@@ -85,6 +93,8 @@ class SemanticPhotoSearchService {
         .toList(growable: false);
     final activeModelVersion = await _mobileClipEmbeddingService
         .getSelectedModelVersion();
+    final selectedBackend = await _mobileClipEmbeddingService
+        .getSelectedBackend();
 
     if (rawQuery.trim().isEmpty || allPhotos.isEmpty) {
       return _emptyResult(query, photos.length);
@@ -130,7 +140,20 @@ class SemanticPhotoSearchService {
     final primaryMetadataCandidates = semanticMetadataCandidates.isNotEmpty
         ? semanticMetadataCandidates
         : photos;
-    final vectors = await _buildSemanticVectors(query);
+    final hasVideoCandidates = primaryMetadataCandidates.any((photo) {
+      final kind = MediaTypeHelper.fromStorageValue(
+        photo.mediaKind,
+        path: photo.path,
+      );
+      return kind == MemoriaMediaKind.video ||
+          kind == MemoriaMediaKind.dynamicImage;
+    });
+    final vectors = await _buildSemanticVectors(
+      query,
+      includeMobileClip2Vectors: selectedBackend != MobileClipBackend.ncnn,
+      includeNcnnVectors:
+          selectedBackend == MobileClipBackend.ncnn || hasVideoCandidates,
+    );
     final primaryTagCandidates = _applyTagStrategy(
       primaryMetadataCandidates,
       query,
@@ -141,8 +164,7 @@ class SemanticPhotoSearchService {
     final primaryScores = _scoreCandidates(
       primaryTagCandidates,
       activeModelVersion: activeModelVersion,
-      positiveVectors: vectors.positiveVectors,
-      negativeVectors: vectors.negativeVectors,
+      vectors: vectors,
       coarseTags: query.coarseTags,
       locations: query.locations,
     );
@@ -383,44 +405,109 @@ class SemanticPhotoSearchService {
   }
 
   Future<_SemanticVectorBundle> _buildSemanticVectors(
-    SemanticSearchQuery query,
-  ) async {
+    SemanticSearchQuery query, {
+    bool includeMobileClip2Vectors = true,
+    bool includeNcnnVectors = false,
+  }) async {
     try {
-      await _semanticService.warmUp();
+      await _tokenizer.warmUp();
+      if (includeMobileClip2Vectors) {
+        await _semanticService.warmUp();
+      }
+      Future<List<double>?> tryEmbedNcnnText(String text) async {
+        try {
+          final tokenIds = await _tokenizer.tokenize(text);
+          return await _ncnnService.encodeTextTokens(tokenIds);
+        } catch (error) {
+          debugPrint(
+            'SemanticPhotoSearchService NCNN text vector failed: $error',
+          );
+          return null;
+        }
+      }
+
       final positiveVectors = <_SemanticVector>[];
+      final positiveVectorsNcnn = <_SemanticVector>[];
       for (final item in query.positiveSemantics) {
-        positiveVectors.add(
-          _SemanticVector(
-            text: item.text,
-            weight: item.weight,
-            vector: await _semanticService.embedText(item.text),
-          ),
-        );
+        if (includeMobileClip2Vectors) {
+          positiveVectors.add(
+            _SemanticVector(
+              text: item.text,
+              weight: item.weight,
+              vector: await _semanticService.embedText(item.text),
+            ),
+          );
+        }
+        if (includeNcnnVectors) {
+          final vector = await tryEmbedNcnnText(item.text);
+          if (vector != null) {
+            positiveVectorsNcnn.add(
+              _SemanticVector(
+                text: item.text,
+                weight: item.weight,
+                vector: vector,
+              ),
+            );
+          }
+        }
       }
       final recallVectors = <_SemanticVector>[];
+      final recallVectorsNcnn = <_SemanticVector>[];
       for (final item in query.recallSemantics) {
-        recallVectors.add(
-          _SemanticVector(
-            text: item.text,
-            weight: item.weight,
-            vector: await _semanticService.embedText(item.text),
-          ),
-        );
+        if (includeMobileClip2Vectors) {
+          recallVectors.add(
+            _SemanticVector(
+              text: item.text,
+              weight: item.weight,
+              vector: await _semanticService.embedText(item.text),
+            ),
+          );
+        }
+        if (includeNcnnVectors) {
+          final vector = await tryEmbedNcnnText(item.text);
+          if (vector != null) {
+            recallVectorsNcnn.add(
+              _SemanticVector(
+                text: item.text,
+                weight: item.weight,
+                vector: vector,
+              ),
+            );
+          }
+        }
       }
       final negativeVectors = <_SemanticVector>[];
+      final negativeVectorsNcnn = <_SemanticVector>[];
       for (final item in query.negativeSemantics) {
-        negativeVectors.add(
-          _SemanticVector(
-            text: item.text,
-            weight: item.weight,
-            vector: await _semanticService.embedText(item.text),
-          ),
-        );
+        if (includeMobileClip2Vectors) {
+          negativeVectors.add(
+            _SemanticVector(
+              text: item.text,
+              weight: item.weight,
+              vector: await _semanticService.embedText(item.text),
+            ),
+          );
+        }
+        if (includeNcnnVectors) {
+          final vector = await tryEmbedNcnnText(item.text);
+          if (vector != null) {
+            negativeVectorsNcnn.add(
+              _SemanticVector(
+                text: item.text,
+                weight: item.weight,
+                vector: vector,
+              ),
+            );
+          }
+        }
       }
       return _SemanticVectorBundle(
         positiveVectors: positiveVectors,
         recallVectors: recallVectors,
         negativeVectors: negativeVectors,
+        positiveVectorsNcnn: positiveVectorsNcnn,
+        recallVectorsNcnn: recallVectorsNcnn,
+        negativeVectorsNcnn: negativeVectorsNcnn,
       );
     } catch (error) {
       debugPrint('SemanticPhotoSearchService build vectors failed: $error');
@@ -428,6 +515,9 @@ class SemanticPhotoSearchService {
         positiveVectors: <_SemanticVector>[],
         recallVectors: <_SemanticVector>[],
         negativeVectors: <_SemanticVector>[],
+        positiveVectorsNcnn: <_SemanticVector>[],
+        recallVectorsNcnn: <_SemanticVector>[],
+        negativeVectorsNcnn: <_SemanticVector>[],
       );
     }
   }
@@ -435,8 +525,7 @@ class SemanticPhotoSearchService {
   _ScoreCandidatesResult _scoreCandidates(
     List<PhotoEntity> candidates, {
     required String activeModelVersion,
-    required List<_SemanticVector> positiveVectors,
-    required List<_SemanticVector> negativeVectors,
+    required _SemanticVectorBundle vectors,
     required List<SemanticSearchCoarseTag> coarseTags,
     required List<SemanticSearchLocation> locations,
     bool forceAllRelated = false,
@@ -447,8 +536,7 @@ class SemanticPhotoSearchService {
       final hit = _scorePhoto(
         photo,
         activeModelVersion: activeModelVersion,
-        positiveVectors: positiveVectors,
-        negativeVectors: negativeVectors,
+        vectors: vectors,
         coarseTags: coarseTags,
         locations: locations,
         forceAllRelated: forceAllRelated,
@@ -465,31 +553,42 @@ class SemanticPhotoSearchService {
   SemanticSearchHit? _scorePhoto(
     PhotoEntity photo, {
     required String activeModelVersion,
-    required List<_SemanticVector> positiveVectors,
-    required List<_SemanticVector> negativeVectors,
+    required _SemanticVectorBundle vectors,
     required List<SemanticSearchCoarseTag> coarseTags,
     required List<SemanticSearchLocation> locations,
     required bool forceAllRelated,
     required double semanticThreshold,
   }) {
+    final embeddingChoice = _readSearchEmbedding(
+      photo,
+      activeModelVersion: activeModelVersion,
+    );
+    if (embeddingChoice == null || embeddingChoice.embedding.isEmpty) {
+      return null;
+    }
+
+    final positiveVectors = embeddingChoice.usesNcnnTextSpace
+        ? vectors.positiveVectorsNcnn
+        : vectors.positiveVectors;
+    final negativeVectors = embeddingChoice.usesNcnnTextSpace
+        ? vectors.negativeVectorsNcnn
+        : vectors.negativeVectors;
     if (positiveVectors.isEmpty) {
       return null;
     }
 
-    final imageEmbedding = _readSearchEmbedding(
-      photo,
-      activeModelVersion: activeModelVersion,
+    final positive = _scorePositiveSemantics(
+      embeddingChoice.embedding,
+      positiveVectors,
     );
-    if (imageEmbedding == null || imageEmbedding.isEmpty) {
-      return null;
-    }
-
-    final positive = _scorePositiveSemantics(imageEmbedding, positiveVectors);
     if (positive.semanticScore < semanticThreshold) {
       return null;
     }
 
-    final negative = _scoreNegativeSemantics(imageEmbedding, negativeVectors);
+    final negative = _scoreNegativeSemantics(
+      embeddingChoice.embedding,
+      negativeVectors,
+    );
     final finalScore =
         positive.qualifiedPositiveScore -
         (_negativePenaltyAlpha * negative.negativeScore);
@@ -554,21 +653,43 @@ class SemanticPhotoSearchService {
     );
   }
 
-  List<double>? _readSearchEmbedding(
+  _SearchEmbeddingChoice? _readSearchEmbedding(
     PhotoEntity photo, {
     required String activeModelVersion,
   }) {
-    // The merged architecture stores vectors in ObjectBox, but many existing
-    // photos still only have legacy Isar embeddings. Search should remain
-    // usable while the index is warming up or after a partial migration.
     final kind = MediaTypeHelper.fromStorageValue(
       photo.mediaKind,
       path: photo.path,
     );
-    return _photoEmbeddingIndexRepository.readEmbeddingForPhoto(
+    final isVideoLike =
+        kind == MemoriaMediaKind.video ||
+        kind == MemoriaMediaKind.dynamicImage;
+    if (isVideoLike) {
+      final videoEmbedding = _photoEmbeddingIndexRepository
+          .readEmbeddingForPhoto(
+            photo,
+            modelVersion: MobileViClipVideoService.modelVersion,
+          );
+      if (videoEmbedding != null && videoEmbedding.isNotEmpty) {
+        return _SearchEmbeddingChoice(
+          embedding: videoEmbedding,
+          usesNcnnTextSpace: true,
+        );
+      }
+    }
+    final embedding = _photoEmbeddingIndexRepository.readEmbeddingForPhoto(
       photo,
       modelVersion: activeModelVersion,
       allowLegacyFallback: kind == MemoriaMediaKind.image,
+    );
+    if (embedding == null || embedding.isEmpty) {
+      return null;
+    }
+    return _SearchEmbeddingChoice(
+      embedding: embedding,
+      usesNcnnTextSpace:
+          activeModelVersion ==
+          buildPhotoEmbeddingModelVersion(MobileClipBackend.ncnn),
     );
   }
 
@@ -659,8 +780,7 @@ class SemanticPhotoSearchService {
     final levelOneScores = _scoreCandidates(
       levelOneCandidates,
       activeModelVersion: activeModelVersion,
-      positiveVectors: vectors.positiveVectors,
-      negativeVectors: vectors.negativeVectors,
+      vectors: vectors,
       coarseTags: query.coarseTags,
       locations: query.locations,
       forceAllRelated: true,
@@ -680,8 +800,7 @@ class SemanticPhotoSearchService {
       final levelTwoScores = _scoreCandidates(
         levelTwoCandidates,
         activeModelVersion: activeModelVersion,
-        positiveVectors: vectors.positiveVectors,
-        negativeVectors: vectors.negativeVectors,
+        vectors: vectors,
         coarseTags: const <SemanticSearchCoarseTag>[],
         locations: query.locations,
         forceAllRelated: true,
@@ -703,7 +822,7 @@ class SemanticPhotoSearchService {
           relatedCount: hits.length,
           query: query,
         ) &&
-        vectors.recallVectors.isNotEmpty) {
+        vectors.hasRecallVectors) {
       final recallCandidates =
           query.tagStrictness == SemanticSearchTagStrictness.strict
           ? levelOneCandidates
@@ -711,8 +830,7 @@ class SemanticPhotoSearchService {
       final recallScores = _scoreCandidates(
         recallCandidates,
         activeModelVersion: activeModelVersion,
-        positiveVectors: vectors.recallVectors,
-        negativeVectors: vectors.negativeVectors,
+        vectors: vectors.forRecall(),
         coarseTags: const <SemanticSearchCoarseTag>[],
         locations: query.locations,
         forceAllRelated: true,
@@ -934,11 +1052,31 @@ class _SemanticVectorBundle {
     required this.positiveVectors,
     required this.recallVectors,
     required this.negativeVectors,
+    this.positiveVectorsNcnn = const <_SemanticVector>[],
+    this.recallVectorsNcnn = const <_SemanticVector>[],
+    this.negativeVectorsNcnn = const <_SemanticVector>[],
   });
 
   final List<_SemanticVector> positiveVectors;
   final List<_SemanticVector> recallVectors;
   final List<_SemanticVector> negativeVectors;
+  final List<_SemanticVector> positiveVectorsNcnn;
+  final List<_SemanticVector> recallVectorsNcnn;
+  final List<_SemanticVector> negativeVectorsNcnn;
+
+  bool get hasRecallVectors =>
+      recallVectors.isNotEmpty || recallVectorsNcnn.isNotEmpty;
+
+  _SemanticVectorBundle forRecall() {
+    return _SemanticVectorBundle(
+      positiveVectors: recallVectors,
+      recallVectors: const <_SemanticVector>[],
+      negativeVectors: negativeVectors,
+      positiveVectorsNcnn: recallVectorsNcnn,
+      recallVectorsNcnn: const <_SemanticVector>[],
+      negativeVectorsNcnn: negativeVectorsNcnn,
+    );
+  }
 }
 
 class _SemanticVector {
@@ -973,6 +1111,16 @@ class _NegativeSemanticAggregate {
 
   final double negativeScore;
   final String? bestNegativeSemantic;
+}
+
+class _SearchEmbeddingChoice {
+  const _SearchEmbeddingChoice({
+    required this.embedding,
+    required this.usesNcnnTextSpace,
+  });
+
+  final List<double> embedding;
+  final bool usesNcnnTextSpace;
 }
 
 class _MetadataRelaxationResult {

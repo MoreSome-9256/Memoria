@@ -119,12 +119,17 @@ class MediaEmbeddingService {
     required String text,
     MobileClipLiteRtService? liteRt,
   }) async {
-    if (media.kind == MemoriaMediaKind.video &&
-        media.modelVersion == MobileViClipVideoService.modelVersion) {
-      return MediaTextSimilarityResult.unavailable(
+    if (media.modelVersion == MobileViClipVideoService.modelVersion ||
+        media.modelVersion ==
+            buildPhotoEmbeddingModelVersion(MobileClipBackend.ncnn)) {
+      final tokenIds = await _tokenizer.tokenize(text);
+      final textVector = await _ncnnService.encodeTextTokens(tokenIds);
+      return MediaTextSimilarityResult(
         text: text,
-        reason:
-            '当前只接入了 MobileViCLIP vision encoder，缺少同一模型空间的 text encoder；视频不能再用 MobileCLIP2 文本向量做相似度。',
+        textVector: textVector,
+        score: _semanticService.calculateSimilarity(media.embedding, textVector),
+        isSameEmbeddingSpace: true,
+        unavailableReason: null,
       );
     }
     final textVector = liteRt == null

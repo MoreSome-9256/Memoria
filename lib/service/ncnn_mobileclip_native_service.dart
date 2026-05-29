@@ -74,23 +74,36 @@ class NcnnMobileClipNativeService {
 
   static const int _bufferSize = 1024;
   static const String _androidLibraryName = 'libmemoria_ncnn.so';
-  static const String _defaultParamAssetPath =
+  static const String _defaultImageParamAssetPath =
       'assets/ncnn/mobileclip_s2/image_encoder.ncnn.param';
-  static const String _defaultBinAssetPath =
+  static const String _defaultImageBinAssetPath =
       'assets/ncnn/mobileclip_s2/image_encoder.ncnn.bin';
+  static const String _defaultTextParamAssetPath =
+      'assets/ncnn/mobileclip_s2/text_encoder.ncnn.param';
+  static const String _defaultTextBinAssetPath =
+      'assets/ncnn/mobileclip_s2/text_encoder.ncnn.bin';
+  static const String _defaultProjectionParamAssetPath =
+      'assets/ncnn/mobileclip_s2/projection_layer.ncnn.param';
+  static const String _defaultProjectionBinAssetPath =
+      'assets/ncnn/mobileclip_s2/projection_layer.ncnn.bin';
 
   ffi.DynamicLibrary? _library;
   bool _loadAttempted = false;
   String _loadError = '';
-  bool _modelInitialized = false;
+  bool _imageModelInitialized = false;
+  bool _textModelInitialized = false;
 
   late final int Function() _isBackendAvailable;
   late final int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)
-  _initModel;
-  late final int Function() _releaseModel;
-  late final int Function() _expectedInputLength;
+  _initImageModel;
+  late final int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)
+  _initTextModel;
+  late final int Function() _releaseModels;
+  late final int Function() _expectedImageInputLength;
+  late final int Function() _expectedTextInputLength;
   late final int Function() _expectedOutputLength;
-  late final int Function() _warmup;
+  late final int Function() _warmupImage;
+  late final int Function() _warmupText;
   late final int Function(ffi.Pointer<ffi.Char>, int) _getVersion;
   late final int Function(ffi.Pointer<ffi.Char>, int) _getLastError;
   late final int Function(
@@ -108,6 +121,13 @@ class NcnnMobileClipNativeService {
     int,
   )
   _encodeRgba8888;
+  late final int Function(
+    ffi.Pointer<ffi.Int32>,
+    int,
+    ffi.Pointer<ffi.Float>,
+    int,
+  )
+  _encodeTextTokens;
 
   bool get isLibraryLoaded => _library != null;
 
@@ -141,25 +161,37 @@ class NcnnMobileClipNativeService {
         .lookupFunction<ffi.Int32 Function(), int Function()>(
           'memoria_ncnn_is_backend_available',
         );
-    _initModel = library
+    _initImageModel = library
         .lookupFunction<
           ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>),
           int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)
-        >('memoria_ncnn_init_model');
-    _releaseModel = library
+        >('memoria_ncnn_init_image_model');
+    _initTextModel = library
+        .lookupFunction<
+          ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>),
+          int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)
+        >('memoria_ncnn_init_text_model');
+    _releaseModels = library
         .lookupFunction<ffi.Int32 Function(), int Function()>(
-          'memoria_ncnn_release_model',
+          'memoria_ncnn_release_models',
         );
-    _expectedInputLength = library
+    _expectedImageInputLength = library
         .lookupFunction<ffi.Int32 Function(), int Function()>(
-          'memoria_ncnn_expected_input_length',
+          'memoria_ncnn_expected_image_input_length',
+        );
+    _expectedTextInputLength = library
+        .lookupFunction<ffi.Int32 Function(), int Function()>(
+          'memoria_ncnn_expected_text_input_length',
         );
     _expectedOutputLength = library
         .lookupFunction<ffi.Int32 Function(), int Function()>(
           'memoria_ncnn_expected_output_length',
         );
-    _warmup = library.lookupFunction<ffi.Int32 Function(), int Function()>(
-      'memoria_ncnn_warmup',
+    _warmupImage = library.lookupFunction<ffi.Int32 Function(), int Function()>(
+      'memoria_ncnn_warmup_image',
+    );
+    _warmupText = library.lookupFunction<ffi.Int32 Function(), int Function()>(
+      'memoria_ncnn_warmup_text',
     );
     _getVersion = library
         .lookupFunction<
@@ -198,6 +230,21 @@ class NcnnMobileClipNativeService {
             int,
           )
         >('memoria_ncnn_encode_rgba8888');
+    _encodeTextTokens = library
+        .lookupFunction<
+          ffi.Int32 Function(
+            ffi.Pointer<ffi.Int32>,
+            ffi.Int32,
+            ffi.Pointer<ffi.Float>,
+            ffi.Int32,
+          ),
+          int Function(
+            ffi.Pointer<ffi.Int32>,
+            int,
+            ffi.Pointer<ffi.Float>,
+            int,
+          )
+        >('memoria_ncnn_encode_text_tokens');
   }
 
   NcnnBackendStatus getStatus() {
@@ -219,23 +266,23 @@ class NcnnMobileClipNativeService {
     return NcnnBackendStatus(
       libraryLoaded: true,
       backendAvailable: _isBackendAvailable() == 1,
-      modelInitialized: _modelInitialized,
+      modelInitialized: _imageModelInitialized || _textModelInitialized,
       version: version,
       lastError: lastError,
-      expectedInputLength: _expectedInputLength(),
+      expectedInputLength: _expectedImageInputLength(),
       expectedOutputLength: _expectedOutputLength(),
     );
   }
 
-  Future<void> ensureModelInitialized({
-    String paramAssetPath = _defaultParamAssetPath,
-    String binAssetPath = _defaultBinAssetPath,
+  Future<void> ensureImageModelInitialized({
+    String paramAssetPath = _defaultImageParamAssetPath,
+    String binAssetPath = _defaultImageBinAssetPath,
   }) async {
     final status = getStatus();
     if (!status.libraryLoaded) {
       throw StateError(status.summary);
     }
-    if (_modelInitialized) {
+    if (_imageModelInitialized) {
       return;
     }
     await AiModelWeightService.instance.ensureWeightsAvailableForInference(
@@ -255,8 +302,8 @@ class NcnnMobileClipNativeService {
     final paramPtr = stagedParam.toNativeUtf8().cast<ffi.Char>();
     final binPtr = stagedBin.toNativeUtf8().cast<ffi.Char>();
     try {
-      final code = _initModel(paramPtr, binPtr);
-      _modelInitialized = code == 0;
+      final code = _initImageModel(paramPtr, binPtr);
+      _imageModelInitialized = code == 0;
       if (code != 0) {
         throw StateError(_readNativeString(_getLastError));
       }
@@ -266,15 +313,81 @@ class NcnnMobileClipNativeService {
     }
   }
 
-  Future<double> warmUp() async {
-    await ensureModelInitialized();
+  Future<void> ensureTextModelInitialized({
+    String paramAssetPath = _defaultTextParamAssetPath,
+    String binAssetPath = _defaultTextBinAssetPath,
+    String projectionParamAssetPath = _defaultProjectionParamAssetPath,
+    String projectionBinAssetPath = _defaultProjectionBinAssetPath,
+  }) async {
+    final status = getStatus();
+    if (!status.libraryLoaded) {
+      throw StateError(status.summary);
+    }
+    if (_textModelInitialized) {
+      return;
+    }
+    await AiModelWeightService.instance.ensureWeightsAvailableForInference(
+      AiModelWeightId.mobileclipNcnn,
+    );
+
+    final stagingDirectory = await getApplicationDocumentsDirectory();
+    final stagedParam = await _stageAssetToFile(
+      assetPath: paramAssetPath,
+      destinationPath: '${stagingDirectory.path}/text_encoder.ncnn.param',
+    );
+    final stagedBin = await _stageAssetToFile(
+      assetPath: binAssetPath,
+      destinationPath: '${stagingDirectory.path}/text_encoder.ncnn.bin',
+    );
+    await _stageAssetToFile(
+      assetPath: projectionParamAssetPath,
+      destinationPath:
+          '${stagingDirectory.path}/projection_layer.ncnn.param',
+    );
+    await _stageAssetToFile(
+      assetPath: projectionBinAssetPath,
+      destinationPath: '${stagingDirectory.path}/projection_layer.ncnn.bin',
+    );
+
+    final paramPtr = stagedParam.toNativeUtf8().cast<ffi.Char>();
+    final binPtr = stagedBin.toNativeUtf8().cast<ffi.Char>();
+    try {
+      final code = _initTextModel(paramPtr, binPtr);
+      _textModelInitialized = code == 0;
+      if (code != 0) {
+        throw StateError(_readNativeString(_getLastError));
+      }
+    } finally {
+      malloc.free(paramPtr);
+      malloc.free(binPtr);
+    }
+  }
+
+  Future<double> warmUpImage() async {
+    await ensureImageModelInitialized();
     final status = getStatus();
     if (!status.libraryLoaded) {
       throw StateError(status.summary);
     }
 
     final stopwatch = Stopwatch()..start();
-    final code = _warmup();
+    final code = _warmupImage();
+    stopwatch.stop();
+    if (code != 0) {
+      throw StateError(_readNativeString(_getLastError));
+    }
+    return stopwatch.elapsedMicroseconds / 1000.0;
+  }
+
+  Future<double> warmUpText() async {
+    await ensureTextModelInitialized();
+    final status = getStatus();
+    if (!status.libraryLoaded) {
+      throw StateError(status.summary);
+    }
+
+    final stopwatch = Stopwatch()..start();
+    final code = _warmupText();
     stopwatch.stop();
     if (code != 0) {
       throw StateError(_readNativeString(_getLastError));
@@ -285,19 +398,21 @@ class NcnnMobileClipNativeService {
   Future<void> dispose() async {
     _initialize();
     if (_library == null) {
-      _modelInitialized = false;
+      _imageModelInitialized = false;
+      _textModelInitialized = false;
       return;
     }
 
-    final code = _releaseModel();
-    _modelInitialized = false;
+    final code = _releaseModels();
+    _imageModelInitialized = false;
+    _textModelInitialized = false;
     if (code != 0) {
       throw StateError(_readNativeString(_getLastError));
     }
   }
 
   Future<List<double>> encodePreprocessedInput(Float32List input) async {
-    await ensureModelInitialized();
+    await ensureImageModelInitialized();
     final status = getStatus();
     if (!status.canEncode) {
       throw StateError(status.summary);
@@ -337,6 +452,51 @@ class NcnnMobileClipNativeService {
     }
   }
 
+  Future<List<double>> encodeTextTokens(List<int> tokenIds) async {
+    await ensureTextModelInitialized();
+    final status = getStatus();
+    if (!status.canEncode) {
+      throw StateError(status.summary);
+    }
+
+    final expectedTextLength = _expectedTextInputLength();
+    if (tokenIds.length != expectedTextLength) {
+      throw ArgumentError(
+        'NCNN text encoder expects $expectedTextLength tokens, got ${tokenIds.length}',
+      );
+    }
+
+    final inputPtr = malloc.allocate<ffi.Int32>(
+      tokenIds.length * ffi.sizeOf<ffi.Int32>(),
+    );
+    final outputPtr = malloc.allocate<ffi.Float>(
+      status.expectedOutputLength * ffi.sizeOf<ffi.Float>(),
+    );
+
+    try {
+      inputPtr
+          .asTypedList(tokenIds.length)
+          .setAll(0, Int32List.fromList(tokenIds));
+      final code = _encodeTextTokens(
+        inputPtr,
+        tokenIds.length,
+        outputPtr,
+        status.expectedOutputLength,
+      );
+      if (code != 0) {
+        throw StateError(_readNativeString(_getLastError));
+      }
+
+      return outputPtr
+          .asTypedList(status.expectedOutputLength)
+          .map((value) => value.toDouble())
+          .toList(growable: false);
+    } finally {
+      malloc.free(inputPtr);
+      malloc.free(outputPtr);
+    }
+  }
+
   Future<List<double>> encodeImageBytes(Uint8List imageBytes) async {
     final profile = await profileEncodeImageBytes(imageBytes);
     return profile.embedding;
@@ -345,7 +505,7 @@ class NcnnMobileClipNativeService {
   Future<NcnnEncodeProfile> profileEncodeImageBytes(
     Uint8List imageBytes,
   ) async {
-    await ensureModelInitialized();
+    await ensureImageModelInitialized();
     final status = getStatus();
     if (!status.canEncode) {
       throw StateError(status.summary);

@@ -176,7 +176,7 @@ class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
       return false;
     }
     try {
-      await _nativeService.ensureModelInitialized();
+      await _nativeService.ensureImageModelInitialized();
     } catch (_) {
       return false;
     }
@@ -190,7 +190,7 @@ class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
       return status.summary;
     }
     try {
-      await _nativeService.ensureModelInitialized();
+      await _nativeService.ensureImageModelInitialized();
     } catch (error) {
       return error.toString();
     }
@@ -200,7 +200,7 @@ class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
   @override
   Future<double> warmUp() async {
     final stopwatch = Stopwatch()..start();
-    await _nativeService.warmUp();
+    await _nativeService.warmUpImage();
     await _tagService.warmUp();
     stopwatch.stop();
     return stopwatch.elapsedMicroseconds / 1000.0;

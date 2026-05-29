@@ -65,11 +65,11 @@ class PhotoService {
   int get totalPhotoCount => _photoBox.count();
 
   Future<void> init() async {
-    if (_isInitialized) {
+    if (_isInitialized && ObjectBoxService().isInitialized) {
       return;
     }
     await getApplicationDocumentsDirectory();
-    await ObjectBoxService().init();
+    await ObjectBoxService().ensureInitialized();
     _isInitialized = true;
   }
 

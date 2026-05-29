@@ -40,6 +40,25 @@ class ObjectBoxService {
         : await openStore(directory: objectBoxDirectory.path);
   }
 
+  Future<void> ensureInitialized({Uint8List? referenceBytes}) async {
+    if (_store != null) {
+      return;
+    }
+
+    if (referenceBytes != null && referenceBytes.isNotEmpty) {
+      try {
+        attachReferenceBytes(referenceBytes);
+        if (_store != null) {
+          return;
+        }
+      } catch (_) {
+        _store = null;
+      }
+    }
+
+    await init();
+  }
+
   Uint8List get storeReferenceBytes {
     final reference = store.reference;
     return Uint8List.fromList(

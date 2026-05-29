@@ -33,7 +33,7 @@ class MobileViClipVideoService {
       kMobileViClipSmallVideoEmbeddingModelVersion;
 
   static const String _modelAssetPath =
-      'assets/mobileviclip/small/mobileviclip_small.onnx';
+      'assets/mobileviclip/small/mobileviclip_small_vision.onnx';
 
   final OnnxSessionProviderPreference _providerPreference;
 

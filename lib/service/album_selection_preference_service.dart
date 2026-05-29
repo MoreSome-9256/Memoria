@@ -54,8 +54,8 @@ class AlbumSelectionPreferenceService {
   static const String _excludeExtremeAspectRatiosKey =
       'scan_exclude_extreme_aspect_ratios';
 
-  /// 默认选中 DCIM 和 Camera 相册。
-  static const List<String> defaultAlbumIds = ['DCIM', 'Camera'];
+  /// 默认使用系统当前已授权范围。只有用户显式保存白名单时才按相册过滤。
+  static const List<String> defaultAlbumIds = <String>[];
 
   Future<AlbumSelectionSnapshot> loadSelection() async {
     final prefs = await SharedPreferences.getInstance();

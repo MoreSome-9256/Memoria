@@ -14,6 +14,7 @@
 #endif
 
 #if MEMORIA_NCNN_RUNTIME_ENABLED
+#include <ncnn/gpu.h>
 #include <ncnn/mat.h>
 #include <ncnn/net.h>
 #include "vendored_mobileclip_image_encoder.h"
@@ -25,16 +26,25 @@ constexpr const char* kTag = "memoria_ncnn";
 constexpr const char* kInputBlobName = "in0";
 constexpr const char* kOutputBlobName = "out0";
 constexpr int kExpectedInputLength = 3 * 256 * 256;
+constexpr int kExpectedTextInputLength = 77;
 constexpr int kExpectedOutputLength = 512;
+constexpr int kEotTokenId = 49407;
 std::mutex g_error_mutex;
 std::mutex g_state_mutex;
 std::string g_last_error = "NCNN backend not linked yet. FFI bridge is ready, but native inference is still stubbed.";
 std::string g_param_path;
 std::string g_bin_path;
+std::string g_text_param_path;
+std::string g_text_bin_path;
+std::string g_projection_param_path;
+std::string g_projection_bin_path;
 bool g_model_init_requested = false;
+bool g_text_model_init_requested = false;
 
 #if MEMORIA_NCNN_RUNTIME_ENABLED
 std::unique_ptr<VendoredMobileClipImageEncoder> g_mobileclip_encoder;
+std::unique_ptr<ncnn::Net> g_text_encoder;
+std::unique_ptr<ncnn::Net> g_projection_layer;
 #endif
 
 void set_last_error(const std::string& message) {
@@ -61,6 +71,15 @@ bool has_initialized_model_paths() {
     return g_model_init_requested && !g_param_path.empty() && !g_bin_path.empty();
 }
 
+bool has_initialized_text_model_paths() {
+    std::lock_guard<std::mutex> lock(g_state_mutex);
+    return g_text_model_init_requested &&
+        !g_text_param_path.empty() &&
+        !g_text_bin_path.empty() &&
+        !g_projection_param_path.empty() &&
+        !g_projection_bin_path.empty();
+}
+
 void copy_buffer(char* buffer, int buffer_len, const std::string& value) {
     const int bytes_to_copy = std::min<int>(buffer_len - 1, value.size());
     std::memcpy(buffer, value.data(), bytes_to_copy);
@@ -72,16 +91,43 @@ std::pair<std::string, std::string> get_model_paths_copy() {
     return {g_param_path, g_bin_path};
 }
 
+struct TextModelPaths {
+    std::string text_param;
+    std::string text_bin;
+    std::string projection_param;
+    std::string projection_bin;
+};
+
+TextModelPaths get_text_model_paths_copy() {
+    std::lock_guard<std::mutex> lock(g_state_mutex);
+    return {
+        g_text_param_path,
+        g_text_bin_path,
+        g_projection_param_path,
+        g_projection_bin_path
+    };
+}
+
 void clear_model_state_locked() {
     g_param_path.clear();
     g_bin_path.clear();
+    g_text_param_path.clear();
+    g_text_bin_path.clear();
+    g_projection_param_path.clear();
+    g_projection_bin_path.clear();
     g_model_init_requested = false;
+    g_text_model_init_requested = false;
 }
 
 #if MEMORIA_NCNN_RUNTIME_ENABLED
 bool has_loaded_runtime_model() {
     std::lock_guard<std::mutex> lock(g_state_mutex);
     return g_mobileclip_encoder != nullptr;
+}
+
+bool has_loaded_runtime_text_model() {
+    std::lock_guard<std::mutex> lock(g_state_mutex);
+    return g_text_encoder != nullptr && g_projection_layer != nullptr;
 }
 
 int load_runtime_model_locked(const std::string& param_path, const std::string& bin_path) {
@@ -96,6 +142,32 @@ int load_runtime_model_locked(const std::string& param_path, const std::string& 
     }
     g_mobileclip_encoder = std::move(encoder);
     return g_mobileclip_encoder != nullptr ? 0 : -12;
+}
+
+int load_net(ncnn::Net& net, const std::string& param_path, const std::string& bin_path) {
+    ncnn::create_gpu_instance();
+    net.opt.use_vulkan_compute = ncnn::get_gpu_count() > 0;
+    const int param_result = net.load_param(param_path.c_str());
+    const int model_result = net.load_model(bin_path.c_str());
+    return param_result == 0 && model_result == 0 ? 0 : -1;
+}
+
+int load_runtime_text_model_locked(const TextModelPaths& paths) {
+    auto text_encoder = std::make_unique<ncnn::Net>();
+    auto projection_layer = std::make_unique<ncnn::Net>();
+
+    if (load_net(*text_encoder, paths.text_param, paths.text_bin) != 0) {
+        set_last_error("Failed to load NCNN MobileCLIP text encoder .param/.bin files.");
+        return -43;
+    }
+    if (load_net(*projection_layer, paths.projection_param, paths.projection_bin) != 0) {
+        set_last_error("Failed to load NCNN MobileCLIP projection layer .param/.bin files.");
+        return -44;
+    }
+
+    g_text_encoder = std::move(text_encoder);
+    g_projection_layer = std::move(projection_layer);
+    return 0;
 }
 
 void l2_normalize_inplace(float* output, int output_len) {
@@ -125,6 +197,20 @@ int copy_result_or_error(const std::vector<float>& values, float* output, int ou
     return 0;
 }
 #endif
+
+std::string sibling_model_path(const char* source_path, const char* sibling_name) {
+    std::filesystem::path path(source_path);
+    return (path.parent_path() / sibling_name).string();
+}
+
+int eot_index_for_tokens(const int* token_ids, int token_len) {
+    for (int i = 0; i < token_len; ++i) {
+        if (token_ids[i] == kEotTokenId) {
+            return i;
+        }
+    }
+    return token_len > 0 ? token_len - 1 : 0;
+}
 
 }  // namespace
 
@@ -174,7 +260,7 @@ int memoria_ncnn_init_model(const char* param_path, const char* bin_path) {
 
 int memoria_ncnn_is_backend_available() {
 #if MEMORIA_NCNN_RUNTIME_ENABLED
-    return has_loaded_runtime_model() ? 1 : 0;
+    return (has_loaded_runtime_model() || has_loaded_runtime_text_model()) ? 1 : 0;
 #else
     return 0;
 #endif
@@ -184,6 +270,8 @@ int memoria_ncnn_release_model() {
     std::lock_guard<std::mutex> lock(g_state_mutex);
 #if MEMORIA_NCNN_RUNTIME_ENABLED
     g_mobileclip_encoder.reset();
+    g_text_encoder.reset();
+    g_projection_layer.reset();
 #endif
     clear_model_state_locked();
     set_last_error("NCNN model released successfully.");
@@ -211,6 +299,8 @@ int memoria_ncnn_get_version(char* buffer, int buffer_len) {
             version = g_mobileclip_encoder->uses_vulkan()
                 ? "ffi-bridge-ncnn-runtime-vulkan"
                 : "ffi-bridge-ncnn-runtime-cpu";
+        } else if (g_text_encoder != nullptr && g_projection_layer != nullptr) {
+            version = "ffi-bridge-ncnn-runtime-text";
         }
     }
 #else
@@ -455,6 +545,202 @@ int memoria_ncnn_encode_preprocessed_f32(
     std::fill(output, output + output_len, 0.0f);
     set_last_error(
         "NCNN encode stub was invoked after model staging. Replace the stub implementation with the real ncnn extractor path."
+    );
+    return -4;
+#endif
+}
+
+int memoria_ncnn_init_image_model(const char* param_path, const char* bin_path) {
+    return memoria_ncnn_init_model(param_path, bin_path);
+}
+
+int memoria_ncnn_init_text_model(const char* text_param_path, const char* text_bin_path) {
+    if (text_param_path == nullptr || text_bin_path == nullptr) {
+        set_last_error("NCNN text init received a null param/bin path.");
+        return -1;
+    }
+
+    if (!file_exists(text_param_path)) {
+        set_last_error("NCNN text init could not find the text .param file.");
+        return -2;
+    }
+    if (!file_exists(text_bin_path)) {
+        set_last_error("NCNN text init could not find the text .bin file.");
+        return -3;
+    }
+
+    const std::string projection_param_path =
+        sibling_model_path(text_param_path, "projection_layer.ncnn.param");
+    const std::string projection_bin_path =
+        sibling_model_path(text_param_path, "projection_layer.ncnn.bin");
+    if (!file_exists(projection_param_path.c_str())) {
+        set_last_error("NCNN text init could not find projection_layer.ncnn.param next to the text model.");
+        return -4;
+    }
+    if (!file_exists(projection_bin_path.c_str())) {
+        set_last_error("NCNN text init could not find projection_layer.ncnn.bin next to the text model.");
+        return -5;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_state_mutex);
+        g_text_param_path = text_param_path;
+        g_text_bin_path = text_bin_path;
+        g_projection_param_path = projection_param_path;
+        g_projection_bin_path = projection_bin_path;
+        g_text_model_init_requested = true;
+    }
+
+#if MEMORIA_NCNN_RUNTIME_ENABLED
+    {
+        const TextModelPaths paths = get_text_model_paths_copy();
+        std::lock_guard<std::mutex> lock(g_state_mutex);
+        const int load_result = load_runtime_text_model_locked(paths);
+        if (load_result != 0) {
+            return load_result;
+        }
+    }
+
+    set_last_error("NCNN text model initialized successfully.");
+    return 0;
+#else
+    set_last_error(
+        "NCNN text model files were staged successfully, but the native ncnn runtime is still not linked into this bridge."
+    );
+    return -6;
+#endif
+}
+
+int memoria_ncnn_release_models() {
+    return memoria_ncnn_release_model();
+}
+
+int memoria_ncnn_expected_image_input_length() {
+    return memoria_ncnn_expected_input_length();
+}
+
+int memoria_ncnn_expected_text_input_length() {
+    return kExpectedTextInputLength;
+}
+
+int memoria_ncnn_warmup_image() {
+    return memoria_ncnn_warmup();
+}
+
+int memoria_ncnn_encode_text_tokens(
+    const int* token_ids,
+    int token_len,
+    float* output,
+    int output_len
+);
+
+int memoria_ncnn_warmup_text() {
+    if (!has_initialized_text_model_paths()) {
+        set_last_error(
+            "NCNN text warmup was called before text model init. Stage text_encoder and projection_layer first."
+        );
+        return -2;
+    }
+
+    int tokens[kExpectedTextInputLength] = {};
+    tokens[0] = 49406;
+    tokens[1] = kEotTokenId;
+    float output[kExpectedOutputLength] = {};
+    return memoria_ncnn_encode_text_tokens(
+        tokens,
+        kExpectedTextInputLength,
+        output,
+        kExpectedOutputLength
+    );
+}
+
+int memoria_ncnn_encode_text_tokens(
+    const int* token_ids,
+    int token_len,
+    float* output,
+    int output_len
+) {
+    if (token_ids == nullptr || output == nullptr) {
+        set_last_error("Null token/output buffer passed to memoria_ncnn_encode_text_tokens.");
+        return -1;
+    }
+    if (token_len != kExpectedTextInputLength) {
+        set_last_error("Unexpected token length for NCNN text encoder. Expected 77 int32 tokens.");
+        return -2;
+    }
+    if (output_len != kExpectedOutputLength) {
+        set_last_error("Unexpected output length for NCNN text encoder. Expected 512 float32 output.");
+        return -3;
+    }
+    if (!has_initialized_text_model_paths()) {
+        set_last_error(
+            "NCNN text encode was called before text model init. Stage text_encoder and projection_layer first."
+        );
+        return -5;
+    }
+
+#if MEMORIA_NCNN_RUNTIME_ENABLED
+    auto paths = get_text_model_paths_copy();
+    {
+        std::lock_guard<std::mutex> lock(g_state_mutex);
+        if (g_text_encoder == nullptr || g_projection_layer == nullptr) {
+            const int load_result = load_runtime_text_model_locked(paths);
+            if (load_result != 0) {
+                return load_result;
+            }
+        }
+    }
+
+    ncnn::Mat token_mat(kExpectedTextInputLength, 1, (void*)token_ids, sizeof(int));
+    auto text_ex = g_text_encoder->create_extractor();
+    text_ex.set_light_mode(true);
+    text_ex.input(kInputBlobName, token_mat.clone());
+
+    ncnn::Mat text_out;
+    if (text_ex.extract(kOutputBlobName, text_out) != 0 || text_out.empty()) {
+        set_last_error("NCNN MobileCLIP text encoder failed during token inference.");
+        return -31;
+    }
+    if (text_out.total() < static_cast<size_t>(kExpectedTextInputLength * kExpectedOutputLength)) {
+        set_last_error("NCNN MobileCLIP text encoder returned an unexpected output shape.");
+        return -32;
+    }
+
+    const int eot_index = eot_index_for_tokens(token_ids, token_len);
+    std::vector<float> selected(kExpectedOutputLength);
+    if (text_out.w == kExpectedOutputLength && text_out.h > eot_index) {
+        const float* row = text_out.row(eot_index);
+        std::copy(row, row + kExpectedOutputLength, selected.begin());
+    } else {
+        const float* text_values = text_out;
+        const int offset = eot_index * kExpectedOutputLength;
+        std::copy(text_values + offset, text_values + offset + kExpectedOutputLength, selected.begin());
+    }
+
+    ncnn::Mat projection_in(kExpectedOutputLength, 1, selected.data(), sizeof(float));
+    auto projection_ex = g_projection_layer->create_extractor();
+    projection_ex.set_light_mode(true);
+    projection_ex.input(kInputBlobName, projection_in.clone());
+
+    ncnn::Mat projection_out;
+    if (projection_ex.extract(kOutputBlobName, projection_out) != 0 || projection_out.empty()) {
+        set_last_error("NCNN MobileCLIP projection layer failed during text inference.");
+        return -33;
+    }
+    if (projection_out.total() != static_cast<size_t>(kExpectedOutputLength)) {
+        set_last_error("NCNN MobileCLIP projection layer returned an unexpected output size.");
+        return -34;
+    }
+
+    const float* projected_values = projection_out;
+    std::copy(projected_values, projected_values + kExpectedOutputLength, output);
+    l2_normalize_inplace(output, output_len);
+    set_last_error("NCNN text encode completed successfully.");
+    return 0;
+#else
+    std::fill(output, output + output_len, 0.0f);
+    set_last_error(
+        "NCNN text encode stub was invoked after model staging. Link the real ncnn runtime before text inference."
     );
     return -4;
 #endif

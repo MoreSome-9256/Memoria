@@ -184,7 +184,8 @@ class MobileClipEmbeddingService {
           return status.summary;
         }
         try {
-          await _ncnnService.ensureModelInitialized();
+          await _ncnnService.ensureImageModelInitialized();
+          await _ncnnService.ensureTextModelInitialized();
         } catch (error) {
           return error.toString();
         }
@@ -205,7 +206,8 @@ class MobileClipEmbeddingService {
         _mobileclip2LiteRtService = await _resolveLiteRtService();
         await _mobileclip2LiteRtService.warmUp();
       case MobileClipBackend.ncnn:
-        await _ncnnService.warmUp();
+        await _ncnnService.warmUpImage();
+        await _ncnnService.warmUpText();
     }
   }
 

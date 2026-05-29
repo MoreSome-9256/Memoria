@@ -36,6 +36,7 @@ void albumCacheForegroundTaskCallback() {
 
 class _AlbumCacheTaskHandler extends TaskHandler {
   bool _started = false;
+  String _runId = '';
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -49,7 +50,13 @@ class _AlbumCacheTaskHandler extends TaskHandler {
 
   @override
   Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
-    UnifiedAnalysisPipelineService().stopPipeline();
+    if (await AiBackgroundTaskService.instance.isCurrentUnifiedRun(_runId)) {
+      UnifiedAnalysisPipelineService().stopPipeline();
+    } else {
+      debugPrint(
+        '[foreground-pipeline] 忽略旧 foreground task destroy runId=$_runId',
+      );
+    }
   }
 
   Future<void> _runPipeline() async {
@@ -60,11 +67,12 @@ class _AlbumCacheTaskHandler extends TaskHandler {
         debugPrint('[foreground-pipeline] 没有待执行的缓存/AI 任务');
         return;
       }
+      _runId = request.runId;
+      debugPrint('[foreground-pipeline] 启动 runId=$_runId');
       await UnifiedAnalysisPipelineService().runInsideForegroundService(
         clearCacheFirst: request.clearCacheFirst,
         analyzeWithAi: request.analyzeWithAi,
         storeReferenceBytes: request.storeReferenceBytes,
-        rootIsolateToken: RootIsolateToken.instance,
       );
     } catch (error, stackTrace) {
       debugPrint('[foreground-pipeline] 执行失败: $error');
@@ -134,6 +142,7 @@ class AiBackgroundTaskService {
       'foreground_pending_unified_analyze_ai';
   static const _pendingUnifiedStoreReferenceKey =
       'foreground_pending_unified_store_reference';
+  static const _pendingUnifiedRunIdKey = 'foreground_pending_unified_run_id';
 
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
@@ -141,12 +150,12 @@ class AiBackgroundTaskService {
 
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
-        channelId: 'memoria_ai_foreground_task',
+        channelId: 'memoria_ai_foreground_task_v2',
         channelName: 'Memoria AI 分析',
         channelDescription: '展示 AI 打标任务的前台服务通知',
         onlyAlertOnce: true,
-        priority: NotificationPriority.LOW,
-        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.DEFAULT,
+        channelImportance: NotificationChannelImportance.DEFAULT,
       ),
       iosNotificationOptions: const IOSNotificationOptions(
         showNotification: false,
@@ -233,6 +242,8 @@ class AiBackgroundTaskService {
     );
     if (result is ServiceRequestFailure) {
       debugPrint('[foreground] startService failed: ${result.error}');
+    } else {
+      debugPrint('[foreground] startService requested: $result');
     }
   }
 
@@ -257,17 +268,32 @@ class AiBackgroundTaskService {
     }
     await _ensureInitialized();
     final prefs = await SharedPreferences.getInstance();
+    final runId = DateTime.now().microsecondsSinceEpoch.toString();
+    await prefs.setString(_pendingUnifiedRunIdKey, 'starting:$runId');
+    if (await FlutterForegroundTask.isRunningService) {
+      await FlutterForegroundTask.stopService();
+      for (var i = 0; i < 20; i++) {
+        if (!await FlutterForegroundTask.isRunningService) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      if (await FlutterForegroundTask.isRunningService) {
+        throw StateError(
+          'Foreground service did not stop before unified pipeline restart.',
+        );
+      }
+    }
     await prefs.setBool(_pendingUnifiedPipelineKey, true);
     await prefs.setBool(_pendingUnifiedClearCacheKey, clearCacheFirst);
     await prefs.setBool(_pendingUnifiedAnalyzeKey, analyzeWithAi);
+    await prefs.setString(_pendingUnifiedRunIdKey, runId);
+    await prefs.setBool('foreground_unified_pipeline_stop_requested', false);
+    await ObjectBoxService().ensureInitialized();
     await prefs.setString(
       _pendingUnifiedStoreReferenceKey,
       base64Encode(ObjectBoxService().storeReferenceBytes),
     );
-    if (await FlutterForegroundTask.isRunningService) {
-      await FlutterForegroundTask.stopService();
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-    }
     await startService(
       title: analyzeWithAi ? 'Memoria 正在缓存并分析媒体' : 'Memoria 正在更新相册缓存',
       text: analyzeWithAi ? '正在读取授权范围，并串行执行本地 AI 分析' : '正在读取授权范围并更新相册缓存',
@@ -285,6 +311,7 @@ class AiBackgroundTaskService {
       throw StateError('Foreground pipeline missing ObjectBox store reference');
     }
     return _UnifiedPipelineForegroundRequest(
+      runId: prefs.getString(_pendingUnifiedRunIdKey) ?? '',
       clearCacheFirst: prefs.getBool(_pendingUnifiedClearCacheKey) ?? false,
       analyzeWithAi: prefs.getBool(_pendingUnifiedAnalyzeKey) ?? true,
       storeReferenceBytes: Uint8List.fromList(base64Decode(encodedReference)),
@@ -297,6 +324,15 @@ class AiBackgroundTaskService {
     await prefs.remove(_pendingUnifiedClearCacheKey);
     await prefs.remove(_pendingUnifiedAnalyzeKey);
     await prefs.remove(_pendingUnifiedStoreReferenceKey);
+    await prefs.remove(_pendingUnifiedRunIdKey);
+  }
+
+  Future<bool> isCurrentUnifiedRun(String runId) async {
+    if (runId.isEmpty) {
+      return false;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_pendingUnifiedRunIdKey) == runId;
   }
 
   Future<void> updateNotification({
@@ -324,11 +360,13 @@ class AiBackgroundTaskService {
 
 class _UnifiedPipelineForegroundRequest {
   const _UnifiedPipelineForegroundRequest({
+    required this.runId,
     required this.clearCacheFirst,
     required this.analyzeWithAi,
     required this.storeReferenceBytes,
   });
 
+  final String runId;
   final bool clearCacheFirst;
   final bool analyzeWithAi;
   final Uint8List storeReferenceBytes;

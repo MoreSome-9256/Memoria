@@ -15,10 +15,10 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:photo_album/service/amplify_cognito_config.dart';
 import 'package:photo_album/service/album_refresh_service.dart';
 import 'package:photo_album/service/app_ai_settings_service.dart';
-import 'package:photo_album/service/ai_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/photo_service.dart';
 import 'package:photo_album/service/ai_progress_notification_service.dart';
+import 'package:photo_album/service/unified_analysis_pipeline_service.dart';
 import 'package:photo_album/storage/objectbox/objectbox_service.dart';
 import 'package:photo_album/utils/ocr_policy.dart';
 import 'view/pages/welcome_page.dart';
@@ -142,8 +142,10 @@ class _AppStartupCoordinator {
             analyzeWithAi: true,
           ),
         );
-      } else {
-        unawaited(AIService().resumePendingAnalysisIfNeeded());
+      } else if (aiSettings.autoResumeAnalysis) {
+        unawaited(
+          UnifiedAnalysisPipelineService().startPendingAnalysisCandidates(),
+        );
       }
     });
     return _startupFuture!;

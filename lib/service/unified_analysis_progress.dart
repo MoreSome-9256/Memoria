@@ -122,7 +122,11 @@ class UnifiedAnalysisProgress {
   final bool scanStopped;
   final bool analysisEnabled;
 
-  bool get isVisible => isRunning || stage == UnifiedAnalysisStage.completed;
+  bool get isVisible =>
+      isRunning ||
+      stage == UnifiedAnalysisStage.completed ||
+      stage == UnifiedAnalysisStage.failed ||
+      scanStopped;
   bool get isScanning => stage == UnifiedAnalysisStage.scanning;
   bool get isProcessing => stage == UnifiedAnalysisStage.processing;
   bool get hasCacheWork =>
@@ -144,7 +148,11 @@ class UnifiedAnalysisProgress {
       aiTotal > 0 ? (aiCompleted / aiTotal).clamp(0, 1) : 0;
 
   double get overallFraction {
+    if (stage == UnifiedAnalysisStage.completed) return 1;
     if (scanTotal <= 0) return 0;
+    if (!analysisEnabled || aiTotal <= 0) {
+      return scanFraction;
+    }
     final scanWeight = 0.4;
     final aiWeight = 0.6;
     final weighted = scanFraction * scanWeight + aiFraction * aiWeight;

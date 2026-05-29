@@ -532,29 +532,22 @@ class _ProfilePageState extends State<ProfilePage> {
                           });
                         },
                       ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('后台常驻分析服务'),
-                        subtitle: Text(
-                          Platform.isIOS
-                              ? '使用 iOS Background App Refresh 调度；系统可能每隔一段时间给短后台窗口，强制关闭 App 后会停止'
-                              : '仅在你允许后以前台服务处理手动添加的任务',
+                      if (Platform.isIOS)
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('后台常驻分析服务'),
+                          subtitle: const Text(
+                            '使用 iOS Background App Refresh 调度；系统可能每隔一段时间给短后台窗口，强制关闭 App 后会停止',
+                          ),
+                          value: aiSettings.iosContinuedProcessingEnabled,
+                          onChanged: (value) {
+                            setSheetState(() {
+                              aiSettings = aiSettings.copyWith(
+                                iosContinuedProcessingEnabled: value,
+                              );
+                            });
+                          },
                         ),
-                        value: Platform.isIOS
-                            ? aiSettings.iosContinuedProcessingEnabled
-                            : aiSettings.androidForegroundServiceEnabled,
-                        onChanged: (value) {
-                          setSheetState(() {
-                            aiSettings = Platform.isIOS
-                                ? aiSettings.copyWith(
-                                    iosContinuedProcessingEnabled: value,
-                                  )
-                                : aiSettings.copyWith(
-                                    androidForegroundServiceEnabled: value,
-                                  );
-                          });
-                        },
-                      ),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('检测到未完成的任务自动继续'),

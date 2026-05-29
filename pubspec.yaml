@@ -127,8 +127,8 @@ flutter:
     - assets/mobileclip2/s2/text_model.onnx
     - assets/mobileclip2/s2/mobileclip2_s2_image.tflite
     - assets/mobileclip2/s2/mobileclip2_s2_text.tflite
-    - assets/mobileviclip/small/mobileviclip_small.onnx
-    - assets/mobileviclip/small/mobileviclip_small_metadata.json
+    - assets/mobileviclip/small/mobileviclip_small_vision.onnx
+#    - assets/mobileviclip/small/mobileviclip_small_metadata.json
     - assets/face/   
     - ai_tools/test_student.png
     - ai_tools/test1.png

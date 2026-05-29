@@ -40,13 +40,15 @@ extension AiModelWeightIdX on AiModelWeightId {
       'mobileclip2/s2/mobileclip2_s2_text.tflite',
     ],
     AiModelWeightId.mobileclipNcnn => const <String>[
-      'ncnn/mobileclip_s2/image.param',
-      'ncnn/mobileclip_s2/image.bin',
-      'ncnn/mobileclip_s2/text.param',
-      'ncnn/mobileclip_s2/text.bin',
+      'ncnn/mobileclip_s2/image_encoder.ncnn.param',
+      'ncnn/mobileclip_s2/image_encoder.ncnn.bin',
+      'ncnn/mobileclip_s2/text_encoder.ncnn.param',
+      'ncnn/mobileclip_s2/text_encoder.ncnn.bin',
+      'ncnn/mobileclip_s2/projection_layer.ncnn.param',
+      'ncnn/mobileclip_s2/projection_layer.ncnn.bin',
     ],
     AiModelWeightId.mobileViClipSmall => const <String>[
-      'mobileviclip/small/mobileviclip_small.onnx',
+      'mobileviclip/small/mobileviclip_small_vision.onnx',
     ],
     AiModelWeightId.smolVlm2 => const <String>[
       'smolvlm2/smolvlm2.gguf',
@@ -60,13 +62,15 @@ extension AiModelWeightIdX on AiModelWeightId {
       'https://memoria-static-ai-models.earthnpc.online/MobileCLIP2/mobileclip2_s2_text.tflite',
     ],
     AiModelWeightId.mobileclipNcnn => const <String>[
-      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/image.param',
-      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/image.bin',
-      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/text.param',
-      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/text.bin',
+      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/image_encoder.ncnn.param',
+      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/image_encoder.ncnn.bin',
+      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/text_encoder.ncnn.param',
+      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/text_encoder.ncnn.bin',
+      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/projection_layer.ncnn.param',
+      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/projection_layer.ncnn.bin',
     ],
     AiModelWeightId.mobileViClipSmall => const <String>[
-      'https://memoria-static-ai-models.earthnpc.online/MobileViCLIP/mobileviclip_small.onnx',
+      'https://memoria-static-ai-models.earthnpc.online/MobileViCLIP/mobileviclip_small_vision.onnx',
     ],
     AiModelWeightId.smolVlm2 => const <String>[
       'https://memoria-static-ai-models.earthnpc.online/SmolVLM2/SmolVLM2-256M-Video-Instruct-Q8_0.gguf',

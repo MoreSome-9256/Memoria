@@ -3,6 +3,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -16,6 +17,7 @@ class ObjectBoxService {
   factory ObjectBoxService() => _instance;
 
   Store? _store;
+  String? _storePath;
 
   bool get isInitialized => _store != null;
 
@@ -27,6 +29,14 @@ class ObjectBoxService {
     return store;
   }
 
+  String get storePath {
+    final path = _storePath;
+    if (path == null) {
+      throw StateError('ObjectBox has not been initialized yet.');
+    }
+    return path;
+  }
+
   Future<void> init() async {
     if (_store != null) {
       return;
@@ -35,13 +45,26 @@ class ObjectBoxService {
     final directory = await getApplicationSupportDirectory();
     final objectBoxDirectory = Directory(p.join(directory.path, 'objectbox'));
     await objectBoxDirectory.create(recursive: true);
-    _store = Store.isOpen(objectBoxDirectory.path)
-        ? Store.attach(getObjectBoxModel(), objectBoxDirectory.path)
-        : await openStore(directory: objectBoxDirectory.path);
+    final dbPath = objectBoxDirectory.path;
+    
+    _store = Store.isOpen(dbPath)
+        ? Store.attach(getObjectBoxModel(), dbPath)
+        : await openStore(directory: dbPath);
+    _storePath = dbPath;
+    
+    debugPrint('[objectbox] init: path=$dbPath isOpen=${Store.isOpen(dbPath)}');
   }
 
-  Future<void> ensureInitialized({Uint8List? referenceBytes}) async {
+  Future<void> ensureInitialized({
+    Uint8List? referenceBytes,
+    bool preferAttach = false,
+  }) async {
     if (_store != null) {
+      return;
+    }
+
+    if (preferAttach) {
+      await init();
       return;
     }
 
@@ -49,9 +72,11 @@ class ObjectBoxService {
       try {
         attachReferenceBytes(referenceBytes);
         if (_store != null) {
+          debugPrint('[objectbox] ensureInitialized: attached via referenceBytes');
           return;
         }
-      } catch (_) {
+      } catch (e) {
+        debugPrint('[objectbox] ensureInitialized: referenceBytes failed: $e');
         _store = null;
       }
     }
@@ -86,7 +111,9 @@ class ObjectBoxService {
   }
 
   void close() {
+    debugPrint('[objectbox] close: path=$_storePath');
     _store?.close();
     _store = null;
+    _storePath = null;
   }
 }

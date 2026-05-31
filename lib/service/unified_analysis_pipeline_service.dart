@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -32,8 +30,6 @@ import 'media_analysis_image_reader.dart';
 import 'media_embedding_service.dart';
 import 'photo_attribute_background_service.dart';
 
-const String _foregroundProducerRunningKey =
-    'foreground_unified_pipeline_producer_running';
 const String _foregroundStopRequestedKey =
     'foreground_unified_pipeline_stop_requested';
 
@@ -138,6 +134,7 @@ class UnifiedAnalysisPipelineService {
     bool analyzeWithAi = true,
     Uint8List? storeReferenceBytes,
   }) async {
+    UnifiedAnalysisProgressStore.instance.markForegroundIsolate();
     _isRunning = true;
     _stopRequested = false;
     _scanCompletedNormally = false;
@@ -154,40 +151,40 @@ class UnifiedAnalysisPipelineService {
     _startedAt = DateTime.now();
 
     try {
-      await UnifiedAnalysisProgressStore.instance.clear();
       _updateProgress(
         stage: UnifiedAnalysisStage.warmingUp,
         message: '前台服务已启动，正在连接数据库…',
       );
       await ObjectBoxService().ensureInitialized(
         referenceBytes: storeReferenceBytes,
+        preferAttach: true,
       );
       await PhotoService().init();
       
       if (analyzeWithAi) {
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool(_foregroundProducerRunningKey, true);
         await prefs.setBool(_foregroundStopRequestedKey, false);
         
-        try {
-          if (clearCacheFirst) {
-            _updateProgress(
-              stage: UnifiedAnalysisStage.scanning,
-              message: '正在清空缓存…',
-            );
-            await PhotoService().clearAllCachedData();
-          }
-          await _runProducer(
-            enqueueForConsumer: false,
-            requestPermission: false,
+        if (clearCacheFirst) {
+          _updateProgress(
+            stage: UnifiedAnalysisStage.scanning,
+            message: '正在清空缓存…',
           );
-        } finally {
-          await prefs.setBool(_foregroundProducerRunningKey, false);
+          await PhotoService().clearAllCachedData();
         }
+        await _runProducer(
+          enqueueForConsumer: false,
+          requestPermission: false,
+        );
+        _scanCompletedNormally = !_stopRequested;
         
         _aiTotal = PhotoService().countPendingAnalysisCandidates();
-        await _runSerialConsumerFromDatabase();
+        if (_aiTotal > 0) {
+          await _runSerialConsumerFromDatabase();
+        }
         await _onPipelineCompleted();
+        
+        await AiBackgroundTaskService.instance.stop();
       } else if (clearCacheFirst) {
         await _runFullRebuildPipeline(
           requestPermission: storeReferenceBytes == null,
@@ -405,7 +402,7 @@ class UnifiedAnalysisPipelineService {
   Future<void> _runConsumer() async {
     _updateProgress(
       stage: UnifiedAnalysisStage.warmingUp,
-      message: '正在预热 AI 引擎…',
+      message: 'AI 模型正在预热，请稍候…',
     );
 
     final settings = await AppAiSettingsService.instance.load();
@@ -489,28 +486,14 @@ class UnifiedAnalysisPipelineService {
         limit: 1,
       );
       if (pending.isEmpty) {
-        final prefs = await SharedPreferences.getInstance();
-        final producerRunning =
-            prefs.getBool(_foregroundProducerRunningKey) ?? false;
-        if (!producerRunning) {
-          break;
-        }
-        _aiTotal = math.max(
-          _aiTotal,
-          PhotoService().countPendingAnalysisCandidates() + _aiCompleted,
-        );
-        _updateProgress(
-          stage: UnifiedAnalysisStage.processing,
-          message: '正在等待扫描线程移交 AI 任务…',
-        );
-        await Future<void>.delayed(const Duration(milliseconds: 500));
-        continue;
+        debugPrint('[pipeline] AI 队列为空，消费者结束');
+        break;
       }
 
       if (!warmedUp) {
         _updateProgress(
           stage: UnifiedAnalysisStage.warmingUp,
-          message: '发现待分析图片，正在预热 AI 引擎…',
+          message: 'AI 模型正在预热，请稍候…',
         );
         settings = await AppAiSettingsService.instance.load();
         backend = await MobileClipBackendPreferenceService()
@@ -744,14 +727,11 @@ class UnifiedAnalysisPipelineService {
   }
 
   Future<void> _onPipelineCompleted() async {
-    _updateProgress(
-      stage: UnifiedAnalysisStage.flushing,
-      message: _analysisEnabled && _aiTotal > 0
-          ? '正在刷新事件聚类…'
-          : '相册缓存已更新，没有新的待分析图片',
-    );
-
     if (_analysisEnabled && _aiTotal > 0) {
+      _updateProgress(
+        stage: UnifiedAnalysisStage.flushing,
+        message: '正在刷新事件聚类…',
+      );
       await EventService().runClustering();
       await _publishPostFilterJunkReport();
     }
@@ -762,18 +742,9 @@ class UnifiedAnalysisPipelineService {
           ? '已完成 $_aiCompleted/$_aiTotal 张照片，失败 $_aiFailed'
           : '相册缓存已更新，没有新的待分析图片',
     );
-
-    await Future.delayed(const Duration(milliseconds: 1800));
-    _progressNotifier.value = UnifiedAnalysisProgress.idle();
   }
 
   Future<void> _publishPostFilterJunkReport() async {
-    if (_junkCandidates.isNotEmpty) {
-      AIService().replacePendingJunkCleanupReport(
-        JunkPhotoCleanupReport.fromCandidates(_junkCandidates),
-      );
-      return;
-    }
     await AIService().refreshJunkCleanupReportFromDatabase();
   }
 
@@ -819,6 +790,11 @@ class UnifiedAnalysisPipelineService {
       analysisEnabled: _analysisEnabled,
     );
     _progressNotifier.value = progress;
+    
+    debugPrint(
+      '[pipeline-progress] stage=$stage scan=$_scanCompleted/$_scanTotal ai=$_aiCompleted/$_aiTotal msg=$message',
+    );
+    
     unawaited(UnifiedAnalysisProgressStore.instance.publish(progress));
 
     if (!_suppressForegroundTaskChannelCalls) {

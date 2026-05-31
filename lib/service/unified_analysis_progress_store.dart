@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import 'unified_analysis_progress.dart';
 
@@ -13,74 +13,53 @@ class UnifiedAnalysisProgressStore {
   static final UnifiedAnalysisProgressStore instance =
       UnifiedAnalysisProgressStore._();
 
-  static const String _snapshotKey =
-      'foreground_unified_pipeline_progress_snapshot';
-  static const String _updatedAtKey =
-      'foreground_unified_pipeline_progress_updated_at';
-  static const Duration _pollInterval = Duration(milliseconds: 700);
-  static const Duration _terminalVisibleDuration = Duration(seconds: 12);
-
   final ValueNotifier<UnifiedAnalysisProgress> progress =
       ValueNotifier<UnifiedAnalysisProgress>(UnifiedAnalysisProgress.idle());
 
-  Timer? _poller;
-  int _lastUpdatedAt = -1;
+  bool _isForegroundIsolate = false;
 
-  void startPolling() {
-    _poller?.cancel();
-    _poller = Timer.periodic(_pollInterval, (_) => unawaited(_poll()));
-    unawaited(_poll());
+  void startListening() {
+    FlutterForegroundTask.addTaskDataCallback(_onReceiveData);
   }
 
-  void stopPolling() {
-    _poller?.cancel();
-    _poller = null;
+  void stopListening() {
+    FlutterForegroundTask.removeTaskDataCallback(_onReceiveData);
+  }
+
+  void markForegroundIsolate() {
+    _isForegroundIsolate = true;
+  }
+
+  void _onReceiveData(Object data) {
+    if (data is! String) return;
+    
+    final snapshot = _decode(data);
+    if (snapshot == null) {
+      debugPrint('[progress-receive] decode failed');
+      return;
+    }
+    
+    debugPrint(
+      '[progress-receive] stage=${snapshot.stage} scan=${snapshot.scanCompleted}/${snapshot.scanTotal} ai=${snapshot.aiCompleted}/${snapshot.aiTotal}',
+    );
+    
+    progress.value = snapshot;
   }
 
   Future<void> clear() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_snapshotKey);
-    await prefs.remove(_updatedAtKey);
-    _lastUpdatedAt = -1;
     progress.value = UnifiedAnalysisProgress.idle();
   }
 
   Future<void> publish(UnifiedAnalysisProgress next) async {
-    final prefs = await SharedPreferences.getInstance();
-    final previous = _decode(prefs.getString(_snapshotKey));
+    final previous = progress.value;
     final merged = _merge(previous, next);
-    final now = DateTime.now().millisecondsSinceEpoch;
-    await prefs.setString(_snapshotKey, jsonEncode(_toJson(merged)));
-    await prefs.setInt(_updatedAtKey, now);
-    _lastUpdatedAt = now;
+    
+    if (_isForegroundIsolate) {
+      final encoded = jsonEncode(_toJson(merged));
+      FlutterForegroundTask.sendDataToMain(encoded);
+    }
+    
     progress.value = merged;
-  }
-
-  Future<void> _poll() async {
-    final prefs = await SharedPreferences.getInstance();
-    final updatedAt = prefs.getInt(_updatedAtKey) ?? -1;
-    final snapshot = _decode(prefs.getString(_snapshotKey));
-    if (snapshot == null) {
-      if (progress.value.isVisible) {
-        progress.value = UnifiedAnalysisProgress.idle();
-      }
-      _lastUpdatedAt = updatedAt;
-      return;
-    }
-
-    final ageMs = DateTime.now().millisecondsSinceEpoch - updatedAt;
-    final isTerminal =
-        snapshot.stage == UnifiedAnalysisStage.completed ||
-        snapshot.stage == UnifiedAnalysisStage.failed;
-    if (isTerminal && ageMs > _terminalVisibleDuration.inMilliseconds) {
-      await clear();
-      return;
-    }
-
-    if (updatedAt != _lastUpdatedAt || progress.value != snapshot) {
-      _lastUpdatedAt = updatedAt;
-      progress.value = snapshot;
-    }
   }
 
   UnifiedAnalysisProgress _merge(
@@ -163,15 +142,12 @@ class UnifiedAnalysisProgressStore {
     };
   }
 
-  UnifiedAnalysisProgress? _decode(String? raw) {
-    if (raw == null || raw.isEmpty) {
-      return null;
-    }
+  UnifiedAnalysisProgress? _decode(String raw) {
+    if (raw.isEmpty) return null;
     try {
       final json = jsonDecode(raw);
-      if (json is! Map<String, dynamic>) {
-        return null;
-      }
+      if (json is! Map<String, dynamic>) return null;
+      
       return UnifiedAnalysisProgress(
         stage: _stageFromName(json['stage'] as String?),
         isRunning: json['isRunning'] == true,
@@ -187,7 +163,8 @@ class UnifiedAnalysisProgressStore {
         scanStopped: json['scanStopped'] == true,
         analysisEnabled: json['analysisEnabled'] != false,
       );
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[progress-decode] error=$e');
       return null;
     }
   }

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/painting.dart';
 import '../service/ai_background_task_service.dart';
 import '../service/ai_progress_notification_service.dart';
+import '../service/ai_service.dart';
 import '../service/unified_analysis_progress.dart';
 import '../service/unified_analysis_progress_store.dart';
 import 'pages/home_page.dart'; // 🌟 导入刚才新写的首页
@@ -40,7 +41,7 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     AIProgressNotificationService().bindNavigationHandler(_handleNavigationTarget);
-    UnifiedAnalysisProgressStore.instance.startPolling();
+    UnifiedAnalysisProgressStore.instance.startListening();
     UnifiedAnalysisProgressStore.instance.progress.addListener(
       _handleForegroundProgressChanged,
     );
@@ -53,7 +54,7 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
       _handleForegroundProgressChanged,
     );
     _foregroundStopTimer?.cancel();
-    UnifiedAnalysisProgressStore.instance.stopPolling();
+    UnifiedAnalysisProgressStore.instance.stopListening();
     super.dispose();
   }
 
@@ -67,6 +68,11 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
       _foregroundStopTimer = null;
       return;
     }
+    
+    if (progress.stage == UnifiedAnalysisStage.completed) {
+      unawaited(AIService().refreshJunkCleanupReportFromDatabase());
+    }
+    
     _foregroundStopTimer ??= Timer(const Duration(seconds: 2), () {
       _foregroundStopTimer = null;
       unawaited(AiBackgroundTaskService.instance.stop());

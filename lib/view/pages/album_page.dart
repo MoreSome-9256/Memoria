@@ -1053,6 +1053,12 @@ class _AlbumPageState extends State<AlbumPage> {
     final elapsedLabel = _formatDurationCompact(
       Duration(milliseconds: progress.elapsedMs),
     );
+    final remainingLabel = progress.estimatedRemainingDuration != null
+        ? _formatDurationCompact(progress.estimatedRemainingDuration!)
+        : null;
+    
+    final isWarmingUp = progress.stage == UnifiedAnalysisStage.warmingUp;
+    
     final cacheTitle = progress.scanDone
         ? '相册缓存已更新 ${progress.scanCompleted}/${progress.scanTotal}'
         : progress.scanStopped
@@ -1061,11 +1067,15 @@ class _AlbumPageState extends State<AlbumPage> {
     final hasAiWork = progress.analysisEnabled && progress.aiTotal > 0;
     final aiTitle = !progress.analysisEnabled
         ? 'AI 打标签未启动'
+        : isWarmingUp
+        ? 'AI 模型正在预热'
         : hasAiWork
         ? 'AI 正在打标签 ${progress.aiCompleted}/${progress.aiTotal}'
         : '尚未发现待分析图片';
     final aiDetail = !progress.analysisEnabled
         ? '仅更新缓存，不预热模型，不移交任务'
+        : isWarmingUp
+        ? '首次处理需要加载模型，请稍候…'
         : hasAiWork
         ? '队列 ${progress.queueSize} · 失败 ${progress.aiFailed}'
         : '扫描完成后如果有新图片，会自动移交到这里处理';
@@ -1096,10 +1106,16 @@ class _AlbumPageState extends State<AlbumPage> {
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
-              Text(
-                '已耗时 $elapsedLabel',
-                style: TextStyle(color: Colors.grey[700], fontSize: 12),
-              ),
+              if (remainingLabel != null && !isWarmingUp)
+                Text(
+                  '剩余 $remainingLabel',
+                  style: TextStyle(color: Colors.indigo[700], fontSize: 12, fontWeight: FontWeight.w600),
+                )
+              else
+                Text(
+                  '已耗时 $elapsedLabel',
+                  style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                ),
             ],
           ),
           const SizedBox(height: 12),
@@ -1117,10 +1133,10 @@ class _AlbumPageState extends State<AlbumPage> {
           if (progress.analysisEnabled) ...[
             const SizedBox(height: 12),
             _buildProgressRow(
-              icon: Icons.auto_awesome,
+              icon: isWarmingUp ? Icons.whatshot : Icons.auto_awesome,
               title: aiTitle,
               detail: aiDetail,
-              value: progress.aiTotal > 0 ? aiFraction : null,
+              value: isWarmingUp ? null : (progress.aiTotal > 0 ? aiFraction : null),
               color: Colors.teal,
             ),
           ],

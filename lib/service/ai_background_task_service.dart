@@ -3,11 +3,12 @@
 // 主进程写 manifest 到 spool → 启动前台服务 → 本 isolate 只做纯计算
 // → result/embedding/progress 写入 spool → done.marker → 主进程消费写库。
 
-import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';

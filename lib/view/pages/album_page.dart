@@ -875,7 +875,7 @@ class _AlbumPageState extends State<AlbumPage> {
               textInputAction: TextInputAction.search,
               onSubmitted: (_) => _submitSemanticSearch(),
               decoration: InputDecoration(
-                hintText: '语义搜索',
+                hintText: '自然语言搜索，例如：去年夏天青岛海边',
                 suffixIcon: IconButton(
                   onPressed: _submitSemanticSearch,
                   icon: const Icon(Icons.search),

@@ -178,7 +178,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
       textInputAction: TextInputAction.search,
       onSubmitted: (_) => _performSearch(),
       decoration: InputDecoration(
-        hintText: '搜索时间、地点、场景或回忆',
+        hintText: '输入自然语言，例如：上周日本的夜景',
         prefixIcon: const Icon(Icons.manage_search_rounded),
         suffixIcon: IconButton(
           onPressed: _performSearch,
@@ -242,6 +242,94 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         ),
       ),
     );
+  }
+
+  Widget _buildQueryPlanPanel(SemanticSearchResult result) {
+    final chips = _buildQueryPlanChips(result.query);
+    if (chips.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.92),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Wrap(spacing: 8, runSpacing: 8, children: chips),
+    );
+  }
+
+  List<Widget> _buildQueryPlanChips(SemanticSearchQuery query) {
+    final chips = <Widget>[];
+    for (final range in query.timeRanges.where(
+      (item) => item.hasDateBoundary,
+    )) {
+      chips.add(_planChip(Icons.event_rounded, _formatDateRange(range)));
+    }
+    for (final range in query.timeRanges.where(
+      (item) => item.hasLocalTimeWindow,
+    )) {
+      chips.add(_planChip(Icons.nights_stay_rounded, _formatLocalTime(range)));
+    }
+    for (final location in query.locations.take(4)) {
+      chips.add(_planChip(Icons.place_rounded, location.text));
+    }
+    for (final semantic in query.positiveSemantics.take(3)) {
+      chips.add(_planChip(Icons.auto_awesome_rounded, semantic.text));
+    }
+    return chips;
+  }
+
+  Widget _planChip(IconData icon, String label) {
+    return Chip(
+      avatar: Icon(icon, size: 16),
+      label: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.sizeOf(context).width - 112,
+        ),
+        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  String _formatDateRange(SemanticSearchTimeRange range) {
+    final start = range.startIso ?? _formatDateTimeMs(range.startTimeMs);
+    final end = range.endIso ?? _formatDateTimeMs(range.endTimeMs);
+    if (start.isNotEmpty && end.isNotEmpty) {
+      return '$start - $end';
+    }
+    return start.isNotEmpty ? start : end;
+  }
+
+  String _formatDateTimeMs(int? value) {
+    if (value == null) {
+      return '';
+    }
+    final date = DateTime.fromMillisecondsSinceEpoch(value);
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-'
+        '${date.day.toString().padLeft(2, '0')}';
+  }
+
+  String _formatLocalTime(SemanticSearchTimeRange range) {
+    final start = _formatMinuteOfDay(range.localStartMinute);
+    final end = _formatMinuteOfDay(range.localEndMinute);
+    final zone = (range.timezone ?? '').trim();
+    final prefix = zone.isEmpty ? '当地时间' : zone;
+    return '$prefix $start-$end';
+  }
+
+  String _formatMinuteOfDay(int? value) {
+    if (value == null) {
+      return '--:--';
+    }
+    final hour = value ~/ 60;
+    final minute = value % 60;
+    return '${hour.toString().padLeft(2, '0')}:'
+        '${minute.toString().padLeft(2, '0')}';
   }
 
   Widget _buildControlPanel(
@@ -726,18 +814,15 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
   }
 
   Widget _buildIdleState() {
-    return const Center(child: Text('输入自然语言开始搜索，例如“春节团聚吃饺子的照片”'));
+    return const Center(child: Text('输入自然语言开始搜索，例如“去年夏天青岛海边的记忆”'));
   }
 
   Widget _buildEmptyState(SemanticSearchResult result) {
-    final message = result.relaxationMessage?.trim().isNotEmpty == true
-        ? '没有找到符合条件的图片。\n${result.relaxationMessage!}'
-        : '没有找到匹配的图片，可以尝试放宽时间、地点或语义描述。';
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(
-          message,
+          '没有找到匹配的图片，可以调整时间、地点或自然语言描述后重新搜索。',
           textAlign: TextAlign.center,
           style: TextStyle(color: Colors.grey[600], height: 1.5),
         ),
@@ -838,6 +923,13 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                     child: _buildSearchBar(),
+                  ),
+                ),
+              if (!widget.hideSearchBar && result != null)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: _buildQueryPlanPanel(result),
                   ),
                 ),
               if (!widget.hideSearchBar &&

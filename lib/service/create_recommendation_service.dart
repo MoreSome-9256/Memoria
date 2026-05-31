@@ -50,7 +50,6 @@ class CreateRecommendationService {
     final existingByKey = <String, CreateRecommendationEntity>{
       for (final entity in existing) entity.recommendationKey: entity,
     };
-    final locationDictionary = _buildLocationDictionary(photos);
     final updates = <CreateRecommendationEntity>[];
     final duePresets = _selectPresetsToRefresh(
       presets,
@@ -70,7 +69,6 @@ class CreateRecommendationService {
       final result = await _searchPreset(
         preset,
         now: now,
-        locationDictionary: locationDictionary,
       );
       final matchedPhotos = _mergeRecommendationPhotos(result);
       final matchedCount = matchedPhotos.length;
@@ -626,25 +624,6 @@ class CreateRecommendationService {
     );
   }
 
-  Set<String> _buildLocationDictionary(List<PhotoEntity> photos) {
-    final values = <String>{};
-    for (final photo in photos) {
-      for (final value in <String?>[
-        photo.province,
-        photo.city,
-        photo.district,
-        photo.locationName,
-        photo.formattedAddress,
-      ]) {
-        final normalized = _normalizedLocation(value);
-        if (normalized != null) {
-          values.add(normalized);
-        }
-      }
-    }
-    return values;
-  }
-
   List<_ResolvedRecommendationPreset> _selectPresetsToRefresh(
     List<_ResolvedRecommendationPreset> presets,
     Map<String, CreateRecommendationEntity> existingByKey,
@@ -728,12 +707,10 @@ class CreateRecommendationService {
   Future<SemanticSearchResult> _searchPreset(
     _ResolvedRecommendationPreset preset, {
     required DateTime now,
-    required Set<String> locationDictionary,
   }) async {
     final presetQuery = _templateService.buildPresetQuery(
       preset.query,
       now: now,
-      locationDictionary: locationDictionary,
     );
     if (presetQuery != null) {
       return _semanticPhotoSearchService.searchWithQuery(presetQuery);
@@ -763,7 +740,6 @@ class CreateRecommendationService {
           },
           'notes': '地点型创作推荐预置查询',
         },
-        locationDictionary: locationDictionary,
       );
       return _semanticPhotoSearchService.searchWithQuery(structuredQuery);
     }
@@ -896,7 +872,7 @@ class CreateRecommendationService {
 
   String _slugify(String input) {
     final normalized = input.toLowerCase().replaceAll(RegExp(r'\s+'), '_');
-    return normalized.replaceAll(RegExp(r'[^a-z0-9_\u4e00-\u9fa5]+'), '');
+    return normalized.replaceAll(RegExp(r'[^a-z0-9_一-龥]+'), '');
   }
 
   String? _normalizedLocation(String? value) {

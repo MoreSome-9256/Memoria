@@ -536,6 +536,12 @@ class UnifiedAnalysisPipelineService {
         );
       }
     }
+
+    debugPrint('[pipeline] 消费者结束: completed=$_aiCompleted failed=$_aiFailed');
+
+    if (_stopRequested || await _readForegroundStopRequested()) {
+      _clearStoppedCandidates();
+    }
   }
 
   Future<void> _handoffBatchToAi(

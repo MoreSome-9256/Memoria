@@ -1,19 +1,17 @@
-/// 故事生成编排主服务，统筹选图、生成、排队和结果交付。
+// 故事生成编排主服务，统筹选图、生成、排队和结果交付。
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
-import 'package:objectbox/objectbox.dart';
-
 import '../models/entity/photo_entity.dart';
 import '../models/entity/story_entity.dart';
 import '../models/vo/photo.dart';
 import '../models/vo/story_generation_models.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
+import '../utils/media_type_helper.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 import 'internvl_experiment_service.dart';

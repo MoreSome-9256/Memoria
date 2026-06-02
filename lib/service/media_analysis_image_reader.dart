@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
@@ -126,6 +125,7 @@ class MediaAnalysisImageReader {
     int analysisSize = defaultAnalysisSize,
     int frameCount = defaultFrameCount,
     File? fallbackFile,
+    bool allowFileFallback = true,
   }) async {
     final asset = await AssetEntity.fromId(assetId);
     if (asset == null) {
@@ -137,25 +137,50 @@ class MediaAnalysisImageReader {
       analysisSize: analysisSize,
       frameCount: frameCount,
       fallbackFile: fallbackFile,
+      allowFileFallback: allowFileFallback,
     );
   }
 
   Future<MediaAnalysisFrameFiles> readFrameFilesFromAsset(
     String assetId, {
-    required File fallbackFile,
     required bool videoLike,
+    File? fallbackFile,
+    bool allowFileFallback = false,
     int maxFrames = defaultFrameCount,
   }) async {
     final asset = await AssetEntity.fromId(assetId);
     if (asset != null) {
-      final sourceFile = await _bestReadableAssetFile(asset) ?? fallbackFile;
       if (asset.type == AssetType.video || asset.isLivePhoto || videoLike) {
-        final fromVideo = await _extractFrameFiles(
-          sourceFile,
-          maxFrames: maxFrames,
+        final sourceFile = await _bestReadableAssetFile(asset);
+        if (sourceFile != null) {
+          final fromVideo = await _extractFrameFiles(
+            sourceFile,
+            maxFrames: maxFrames,
+          );
+          if (fromVideo.frames.isNotEmpty) {
+            return fromVideo;
+          }
+          if (asset.isLivePhoto || _isGifLike(asset)) {
+            final decoded = await _decodeGifFrameFiles(
+              sourceFile,
+              maxFrames: maxFrames,
+            );
+            if (decoded.frames.isNotEmpty) {
+              return decoded;
+            }
+          }
+        }
+        final frameBytes = await _readAssetFrameBytes(
+          asset,
+          sourceFile: null,
+          frameCount: maxFrames,
+          imageSize: defaultAnalysisSize,
         );
-        if (fromVideo.frames.isNotEmpty) {
-          return fromVideo;
+        if (frameBytes.isNotEmpty) {
+          return _writeFrameByteList(
+            frameBytes,
+            prefix: 'memoria_asset_vlm_frame',
+          );
         }
       }
       final bytes = await _readAssetThumbnail(
@@ -167,10 +192,17 @@ class MediaAnalysisImageReader {
         return _writeFrameBytes(bytes, prefix: 'memoria_asset_vlm');
       }
     }
-    return readFrameFilesFromFile(
-      fallbackFile,
-      videoLike: videoLike,
-      maxFrames: maxFrames,
+    if (allowFileFallback && fallbackFile != null) {
+      return readFrameFilesFromFile(
+        fallbackFile,
+        videoLike: videoLike,
+        maxFrames: maxFrames,
+      );
+    }
+    return const MediaAnalysisFrameFiles(
+      frames: <File>[],
+      cleanupPaths: <String>[],
+      sourceLabel: 'asset_unreadable',
     );
   }
 
@@ -405,13 +437,32 @@ class MediaAnalysisImageReader {
     Uint8List bytes, {
     required String prefix,
   }) async {
+    return _writeFrameByteList(<Uint8List>[bytes], prefix: prefix);
+  }
+
+  Future<MediaAnalysisFrameFiles> _writeFrameByteList(
+    List<Uint8List> byteList, {
+    required String prefix,
+  }) async {
     final dir = await getTemporaryDirectory();
-    final path = '${dir.path}/${prefix}_${DateTime.now().microsecondsSinceEpoch}.jpg';
-    final file = File(path);
-    await file.writeAsBytes(bytes, flush: true);
+    final runId = DateTime.now().microsecondsSinceEpoch;
+    final frames = <File>[];
+    final paths = <String>[];
+    for (var i = 0; i < byteList.length; i++) {
+      final bytes = byteList[i];
+      if (bytes.isEmpty) {
+        continue;
+      }
+      final path =
+          '${dir.path}/${prefix}_${runId}_${i.toString().padLeft(2, '0')}.jpg';
+      final file = File(path);
+      await file.writeAsBytes(bytes, flush: true);
+      frames.add(file);
+      paths.add(path);
+    }
     return MediaAnalysisFrameFiles(
-      frames: <File>[file],
-      cleanupPaths: <String>[path],
+      frames: frames,
+      cleanupPaths: paths,
       sourceLabel: 'jpeg_frame',
     );
   }
@@ -428,6 +479,11 @@ class MediaAnalysisImageReader {
       return MemoriaMediaKind.dynamicImage;
     }
     return path == null ? MemoriaMediaKind.image : MediaTypeHelper.fromPath(path);
+  }
+
+  bool _isGifLike(AssetEntity asset) {
+    final mime = asset.mimeType?.toLowerCase() ?? '';
+    return mime == 'image/gif' || mime == 'image/webp';
   }
 
   (int, int) _boundedSize({

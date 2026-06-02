@@ -1,6 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 
@@ -72,7 +70,7 @@ class _SmolVlmDescriptionPageState extends State<SmolVlmDescriptionPage> {
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
     final selected = <_SelectedVlmMedia>[];
     for (final pick in picks) {
-      if (pick.path.trim().isEmpty || !File(pick.path).existsSync()) {
+      if (pick.assetId.trim().isEmpty) {
         continue;
       }
       final q = photoBox
@@ -102,10 +100,9 @@ class _SmolVlmDescriptionPageState extends State<SmolVlmDescriptionPage> {
       for (var i = 0; i < _selected.length; i++) {
         final item = _selected[i];
         final description = await LocalVlmDescriptionService.instance
-            .generateMediaDescription(
-              mediaFile: File(item.pick.path),
-              treatAsVideo: item.isVideoLike,
+            .generateAssetDescription(
               assetId: item.pick.assetId,
+              treatAsVideo: item.isVideoLike,
               prompt: _buildPrompt(item),
             );
         outputs.add(item.toJson(description: description, error: null));

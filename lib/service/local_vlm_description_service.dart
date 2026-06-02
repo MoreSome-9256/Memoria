@@ -36,27 +36,61 @@ class LocalVlmDescriptionService {
     String prompt =
         'Describe the visible content in one concise, concrete paragraph.',
   }) async {
+    final normalizedAssetId = assetId?.trim();
+    if (normalizedAssetId != null && normalizedAssetId.isNotEmpty) {
+      return generateAssetDescription(
+        assetId: normalizedAssetId,
+        treatAsVideo: treatAsVideo,
+        fallbackFile: mediaFile.path.trim().isEmpty ? null : mediaFile,
+        prompt: prompt,
+      );
+    }
+    return _generateDescriptionFromFrames(
+      frameResult: await MediaAnalysisImageReader.instance
+          .readFrameFilesFromFile(
+            mediaFile,
+            videoLike: treatAsVideo,
+            maxFrames: treatAsVideo ? 8 : 1,
+          ),
+      treatAsVideo: treatAsVideo,
+      prompt: prompt,
+    );
+  }
+
+  Future<String> generateAssetDescription({
+    required String assetId,
+    required bool treatAsVideo,
+    File? fallbackFile,
+    String prompt =
+        'Describe the visible content in one concise, concrete paragraph.',
+  }) async {
+    return _generateDescriptionFromFrames(
+      frameResult: await MediaAnalysisImageReader.instance
+          .readFrameFilesFromAsset(
+            assetId.trim(),
+            videoLike: treatAsVideo,
+            fallbackFile: fallbackFile,
+            allowFileFallback: false,
+            maxFrames: treatAsVideo ? 8 : 1,
+          ),
+      treatAsVideo: treatAsVideo,
+      prompt: prompt,
+    );
+  }
+
+  Future<String> _generateDescriptionFromFrames({
+    required MediaAnalysisFrameFiles frameResult,
+    required bool treatAsVideo,
+    required String prompt,
+  }) async {
     if (!await isEnabled) {
       return '';
     }
-    final engine = await _ensureEngine();
-    final chat = await engine.createChat();
-    final cleanupPaths = <String>[];
+    final cleanupPaths = List<String>.from(frameResult.cleanupPaths);
+    EngineChat? chat;
     try {
-      final frameResult =
-          assetId != null && assetId.trim().isNotEmpty
-              ? await MediaAnalysisImageReader.instance.readFrameFilesFromAsset(
-                  assetId.trim(),
-                  fallbackFile: mediaFile,
-                  videoLike: treatAsVideo,
-                  maxFrames: treatAsVideo ? 8 : 1,
-                )
-              : await MediaAnalysisImageReader.instance.readFrameFilesFromFile(
-                  mediaFile,
-                  videoLike: treatAsVideo,
-                  maxFrames: treatAsVideo ? 8 : 1,
-                );
-      cleanupPaths.addAll(frameResult.cleanupPaths);
+      final engine = await _ensureEngine();
+      chat = await engine.createChat();
       final frameBytes = await _readFrameBytes(frameResult.frames);
       if (frameBytes.isEmpty) {
         throw StateError('No readable visual frames were extracted.');
@@ -78,7 +112,7 @@ class LocalVlmDescriptionService {
       }
       return buffer.toString().trim();
     } finally {
-      await chat.dispose();
+      await chat?.dispose();
       for (final path in cleanupPaths) {
         try {
           final file = File(path);

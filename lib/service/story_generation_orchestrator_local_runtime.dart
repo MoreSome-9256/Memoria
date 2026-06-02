@@ -15,7 +15,6 @@ extension _StoryGenerationOrchestratorLocalRuntime
     onProgress,
   }) async {
     final captions = <int, _CaptionResult>{};
-    _LocalRuntime? fallbackRuntime;
     for (var index = 0; index < photos.length; index++) {
       final photo = photos[index];
       final payload = OnDeviceInternvlImagePayload(
@@ -39,10 +38,6 @@ extension _StoryGenerationOrchestratorLocalRuntime
         final generatedCaptions = await _generateLocalCaptionCandidates(
           photo: photo,
           payload: payload,
-          resolveFallbackRuntime: () async {
-            fallbackRuntime ??= await _prepareLocalRuntime();
-            return fallbackRuntime!;
-          },
         );
         if (generatedCaptions.isNotEmpty) {
           captions[photo.id] = _CaptionResult.localVlm(
@@ -73,16 +68,21 @@ extension _StoryGenerationOrchestratorLocalRuntime
   Future<List<String>> _generateLocalCaptionCandidates({
     required PhotoEntity photo,
     required OnDeviceInternvlImagePayload payload,
-    required Future<_LocalRuntime> Function() resolveFallbackRuntime,
   }) async {
     final results = <String>[];
+    final mediaKind = MediaTypeHelper.fromStorageValue(
+      photo.mediaKind,
+      path: photo.path,
+    );
+    final treatAsVideo =
+        mediaKind == MemoriaMediaKind.video ||
+        mediaKind == MemoriaMediaKind.dynamicImage;
     for (var attempt = 0; attempt < 3; attempt++) {
       try {
         final description = await LocalVlmDescriptionService.instance
-            .generateMediaDescription(
-              mediaFile: File(photo.path),
-              treatAsVideo: false,
+            .generateAssetDescription(
               assetId: photo.assetId,
+              treatAsVideo: treatAsVideo,
               prompt: _buildSmolVlmCaptionPrompt(payload, attempt: attempt + 1),
             );
         final normalized = _normalizeCaptionCandidate(description);
@@ -93,41 +93,6 @@ extension _StoryGenerationOrchestratorLocalRuntime
       } catch (error) {
         debugPrint(
           '[story-vlm] SmolVLM caption attempt ${attempt + 1}/3 failed: $error',
-        );
-      }
-
-      try {
-        final runtime = await resolveFallbackRuntime();
-        final prompt = _buildLocalCaptionPrompt(<OnDeviceInternvlImagePayload>[
-          payload,
-        ], attempt: attempt + 1);
-        final structured = await _runLocalStructuredTask(
-          prompt: prompt,
-          payloads: <OnDeviceInternvlImagePayload>[payload],
-          maxTokens: 320,
-          temperature: 0.18 + attempt * 0.08,
-          cliTimeoutMs: 300000,
-          requestTimeout: const Duration(minutes: 5),
-          preparedRuntime: runtime,
-          allowCliFallback: true,
-        );
-
-        final parsed = _tryParseJsonObject(structured.rawContent);
-        var caption = '';
-        final rawItems = _extractListOfMaps(parsed?['captions']);
-        if (rawItems.isNotEmpty) {
-          caption = rawItems.first['caption']?.toString().trim() ?? '';
-        }
-        if (caption.isEmpty) {
-          caption = structured.narrative.trim();
-        }
-        final normalized = _normalizeCaptionCandidate(caption);
-        if (normalized.isNotEmpty && !results.contains(normalized)) {
-          results.add(normalized);
-        }
-      } catch (error) {
-        debugPrint(
-          '[story-vlm] caption attempt ${attempt + 1}/3 failed: $error',
         );
       }
     }
@@ -340,38 +305,6 @@ $semanticHint$templateHint$musicHint
 图片素材(JSON)：
 ${jsonEncode(photoPayload)}
 ''';
-  }
-
-  String _buildLocalCaptionPrompt(
-    List<OnDeviceInternvlImagePayload> payloads, {
-    int attempt = 1,
-  }) {
-    final metadataLines = <String>[
-      '图片元数据：',
-      for (var index = 0; index < payloads.length; index++)
-        '- 图片${index + 1}：${_formatPayloadMeta(payloads[index])}',
-    ];
-    final focus = switch (attempt) {
-      1 => '重点描述画面主体、人物/物体、场景和动作。',
-      2 => '重点补充环境细节、构图、氛围、时间地点线索。',
-      _ => '重点检查文字、屏幕、文档、标识、遮挡、模糊和不确定之处。',
-    };
-
-    return <String>[
-      '你是手机本地运行的图片描述助手。',
-      '任务：充分读取每张图片，为后续云端故事模型提供可靠视觉解释。',
-      '这是同一张图片的第 $attempt 次独立读取，请从不同侧重点观察，避免重复上一轮措辞。',
-      focus,
-      '严格基于可见内容与元数据；不确定就写“不确定”，不要编造人物身份、关系和剧情。',
-      '如果图片主要是文字、屏幕、文档、聊天或界面，请明确说明它是这类内容，并概括可见信息。',
-      '',
-      ...metadataLines,
-      '',
-      '只输出 JSON，不要 markdown，不要分析，不要复述要求。',
-      'JSON 格式严格固定为：{"captions":[{"index":1,"caption":"..."}]}',
-      'captions 数组长度必须与输入图片数量一致，index 从 1 开始。',
-      'caption 长度控制在 30-90 个中文字符，允许用一句话解释画面。',
-    ].join('\n');
   }
 
   String _buildSmolVlmCaptionPrompt(

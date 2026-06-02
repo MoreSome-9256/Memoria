@@ -1,6 +1,5 @@
 // VLM 照片选择页面，辅助选择用于视觉语言分析的照片。
 
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -168,17 +167,6 @@ class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
       return;
     }
 
-    final file = await asset.file;
-    if (file == null || file.path.isEmpty || !File(file.path).existsSync()) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('无法读取这个媒体的原始文件路径')));
-      return;
-    }
-
     if (!mounted) {
       return;
     }
@@ -191,7 +179,7 @@ class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
           : MemoriaMediaKind.image;
       _selectedResults[asset.id] = VlmPhotoPickerResult(
         assetId: asset.id,
-        path: file.path,
+        path: '',
         createdAt: asset.createDateTime,
         mediaKind: mediaKind,
       );

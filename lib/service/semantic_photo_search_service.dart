@@ -219,8 +219,8 @@ class SemanticPhotoSearchService {
 
   SemanticSearchResult _emptyResult(
     SemanticSearchQuery query,
-    int totalAnalyzedPhotos, {
-  }) {
+    int totalAnalyzedPhotos,
+  ) {
     return SemanticSearchResult(
       query: query,
       exactPhotos: const <PhotoEntity>[],

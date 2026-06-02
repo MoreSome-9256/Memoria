@@ -45,6 +45,7 @@ class OnDeviceInternvlImagePayload {
     return map;
   }
 }
+
 /// 手机本地多模态模型设备画像。
 ///
 /// 这不是“已经集成成功”的运行状态，而是“当前手机硬件适不适合承载本地多模态 Q4 模型”
@@ -86,7 +87,9 @@ class OnDeviceInternvlProfile {
   factory OnDeviceInternvlProfile.fromMap(Map<Object?, Object?> map) {
     final supportedAbisRaw = map['supportedAbis'];
     final supportedAbis = supportedAbisRaw is List
-        ? supportedAbisRaw.map((item) => item.toString()).toList(growable: false)
+        ? supportedAbisRaw
+              .map((item) => item.toString())
+              .toList(growable: false)
         : const <String>[];
 
     return OnDeviceInternvlProfile(
@@ -364,7 +367,7 @@ class OnDeviceInternvlService {
       return null;
     }
 
-    final raw = await _channel.invokeMethod<Map<Object?, Object?>>('probeDevice');
+    final raw = await _invokeMap('probeDevice');
     if (raw == null) {
       return null;
     }
@@ -376,23 +379,20 @@ class OnDeviceInternvlService {
       return null;
     }
 
-    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
-      'getBackendStatus',
-    );
+    final raw = await _invokeMap('getBackendStatus');
     if (raw == null) {
       return null;
     }
     return OnDeviceInternvlBackendStatus.fromMap(raw);
   }
 
-  Future<OnDeviceInternvlServerDeploymentStatus?> getServerDeploymentStatus() async {
+  Future<OnDeviceInternvlServerDeploymentStatus?>
+  getServerDeploymentStatus() async {
     if (!Platform.isAndroid) {
       return null;
     }
 
-    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
-      'getServerDeploymentStatus',
-    );
+    final raw = await _invokeMap('getServerDeploymentStatus');
     if (raw == null) {
       return null;
     }
@@ -404,9 +404,7 @@ class OnDeviceInternvlService {
       return null;
     }
 
-    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
-      'getServerStatus',
-    );
+    final raw = await _invokeMap('getServerStatus');
     if (raw == null) {
       return null;
     }
@@ -421,13 +419,10 @@ class OnDeviceInternvlService {
       return null;
     }
 
-    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
-      'ensureServerStarted',
-      <String, Object>{
-        'threads': threads,
-        'contextSize': contextSize,
-      },
-    );
+    final raw = await _invokeMap('ensureServerStarted', <String, Object>{
+      'threads': threads,
+      'contextSize': contextSize,
+    });
     if (raw == null) {
       return null;
     }
@@ -439,9 +434,7 @@ class OnDeviceInternvlService {
       return null;
     }
 
-    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
-      'stopServer',
-    );
+    final raw = await _invokeMap('stopServer');
     if (raw == null) {
       return null;
     }
@@ -453,9 +446,7 @@ class OnDeviceInternvlService {
       return null;
     }
 
-    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
-      'getCliDeploymentStatus',
-    );
+    final raw = await _invokeMap('getCliDeploymentStatus');
     if (raw == null) {
       return null;
     }
@@ -492,23 +483,35 @@ class OnDeviceInternvlService {
       );
     }
 
-    final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
-      'runCliExperiment',
-      <String, Object>{
-        'imagePath': imagePaths.isEmpty ? '' : imagePaths.first,
-        'imagePaths': imagePaths,
-        'imageMetadatas': imageMetadatas,
-        'prompt': prompt,
-        'threads': threads,
-        'contextSize': contextSize,
-        'maxTokens': maxTokens,
-        'timeoutMs': timeoutMs,
-      },
-    );
+    final raw = await _invokeMap('runCliExperiment', <String, Object>{
+      'imagePath': imagePaths.isEmpty ? '' : imagePaths.first,
+      'imagePaths': imagePaths,
+      'imageMetadatas': imageMetadatas,
+      'prompt': prompt,
+      'threads': threads,
+      'contextSize': contextSize,
+      'maxTokens': maxTokens,
+      'timeoutMs': timeoutMs,
+    });
     if (raw == null) {
       return null;
     }
     return OnDeviceInternvlCliResult.fromMap(raw);
+  }
+
+  Future<Map<Object?, Object?>?> _invokeMap(
+    String method, [
+    Object? arguments,
+  ]) async {
+    try {
+      return await _channel.invokeMethod<Map<Object?, Object?>>(
+        method,
+        arguments,
+      );
+    } on MissingPluginException {
+      debugPrint('⚠️ [Qwen VLM] MethodChannel 未注册，跳过 $method');
+      return null;
+    }
   }
 
   /// 在调试启动时输出一份摘要，方便你直接在 `flutter run` 日志里判断：

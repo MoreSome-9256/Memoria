@@ -2,8 +2,10 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:objectbox/objectbox.dart';
 
 import '../models/entity/photo_entity.dart';
@@ -15,6 +17,7 @@ import '../storage/objectbox/objectbox_service.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 import 'internvl_experiment_service.dart';
+import 'local_vlm_description_service.dart';
 import 'llm_service.dart';
 import 'music_service.dart';
 import 'on_device_internvl_service.dart';

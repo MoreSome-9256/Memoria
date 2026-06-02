@@ -33,7 +33,7 @@ extension AIServicePhotoProcessing on AIService {
         result.profile.objectBoxWriteMs = persistenceProfile.objectBoxWriteMs;
       }
       if (result.deferredCaptionTask != null) {
-        _enqueueAsyncCaption(result.deferredCaptionTask!);
+        await _runAsyncCaptionTask(result.deferredCaptionTask!);
       }
       return result;
     } catch (error) {
@@ -62,13 +62,22 @@ extension AIServicePhotoProcessing on AIService {
     final isarWriteWatch = Stopwatch()..start();
     final store = ObjectBoxService().store;
     final photoBox = store.box<PhotoEntity>();
+    var storeImageEmbedding = true;
     store.runInTransaction(TxMode.write, () {
       final p = photoBox.get(id);
       if (p != null) {
+        final mediaKind = MediaTypeHelper.fromStorageValue(
+          p.mediaKind,
+          path: p.path,
+        );
+        storeImageEmbedding = mediaKind == MemoriaMediaKind.image;
         p.aiTags = tags;
         p.isAiAnalyzed = true;
+        p.isAiAnalysisCandidate = false;
         p.aiCaption = aiCaption.isEmpty ? null : aiCaption;
-        p.imageEmbedding = imageEmbedding.isEmpty ? null : imageEmbedding;
+        p.imageEmbedding = storeImageEmbedding && imageEmbedding.isNotEmpty
+            ? imageEmbedding
+            : null;
         p.ocrText = ocrText.isEmpty ? null : ocrText;
         p.ocrTags = ocrTags;
         p.faceCount = faceCount;
@@ -82,7 +91,7 @@ extension AIServicePhotoProcessing on AIService {
     var objectBoxWriteMs = 0.0;
     if (!skipVectorIndexWrite) {
       final objectBoxWriteWatch = Stopwatch()..start();
-      if (imageEmbedding.isEmpty) {
+      if (imageEmbedding.isEmpty || !storeImageEmbedding) {
         _photoEmbeddingIndexRepository.deleteByPhotoIds(<int>[id]);
       } else {
         _photoEmbeddingIndexRepository.upsertEmbedding(
@@ -109,37 +118,5 @@ extension AIServicePhotoProcessing on AIService {
     q.close();
 
     return {'total': total, 'analyzed': analyzed, 'pending': total - analyzed};
-  }
-}
-
-Future<(int, int)?> _readImageDimensions(
-  File imageFile, {
-  int? knownWidth,
-  int? knownHeight,
-}) async {
-  try {
-    if (knownWidth != null &&
-        knownHeight != null &&
-        knownWidth > 0 &&
-        knownHeight > 0) {
-      return (knownWidth, knownHeight);
-    }
-
-    final bytes = await imageFile.readAsBytes();
-    final decoder = img.findDecoderForData(bytes);
-    final info = decoder?.startDecode(bytes);
-    if (info != null && info.width > 0 && info.height > 0) {
-      return (info.width, info.height);
-    }
-
-    final decoded = img.decodeImage(bytes);
-    if (decoded == null) {
-      return null;
-    }
-    final baked = img.bakeOrientation(decoded);
-    return (baked.width, baked.height);
-  } catch (error) {
-    debugPrint('读取分析图片尺寸失败 path=${imageFile.path}: $error');
-    return null;
   }
 }

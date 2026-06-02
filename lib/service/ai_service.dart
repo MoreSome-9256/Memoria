@@ -1,11 +1,12 @@
 /// AI 分析主编排服务，协调照片处理、标签、向量、人脸和 OCR 流程。
 
 import 'dart:async';
-import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
@@ -13,23 +14,35 @@ import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/tag_taxonomy_v2.dart';
+import '../models/entity/face_entity.dart';
 import '../models/entity/photo_entity.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
+import '../storage/vector_index/face_embedding_index_repository.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../storage/vector_index/vector_index_constants.dart';
 import '../utils/ai_score_helper.dart';
+import '../utils/face_crop_util.dart';
+import '../utils/media_type_helper.dart';
+import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
+import 'ai_background_task_service.dart';
 import 'ai_progress_notification_service.dart';
+import 'analysis_spool_progress_notifier.dart';
+import 'analysis_spool_service.dart';
+import 'app_ai_settings_service.dart';
 import 'event_service.dart';
+import 'face_embedding_service.dart';
 import 'face_pipeline_service.dart';
 import 'junk_photo_filter_service.dart';
+import 'onnx_face_embedding_service.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_embedding_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'ocr_service.dart';
-import 'photo_service.dart';
 import 'photo_caption_service.dart';
+import 'photo_service.dart';
 
 part 'ai_service_progress.dart';
 part 'ai_service_input.dart';
@@ -46,9 +59,16 @@ class AIService {
   static final AIService _instance = AIService._internal();
   factory AIService() => _instance;
   AIService._internal() {
-    _progressNotifier.addListener(_syncProgressNotification);
-    AIProgressNotificationService().bindActionHandler(_handleForegroundAction);
+    if (uiIntegrationEnabled) {
+      _progressNotifier.addListener(_syncProgressNotification);
+      AIProgressNotificationService().bindActionHandler(
+        _handleForegroundAction,
+      );
+      _startRuntimeProgressPolling();
+    }
   }
+
+  static bool uiIntegrationEnabled = true;
 
   static const Set<String> _blockedVisualTags = <String>{
     'Screenshot',
@@ -77,14 +97,19 @@ class AIService {
         defaultValue: 'always_compress',
       );
   static const int _minFaceDetectorInputSize = 32;
-  static const int _maxParallelWorkers = 4;
-  static const int _maxConcurrentCaptionWorkers = 2;
   static const String _autoResumeKey = 'ai_auto_resume';
   static const String _runtimeActiveKey = 'ai_runtime_active';
   static const String _runtimeHeartbeatAtKey = 'ai_runtime_heartbeat_at';
   static const String _runtimeTotalKey = 'ai_runtime_total';
   static const String _runtimeCompletedKey = 'ai_runtime_completed';
   static const String _runtimeFailedKey = 'ai_runtime_failed';
+  static const String _runtimeStepKey = 'ai_runtime_step';
+  static const String _runtimeElapsedMsKey = 'ai_runtime_elapsed_ms';
+  static const String _runtimeWarmUpCompletedKey =
+      'ai_runtime_warmup_completed';
+  static const String _runtimeWarmUpTotalKey = 'ai_runtime_warmup_total';
+  static const String _runtimePausedKey = 'ai_runtime_paused';
+  static const String _runtimeStoppingKey = 'ai_runtime_stopping';
   static const String _manualStopPendingKey = 'ai_manual_stop_pending';
 
   final ValueNotifier<AIAnalysisProgress> _progressNotifier =
@@ -96,8 +121,8 @@ class AIService {
   final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
       PhotoEmbeddingIndexRepository();
   final Set<int> _junkFilterBypassPhotoIds = <int>{};
-  final ListQueue<_AsyncCaptionTask> _pendingCaptionTasks =
-      ListQueue<_AsyncCaptionTask>();
+  final Map<String, Future<SpoolConsumeReport>> _activeSpoolConsumes =
+      <String, Future<SpoolConsumeReport>>{};
   static final _AnalysisInputConfig _analysisInputConfig =
       _AnalysisInputConfig.resolve(
         strategyLabel: _analysisInputStrategyOverride,
@@ -108,21 +133,25 @@ class AIService {
         strategyLabel: _analysisAuxiliaryStrategyOverride,
       );
 
-  bool _autoResumeEnabled = false;
-
   bool _isAnalyzing = false;
   bool _pauseRequested = false;
   bool _stopRequested = false;
   int _inflightCount = 0;
-  int _activeCaptionTasks = 0;
   Completer<void>? _analysisCompleter;
   int _lastRuntimeHeartbeatPersistAtMs = 0;
+  Timer? _runtimeProgressPoller;
 
   ValueListenable<AIAnalysisProgress> get progressListenable =>
       _progressNotifier;
   ValueListenable<JunkPhotoCleanupReport?> get junkCleanupReportListenable =>
       _junkCleanupReportNotifier;
-  bool get isAnalyzing => _isAnalyzing;
+  bool get isAnalyzing {
+    final progress = _progressNotifier.value;
+    return _isAnalyzing ||
+        progress.isRunning ||
+        progress.isPaused ||
+        progress.isStopping;
+  }
 
   JunkPhotoCleanupReport? get latestJunkCleanupReport =>
       _junkCleanupReportNotifier.value;

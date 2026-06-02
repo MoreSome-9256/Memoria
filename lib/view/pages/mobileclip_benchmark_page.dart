@@ -1,10 +1,13 @@
-/// MobileCLIP 基准测试页面，用于测试模型性能和资源占用。
+// MobileCLIP 基准测试页面，用于测试模型性能和资源占用。
+
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
 import '../../models/mobileclip_benchmark.dart';
 import '../../service/mobileclip_benchmark_service.dart';
 import '../widgets/path_image.dart';
+import 'vlm_photo_picker_page.dart';
 
 class MobileClipBenchmarkPage extends StatefulWidget {
   const MobileClipBenchmarkPage({super.key});
@@ -17,10 +20,37 @@ class MobileClipBenchmarkPage extends StatefulWidget {
 class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
   final MobileClipBenchmarkService _benchmarkService =
       MobileClipBenchmarkService();
-  int _sampleCount = 24;
+  List<MobileClipBenchmarkSample> _samples =
+      const <MobileClipBenchmarkSample>[];
   bool _isRunning = false;
   MobileClipBenchmarkReport? _report;
   String? _errorMessage;
+
+  Future<void> _pickSamples() async {
+    final result = await Navigator.of(context).push<List<VlmPhotoPickerResult>>(
+      MaterialPageRoute<List<VlmPhotoPickerResult>>(
+        builder: (context) => const VlmPhotoPickerPage(
+          maxSelection: 48,
+          title: '选择 Benchmark 图片',
+        ),
+      ),
+    );
+    if (result == null || result.isEmpty || !mounted) return;
+    setState(() {
+      _samples = result
+          .map((item) {
+            return MobileClipBenchmarkSample(
+              photoId: 0,
+              assetId: item.assetId,
+              path: item.path,
+              timestamp: item.createdAt.millisecondsSinceEpoch,
+            );
+          })
+          .toList(growable: false);
+      _report = null;
+      _errorMessage = null;
+    });
+  }
 
   Future<void> _runBenchmark() async {
     setState(() {
@@ -29,9 +59,7 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
     });
 
     try {
-      final report = await _benchmarkService.runBenchmark(
-        sampleCount: _sampleCount,
-      );
+      final report = await _benchmarkService.runBenchmark(samples: _samples);
       if (!mounted) {
         return;
       }
@@ -57,22 +85,15 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
   @override
   Widget build(BuildContext context) {
     final report = _report;
-    final summariesById = report == null
-        ? const <String, MobileClipAdapterSummary>{}
-        : <String, MobileClipAdapterSummary>{
-            for (final summary in report.adapterSummaries)
-              summary.adapterId: summary,
-          };
-    final cpuSummary = summariesById['onnx_cpu'];
-    final npuSummary = summariesById['onnx_nnapi_hardware'];
-
     return Scaffold(
       appBar: AppBar(title: const Text('MobileCLIP Benchmark')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            '在同一批照片上对比同一个 MobileCLIP2 ONNX 模型在手机端 CPU 与 NNAPI hardware 上的速度。当前默认会展示 ONNX CPU 与 ONNX NNAPI hardware 两条链路，且共享同一份 Flutter 预处理输入。',
+            Platform.isAndroid
+                ? '从相册选择同一批图片，对比 MobileCLIP2 LiteRT XNNPACK、CPU 与 NCNN 路径上的 embedding、标签和速度。'
+                : '从相册选择同一批图片，对比当前平台可用的 LiteRT 后端 embedding、标签和速度。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -82,35 +103,43 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('样本数量', style: Theme.of(context).textTheme.titleMedium),
+                  Text(
+                    'Benchmark 样本',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                   const SizedBox(height: 8),
-                  SegmentedButton<int>(
-                    segments: const [
-                      ButtonSegment<int>(value: 12, label: Text('12')),
-                      ButtonSegment<int>(value: 24, label: Text('24')),
-                      ButtonSegment<int>(value: 48, label: Text('48')),
-                    ],
-                    selected: <int>{_sampleCount},
-                    onSelectionChanged: _isRunning
-                        ? null
-                        : (selection) {
-                            setState(() {
-                              _sampleCount = selection.first;
-                            });
-                          },
-                  ),
+                  Text('已选择 ${_samples.length} 张图片'),
                   const SizedBox(height: 12),
-                  FilledButton.icon(
-                    onPressed: _isRunning ? null : _runBenchmark,
-                    icon: _isRunning
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.speed_outlined),
-                    label: Text(_isRunning ? '运行中...' : '开始 Benchmark'),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: _isRunning ? null : _pickSamples,
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: const Text('从相册选择图片'),
+                      ),
+                      FilledButton.icon(
+                        onPressed: _isRunning || _samples.isEmpty
+                            ? null
+                            : _runBenchmark,
+                        icon: _isRunning
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.speed_outlined),
+                        label: Text(_isRunning ? '运行中...' : '开始 Benchmark'),
+                      ),
+                    ],
                   ),
+                  if (_samples.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _SelectedSamplesStrip(samples: _samples),
+                  ],
                 ],
               ),
             ),
@@ -129,10 +158,6 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
             const SizedBox(height: 16),
             _ReportOverviewCard(report: report),
             const SizedBox(height: 16),
-            if (cpuSummary != null && npuSummary != null) ...[
-              _SpeedupCard(cpuSummary: cpuSummary, npuSummary: npuSummary),
-              const SizedBox(height: 16),
-            ],
             ...report.warnings.map(
               (warning) => Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -159,6 +184,35 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _SelectedSamplesStrip extends StatelessWidget {
+  const _SelectedSamplesStrip({required this.samples});
+
+  final List<MobileClipBenchmarkSample> samples;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 72,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: samples.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final sample = samples[index];
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: 72,
+              height: 72,
+              child: PathImage(path: sample.path, fit: BoxFit.cover),
+            ),
+          );
+        },
       ),
     );
   }
@@ -248,62 +302,6 @@ class _AdapterSummaryCard extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _SpeedupCard extends StatelessWidget {
-  const _SpeedupCard({required this.cpuSummary, required this.npuSummary});
-
-  final MobileClipAdapterSummary cpuSummary;
-  final MobileClipAdapterSummary npuSummary;
-
-  @override
-  Widget build(BuildContext context) {
-    final inferenceSpeedup = _speedup(
-      baselineMs: cpuSummary.meanInferenceMs,
-      candidateMs: npuSummary.meanInferenceMs,
-    );
-    final totalSpeedup = _speedup(
-      baselineMs: cpuSummary.meanTotalMs,
-      candidateMs: npuSummary.meanTotalMs,
-    );
-
-    return Card(
-      color: Theme.of(context).colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'CPU vs NNAPI hardware 速度对比',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '平均推理: CPU ${cpuSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
-              'NNAPI hardware ${npuSummary.meanInferenceMs.toStringAsFixed(1)} ms, '
-              '加速比 $inferenceSpeedup',
-            ),
-            Text(
-              '平均总耗时: CPU ${cpuSummary.meanTotalMs.toStringAsFixed(1)} ms, '
-              'NNAPI hardware ${npuSummary.meanTotalMs.toStringAsFixed(1)} ms, '
-              '加速比 $totalSpeedup',
-            ),
-            Text(
-              '共享预处理后，这里的差异主要反映 ONNX Runtime 在 CPU 与 NNAPI hardware 上的执行差异。',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _speedup({required double baselineMs, required double candidateMs}) {
-    if (baselineMs <= 0 || candidateMs <= 0) {
-      return '-';
-    }
-    return '${(baselineMs / candidateMs).toStringAsFixed(2)}x';
   }
 }
 

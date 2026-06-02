@@ -15,7 +15,6 @@ extension _StoryGenerationOrchestratorLocalRuntime
     onProgress,
   }) async {
     final captions = <int, _CaptionResult>{};
-    final runtime = await _prepareLocalRuntime();
     for (var index = 0; index < photos.length; index++) {
       final photo = photos[index];
       final payload = OnDeviceInternvlImagePayload(
@@ -36,31 +35,15 @@ extension _StoryGenerationOrchestratorLocalRuntime
       );
 
       try {
-        final prompt = _buildLocalCaptionPrompt(<OnDeviceInternvlImagePayload>[
-          payload,
-        ]);
-        final structured = await _runLocalStructuredTask(
-          prompt: prompt,
-          payloads: <OnDeviceInternvlImagePayload>[payload],
-          maxTokens: 192,
-          temperature: 0.2,
-          cliTimeoutMs: 240000,
-          requestTimeout: const Duration(minutes: 4),
-          preparedRuntime: runtime,
-          allowCliFallback: true,
+        final generatedCaptions = await _generateLocalCaptionCandidates(
+          photo: photo,
+          payload: payload,
         );
-
-        final parsed = _tryParseJsonObject(structured.rawContent);
-        String caption = '';
-        final rawItems = _extractListOfMaps(parsed?['captions']);
-        if (rawItems.isNotEmpty) {
-          caption = rawItems.first['caption']?.toString().trim() ?? '';
-        }
-        if (caption.isEmpty) {
-          caption = structured.narrative.trim();
-        }
-        if (caption.isNotEmpty) {
-          captions[photo.id] = _CaptionResult.localVlm(caption);
+        if (generatedCaptions.isNotEmpty) {
+          captions[photo.id] = _CaptionResult.localVlm(
+            generatedCaptions.first,
+            alternatives: generatedCaptions.skip(1).toList(growable: false),
+          );
         }
       } catch (_) {
         final existingCaption = photo.aiCaption?.trim();
@@ -80,6 +63,40 @@ extension _StoryGenerationOrchestratorLocalRuntime
     }
 
     return captions;
+  }
+
+  Future<List<String>> _generateLocalCaptionCandidates({
+    required PhotoEntity photo,
+    required OnDeviceInternvlImagePayload payload,
+  }) async {
+    final results = <String>[];
+    final mediaKind = MediaTypeHelper.fromStorageValue(
+      photo.mediaKind,
+      path: photo.path,
+    );
+    final treatAsVideo =
+        mediaKind == MemoriaMediaKind.video ||
+        mediaKind == MemoriaMediaKind.dynamicImage;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final description = await LocalVlmDescriptionService.instance
+            .generateAssetDescription(
+              assetId: photo.assetId,
+              treatAsVideo: treatAsVideo,
+              prompt: _buildSmolVlmCaptionPrompt(payload, attempt: attempt + 1),
+            );
+        final normalized = _normalizeCaptionCandidate(description);
+        if (normalized.isNotEmpty && !results.contains(normalized)) {
+          results.add(normalized);
+          continue;
+        }
+      } catch (error) {
+        debugPrint(
+          '[story-vlm] SmolVLM caption attempt ${attempt + 1}/3 failed: $error',
+        );
+      }
+    }
+    return results;
   }
 
   Future<_StructuredStoryPayload> _generateLocalDirectStory({
@@ -258,8 +275,10 @@ extension _StoryGenerationOrchestratorLocalRuntime
 8. highlights 用 3-6 条短句概括故事的精彩片段或关键线索。
 9. 如果某张图片包含 preferred_caption 和 preferred_caption_source，请把 preferred_caption 当作这张图最优先的视觉依据。
 10. 如果 preferred_caption_source 是 "local_vlm"，不要让 tags 或 existing_caption 覆盖这条本地视觉描述。
-11. existing_caption 只是本地 caption 不可用时的回退线索。
-12. tags、ocr_tags 和 ocr_summary 都只是辅助线索，不能替代图片主体描述。
+11. local_vlm_caption_candidates 是同一张图片由本地 VLM 独立读取 3 次得到的参考结果，用于降低单次波动；它们不是三张不同图片。请综合三次结果，优先采用互相一致的可见事实。
+12. 如果三次本地 VLM 结果互相矛盾，只保留最保守、最可见的事实，不确定内容不要写成确定剧情。
+13. existing_caption 只是本地 caption 不可用时的回退线索。
+14. tags、ocr_tags 和 ocr_summary 都只是辅助线索，不能替代图片主体描述；tags 可以帮助你判断主体类别和氛围，但不能覆盖本地 VLM 对可见画面的解释。
 $semanticHint$templateHint$musicHint
 
 输出 JSON 格式：
@@ -288,25 +307,27 @@ ${jsonEncode(photoPayload)}
 ''';
   }
 
-  String _buildLocalCaptionPrompt(List<OnDeviceInternvlImagePayload> payloads) {
-    final metadataLines = <String>[
-      '图片元数据：',
-      for (var index = 0; index < payloads.length; index++)
-        '- 图片${index + 1}：${_formatPayloadMeta(payloads[index])}',
-    ];
-
+  String _buildSmolVlmCaptionPrompt(
+    OnDeviceInternvlImagePayload payload, {
+    int attempt = 1,
+  }) {
+    final focus = switch (attempt) {
+      1 => 'Focus on the main visible subjects, objects, setting, and actions.',
+      2 =>
+        'Focus on environment details, composition, mood, time and location cues.',
+      _ =>
+        'Focus on visible text, screens, documents, signs, blur, occlusion, and uncertainty.',
+    };
     return <String>[
-      '你是手机本地运行的图片描述助手。',
-      '任务：为每张图片生成一句简短中文 caption。',
-      '严格基于可见内容与元数据，不要解释，不要展示推理过程。',
-      '',
-      ...metadataLines,
-      '',
-      '只输出 JSON，不要 markdown，不要分析，不要复述要求。',
-      'JSON 格式严格固定为：{"captions":[{"index":1,"caption":"..."}]}',
-      'captions 数组长度必须与输入图片数量一致，index 从 1 开始。',
-      'caption 长度控制在 12-40 个中文字符。',
-    ].join('\n');
+      'Describe only observable visual facts in this image.',
+      'This is independent read $attempt of the same image for downstream story writing.',
+      focus,
+      'Do not infer identities, relationships, intentions, hidden context, or fictional plot.',
+      'If something is uncertain, state that it is uncertain.',
+      'If the image is mostly a screenshot, document, chat, UI, sign, or text-heavy content, say so and summarize only visible content.',
+      'Known metadata: ${_formatPayloadMeta(payload)}.',
+      'Answer in English in one concrete paragraph, 40-100 words.',
+    ].join(' ');
   }
 
   String _buildLocalStoryPrompt(
@@ -381,7 +402,7 @@ ${jsonEncode(photoPayload)}
           server: server,
           prompt: prompt,
           payloads: payloads,
-          profileThreads: profile?.recommendedThreads ?? 4,
+          profileThreads: 1,
           profileContextSize: profile?.recommendedContextSize ?? 2048,
           maxTokens: maxTokens,
           cliTimeoutMs: cliTimeoutMs,
@@ -390,7 +411,7 @@ ${jsonEncode(photoPayload)}
       if (_looksLikeServerPipeFailure(error)) {
         await OnDeviceInternvlService().stopServer();
         final restarted = await OnDeviceInternvlService().ensureServerStarted(
-          threads: profile?.recommendedThreads ?? 4,
+          threads: 1,
           contextSize: profile?.recommendedContextSize ?? 2048,
         );
         if (restarted == null || !restarted.ready) {
@@ -420,7 +441,7 @@ ${jsonEncode(photoPayload)}
               server: restarted,
               prompt: prompt,
               payloads: payloads,
-              profileThreads: profile?.recommendedThreads ?? 4,
+              profileThreads: 1,
               profileContextSize: profile?.recommendedContextSize ?? 2048,
               maxTokens: maxTokens,
               cliTimeoutMs: cliTimeoutMs,
@@ -436,7 +457,7 @@ ${jsonEncode(photoPayload)}
   Future<_LocalRuntime> _prepareLocalRuntime() async {
     final profile = await OnDeviceInternvlService().probeDeviceProfile();
     final server = await OnDeviceInternvlService().ensureServerStarted(
-      threads: profile?.recommendedThreads ?? 4,
+      threads: 1,
       contextSize: profile?.recommendedContextSize ?? 2048,
     );
     return _LocalRuntime(profile: profile, server: server);
@@ -507,5 +528,17 @@ ${jsonEncode(photoPayload)}
     return text.contains('未解析出文本内容') ||
         text.contains('did not contain parseable text') ||
         text.contains('raw response');
+  }
+
+  String _normalizeCaptionCandidate(String value) {
+    final normalized = value
+        .replaceAll(RegExp(r'```(?:json)?', caseSensitive: false), '')
+        .replaceAll('```', '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (normalized.length <= 2) {
+      return '';
+    }
+    return normalized;
   }
 }

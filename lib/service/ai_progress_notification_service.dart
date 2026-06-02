@@ -55,21 +55,24 @@ class AIProgressNotificationService {
       _handleNotificationResponse(launchResponse);
     }
 
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    _initialized = true;
+  }
+
+  Future<void> ensurePermission() async {
+    if (kIsWeb) return;
+    if (defaultTargetPlatform == TargetPlatform.android) {
       final androidImpl = _plugin
           .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin
           >();
       await androidImpl?.requestNotificationsPermission();
-    } else if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
       final iosImpl =
           _plugin.resolvePlatformSpecificImplementation<
             IOSFlutterLocalNotificationsPlugin
           >();
       await iosImpl?.requestPermissions(alert: true, badge: false, sound: false);
     }
-
-    _initialized = true;
   }
 
   void bindActionHandler(ValueChanged<String> handler) {
@@ -149,6 +152,9 @@ class AIProgressNotificationService {
     required double fraction,
   }) async {
     await initialize();
+    // Do not request notification permission from this hot path. It can run
+    // from lifecycle/background contexts where Android plugins have no Activity
+    // context, which makes flutter_local_notifications throw a native NPE.
 
     final title = isStopping
         ? 'AI 打标正在结束'

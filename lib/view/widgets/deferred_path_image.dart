@@ -1,20 +1,26 @@
 /// 延迟加载路径图片组件，适合在列表或相册中按需解码。
 
 import 'dart:async';
-import 'dart:collection';
-import 'package:flutter/widget_previews.dart';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
-import 'path_image.dart';
+import '../../utils/media_type_helper.dart';
+import 'media_thumbnail.dart';
 
 class DeferredPathImage extends StatefulWidget {
   const DeferredPathImage({
     super.key,
     required this.path,
+    this.assetId,
+    this.kind,
+    this.thumbnailBytes,
     this.fit = BoxFit.cover,
   });
 
   final String path;
+  final String? assetId;
+  final MemoriaMediaKind? kind;
+  final Uint8List? thumbnailBytes;
   final BoxFit fit;
 
   @override
@@ -22,21 +28,32 @@ class DeferredPathImage extends StatefulWidget {
 }
 
 class _DeferredPathImageState extends State<DeferredPathImage> {
-  final _DeferredImageTicket _ticket = _DeferredImageTicket();
   bool _ready = false;
-  bool _firstFrameReported = false;
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _DeferredImageLoadScheduler.enqueue(_ticket, _startDeferredLoad);
+    _scheduleLoad();
   }
 
-  void _startDeferredLoad() {
+  @override
+  void didUpdateWidget(covariant DeferredPathImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.path != widget.path ||
+        oldWidget.assetId != widget.assetId ||
+        oldWidget.kind != widget.kind ||
+        oldWidget.thumbnailBytes != widget.thumbnailBytes) {
+      _ready = false;
+      _timer?.cancel();
+      _scheduleLoad();
+    }
+  }
+
+  void _scheduleLoad() {
     final delayMs = 30 + (widget.path.hashCode.abs() % 11) * 28;
     _timer = Timer(Duration(milliseconds: delayMs), () {
-      if (!mounted || _ticket.completed) {
+      if (!mounted) {
         return;
       }
       setState(() {
@@ -45,28 +62,21 @@ class _DeferredPathImageState extends State<DeferredPathImage> {
     });
   }
 
-  void _onFirstFrame() {
-    if (_firstFrameReported) {
-      return;
-    }
-    _firstFrameReported = true;
-    _DeferredImageLoadScheduler.complete(_ticket);
-  }
-
   @override
   void dispose() {
     _timer?.cancel();
-    _DeferredImageLoadScheduler.complete(_ticket);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     if (_ready) {
-      return PathImage(
+      return MediaThumbnail(
         path: widget.path,
+        assetId: widget.assetId,
+        kind: widget.kind,
+        thumbnailBytes: widget.thumbnailBytes,
         fit: widget.fit,
-        onFirstFrame: _onFirstFrame,
       );
     }
 
@@ -82,51 +92,3 @@ class _DeferredPathImageState extends State<DeferredPathImage> {
     );
   }
 }
-
-class _DeferredImageTicket {
-  bool started = false;
-  bool completed = false;
-}
-
-class _DeferredImageLoadScheduler {
-  static const int _maxConcurrent = 4;
-  static final Queue<(_DeferredImageTicket, VoidCallback)> _queue =
-      Queue<(_DeferredImageTicket, VoidCallback)>();
-  static int _active = 0;
-
-  static void enqueue(_DeferredImageTicket ticket, VoidCallback starter) {
-    if (ticket.completed) {
-      return;
-    }
-    _queue.add((ticket, starter));
-    _pump();
-  }
-
-  static void complete(_DeferredImageTicket ticket) {
-    if (ticket.completed) {
-      return;
-    }
-    ticket.completed = true;
-
-    if (ticket.started && _active > 0) {
-      _active -= 1;
-    } else {
-      _queue.removeWhere((entry) => identical(entry.$1, ticket));
-    }
-
-    _pump();
-  }
-
-  static void _pump() {
-    while (_active < _maxConcurrent && _queue.isNotEmpty) {
-      final (ticket, starter) = _queue.removeFirst();
-      if (ticket.completed) {
-        continue;
-      }
-      ticket.started = true;
-      _active += 1;
-      starter();
-    }
-  }
-}
-

@@ -11,6 +11,7 @@ class TagSanitizer {
     '月票',
     '当票',
     '__junk_candidate__',
+    '__junk_pending__',
   };
 
   static String? sanitizeVisualTag(String? value) {

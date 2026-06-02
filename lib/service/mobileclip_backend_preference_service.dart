@@ -3,30 +3,31 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum MobileClipBackend { mobileclip2Onnx, ncnn }
+enum MobileClipBackend { mobileclip2LiteRt, ncnn }
 
 extension MobileClipBackendX on MobileClipBackend {
   String get storageValue => switch (this) {
-    MobileClipBackend.mobileclip2Onnx => 'mobileclip2_onnx',
+    MobileClipBackend.mobileclip2LiteRt => 'mobileclip2_litert',
     MobileClipBackend.ncnn => 'ncnn',
   };
 
   String get label => switch (this) {
-    MobileClipBackend.mobileclip2Onnx => 'MobileCLIP2 ONNX',
-    MobileClipBackend.ncnn => 'NCNN',
+    MobileClipBackend.mobileclip2LiteRt => 'MobileCLIP2 LiteRT',
+    MobileClipBackend.ncnn => 'NCNN FFI',
   };
 
   String get description => switch (this) {
-    MobileClipBackend.mobileclip2Onnx =>
-      'Android 优先使用 NNAPI hardware，失败时回退到 XNNPACK/CPU',
-    MobileClipBackend.ncnn => '兼容性优先，推理更快但模型更弱',
+    MobileClipBackend.mobileclip2LiteRt =>
+      'LiteRT MobileCLIP2，默认使用 XNNPACK 以保证标签结果稳定',
+    MobileClipBackend.ncnn => 'Android 原生 FFI 桥接，优先尝试 NCNN Vulkan GPU',
   };
 
   static MobileClipBackend fromStorageValue(String? value) {
     return switch (value) {
-      'mobileclip2_onnx' => MobileClipBackend.mobileclip2Onnx,
+      'mobileclip2_litert' => MobileClipBackend.mobileclip2LiteRt,
+      'mobileclip2_onnx' => MobileClipBackend.mobileclip2LiteRt,
       'ncnn' => MobileClipBackend.ncnn,
-      _ => MobileClipBackend.mobileclip2Onnx,
+      _ => MobileClipBackend.mobileclip2LiteRt,
     };
   }
 }
@@ -42,7 +43,7 @@ class MobileClipBackendPreferenceService {
   static const String _backendKey = 'mobileclip_backend';
 
   final ValueNotifier<MobileClipBackend> _backendNotifier =
-      ValueNotifier<MobileClipBackend>(MobileClipBackend.mobileclip2Onnx);
+      ValueNotifier<MobileClipBackend>(MobileClipBackend.mobileclip2LiteRt);
 
   SharedPreferences? _preferences;
 

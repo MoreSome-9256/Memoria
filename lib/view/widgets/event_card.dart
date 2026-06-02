@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/event.dart';
+import '../../utils/media_type_helper.dart';
 import '../pages/event_detail_page.dart';
 import 'deferred_path_image.dart';
 import 'fullscreen_photo_viewer.dart';
@@ -22,12 +23,7 @@ class EventCard extends StatelessWidget {
       return true;
     }
 
-    const blockedTitles = <String>{
-      '未知地点的回忆',
-      '未知地点回忆',
-      '回忆',
-      '时光',
-    };
+    const blockedTitles = <String>{'未知地点的回忆', '未知地点回忆', '回忆', '时光'};
     if (blockedTitles.contains(title)) {
       return true;
     }
@@ -56,7 +52,8 @@ class EventCard extends StatelessWidget {
   String _dateLine() {
     final start =
         '${event.startDate.year}年${event.startDate.month.toString().padLeft(2, '0')}月${event.startDate.day.toString().padLeft(2, '0')}日';
-    final sameDay = event.startDate.year == event.endDate.year &&
+    final sameDay =
+        event.startDate.year == event.endDate.year &&
         event.startDate.month == event.endDate.month &&
         event.startDate.day == event.endDate.day;
     if (sameDay) {
@@ -197,18 +194,20 @@ class EventCard extends StatelessWidget {
                           scrollDirection: Axis.horizontal,
                           physics: const NeverScrollableScrollPhysics(),
                           child: Row(
-                            children: tags.map((tag) {
-                              return Padding(
-                                padding: const EdgeInsets.only(right: 8),
-                                child: Chip(
-                                  label: Text(
-                                    tag,
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                  visualDensity: VisualDensity.compact,
-                                ),
-                              );
-                            }).toList(growable: false),
+                            children: tags
+                                .map((tag) {
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: Chip(
+                                      label: Text(
+                                        tag,
+                                        style: const TextStyle(fontSize: 12),
+                                      ),
+                                      visualDensity: VisualDensity.compact,
+                                    ),
+                                  );
+                                })
+                                .toList(growable: false),
                           ),
                         );
                       },
@@ -240,6 +239,7 @@ class EventCard extends StatelessWidget {
         onTap: () => showFullscreenPhotoViewer(
           context,
           path: photo.path,
+          assetId: photo.id,
           heroTag: heroTag,
         ),
         child: Hero(
@@ -247,7 +247,16 @@ class EventCard extends StatelessWidget {
           child: SizedBox(
             height: 200,
             width: double.infinity,
-            child: DeferredPathImage(path: photo.path, fit: BoxFit.cover),
+            child: DeferredPathImage(
+              path: photo.path,
+              assetId: photo.id,
+              kind: MediaTypeHelper.fromStorageValue(
+                photo.mediaKind,
+                path: photo.path,
+              ),
+              thumbnailBytes: photo.thumbnailBytes,
+              fit: BoxFit.cover,
+            ),
           ),
         ),
       );
@@ -256,32 +265,43 @@ class EventCard extends StatelessWidget {
     return SizedBox(
       height: 200,
       child: Row(
-        children: coverPhotos.asMap().entries.map((entry) {
-          return Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(
-                right: entry.key < coverPhotos.length - 1 ? 2 : 0,
-              ),
-              child: GestureDetector(
-                onTap: () => showFullscreenPhotoViewer(
-                  context,
-                  path: entry.value.path,
-                  heroTag: 'event-cover-${event.id}-${entry.value.id}',
-                ),
-                child: Hero(
-                  tag: 'event-cover-${event.id}-${entry.value.id}',
-                  child: SizedBox(
-                    height: 200,
-                    child: DeferredPathImage(
+        children: coverPhotos
+            .asMap()
+            .entries
+            .map((entry) {
+              return Expanded(
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    right: entry.key < coverPhotos.length - 1 ? 2 : 0,
+                  ),
+                  child: GestureDetector(
+                    onTap: () => showFullscreenPhotoViewer(
+                      context,
                       path: entry.value.path,
-                      fit: BoxFit.cover,
+                      assetId: entry.value.id,
+                      heroTag: 'event-cover-${event.id}-${entry.value.id}',
+                    ),
+                    child: Hero(
+                      tag: 'event-cover-${event.id}-${entry.value.id}',
+                      child: SizedBox(
+                        height: 200,
+                        child: DeferredPathImage(
+                          path: entry.value.path,
+                          assetId: entry.value.id,
+                          kind: MediaTypeHelper.fromStorageValue(
+                            entry.value.mediaKind,
+                            path: entry.value.path,
+                          ),
+                          thumbnailBytes: entry.value.thumbnailBytes,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ),
-          );
-        }).toList(growable: false),
+              );
+            })
+            .toList(growable: false),
       ),
     );
   }

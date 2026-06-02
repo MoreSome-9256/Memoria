@@ -324,18 +324,4 @@ extension _StoryGenerationOrchestratorStoryBuilder
     return null;
   }
 
-  List<Map<String, dynamic>> _extractListOfMaps(Object? value) {
-    if (value is! List) {
-      return const <Map<String, dynamic>>[];
-    }
-    return value
-        .whereType<Map>()
-        .map((item) {
-          return item.map(
-            (key, mapValue) =>
-                MapEntry<String, dynamic>(key.toString(), mapValue),
-          );
-        })
-        .toList(growable: false);
-  }
 }

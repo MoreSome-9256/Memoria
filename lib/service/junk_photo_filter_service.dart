@@ -1,4 +1,4 @@
-/// 垃圾照片过滤服务，用于识别截图、模糊图和低质量内容。
+/// 垃圾照片过滤服务，用于识别严重模糊、遮挡和低事件价值内容。
 
 import 'dart:math' as math;
 
@@ -46,16 +46,10 @@ class JunkPhotoHit {
 }
 
 class JunkPhotoDecision {
-  const JunkPhotoDecision({
-    required this.shouldFilter,
-    required this.hits,
-  });
+  const JunkPhotoDecision({required this.shouldFilter, required this.hits});
 
   factory JunkPhotoDecision.keep() {
-    return const JunkPhotoDecision(
-      shouldFilter: false,
-      hits: <JunkPhotoHit>[],
-    );
+    return const JunkPhotoDecision(shouldFilter: false, hits: <JunkPhotoHit>[]);
   }
 
   final bool shouldFilter;
@@ -137,6 +131,7 @@ class JunkPhotoFilterService {
   JunkPhotoFilterService._internal();
 
   static const String junkCandidateTag = '__junk_candidate__';
+  static const String pendingJunkCandidateTag = '__junk_pending__';
 
   static final JunkPhotoFilterService _instance =
       JunkPhotoFilterService._internal();
@@ -145,54 +140,6 @@ class JunkPhotoFilterService {
 
   static const List<JunkPhotoCategoryDefinition> _definitions =
       <JunkPhotoCategoryDefinition>[
-        JunkPhotoCategoryDefinition(
-          id: 'screenshot',
-          label: '截图/界面',
-          description: '聊天截图、支付页、设置页、APP 界面一类的屏幕内容。',
-          prototypePrompts: <String>[
-            'a mobile phone screenshot',
-            'a screenshot of a chat application',
-            'a screenshot of a payment app',
-            'a screenshot of a settings page',
-            'a screenshot of a shopping app interface',
-          ],
-          threshold: 0.24,
-          screenshotBoost: 0.08,
-          ocrBoostThreshold: 24,
-          ocrBoost: 0.02,
-          extraKeywordHints: <String>['screenshot', 'screen', 'ui'],
-        ),
-        JunkPhotoCategoryDefinition(
-          id: 'document',
-          label: '文档/表格',
-          description: '纸质文件、课件、报表、白板文字、拍屏文档等。',
-          prototypePrompts: <String>[
-            'a photo of a printed document',
-            'a scanned paper document',
-            'a close-up photo of text on paper',
-            'a spreadsheet or report document',
-            'a photo of presentation slides on a screen',
-          ],
-          threshold: 0.255,
-          ocrBoostThreshold: 40,
-          ocrBoost: 0.035,
-          extraKeywordHints: <String>['document', 'paper', 'text'],
-        ),
-        JunkPhotoCategoryDefinition(
-          id: 'receipt',
-          label: '票据/账单',
-          description: '小票、发票、快递面单、支付凭证、收据等工具型图片。',
-          prototypePrompts: <String>[
-            'a photo of a receipt',
-            'a bill or invoice document',
-            'a shipping label on a package',
-            'a payment receipt with text',
-          ],
-          threshold: 0.27,
-          ocrBoostThreshold: 28,
-          ocrBoost: 0.03,
-          extraKeywordHints: <String>['receipt', 'invoice', 'bill'],
-        ),
         JunkPhotoCategoryDefinition(
           id: 'code',
           label: '二维码/海报码',
@@ -221,7 +168,53 @@ class JunkPhotoFilterService {
           threshold: 0.285,
           ocrBoostThreshold: 8,
           ocrBoost: 0.015,
-          extraKeywordHints: <String>['meme', 'sticker', 'reaction', '梗图', '表情包'],
+          extraKeywordHints: <String>[
+            'meme',
+            'sticker',
+            'reaction',
+            '梗图',
+            '表情包',
+          ],
+        ),
+        JunkPhotoCategoryDefinition(
+          id: 'plain_selfie',
+          label: '低信息自拍/证件照',
+          description: '纯大头自拍、证件照或没有背景、他人和事件线索的人像。多人场景、旅行和活动合照不应命中。',
+          prototypePrompts: <String>[
+            'a plain close-up selfie headshot with no background context',
+            'an ID photo portrait against a plain background',
+            'a passport photo or document portrait',
+            'a close-up face selfie without environment or event context',
+          ],
+          threshold: 0.285,
+          extraKeywordHints: <String>['selfie', 'passport photo', 'id photo'],
+        ),
+        JunkPhotoCategoryDefinition(
+          id: 'advertisement_poster',
+          label: '广告/海报',
+          description: '程序生成的分享海报、营销广告、纯宣传图。街景或活动照片中出现广告牌不应命中。',
+          prototypePrompts: <String>[
+            'a generated advertising poster image',
+            'a promotional marketing poster with text',
+            'a social media share poster advertisement',
+            'a product advertisement image with graphic design',
+          ],
+          threshold: 0.285,
+          ocrBoostThreshold: 16,
+          ocrBoost: 0.02,
+          extraKeywordHints: <String>['广告', '海报', '推广', 'promo', 'sale'],
+        ),
+        JunkPhotoCategoryDefinition(
+          id: 'abstract_low_value',
+          label: '低事件价值图形',
+          description: '抽象图案、纯装饰图、无具体事件意义或生活线索的图片。',
+          prototypePrompts: <String>[
+            'an abstract graphic pattern with no real world event',
+            'a decorative wallpaper image',
+            'a simple abstract art image without people or place',
+            'a generated geometric pattern image',
+          ],
+          threshold: 0.295,
         ),
         JunkPhotoCategoryDefinition(
           id: 'dark_or_occluded',
@@ -257,6 +250,27 @@ class JunkPhotoFilterService {
 
   List<JunkPhotoCategoryDefinition> get definitions => _definitions;
 
+  /// 可被 `compute()` 序列化的原型缓存
+  Map<String, List<double>> get prototypeCache =>
+      Map<String, List<double>>.unmodifiable(_prototypeCache);
+
+  /// 可被 `compute()` 序列化的分类定义列表
+  List<Map<String, Object?>> get definitionsJson {
+    return _definitions
+        .map(
+          (d) => <String, Object?>{
+            'id': d.id,
+            'label': d.label,
+            'description': d.description,
+            'threshold': d.threshold,
+            'screenshotBoost': d.screenshotBoost,
+            'ocrBoostThreshold': d.ocrBoostThreshold,
+            'ocrBoost': d.ocrBoost,
+          },
+        )
+        .toList(growable: false);
+  }
+
   Future<void> warmUp() async {
     if (_isWarmedUp) {
       return;
@@ -287,7 +301,10 @@ class JunkPhotoFilterService {
         continue;
       }
 
-      var score = _semanticService.calculateSimilarity(imageEmbedding, prototype);
+      var score = _semanticService.calculateSimilarity(
+        imageEmbedding,
+        prototype,
+      );
       if (definition.screenshotBoost > 0 && photo.isProbablyScreenshot) {
         score += definition.screenshotBoost;
       }
@@ -323,9 +340,10 @@ class JunkPhotoFilterService {
   Future<List<double>> _buildPrototype(
     JunkPhotoCategoryDefinition definition,
   ) async {
-    final promptVectors = await Future.wait(
-      definition.prototypePrompts.map(_semanticService.embedText),
-    );
+    final promptVectors = <List<double>>[];
+    for (final prompt in definition.prototypePrompts) {
+      promptVectors.add(await _semanticService.embedText(prompt));
+    }
     return _meanAndNormalize(promptVectors);
   }
 

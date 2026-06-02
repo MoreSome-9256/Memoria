@@ -43,10 +43,13 @@ class _AiPhotoProcessingRequest {
     required this.photoCaptionService,
     required this.facePipelineService,
     required this.ocrService,
-    required this.faceDetector,
+    this.faceDetector,
+    this.faceDetectorLock,
     required this.junkPhotoFilterService,
     required this.skipJunkFilter,
     required this.stopRequested,
+    required this.ocrEnabled,
+    required this.faceAnalysisEnabled,
   });
 
   final PhotoEntity photo;
@@ -56,10 +59,37 @@ class _AiPhotoProcessingRequest {
   final PhotoCaptionService photoCaptionService;
   final FacePipelineService facePipelineService;
   final OcrService ocrService;
-  final FaceDetector faceDetector;
+  final FaceDetector? faceDetector;
+  final _SimpleMutex? faceDetectorLock;
   final JunkPhotoFilterService junkPhotoFilterService;
   final bool skipJunkFilter;
   final bool stopRequested;
+  final bool ocrEnabled;
+  final bool faceAnalysisEnabled;
+}
+
+/// 简单的异步互斥锁，用于序列化 FaceDetector 的访问。
+class _SimpleMutex {
+  final List<Completer<void>> _queue = <Completer<void>>[];
+  bool _locked = false;
+
+  Future<void> acquire() async {
+    if (!_locked) {
+      _locked = true;
+      return;
+    }
+    final c = Completer<void>();
+    _queue.add(c);
+    await c.future;
+  }
+
+  void release() {
+    if (_queue.isNotEmpty) {
+      _queue.removeAt(0).complete();
+    } else {
+      _locked = false;
+    }
+  }
 }
 
 class _AiPhotoWriteRequest {
@@ -175,10 +205,22 @@ class _RuntimeSnapshot {
     required this.total,
     required this.completed,
     required this.failed,
+    required this.currentStep,
+    required this.elapsedMs,
+    required this.warmUpCompleted,
+    required this.warmUpTotal,
+    required this.isPaused,
+    required this.isStopping,
   });
 
   final bool isActive;
   final int total;
   final int completed;
   final int failed;
+  final String currentStep;
+  final int elapsedMs;
+  final int warmUpCompleted;
+  final int warmUpTotal;
+  final bool isPaused;
+  final bool isStopping;
 }

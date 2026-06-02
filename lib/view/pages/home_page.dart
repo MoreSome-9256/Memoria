@@ -8,7 +8,8 @@ import '../../models/entity/photo_entity.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
-import '../widgets/path_image.dart';
+import '../../utils/media_type_helper.dart';
+import '../widgets/media_thumbnail.dart';
 import 'create_hub_page.dart';
 import 'event_detail_page.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
@@ -52,7 +53,10 @@ class _HomePageState extends State<HomePage> {
   // ==========================================
   Future<void> _loadRecentPhotos() async {
     final _pb = ObjectBoxService().store.box<PhotoEntity>();
-    final _q = _pb.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
+    final _q = _pb
+        .query()
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
     _q.limit = 100;
     var recentCandidates = _q.find();
     _q.close();
@@ -157,9 +161,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<Map<String, dynamic>?> _buildTimeRuleCard(
-    DateTime now,
-  ) async {
+  Future<Map<String, dynamic>?> _buildTimeRuleCard(DateTime now) async {
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
     // 1. 年度总结 (12.20 - 1.10)
     if ((now.month == 12 && now.day >= 20) ||
@@ -174,8 +176,9 @@ class _HomePageState extends State<HomePage> {
         59,
         59,
       ).millisecondsSinceEpoch;
-      final _tq = photoBox.query(
-        PhotoEntity_.timestamp.between(start, end)).build();
+      final _tq = photoBox
+          .query(PhotoEntity_.timestamp.between(start, end))
+          .build();
       final photos = _tq.find();
       _tq.close();
 
@@ -203,8 +206,9 @@ class _HomePageState extends State<HomePage> {
         59,
         59,
       ).millisecondsSinceEpoch;
-      final _tq = photoBox.query(
-        PhotoEntity_.timestamp.between(start, end)).build();
+      final _tq = photoBox
+          .query(PhotoEntity_.timestamp.between(start, end))
+          .build();
       final photos = _tq.find();
       _tq.close();
 
@@ -238,8 +242,9 @@ class _HomePageState extends State<HomePage> {
         59,
         59,
       ).millisecondsSinceEpoch;
-      final _tq = photoBox.query(
-        PhotoEntity_.timestamp.between(start, end)).build();
+      final _tq = photoBox
+          .query(PhotoEntity_.timestamp.between(start, end))
+          .build();
       final photos = _tq.find();
       _tq.close();
       if (photos.isNotEmpty) {
@@ -264,7 +269,10 @@ class _HomePageState extends State<HomePage> {
 
   Future<List<Map<String, dynamic>>> _buildContentRuleCards() async {
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final _cq = photoBox.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
+    final _cq = photoBox
+        .query()
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
     _cq.limit = 500;
     final recentPhotos = _cq.find();
     _cq.close();
@@ -369,7 +377,10 @@ class _HomePageState extends State<HomePage> {
 
   Future<List<Map<String, dynamic>>> _buildLocationRuleCards() async {
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final _lq = photoBox.query().order(PhotoEntity_.timestamp, flags: Order.descending).build();
+    final _lq = photoBox
+        .query()
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
     _lq.limit = 1000;
     final recentPhotos = _lq.find();
     _lq.close();
@@ -587,10 +598,14 @@ class _HomePageState extends State<HomePage> {
                       key: ValueKey(currentPhoto.id),
                       fit: StackFit.expand,
                       children: [
-                        PathImage(
+                        MediaThumbnail(
                           path: currentPhoto.path,
-                          width: double.infinity,
-                          height: double.infinity,
+                          assetId: currentPhoto.assetId,
+                          kind: MediaTypeHelper.fromStorageValue(
+                            currentPhoto.mediaKind,
+                            path: currentPhoto.path,
+                          ),
+                          thumbnailBytes: currentPhoto.thumbnailBytes,
                           fit: BoxFit.cover,
                         ),
                         Container(color: Colors.black.withValues(alpha: 0.35)),
@@ -737,6 +752,8 @@ class _HomePageState extends State<HomePage> {
                 path: p.path,
                 dateTaken: DateTime.fromMillisecondsSinceEpoch(p.timestamp),
                 isSelected: true,
+                mediaKind: p.mediaKind,
+                thumbnailBytes: p.thumbnailBytes,
               ),
             )
             .toList();
@@ -801,7 +818,16 @@ class _HomePageState extends State<HomePage> {
                 height: 80,
                 color: Colors.white54,
                 child: firstPhoto != null
-                    ? PathImage(path: firstPhoto.path, fit: BoxFit.cover)
+                    ? MediaThumbnail(
+                        path: firstPhoto.path,
+                        assetId: firstPhoto.assetId,
+                        kind: MediaTypeHelper.fromStorageValue(
+                          firstPhoto.mediaKind,
+                          path: firstPhoto.path,
+                        ),
+                        thumbnailBytes: firstPhoto.thumbnailBytes,
+                        fit: BoxFit.cover,
+                      )
                     : Icon(
                         cardData['icon'] as IconData,
                         color: Colors.grey.shade600,

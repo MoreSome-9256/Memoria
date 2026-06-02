@@ -15,6 +15,7 @@ public:
     );
 
     bool is_loaded() const;
+    bool uses_vulkan() const;
 
     int encode_rgb24(
         const unsigned char* pixels,
@@ -43,4 +44,5 @@ private:
     ncnn::Net image_encoder_;
     std::string model_name_;
     bool is_loaded_ = false;
+    bool uses_vulkan_ = false;
 };

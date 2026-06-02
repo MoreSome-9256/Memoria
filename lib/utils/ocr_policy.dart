@@ -5,18 +5,15 @@ import 'tag_sanitizer.dart';
 class OcrPolicy {
   OcrPolicy._();
 
-  // Disabled by default because noisy OCR fragments were polluting tags,
-  // prompts and summaries more than helping them.
-  // Uses String.fromEnvironment to match --dart-define-from-file JSON string values.
-  static bool get mlKitEnabled {
-    const value = String.fromEnvironment('ENABLE_ML_KIT_OCR', defaultValue: 'false');
-    return value == 'true' || value == '1';
+  static bool _mlKitEnabled = false;
+
+  static bool get mlKitEnabled => _mlKitEnabled;
+
+  static void setRuntimeEnabled(bool enabled) {
+    _mlKitEnabled = enabled;
   }
 
-  static List<String> effectiveTags(
-    Iterable<String>? values, {
-    int? maxTags,
-  }) {
+  static List<String> effectiveTags(Iterable<String>? values, {int? maxTags}) {
     if (!mlKitEnabled) {
       return const <String>[];
     }
@@ -26,10 +23,7 @@ class OcrPolicy {
     );
   }
 
-  static String effectiveText(
-    String? value, {
-    int? maxLength,
-  }) {
+  static String effectiveText(String? value, {int? maxLength}) {
     if (!mlKitEnabled) {
       return '';
     }

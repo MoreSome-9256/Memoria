@@ -184,6 +184,8 @@ class StoryResultPage extends StatefulWidget {
       ocrTags: OcrPolicy.effectiveTags(photoEntity.ocrTags ?? const <String>[]),
       width: photoEntity.width,
       height: photoEntity.height,
+      mediaKind: photoEntity.mediaKind,
+      thumbnailBytes: photoEntity.thumbnailBytes,
     );
   }
 
@@ -252,6 +254,8 @@ class StoryResultPage extends StatefulWidget {
       height: overridePhoto.height > 0
           ? overridePhoto.height
           : basePhoto.height,
+      mediaKind: overridePhoto.mediaKind,
+      thumbnailBytes: overridePhoto.thumbnailBytes ?? basePhoto.thumbnailBytes,
       faces: overridePhoto.faces ?? basePhoto.faces,
     );
   }
@@ -356,22 +360,23 @@ class _StoryResultPageState extends State<StoryResultPage> {
       story.content = StoryEntity.sectionsToMarkdown(sectionMaps);
       story.updatedAt = DateTime.now().millisecondsSinceEpoch;
       story.isManuallySaved = true; // 标记为手动保存
-      if (widget.customMusicPath != null && widget.customMusicPath!.trim().isNotEmpty) {
+      if (widget.customMusicPath != null &&
+          widget.customMusicPath!.trim().isNotEmpty) {
         story.customMusicPath = widget.customMusicPath;
       }
-      
+
       store.runInTransaction(TxMode.write, () {
         // 删除所有自动保存的记录（因为用户已经手动保存了）
-        final autoSavedQuery = storyBox.query(
-          StoryEntity_.isManuallySaved.equals(false),
-        ).build();
+        final autoSavedQuery = storyBox
+            .query(StoryEntity_.isManuallySaved.equals(false))
+            .build();
         final autoSavedStories = autoSavedQuery.find();
         autoSavedQuery.close();
-        
+
         if (autoSavedStories.isNotEmpty) {
           storyBox.removeMany(autoSavedStories.map((s) => s.id).toList());
         }
-        
+
         // 保存当前故事
         storyBox.put(story);
       });
@@ -435,10 +440,9 @@ class _StoryResultPageState extends State<StoryResultPage> {
             widget.title,
             if (widget.subtitle.trim().isNotEmpty) widget.subtitle.trim(),
           ].join(' · ');
-          await Share.shareXFiles(
-            [XFile(story.cachedVideoPath!, mimeType: 'video/mp4')],
-            text: caption,
-          );
+          await Share.shareXFiles([
+            XFile(story.cachedVideoPath!, mimeType: 'video/mp4'),
+          ], text: caption);
           return;
         }
       } catch (_) {
@@ -685,7 +689,8 @@ class _StoryResultPageState extends State<StoryResultPage> {
         final storyBox = ObjectBoxService().store.box<StoryEntity>();
         final story = storyBox.get(widget.storyEntityId!);
         if (story?.videoParamsJson != null) {
-          savedParams = jsonDecode(story!.videoParamsJson!) as Map<String, dynamic>;
+          savedParams =
+              jsonDecode(story!.videoParamsJson!) as Map<String, dynamic>;
         }
       } catch (_) {}
     }
@@ -702,13 +707,19 @@ class _StoryResultPageState extends State<StoryResultPage> {
           targetPlatform: widget.targetPlatform,
           storyEntityId: widget.storyEntityId,
           onComplete: (_, _) {},
-          currentTextStyle: savedParams?['currentTextStyle'] as String? ?? 'hero',
-          textYPosition: (savedParams?['textYPosition'] as num?)?.toDouble() ?? 0.8,
+          currentTextStyle:
+              savedParams?['currentTextStyle'] as String? ?? 'hero',
+          textYPosition:
+              (savedParams?['textYPosition'] as num?)?.toDouble() ?? 0.8,
           textSize: (savedParams?['textSize'] as num?)?.toDouble() ?? 24.0,
-          textBlurIntensity: (savedParams?['textBlurIntensity'] as num?)?.toDouble() ?? 4.0,
-          shakeIntensity: (savedParams?['shakeIntensity'] as num?)?.toDouble() ?? 0.0,
-          shakeFrequency: (savedParams?['shakeFrequency'] as num?)?.toDouble() ?? 1.0,
-          glitchIntensity: (savedParams?['glitchIntensity'] as num?)?.toDouble() ?? 0.0,
+          textBlurIntensity:
+              (savedParams?['textBlurIntensity'] as num?)?.toDouble() ?? 4.0,
+          shakeIntensity:
+              (savedParams?['shakeIntensity'] as num?)?.toDouble() ?? 0.0,
+          shakeFrequency:
+              (savedParams?['shakeFrequency'] as num?)?.toDouble() ?? 1.0,
+          glitchIntensity:
+              (savedParams?['glitchIntensity'] as num?)?.toDouble() ?? 0.0,
           enableFlash: savedParams?['enableFlash'] as bool? ?? true,
           useVignette: savedParams?['useVignette'] as bool? ?? false,
           useGrain: savedParams?['useGrain'] as bool? ?? false,
@@ -1001,7 +1012,10 @@ class _StorySharePoster extends StatelessWidget {
     }
   }
 
-  Widget _buildStyleClassic(BuildContext context, List<StorySection> visibleSections) {
+  Widget _buildStyleClassic(
+    BuildContext context,
+    List<StorySection> visibleSections,
+  ) {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -1014,23 +1028,34 @@ class _StorySharePoster extends StatelessWidget {
       child: Stack(
         children: [
           Positioned(
-            top: 0, left: 0, right: 0,
+            top: 0,
+            left: 0,
+            right: 0,
             child: Container(height: 18, color: const Color(0xFF172326)),
           ),
           Positioned(
-            top: 18, left: 0, bottom: 0,
+            top: 18,
+            left: 0,
+            bottom: 0,
             child: Container(width: 18, color: const Color(0xFF172326)),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(58, 62, 58, 64),
-            child: _buildPosterBody(context, visibleSections, accentColor: const Color(0xFFCC775A)),
+            child: _buildPosterBody(
+              context,
+              visibleSections,
+              accentColor: const Color(0xFFCC775A),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildStyleMoody(BuildContext context, List<StorySection> visibleSections) {
+  Widget _buildStyleMoody(
+    BuildContext context,
+    List<StorySection> visibleSections,
+  ) {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -1042,7 +1067,9 @@ class _StorySharePoster extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(48, 48, 48, 56),
-        child: _buildPosterBody(context, visibleSections,
+        child: _buildPosterBody(
+          context,
+          visibleSections,
           accentColor: const Color(0xFFE94560),
           isDark: true,
         ),
@@ -1050,12 +1077,17 @@ class _StorySharePoster extends StatelessWidget {
     );
   }
 
-  Widget _buildStyleMinimal(BuildContext context, List<StorySection> visibleSections) {
+  Widget _buildStyleMinimal(
+    BuildContext context,
+    List<StorySection> visibleSections,
+  ) {
     return Container(
       color: const Color(0xFFFFFFFF),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(56, 52, 56, 56),
-        child: _buildPosterBody(context, visibleSections,
+        child: _buildPosterBody(
+          context,
+          visibleSections,
           accentColor: const Color(0xFF2D2D2D),
           showBadge: false,
         ),
@@ -1063,7 +1095,10 @@ class _StorySharePoster extends StatelessWidget {
     );
   }
 
-  Widget _buildStyleVintage(BuildContext context, List<StorySection> visibleSections) {
+  Widget _buildStyleVintage(
+    BuildContext context,
+    List<StorySection> visibleSections,
+  ) {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -1080,7 +1115,9 @@ class _StorySharePoster extends StatelessWidget {
         ),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(48, 48, 48, 48),
-          child: _buildPosterBody(context, visibleSections,
+          child: _buildPosterBody(
+            context,
+            visibleSections,
             accentColor: const Color(0xFF8B6914),
             showPhotoCount: false,
           ),
@@ -1097,11 +1134,19 @@ class _StorySharePoster extends StatelessWidget {
     bool showBadge = true,
     bool showPhotoCount = true,
   }) {
-    final textColor = isDark ? const Color(0xFFF0F0F0) : const Color(0xFF191D1D);
-    final mutedColor = isDark ? const Color(0xFFA0A0A0) : const Color(0xFF5D5148);
+    final textColor = isDark
+        ? const Color(0xFFF0F0F0)
+        : const Color(0xFF191D1D);
+    final mutedColor = isDark
+        ? const Color(0xFFA0A0A0)
+        : const Color(0xFF5D5148);
     final badgeBg = isDark ? const Color(0xFFE94560) : const Color(0xFF172326);
-    final badgeText = isDark ? const Color(0xFFFFFFFF) : const Color(0xFFF8F3E7);
-    final heroCardBg = isDark ? const Color(0xFF1E2A3A) : const Color(0xFFFFFCF4);
+    final badgeText = isDark
+        ? const Color(0xFFFFFFFF)
+        : const Color(0xFFF8F3E7);
+    final heroCardBg = isDark
+        ? const Color(0xFF1E2A3A)
+        : const Color(0xFFFFFCF4);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -1112,7 +1157,10 @@ class _StorySharePoster extends StatelessWidget {
             children: [
               if (showBadge)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 9,
+                  ),
                   decoration: BoxDecoration(
                     color: badgeBg,
                     borderRadius: BorderRadius.circular(4),
@@ -1153,9 +1201,7 @@ class _StorySharePoster extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 760),
             padding: const EdgeInsets.only(left: 18),
             decoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(color: accentColor, width: 6),
-              ),
+              border: Border(left: BorderSide(color: accentColor, width: 6)),
             ),
             child: Text(
               subtitle.trim(),
@@ -1171,10 +1217,7 @@ class _StorySharePoster extends StatelessWidget {
         _PosterHeroCard(photo: heroImage),
         const SizedBox(height: 32),
         for (var index = 0; index < visibleSections.length; index++)
-          _PosterSectionCard(
-            section: visibleSections[index],
-            index: index,
-          ),
+          _PosterSectionCard(section: visibleSections[index], index: index),
         const SizedBox(height: 26),
         Container(
           width: double.infinity,
@@ -1195,6 +1238,7 @@ class _StorySharePoster extends StatelessWidget {
       ],
     );
   }
+
   double _fitTitleSize(String value) {
     final length = value.characters.length;
     if (length >= 22) {
@@ -1673,5 +1717,3 @@ class _SharePosterPreviewSheetState extends State<_SharePosterPreviewSheet>
     );
   }
 }
-
-

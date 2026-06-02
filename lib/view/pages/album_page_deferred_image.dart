@@ -10,7 +10,7 @@ class _DeferredImageTicket {
 }
 
 class _DeferredImageLoadScheduler {
-  static const int _maxConcurrent = 4;
+  static const int _maxConcurrent = 2;
   static final ValueNotifier<int> pendingCountListenable = ValueNotifier<int>(
     0,
   );
@@ -105,7 +105,16 @@ class _AlbumTagPhotoTile extends StatelessWidget {
             children: [
               Hero(
                 tag: heroTag,
-                child: _DeferredPathImage(path: photo.path, fit: BoxFit.cover),
+                child: _DeferredPathImage(
+                  path: photo.path,
+                  assetId: photo.assetId,
+                  kind: MediaTypeHelper.fromStorageValue(
+                    photo.mediaKind,
+                    path: photo.path,
+                  ),
+                  thumbnailBytes: photo.thumbnailBytes,
+                  fit: BoxFit.cover,
+                ),
               ),
               if (selectionMode && !selected)
                 Container(color: Colors.black.withValues(alpha: 0.32)),
@@ -151,9 +160,18 @@ class _AlbumTagPhotoTile extends StatelessWidget {
 }
 
 class _DeferredPathImage extends StatefulWidget {
-  const _DeferredPathImage({required this.path, this.fit = BoxFit.cover});
+  const _DeferredPathImage({
+    required this.path,
+    this.assetId,
+    this.kind,
+    this.thumbnailBytes,
+    this.fit = BoxFit.cover,
+  });
 
   final String path;
+  final String? assetId;
+  final MemoriaMediaKind? kind;
+  final Uint8List? thumbnailBytes;
   final BoxFit fit;
 
   @override
@@ -203,8 +221,11 @@ class _DeferredPathImageState extends State<_DeferredPathImage> {
   @override
   Widget build(BuildContext context) {
     if (_ready) {
-      return PathImage(
+      return MediaThumbnail(
         path: widget.path,
+        assetId: widget.assetId,
+        kind: widget.kind,
+        thumbnailBytes: widget.thumbnailBytes,
         fit: widget.fit,
         onFirstFrame: _onFirstFrame,
       );

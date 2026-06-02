@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstring>
 
+#include <ncnn/gpu.h>
+
 namespace {
 
 constexpr const char* kInputBlobName = "in0";
@@ -25,6 +27,14 @@ void l2_normalize(std::vector<float>& values) {
     }
 }
 
+bool has_vulkan_gpu() {
+    static const bool available = []() {
+        ncnn::create_gpu_instance();
+        return ncnn::get_gpu_count() > 0;
+    }();
+    return available;
+}
+
 }  // namespace
 
 VendoredMobileClipImageEncoder::VendoredMobileClipImageEncoder(
@@ -32,6 +42,8 @@ VendoredMobileClipImageEncoder::VendoredMobileClipImageEncoder(
     const std::string& param_path,
     const std::string& bin_path
 ) : model_name_(model_name) {
+    uses_vulkan_ = has_vulkan_gpu();
+    image_encoder_.opt.use_vulkan_compute = uses_vulkan_;
     const int param_result = image_encoder_.load_param(param_path.c_str());
     const int model_result = image_encoder_.load_model(bin_path.c_str());
     is_loaded_ = (param_result == 0 && model_result == 0);
@@ -39,6 +51,10 @@ VendoredMobileClipImageEncoder::VendoredMobileClipImageEncoder(
 
 bool VendoredMobileClipImageEncoder::is_loaded() const {
     return is_loaded_;
+}
+
+bool VendoredMobileClipImageEncoder::uses_vulkan() const {
+    return uses_vulkan_;
 }
 
 int VendoredMobileClipImageEncoder::target_size() const {

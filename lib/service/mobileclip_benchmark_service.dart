@@ -1,17 +1,14 @@
-/// MobileCLIP 基准测试服务，负责收集模型运行时性能数据。
+// MobileCLIP 基准测试服务，负责收集模型运行时性能数据。
 
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import '../models/entity/photo_entity.dart';
 import '../models/mobileclip_benchmark.dart';
-import '../objectbox.g.dart';
-import '../storage/objectbox/objectbox_service.dart';
+import 'litert_inference_service.dart';
+import 'mobileclip_litert_service.dart';
 import 'mobileclip_tag_service.dart';
-import 'mobileclip_vision_service.dart';
 import 'ncnn_mobileclip_native_service.dart';
-import 'onnx_session_provider_service.dart';
 
 abstract class MobileClipBenchmarkAdapter {
   const MobileClipBenchmarkAdapter();
@@ -24,6 +21,8 @@ abstract class MobileClipBenchmarkAdapter {
 
   Future<double> warmUp();
 
+  Future<Float32List> encodePreprocessedInput(Uint8List imageBytes);
+
   Future<MobileClipAdapterRunResult> encodeImageBytes(
     Uint8List imageBytes, {
     Float32List? sharedInput,
@@ -34,21 +33,21 @@ abstract class MobileClipBenchmarkAdapter {
   Future<void> dispose() async {}
 }
 
-class OnnxMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
-  OnnxMobileClipBenchmarkAdapter({
+class LiteRtMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
+  LiteRtMobileClipBenchmarkAdapter({
     required this.adapterId,
     required this.adapterDisplayName,
-    required OnnxSessionProviderPreference providerPreference,
-    MobileClipVisionService? visionService,
+    required LocalInferenceAccelerator accelerator,
+    MobileClipLiteRtService? visionService,
     MobileClipTagService? tagService,
   }) : _visionService =
            visionService ??
-           MobileClipVisionService.withProviderPreference(providerPreference),
+           MobileClipLiteRtService.detachedWithAccelerator(accelerator),
        _tagService = tagService ?? MobileClipTagService();
 
   final String adapterId;
   final String adapterDisplayName;
-  final MobileClipVisionService _visionService;
+  final MobileClipLiteRtService _visionService;
   final MobileClipTagService _tagService;
 
   @override
@@ -96,6 +95,11 @@ class OnnxMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
   }
 
   @override
+  Future<Float32List> encodePreprocessedInput(Uint8List imageBytes) {
+    return _visionService.preprocessImageBytesForBenchmark(imageBytes);
+  }
+
+  @override
   Future<MobileClipAdapterRunResult> encodeImageBytes(
     Uint8List imageBytes, {
     Float32List? sharedInput,
@@ -115,7 +119,7 @@ class OnnxMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
     }
     final rssBefore = ProcessInfo.currentRss;
     final inferenceWatch = Stopwatch()..start();
-    final embedding = await _visionService.embedPreprocessedInput(input);
+    final embedding = await _visionService.embedPreprocessedImageInput(input);
     inferenceWatch.stop();
     final tagWatch = Stopwatch()..start();
     final tags = await _tagService.retrieveTags(embedding);
@@ -160,7 +164,7 @@ class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
   String get id => 'ncnn';
 
   @override
-  String get displayName => 'ncnn FFI (author export)';
+  String get displayName => 'NCNN FFI';
 
   @override
   bool get usesSharedPreprocessing => false;
@@ -171,13 +175,11 @@ class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
     if (!status.libraryLoaded) {
       return false;
     }
-
     try {
-      await _nativeService.ensureModelInitialized();
+      await _nativeService.ensureImageModelInitialized();
     } catch (_) {
       return false;
     }
-
     return _nativeService.getStatus().canEncode;
   }
 
@@ -187,23 +189,26 @@ class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
     if (!status.libraryLoaded) {
       return status.summary;
     }
-
     try {
-      await _nativeService.ensureModelInitialized();
+      await _nativeService.ensureImageModelInitialized();
     } catch (error) {
       return error.toString();
     }
-
     return _nativeService.getStatus().summary;
   }
 
   @override
   Future<double> warmUp() async {
     final stopwatch = Stopwatch()..start();
+    await _nativeService.warmUpImage();
     await _tagService.warmUp();
-    await _nativeService.warmUp();
     stopwatch.stop();
     return stopwatch.elapsedMicroseconds / 1000.0;
+  }
+
+  @override
+  Future<Float32List> encodePreprocessedInput(Uint8List imageBytes) {
+    throw UnsupportedError('NCNN FFI owns its preprocessing in native code.');
   }
 
   @override
@@ -245,50 +250,72 @@ class NcnnMobileClipBenchmarkAdapter extends MobileClipBenchmarkAdapter {
 }
 
 class MobileClipBenchmarkService {
-  MobileClipBenchmarkService({
-    List<MobileClipBenchmarkAdapter>? adapters,
-    MobileClipVisionService? sharedPreprocessingVisionService,
-  }) : _adapters = adapters ?? _buildDefaultAdapters(),
-       _sharedPreprocessingVisionService =
-           sharedPreprocessingVisionService ??
-           MobileClipVisionService.withProviderPreference(
-             OnnxSessionProviderPreference.cpu,
-           );
+  MobileClipBenchmarkService({List<MobileClipBenchmarkAdapter>? adapters})
+    : _adapters = adapters ?? _buildDefaultAdapters();
 
   final List<MobileClipBenchmarkAdapter> _adapters;
-  final MobileClipVisionService _sharedPreprocessingVisionService;
 
   static List<MobileClipBenchmarkAdapter> _buildDefaultAdapters() {
-    final adapters = <MobileClipBenchmarkAdapter>[
-      OnnxMobileClipBenchmarkAdapter(
-        adapterId: 'onnx_nnapi_hardware',
-        adapterDisplayName: 'ONNX NNAPI hardware',
-        providerPreference: OnnxSessionProviderPreference.nnapiHardwareOnly,
-      ),
-      OnnxMobileClipBenchmarkAdapter(
-        adapterId: 'onnx_cpu',
-        adapterDisplayName: 'ONNX CPU',
-        providerPreference: OnnxSessionProviderPreference.cpu,
-      ),
-    ];
+    final accelerators = Platform.isAndroid
+        ? const <(String, String, LocalInferenceAccelerator)>[
+            (
+              'litert_xnnpack',
+              'LiteRT XNNPACK',
+              LocalInferenceAccelerator.xnnpack,
+            ),
+            ('litert_cpu', 'LiteRT CPU', LocalInferenceAccelerator.cpu),
+            ('litert_gpu', 'LiteRT GPU', LocalInferenceAccelerator.gpu),
+            ('litert_npu', 'LiteRT NPU', LocalInferenceAccelerator.npu),
+          ]
+        : (Platform.isIOS || Platform.isMacOS)
+            ? const <(String, String, LocalInferenceAccelerator)>[
+                (
+                  'litert_xnnpack',
+                  'LiteRT XNNPACK',
+                  LocalInferenceAccelerator.xnnpack,
+                ),
+                ('litert_cpu', 'LiteRT CPU', LocalInferenceAccelerator.cpu),
+                (
+                  'litert_coreml',
+                  'LiteRT CoreML',
+                  LocalInferenceAccelerator.coreml,
+                ),
+                (
+                  'litert_metal',
+                  'LiteRT Metal',
+                  LocalInferenceAccelerator.metal,
+                ),
+              ]
+            : const <(String, String, LocalInferenceAccelerator)>[
+                (
+                  'litert_xnnpack',
+                  'LiteRT XNNPACK',
+                  LocalInferenceAccelerator.xnnpack,
+                ),
+                ('litert_cpu', 'LiteRT CPU', LocalInferenceAccelerator.cpu),
+                ('litert_gpu', 'LiteRT GPU', LocalInferenceAccelerator.gpu),
+              ];
 
-    if (!Platform.isAndroid) {
-      return <MobileClipBenchmarkAdapter>[
-        OnnxMobileClipBenchmarkAdapter(
-          adapterId: 'onnx_cpu',
-          adapterDisplayName: 'ONNX CPU',
-          providerPreference: OnnxSessionProviderPreference.cpu,
-        ),
-      ];
+    final adapters = accelerators
+        .map<MobileClipBenchmarkAdapter>((entry) {
+          return LiteRtMobileClipBenchmarkAdapter(
+            adapterId: entry.$1,
+            adapterDisplayName: entry.$2,
+            accelerator: entry.$3,
+          );
+        })
+        .toList(growable: true);
+    if (Platform.isAndroid) {
+      adapters.add(NcnnMobileClipBenchmarkAdapter());
     }
-
     return adapters;
   }
 
-  Future<MobileClipBenchmarkReport> runBenchmark({int sampleCount = 24}) async {
+  Future<MobileClipBenchmarkReport> runBenchmark({
+    required List<MobileClipBenchmarkSample> samples,
+  }) async {
     try {
       final warnings = <String>[];
-      final samples = await _loadSamples(sampleCount);
       if (samples.isEmpty) {
         return MobileClipBenchmarkReport(
           generatedAt: DateTime.now(),
@@ -296,7 +323,7 @@ class MobileClipBenchmarkService {
           usesSharedPreprocessing: false,
           adapterSummaries: const <MobileClipAdapterSummary>[],
           comparisons: const <MobileClipEmbeddingComparisonSummary>[],
-          warnings: <String>['没有找到可用于 benchmark 的本地照片样本。'],
+          warnings: <String>['请先从相册选择用于 benchmark 的图片样本。'],
         );
       }
 
@@ -345,8 +372,9 @@ class MobileClipBenchmarkService {
         double? sharedPreprocessMs;
         if (sharedPreprocessingEnabled) {
           final preprocessWatch = Stopwatch()..start();
-          sharedInput = await _sharedPreprocessingVisionService
-              .preprocessImageBytesForBenchmark(bytes);
+          sharedInput = await warmedAdapters.first.encodePreprocessedInput(
+            bytes,
+          );
           preprocessWatch.stop();
           sharedPreprocessMs = preprocessWatch.elapsedMicroseconds / 1000.0;
         }
@@ -405,45 +433,10 @@ class MobileClipBenchmarkService {
         warnings: warnings,
       );
     } finally {
-      await _sharedPreprocessingVisionService.dispose();
       for (final adapter in _adapters) {
         await adapter.dispose();
       }
     }
-  }
-
-  Future<List<MobileClipBenchmarkSample>> _loadSamples(int sampleCount) async {
-    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final q = photoBox.query()
-        .order(PhotoEntity_.timestamp, flags: Order.descending)
-        .build();
-    q.limit = math.max(sampleCount * 4, sampleCount);
-    final candidates = q.find();
-    q.close();
-
-    final samples = <MobileClipBenchmarkSample>[];
-    for (final photo in candidates) {
-      if (photo.path.trim().isEmpty) {
-        continue;
-      }
-      final file = File(photo.path);
-      if (!file.existsSync()) {
-        continue;
-      }
-      samples.add(
-        MobileClipBenchmarkSample(
-          photoId: photo.id,
-          assetId: photo.assetId,
-          path: photo.path,
-          timestamp: photo.timestamp,
-        ),
-      );
-      if (samples.length >= sampleCount) {
-        break;
-      }
-    }
-
-    return samples;
   }
 
   MobileClipAdapterSummary _buildSummary({

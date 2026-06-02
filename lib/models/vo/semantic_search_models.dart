@@ -3,9 +3,7 @@
 import '../entity/photo_entity.dart';
 
 enum SemanticSearchRouteType {
-  shortSemantic,
   llmStructured,
-  localFallback,
 }
 
 enum SemanticSearchQueryType {
@@ -27,16 +25,41 @@ class SemanticSearchTimeRange {
     required this.startTimeMs,
     required this.endTimeMs,
     required this.reason,
+    this.startIso,
+    this.endIso,
+    this.timezone,
+    this.utcOffsetMinutes,
+    this.localStartMinute,
+    this.localEndMinute,
   });
 
   final int? startTimeMs;
   final int? endTimeMs;
   final String reason;
+  final String? startIso;
+  final String? endIso;
+  final String? timezone;
+  final int? utcOffsetMinutes;
+  final int? localStartMinute;
+  final int? localEndMinute;
+
+  bool get hasDateBoundary => startTimeMs != null || endTimeMs != null;
+  bool get hasLocalTimeWindow =>
+      localStartMinute != null &&
+      localEndMinute != null &&
+      utcOffsetMinutes != null;
+  bool get hasConstraint => hasDateBoundary || hasLocalTimeWindow;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'start_time_ms': startTimeMs,
       'end_time_ms': endTimeMs,
+      'start_iso': startIso,
+      'end_iso': endIso,
+      'timezone': timezone,
+      'utc_offset_minutes': utcOffsetMinutes,
+      'local_start_minute': localStartMinute,
+      'local_end_minute': localEndMinute,
       'reason': reason,
     };
   }
@@ -46,15 +69,24 @@ class SemanticSearchLocation {
   const SemanticSearchLocation({
     required this.text,
     required this.type,
+    this.aliases = const <String>[],
+    this.timezone,
+    this.utcOffsetMinutes,
   });
 
   final String text;
   final String type;
+  final List<String> aliases;
+  final String? timezone;
+  final int? utcOffsetMinutes;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'text': text,
       'type': type,
+      'aliases': aliases,
+      'timezone': timezone,
+      'utc_offset_minutes': utcOffsetMinutes,
     };
   }
 }
@@ -144,7 +176,7 @@ class SemanticSearchQuery {
   factory SemanticSearchQuery.empty(String rawQuery) {
     return SemanticSearchQuery(
       rawQuery: rawQuery,
-      routeType: SemanticSearchRouteType.localFallback,
+      routeType: SemanticSearchRouteType.llmStructured,
       queryType: SemanticSearchQueryType.metadata,
       timeRanges: const <SemanticSearchTimeRange>[],
       locations: const <SemanticSearchLocation>[],
@@ -160,7 +192,7 @@ class SemanticSearchQuery {
       ),
       usedLlm: false,
       llmConfigured: false,
-      parserSource: 'local',
+      parserSource: 'empty',
       debugJson: '{}',
       notes: '',
     );
@@ -183,13 +215,12 @@ class SemanticSearchQuery {
   final String debugJson;
   final String notes;
 
-  bool get hasTimeConstraints => timeRanges.isNotEmpty;
+  bool get hasTimeConstraints => timeRanges.any((item) => item.hasConstraint);
   bool get hasLocationConstraints => locations.isNotEmpty;
   bool get hasCoarseTags => coarseTags.isNotEmpty;
   bool get hasPositiveSemantics => positiveSemantics.isNotEmpty;
   bool get hasRecallSemantics => recallSemantics.isNotEmpty;
   bool get hasNegativeSemantics => negativeSemantics.isNotEmpty;
-  bool get isShortSemanticRoute => routeType == SemanticSearchRouteType.shortSemantic;
   bool get isMetadataOnly => queryType == SemanticSearchQueryType.metadata;
 
   List<String> get locationTexts =>
@@ -287,8 +318,6 @@ class SemanticSearchResult {
     required this.hits,
     required this.totalAnalyzedPhotos,
     required this.filteredCandidateCount,
-    required this.usedFallback,
-    required this.relaxationMessage,
     required this.metadataCandidateCount,
     required this.tagCandidateCount,
     required this.noExactMatchMessage,
@@ -300,8 +329,6 @@ class SemanticSearchResult {
   final Map<int, SemanticSearchHit> hits;
   final int totalAnalyzedPhotos;
   final int filteredCandidateCount;
-  final bool usedFallback;
-  final String? relaxationMessage;
   final int metadataCandidateCount;
   final int tagCandidateCount;
   final String? noExactMatchMessage;

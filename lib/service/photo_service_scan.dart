@@ -1,20 +1,25 @@
 /// 照片扫描服务 — 提供增量发现和全量重建两种入口。
 ///
 /// 【增量发现（推荐）】scanBatchPhotos
-///   stop-early 策略：从最新照片开始扫描，收集到 batchSize 张新照片后立即停止。
-///   适合 "下一批 N 张" 场景。
+///   先完整更新授权相册缓存，再由刷新服务从数据库筛选交给 AI 的项目。
+///   适合 "全部新项目" 与 "下一批 N 张" 场景。
 ///
-/// 【全量重建】rebuildAllCachedData / scanAndSyncPhotos
+/// 【全量重建】rebuildAllCachedData
 ///   扫描所有照片。仅适合首次初始化或 "安全重建" 场景。
 
 part of 'photo_service.dart';
 
 extension PhotoServiceScan on PhotoService {
+  void invalidateScanSessionCache() {
+    _PhotoScanCoordinator.invalidateSessionCache();
+    _photoAccessCache.clear();
+  }
+
   // ── 全量重建（清空所有后重建）───────────────────────────────────
   Future<PhotoScanSummary> rebuildAllCachedData({int? maxAssets}) async {
-    final plan = await _PhotoScanCoordinator(this).prepareRebuild(
-      maxAssets: maxAssets,
-    );
+    final plan = await _PhotoScanCoordinator(
+      this,
+    ).prepareRebuild(maxAssets: maxAssets);
 
     _store.runInTransaction(TxMode.write, () {
       _albumBookBox.removeAll();
@@ -45,71 +50,27 @@ extension PhotoServiceScan on PhotoService {
     );
   }
 
-  // ── 兼容原 API ──────────────────────────────────────────────────
-  Future<PhotoScanSummary> scanAndSyncPhotos({int? maxAssets}) {
-    return scanAndSyncPhotosWithOffset(maxAssets: maxAssets);
-  }
-
-  Future<PhotoScanSummary> scanAndSyncPhotosWithOffset({
-    int? maxAssets,
-    int offsetFromNewest = 0,
-  }) async {
-    final plan = await _PhotoScanCoordinator(this).prepareIncremental(
-      maxAssets: maxAssets,
-      offsetFromNewest: offsetFromNewest,
-    );
-
-    var insertedPhotoIds = const <int>[];
-    if (plan.built.photos.isNotEmpty) {
-      final storedIds = _store.runInTransaction(
-        TxMode.write,
-        () => _photoBox.putMany(plan.built.photos),
-      );
-      insertedPhotoIds = storedIds.where((id) => id > 0).toList(growable: false);
-    }
-
-    final totalAfter = _photoBox.count();
-    if (totalAfter == 0) {
-      throw const PhotoScanException(
-        PhotoScanError.noEligiblePhoto,
-        '没有找到可用照片。请检查相册权限和本地相册。',
-      );
-    }
-
-    return PhotoScanSummary(
-      totalBefore: plan.totalBefore,
-      totalAfter: totalAfter,
-      removedCount: plan.removedCount,
-      insertedCount: plan.built.insertedCount,
-      insertedPhotoIds: insertedPhotoIds,
-      scanStartOffset: plan.prepared.startOffset,
-      scannedCount: plan.prepared.fetchCount,
-      skippedInvalidTime: plan.built.skippedInvalidTime,
-      insertedNoGps: plan.built.insertedNoGps,
-      skippedNonCamera: plan.built.skippedNonCamera,
-      skippedScreenshot: plan.built.skippedScreenshot,
-    );
-  }
-
-  // ── ★ 推荐入口：增量收集新照片，收够即停 ────────────────────────
-  /// 从系统相册最新照片开始扫描，收集到 [batchSize] 张新照片后停止。
+  // ── ★ 推荐入口：预扫描系统相册并更新本地缓存 ─────────────────────
+  /// 扫描完整授权范围并更新本地数据库缓存。
+  /// [batchSize] 只影响后续 AI 交接数量，不截断缓存扫描。
   /// 返回 [BatchScanResult]，包含新照片列表和统计信息。
   Future<BatchScanResult> scanBatchPhotos({
-    required int batchSize,
+    required int? batchSize,
     ValueChanged<BatchScanProgress>? onProgress,
   }) async {
-    final plan = await _PhotoScanCoordinator(this).prepareIncremental(
-      maxAssets: batchSize,
-      onProgress: onProgress,
-    );
+    final plan = await _PhotoScanCoordinator(
+      this,
+    ).prepareIncremental(maxAssets: batchSize, onProgress: onProgress);
 
-    var insertedPhotoIds = const <int>[];
+    var insertedPhotoIds = plan.insertedPhotoIds;
     if (plan.built.photos.isNotEmpty) {
       final storedIds = _store.runInTransaction(
         TxMode.write,
         () => _photoBox.putMany(plan.built.photos),
       );
-      insertedPhotoIds = storedIds.where((id) => id > 0).toList(growable: false);
+      insertedPhotoIds = storedIds
+          .where((id) => id > 0)
+          .toList(growable: false);
     }
 
     return BatchScanResult(

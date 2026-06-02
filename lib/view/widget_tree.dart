@@ -1,10 +1,14 @@
 /// 应用的主底部导航树，负责在首页、相册、创作、个人页和主题页之间切换。
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/painting.dart';
+import '../service/ai_background_task_service.dart';
 import '../service/ai_progress_notification_service.dart';
 import '../service/ai_service.dart';
-import '../service/album_refresh_service.dart';
+import '../service/unified_analysis_progress.dart';
+import '../service/unified_analysis_progress_store.dart';
 import 'pages/home_page.dart'; // 🌟 导入刚才新写的首页
 import 'pages/album_page.dart';
 import 'pages/create_hub_page.dart';
@@ -20,17 +24,16 @@ class WidgetTree extends StatefulWidget {
 }
 
 class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
-  int _currentIndex = 0; // 默认一打开显示 0（首页）
-  bool _progressBannerHidden = false; // 进度条隐藏状态
-  int _hiddenRefreshProgressRunId = -1;
+  int _currentIndex = 0;
+  bool _progressBannerHidden = false;
+  Timer? _foregroundStopTimer;
 
-  // 🌟 去掉 CreatePage 这个"伪占位符"，因为现在它是被 push 出来的
   final List<Widget> _pages = const [
-    HomePage(), // 0: 首页
-    AlbumPage(), // 1: 相册
-    SizedBox(), // 2: 占位用的空盒子，永远不会被渲染，因为我们拦截了 2 的点击
-    ThemeClustersPage(), // 3: 主题聚类
-    ProfilePage(), // 4: 我的
+    HomePage(),
+    AlbumPage(),
+    SizedBox(),
+    ThemeClustersPage(),
+    ProfilePage(),
   ];
 
   @override
@@ -38,12 +41,47 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     AIProgressNotificationService().bindNavigationHandler(_handleNavigationTarget);
+    UnifiedAnalysisProgressStore.instance.startListening();
+    UnifiedAnalysisProgressStore.instance.progress.addListener(
+      _handleForegroundProgressChanged,
+    );
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    UnifiedAnalysisProgressStore.instance.progress.removeListener(
+      _handleForegroundProgressChanged,
+    );
+    _foregroundStopTimer?.cancel();
+    UnifiedAnalysisProgressStore.instance.stopListening();
     super.dispose();
+  }
+
+  void _handleForegroundProgressChanged() {
+    final progress = UnifiedAnalysisProgressStore.instance.progress.value;
+    final isTerminal =
+        progress.stage == UnifiedAnalysisStage.completed ||
+        progress.stage == UnifiedAnalysisStage.failed;
+    if (!isTerminal) {
+      _foregroundStopTimer?.cancel();
+      _foregroundStopTimer = null;
+      return;
+    }
+
+    if (progress.stage == UnifiedAnalysisStage.completed) {
+      unawaited(AIService().refreshJunkCleanupReportFromDatabase());
+    }
+
+    _foregroundStopTimer ??= Timer(const Duration(seconds: 2), () {
+      _foregroundStopTimer = null;
+      unawaited(AiBackgroundTaskService.instance.stop());
+      if (mounted) {
+        setState(() {
+          _progressBannerHidden = true;
+        });
+      }
+    });
   }
 
   void _handleNavigationTarget(dynamic target) {
@@ -171,44 +209,47 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
   }
 
   Widget _buildTopProgressOverlay() {
-    return ValueListenableBuilder<AlbumRefreshProgress>(
-      valueListenable: AlbumRefreshService().progressListenable,
-      builder: (context, refreshProgress, _) {
-        return ValueListenableBuilder<AIAnalysisProgress>(
-          valueListenable: AIService().progressListenable,
-          builder: (context, aiProgress, child) {
-            if (refreshProgress.isVisible &&
-                _hiddenRefreshProgressRunId != refreshProgress.runId) {
-              return _TopProgressBanner(
-                key: const ValueKey<String>('album-refresh-progress'),
-                title: refreshProgress.title,
-                message: refreshProgress.message,
-                progress: refreshProgress.progress,
-                onHide: () {
-                  setState(() {
-                    _hiddenRefreshProgressRunId = refreshProgress.runId;
-                  });
-                },
-              );
-            }
-            if (_currentIndex == 1 || !aiProgress.isVisible || _progressBannerHidden) {
-              return const SizedBox.shrink();
-            }
-            return _TopProgressBanner(
-              key: const ValueKey<String>('global-ai-progress'),
-              title: '后台 AI 正在继续处理',
-              message: aiProgress.currentStep,
-              progress: aiProgress.fraction,
-              onHide: () {
-                setState(() {
-                  _progressBannerHidden = true;
-                });
-              },
-            );
+    return ValueListenableBuilder<UnifiedAnalysisProgress>(
+      valueListenable: UnifiedAnalysisProgressStore.instance.progress,
+      builder: (context, progress, _) {
+        if (!progress.isVisible || _progressBannerHidden) {
+          return const SizedBox.shrink();
+        }
+        return _TopProgressBanner(
+          key: const ValueKey<String>('unified-pipeline-progress'),
+          title: _extractUnifiedTitle(progress),
+          message: progress.message,
+          progress: progress.overallFraction,
+          elapsed: progress.elapsed,
+          estimatedRemaining: progress.estimatedRemainingDuration,
+          isCompleted: progress.stage == UnifiedAnalysisStage.completed,
+          onHide: () {
+            setState(() {
+              _progressBannerHidden = true;
+            });
           },
         );
       },
     );
+  }
+
+  String _extractUnifiedTitle(UnifiedAnalysisProgress progress) {
+    switch (progress.stage) {
+      case UnifiedAnalysisStage.idle:
+        return '';
+      case UnifiedAnalysisStage.warmingUp:
+        return '正在预热引擎';
+      case UnifiedAnalysisStage.scanning:
+        return '正在扫描照片';
+      case UnifiedAnalysisStage.processing:
+        return '正在处理照片';
+      case UnifiedAnalysisStage.flushing:
+        return '正在刷新索引';
+      case UnifiedAnalysisStage.completed:
+        return '已完成';
+      case UnifiedAnalysisStage.failed:
+        return '处理失败';
+    }
   }
 
   // 🌟 底部导航栏子项的统一构建方法
@@ -253,22 +294,85 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
   }
 }
 
-class _TopProgressBanner extends StatelessWidget {
+class _TopProgressBanner extends StatefulWidget {
   const _TopProgressBanner({
     super.key,
     required this.title,
     required this.message,
     required this.progress,
+    required this.elapsed,
+    this.estimatedRemaining,
+    this.isCompleted = false,
     this.onHide,
   });
 
   final String title;
   final String message;
   final double progress;
+  final Duration elapsed;
+  final Duration? estimatedRemaining;
+  final bool isCompleted;
   final VoidCallback? onHide;
 
   @override
+  State<_TopProgressBanner> createState() => _TopProgressBannerState();
+}
+
+class _TopProgressBannerState extends State<_TopProgressBanner> {
+  Timer? _elapsedTimer;
+  late Duration _displayElapsed;
+
+  @override
+  void initState() {
+    super.initState();
+    _displayElapsed = widget.elapsed;
+    _startElapsedTimer();
+  }
+
+  @override
+  void didUpdateWidget(_TopProgressBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.elapsed != widget.elapsed) {
+      _displayElapsed = widget.elapsed;
+    }
+    if (widget.isCompleted && !oldWidget.isCompleted) {
+      _elapsedTimer?.cancel();
+      _elapsedTimer = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _elapsedTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startElapsedTimer() {
+    _elapsedTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {
+        _displayElapsed = _displayElapsed + const Duration(seconds: 1);
+      });
+    });
+  }
+
+  String _formatDuration(Duration d) {
+    final seconds = d.inSeconds;
+    if (seconds < 60) return '${seconds}s';
+    final minutes = d.inMinutes;
+    final remainingSeconds = seconds % 60;
+    if (minutes < 60) return '${minutes}m ${remainingSeconds}s';
+    final hours = d.inHours;
+    final remainingMinutes = minutes % 60;
+    return '${hours}h ${remainingMinutes}m ${remainingSeconds}s';
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final timeText = widget.estimatedRemaining != null
+        ? '已用 ${_formatDuration(_displayElapsed)}  ·  预计剩余 ${_formatDuration(widget.estimatedRemaining!)}'
+        : '已用 ${_formatDuration(_displayElapsed)}';
+
     return SafeArea(
       child: Align(
         alignment: Alignment.topCenter,
@@ -294,31 +398,37 @@ class _TopProgressBanner extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    title,
+                    widget.title,
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    message,
+                    widget.message,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: Colors.grey[700], fontSize: 12),
                   ),
+                  const SizedBox(height: 4),
+                  Text(
+                    timeText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Colors.grey[600], fontSize: 11),
+                  ),
                   const SizedBox(height: 10),
                   LinearProgressIndicator(
-                    value: progress.clamp(0, 1),
+                    value: widget.progress.clamp(0, 1),
                     minHeight: 6,
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ],
               ),
-              // 隐藏按钮（仅在有 onHide 回调时显示）
-              if (onHide != null)
+              if (widget.onHide != null)
                 Positioned(
                   top: 0,
                   right: 0,
                   child: GestureDetector(
-                    onTap: onHide,
+                    onTap: widget.onHide,
                     child: Padding(
                       padding: const EdgeInsets.all(8.0),
                       child: Icon(

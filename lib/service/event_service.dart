@@ -1,6 +1,5 @@
 /// 事件聚合服务，负责按时间、位置和内容把照片整理成事件。
 
-import 'package:dio/dio.dart';
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/entity/event_entity.dart';
@@ -11,6 +10,7 @@ import '../utils/tag_sanitizer.dart';
 import '../utils/event_cluster_helper.dart';
 import '../utils/smart_title_generator.dart';
 import '../service/llm_service.dart';
+import '../service/amap_geo_service.dart';
 
 class EventService {
   static final EventService _instance = EventService._internal();
@@ -45,20 +45,6 @@ class EventService {
     '广告',
     '专题',
   };
-
-  static const String _amapWebKey = String.fromEnvironment(
-    'AMAP_WEB_KEY',
-    defaultValue: '7fe01f8a449b2aac28068feac9177316',
-  );
-
-  final Dio _dio = Dio(
-    BaseOptions(
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 10),
-      sendTimeout: const Duration(seconds: 10),
-      responseType: ResponseType.json,
-    ),
-  );
 
   // 📊 聚类算法配置（旅游同日增强）
   static const ClusterConfig _clusterConfig = ClusterConfig(
@@ -167,15 +153,9 @@ class EventService {
   }
 
   Future<void> _resolveEventLocations() async {
-    if (_amapWebKey.trim().isEmpty) {
-      print("⚠️ AMAP_WEB_KEY 未配置，跳过地址解析");
-      return;
-    }
-
     final store = ObjectBoxService().store;
     final eventBox = store.box<EventEntity>();
 
-    // 查询需要解析地址的事件（有GPS但还没有细粒度地点）
     final q = eventBox.query(
       EventEntity_.avgLatitude.notNull()
           .and(EventEntity_.photoCount.greaterThan(minPhotosForDisplay - 1))
@@ -195,40 +175,25 @@ class EventService {
     for (final event in events) {
       try {
         print("开始解析事件地址: id=${event.id}");
-        final regeocode = await _reverseGeocodeWithAmap(
+        final addr = await AmapGeoService.reverseGeocode(
           latitude: event.avgLatitude!,
           longitude: event.avgLongitude!,
           extensions: 'all',
         );
-        final data = regeocode['addressComponent'];
-        if (data is! Map<String, dynamic>) {
-          throw Exception('高德返回缺少addressComponent');
-        }
 
-        final province = _extractNonEmptyString(data, ['province']);
-        final district = _extractNonEmptyString(data, ['district']);
-        String? city = _extractNonEmptyString(data, ['city']);
-        city ??= district;
-        city ??= province;
-        final adcode = _extractNonEmptyString(data, ['adcode']);
-        final citycode = _extractNonEmptyString(data, ['citycode']);
-        final formattedAddress = _extractNonEmptyString(regeocode, ['formatted_address']);
-        final locationName = _extractLocationName(
-          regeocode,
-          data,
-          city: city,
-          district: district,
-          formattedAddress: formattedAddress,
-        );
+        if (addr == null) {
+          print("❌ 地址解析返回空");
+          continue;
+        }
 
         store.runInTransaction(TxMode.write, () {
           final e = eventBox.get(event.id);
           if (e == null) return;
-          e.province = province;
-          e.city = city;
-          e.district = district;
-          e.locationName = locationName;
-          e.formattedAddress = formattedAddress;
+          e.province = addr.province;
+          e.city = addr.city;
+          e.district = addr.district;
+          e.locationName = addr.locationName;
+          e.formattedAddress = addr.formattedAddress;
           final displayLocation = e.locationName ?? e.district ?? e.city ?? e.province;
           if ((displayLocation?.trim().isNotEmpty ?? false)) {
             e.title = "${displayLocation!.trim()} · ${e.dateRangeText}";
@@ -237,9 +202,8 @@ class EventService {
         });
 
         print(
-          "📍 事件地址解析成功: id=${event.id} city=${city ?? '-'} "
-          "district=${district ?? '-'} adcode=${adcode ?? '-'} "
-          "citycode=${citycode ?? '-'}",
+          "📍 事件地址解析成功: id=${event.id} city=${addr.city ?? '-'} "
+          "district=${addr.district ?? '-'} adcode=${addr.adcode ?? '-'}",
         );
       } catch (e) {
         print("❌ 地址解析失败: $e");
@@ -252,10 +216,6 @@ class EventService {
   }
 
   Future<void> _resolvePhotoLocationsForVisibleEvents() async {
-    if (_amapWebKey.trim().isEmpty) {
-      return;
-    }
-
     final store = ObjectBoxService().store;
     final eventBox = store.box<EventEntity>();
     final photoBox = store.box<PhotoEntity>();
@@ -303,47 +263,33 @@ class EventService {
       if (lat == null || lon == null) continue;
 
       try {
-        final regeocode = await _reverseGeocodeWithAmap(
+        final addr = await AmapGeoService.reverseGeocode(
           latitude: lat,
           longitude: lon,
           extensions: 'all',
         );
-        final addressComponent = regeocode['addressComponent'];
-        if (addressComponent is! Map<String, dynamic>) {
-          throw Exception('高德返回缺少addressComponent');
-        }
 
-        final formattedAddress = _extractNonEmptyString(regeocode, ['formatted_address']);
-        final district = _extractNonEmptyString(addressComponent, ['district']);
-        final adcode = _extractNonEmptyString(addressComponent, ['adcode']);
-        final province = _extractNonEmptyString(addressComponent, ['province']);
-        String? city = _extractNonEmptyString(addressComponent, ['city']);
-        city ??= district;
-        city ??= province;
-        final locationName = _extractLocationName(
-          regeocode,
-          addressComponent,
-          city: city,
-          district: district,
-          formattedAddress: formattedAddress,
-        );
+        if (addr == null) {
+          print("❌ 照片地址解析返回空: id=${photo.id}");
+          continue;
+        }
 
         store.runInTransaction(TxMode.write, () {
           final latest = photoBox.get(photo.id);
           if (latest == null) return;
-          latest.province = province;
-          latest.city = city;
-          latest.district = district;
-          latest.locationName = locationName;
-          latest.adcode = adcode;
-          latest.formattedAddress = formattedAddress;
+          latest.province = addr.province;
+          latest.city = addr.city;
+          latest.district = addr.district;
+          latest.locationName = addr.locationName;
+          latest.adcode = addr.adcode;
+          latest.formattedAddress = addr.formattedAddress;
           latest.isLocationProcessed = true;
           photoBox.put(latest);
         });
 
         print(
-          "📌 照片地址解析成功: id=${photo.id} city=${city ?? '-'} "
-          "district=${district ?? '-'} adcode=${adcode ?? '-'}",
+          "📌 照片地址解析成功: id=${photo.id} city=${addr.city ?? '-'} "
+          "district=${addr.district ?? '-'} adcode=${addr.adcode ?? '-'}",
         );
       } catch (e) {
         print("❌ 照片地址解析失败: id=${photo.id} error=$e");
@@ -353,208 +299,6 @@ class EventService {
     }
 
     _resolvePhotoLocationsForVisibleEvents();
-  }
-
-  Future<Map<String, dynamic>> _reverseGeocodeWithAmap({
-    required double latitude,
-    required double longitude,
-    String extensions = 'base',
-  }) async {
-    final response = await _dio.get(
-      'https://restapi.amap.com/v3/geocode/regeo',
-      queryParameters: {
-        'key': _amapWebKey,
-        'location': '$longitude,$latitude',
-        'extensions': extensions,
-        'coordsys': 'gps',
-      },
-    );
-
-    final body = response.data;
-
-    if (body is! Map<String, dynamic>) {
-      throw Exception('高德返回格式异常');
-    }
-
-    print(
-      "高德逆地址响应: status=${body['status'] ?? '-'} "
-      "hasRegeocode=${body['regeocode'] is Map<String, dynamic>} "
-      "extensions=$extensions",
-    );
-
-    if (body['status'] != '1') {
-      throw Exception('高德返回失败: ${body['info'] ?? '未知错误'}');
-    }
-
-    final regeocode = body['regeocode'];
-    if (regeocode is! Map<String, dynamic>) {
-      throw Exception('高德返回缺少regeocode');
-    }
-    return regeocode;
-  }
-
-  String? _extractNonEmptyString(
-    Map<String, dynamic> source,
-    List<String> keys,
-  ) {
-    for (final key in keys) {
-      final value = source[key];
-      if (value is String && value.trim().isNotEmpty) {
-        return value.trim();
-      }
-      if (value is List && value.isNotEmpty) {
-        final first = value.first;
-        if (first is String && first.trim().isNotEmpty) {
-          return first.trim();
-        }
-      }
-    }
-    return null;
-  }
-
-  String? _extractLocationName(
-    Map<String, dynamic> regeocode,
-    Map<String, dynamic> addressComponent, {
-    String? city,
-    String? district,
-    String? formattedAddress,
-  }) {
-    final poi = regeocode['pois'];
-    if (poi is List && poi.isNotEmpty) {
-      final firstPoi = poi.first;
-      if (firstPoi is Map<String, dynamic>) {
-        final poiName = _extractNonEmptyString(firstPoi, ['name']);
-        if (_isUsefulLocationName(poiName, city: city, district: district)) {
-          return poiName;
-        }
-      }
-    }
-
-    final aois = regeocode['aois'];
-    if (aois is List && aois.isNotEmpty) {
-      final firstAoi = aois.first;
-      if (firstAoi is Map<String, dynamic>) {
-        final aoiName = _extractNonEmptyString(firstAoi, ['name']);
-        if (_isUsefulLocationName(aoiName, city: city, district: district)) {
-          return aoiName;
-        }
-      }
-    }
-
-    final building = addressComponent['building'];
-    if (building is Map<String, dynamic>) {
-      final buildingName = _extractNonEmptyString(building, ['name']);
-      if (_isUsefulLocationName(buildingName, city: city, district: district)) {
-        return buildingName;
-      }
-    }
-
-    final neighborhood = addressComponent['neighborhood'];
-    if (neighborhood is Map<String, dynamic>) {
-      final neighborhoodName = _extractNonEmptyString(neighborhood, ['name']);
-      if (_isUsefulLocationName(neighborhoodName, city: city, district: district)) {
-        return neighborhoodName;
-      }
-    }
-
-    final formattedAddressName = _extractLocationNameFromFormattedAddress(
-      formattedAddress,
-      addressComponent,
-      city: city,
-      district: district,
-    );
-    if (_isUsefulLocationName(
-      formattedAddressName,
-      city: city,
-      district: district,
-    )) {
-      return formattedAddressName;
-    }
-
-    final township = _extractNonEmptyString(addressComponent, ['township']);
-    if (_isUsefulLocationName(township, city: city, district: district)) {
-      return township;
-    }
-
-    return district ?? city;
-  }
-
-  String? _extractLocationNameFromFormattedAddress(
-    String? formattedAddress,
-    Map<String, dynamic> addressComponent, {
-    String? city,
-    String? district,
-  }) {
-    if (formattedAddress == null) {
-      return null;
-    }
-
-    var candidate = formattedAddress.trim();
-    if (candidate.isEmpty) {
-      return null;
-    }
-
-    final province = _extractNonEmptyString(addressComponent, ['province']);
-    final township = _extractNonEmptyString(addressComponent, ['township']);
-    final streetName = _extractStreetName(addressComponent);
-    final prefixes = <String>{
-      if (province != null && province.isNotEmpty) province,
-      if (city != null && city.isNotEmpty) city,
-      if (district != null && district.isNotEmpty) district,
-      if (township != null && township.isNotEmpty) township,
-      if (streetName != null && streetName.isNotEmpty) streetName,
-    }.toList()
-      ..sort((a, b) => b.length.compareTo(a.length));
-
-    var changed = true;
-    while (changed && candidate.isNotEmpty) {
-      changed = false;
-      for (final prefix in prefixes) {
-        if (candidate.startsWith(prefix)) {
-          candidate = candidate.substring(prefix.length).trim();
-          changed = true;
-        }
-      }
-      candidate = candidate.replaceFirst(RegExp(r'^[,，\s]+'), '').trim();
-    }
-
-    if (_isUsefulLocationName(candidate, city: city, district: district)) {
-      return candidate;
-    }
-
-    return null;
-  }
-
-  String? _extractStreetName(Map<String, dynamic> addressComponent) {
-    final streetName = _extractNonEmptyString(addressComponent, ['street']);
-    if (streetName != null && streetName.isNotEmpty) {
-      return streetName;
-    }
-
-    final streetNumber = addressComponent['streetNumber'];
-    if (streetNumber is Map<String, dynamic>) {
-      return _extractNonEmptyString(streetNumber, ['street', 'name']);
-    }
-
-    return null;
-  }
-
-  bool _isUsefulLocationName(String? value, {String? city, String? district}) {
-    final normalized = value?.trim();
-    if (normalized == null || normalized.isEmpty) {
-      return false;
-    }
-
-    if (normalized == city || normalized == district) {
-      return false;
-    }
-
-    const ignored = <String>{'[]', '[[]]'};
-    if (ignored.contains(normalized)) {
-      return false;
-    }
-
-    return true;
   }
 
   Future<Map<String, int>> getEventStats() async {

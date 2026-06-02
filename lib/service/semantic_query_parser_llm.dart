@@ -1,224 +1,273 @@
-/// 语义查询解析的 LLM 路径实现，负责把自然语言转为结构化意图。
+/// LLM-only semantic query parser.
+///
+/// The parser follows the common output-parser pattern used by agent
+/// frameworks: ask for a strict JSON plan, validate it locally, then ask the
+/// model to repair only the invalid plan when parsing or validation fails.
 
 part of 'semantic_query_parser_service.dart';
 
 extension _SemanticQueryParserLlm on SemanticQueryParserService {
-  Future<SemanticSearchQuery> _parseWithLlm(
-    String rawQuery,
-    Set<String> locationDictionary,
-  ) async {
-    final coarseCatalog = _coarseSeeds
-        .map(
-          (item) => <String, dynamic>{
-            'id': item.id,
-            'label_zh': item.labelZh,
-            'label_en': item.labelEn,
-          },
-        )
-        .toList(growable: false);
+  static const int _maxPlanAttempts = 2;
 
-    final prompt =
-        '''
-\u8bf7\u628a\u7528\u6237\u7684\u76f8\u518c\u641c\u7d22\u8bed\u53e5\u89e3\u6790\u6210 JSON\u3002
+  Future<SemanticSearchQuery> _parseWithLlm(String rawQuery) async {
+    final prompt = _buildParserPrompt(rawQuery);
+    String? response;
+    Object? lastError;
 
-\u4f60\u9700\u8981\u8f93\u51fa\u4ee5\u4e0b\u5b57\u6bb5\uff1a
+    for (var attempt = 0; attempt < _maxPlanAttempts; attempt++) {
+      response = await _llmService.completeText(
+        prompt: attempt == 0
+            ? prompt
+            : _buildPlanRepairPrompt(
+                rawQuery: rawQuery,
+                invalidResponse: response,
+                error: lastError,
+              ),
+        systemPrompt: _parserSystemPrompt,
+        jsonMode: true,
+        temperature: attempt == 0 ? 0.1 : 0.0,
+        topP: 0.2,
+        requestTimeout: const Duration(seconds: 30),
+      );
 
-{
-  "query_type": "metadata | attribute | concrete | abstract | collection",
-  "time_ranges": [
-    {
-      "start_time_ms": 0,
-      "end_time_ms": 0,
-      "reason": ""
+      try {
+        final jsonObject = _decodeJsonObject(response);
+        return _buildStructuredQueryFromJsonObject(
+          rawQuery: rawQuery,
+          jsonObject: jsonObject,
+          usedLlm: true,
+          llmConfigured: true,
+          parserSource: attempt == 0 ? 'llm' : 'llm_repaired',
+          baseNotes: attempt == 0
+              ? 'LLM structured parser'
+              : 'LLM repaired structured parser',
+        );
+      } catch (error) {
+        lastError = error;
+      }
     }
-  ],
-  "locations": [
-    {
-      "text": "",
-      "type": "province | city | district"
-    }
-  ],
-  "coarse_tags": [
-    {
-      "id": "",
-      "label_zh": "",
-      "label_en": "",
-      "confidence": 0.0
-    }
-  ],
-  "tag_strictness": "strict | prefer | optional",
-  "positive_semantics": [
-    {
-      "text": "",
-      "weight": 0.0
-    }
-  ],
-  "recall_semantics": [
-    {
-      "text": "",
-      "weight": 0.0
-    }
-  ],
-  "negative_semantics": [
-    {
-      "text": "",
-      "weight": 0.0
-    }
-  ],
-  "estimated_result_count": {
-    "min": 0,
-    "max": 0,
-    "confidence": 0.0
-  },
-  "notes": ""
-}
 
-\u5b57\u6bb5\u8981\u6c42\uff1a
+    throw FormatException('LLM search plan is invalid after repair: $lastError');
+  }
 
-1. query_type \u5fc5\u987b\u89e3\u91ca\u67e5\u8be2\u672c\u8d28\uff1a
-   - metadata\uff1a\u7eaf\u65f6\u95f4/\u5730\u70b9\u8fc7\u6ee4
-   - attribute\uff1a\u989c\u8272\u3001\u7a7f\u7740\u3001\u5c40\u90e8\u89c6\u89c9\u5c5e\u6027
-   - concrete\uff1a\u5177\u4f53\u4e3b\u4f53\u6216\u5177\u4f53\u573a\u666f
-   - abstract\uff1a\u62bd\u8c61\u60c5\u7eea\u3001\u6c1b\u56f4\u3001\u5b63\u8282\u611f
-   - collection\uff1a\u96c6\u5408\u578b\u4e3b\u9898\uff0c\u8868\u793a\u7528\u6237\u60f3\u627e\u7684\u662f\u4e00\u6574\u7c7b\u7167\u7247\u96c6\u5408\uff0c\u800c\u4e0d\u662f\u5355\u4e00\u5bf9\u8c61\u6216\u5355\u4e00\u573a\u666f\uff1b\u4f8b\u5982\u201c\u65c5\u6e38\u7167\u7247\u201d\u201c\u6821\u56ed\u751f\u6d3b\u201d\u201c\u5bb6\u5ead\u805a\u4f1a\u7167\u7247\u201d\uff0c\u8fd9\u7c7b\u67e5\u8be2\u901a\u5e38\u8986\u76d6\u4eba\u7269\u3001\u8857\u666f\u3001\u5730\u6807\u3001\u7f8e\u98df\u3001\u81ea\u7136\u98ce\u666f\u7b49\u591a\u4e2a\u5b50\u573a\u666f\uff0c\u4e0d\u80fd\u89e3\u6790\u5f97\u8fc7\u7a84
-
-2. time_ranges\uff1a
-   - \u7528\u4e8e\u65f6\u95f4\u8fc7\u6ee4
-   - \u53ef\u4ee5\u6709\u591a\u4e2a\u65f6\u95f4\u6bb5
-   - \u65e0\u6cd5\u786e\u5b9a\u65f6\u53ef\u4ee5\u4e3a null
-
-3. locations\uff1a
-   - \u53ea\u4fdd\u7559\u771f\u5b9e\u5730\u7406\u4f4d\u7f6e\u540d\u79f0
-   - \u4f8b\u5982\uff1a\u4e0a\u6d77\u3001\u676d\u5dde\u3001\u897f\u6e56\u533a
-   - \u4e0d\u8981\u8f93\u51fa\u5750\u6807
-   - \u4e0d\u8981\u628a\u6d77\u8fb9\u3001\u8349\u5730\u3001\u591c\u666f\u3001\u82b1\u6d77\u3001\u516c\u56ed\u653e\u8fdb locations
-   - \u8fd9\u4e9b\u5730\u70b9\u6587\u672c\u540e\u7eed\u4f1a\u7528\u4e8e\u5339\u914d\u7167\u7247\u5df2\u9006\u5730\u7406\u7f16\u7801\u7684 city/province/district/locationName/formattedAddress \u5b57\u6bb5
-
-4. coarse_tags\uff1a
-   - \u53ea\u80fd\u4ece\u7ed9\u5b9a\u7c97\u6807\u7b7e\u5217\u8868\u4e2d\u9009\u62e9
-   - \u53ef\u4ee5\u591a\u4e2a
-   - \u4e0d\u80fd\u81ea\u9020\u65b0\u6807\u7b7e
-   - \u96c6\u5408\u67e5\u8be2\u548c\u62bd\u8c61\u67e5\u8be2\u4e0d\u8981\u8fd4\u56de\u8fc7\u7a84\u7684\u7c97\u6807\u7b7e\u96c6\u5408
-
-5. tag_strictness\uff1a
-   - strict\uff1a\u5fc5\u987b\u547d\u4e2d\u8fd9\u4e9b\u7c97\u6807\u7b7e
-   - prefer\uff1a\u4f18\u5148\u4f7f\u7528\u8fd9\u4e9b\u7c97\u6807\u7b7e\uff0c\u4f46\u5c11\u7ed3\u679c\u65f6\u53ef\u4ee5\u653e\u5bbd
-   - optional\uff1a\u7c97\u6807\u7b7e\u4ec5\u4f5c\u8f85\u52a9\uff0c\u4e0d\u5e94\u963b\u585e\u53ec\u56de
-
-6. positive_semantics\uff1a
-   - \u7528\u4e8e\u6700\u7ec8\u7cbe\u6392
-   - \u9700\u66f4\u51c6\u786e\u3001\u66f4\u96c6\u4e2d
-   - \u5fc5\u987b\u8f93\u51fa\u9002\u5408\u641c\u56fe\u7684\u82f1\u6587\u77ed\u53e5\uff0c\u63a8\u8350\u4f7f\u7528 “a photo of ...” \u8fd9\u79cd\u5f62\u5f0f
-   - \u4e0d\u8981\u8f93\u51fa\u5355\u4e2a\u8bcd\uff0c\u4e0d\u8981\u8f93\u51fa\u6807\u7b7e\u540d\uff0c\u4e0d\u8981\u8f93\u51fa\u4e2d\u6587
-   - \u6bcf\u4e2a\u9879\u5305\u542b text \u548c weight
-
-7. recall_semantics\uff1a
-   - \u7528\u4e8e\u5c11\u7ed3\u679c\u65f6\u5bbd\u53ec\u56de
-   - \u9700\u8986\u76d6\u76f8\u5173\u5b50\u573a\u666f\u3001\u8fd1\u4e49\u8868\u8fbe\u3001\u540c\u4e3b\u9898\u5178\u578b\u5185\u5bb9
-   - \u5fc5\u987b\u8f93\u51fa\u9002\u5408\u641c\u56fe\u7684\u82f1\u6587\u77ed\u53e5\uff0c\u63a8\u8350\u4f7f\u7528 “a photo of ...” \u8fd9\u79cd\u5f62\u5f0f
-   - \u4e0d\u8981\u8f93\u51fa\u5355\u4e2a\u8bcd\uff0c\u4e0d\u8981\u8f93\u51fa\u6807\u7b7e\u540d\uff0c\u4e0d\u8981\u8f93\u51fa\u4e2d\u6587
-   - \u96c6\u5408\u67e5\u8be2\u548c\u62bd\u8c61\u67e5\u8be2\u5fc5\u987b\u8ba4\u771f\u8f93\u51fa\uff0c\u4e0d\u8981\u8fc7\u7a84
-
-8. negative_semantics\uff1a
-   - \u8868\u793a\u7528\u6237\u4e0d\u60f3\u8981\u7684\u5185\u5bb9
-   - \u5fc5\u987b\u8f93\u51fa\u9002\u5408\u641c\u56fe\u7684\u82f1\u6587\u77ed\u53e5\uff0c\u63a8\u8350\u4f7f\u7528 “a photo of ...” \u6216 “a screenshot of ...” \u8fd9\u79cd\u5f62\u5f0f
-   - \u4e0d\u8981\u8f93\u51fa\u5355\u4e2a\u8bcd\uff0c\u4e0d\u8981\u8f93\u51fa\u6807\u7b7e\u540d\uff0c\u4e0d\u8981\u8f93\u51fa\u4e2d\u6587
-   - \u5982\u679c\u7528\u6237\u6ca1\u6709\u660e\u786e\u8bf4\u8981\u627e\u622a\u56fe/\u6587\u6863/\u4ee3\u7801\uff0c\u5219\u9ed8\u8ba4\u52a0\u5165\u622a\u56fe/\u6587\u6863\u7c7b\u8d1f\u5411\u8bed\u4e49
-
-9. estimated_result_count\uff1a
-   - \u4f30\u8ba1\u5408\u7406\u7ed3\u679c\u89c4\u6a21
-   - \u9700\u8981\u8f93\u51fa min / max / confidence
-   - \u62bd\u8c61\u67e5\u8be2\u3001\u96c6\u5408\u67e5\u8be2\u901a\u5e38\u6bd4\u5177\u4f53\u67e5\u8be2\u66f4\u591a
-
-10. \u5bf9\u4e8e metadata \u7c7b\u67e5\u8be2\uff08\u53ea\u5305\u542b\u65f6\u95f4/\u5730\u70b9\u8fc7\u6ee4\uff09\uff1a
-   - query_type \u5fc5\u987b\u662f metadata
-   - coarse_tags \u8fd4\u56de []
-   - positive_semantics \u8fd4\u56de []
-   - recall_semantics \u8fd4\u56de []
-   - negative_semantics \u8fd4\u56de []
-
-11. \u53ea\u8f93\u51fa JSON\uff0c\u4e0d\u8981\u89e3\u91ca\u3002
-
-\u7c97\u6807\u7b7e\u5217\u8868\uff1a
-${jsonEncode(coarseCatalog)}
-
-\u7528\u6237\u67e5\u8be2\uff1a
-$rawQuery
-''';
-
+  Future<SemanticSearchQuery> _repairSearchPlanAfterEmptyResult({
+    required String rawQuery,
+    required SemanticSearchQuery previousQuery,
+    required int metadataCandidateCount,
+    required int tagCandidateCount,
+  }) async {
     final response = await _llmService.completeText(
-      prompt: prompt,
-      systemPrompt:
-          '\u4f60\u662f\u201c\u76f8\u518c\u8bed\u4e49\u641c\u7d22\u89e3\u6790\u5668\u201d\u3002\u4f60\u7684\u552f\u4e00\u4efb\u52a1\u662f\u628a\u7528\u6237\u7684\u76f8\u518c\u641c\u7d22\u8bed\u53e5\u8f6c\u6210\u7ed3\u6784\u5316 JSON\u3002\u4f60\u8f93\u51fa\u7684\u4e0d\u662f\u89e3\u91ca\uff0c\u4e0d\u662f\u5efa\u8bae\uff0c\u800c\u662f\u201c\u641c\u7d22\u8ba1\u5212\u201d\u3002\u53ea\u8f93\u51fa\u4e00\u4e2a JSON \u5bf9\u8c61\uff0c\u4e0d\u8981\u8f93\u51fa Markdown\uff0c\u4e0d\u8981\u8f93\u51fa\u4ee3\u7801\u5757\uff0c\u4e0d\u8981\u8f93\u51fa\u4efb\u4f55\u989d\u5916\u6587\u672c\u3002',
+      prompt: _buildEmptyResultRepairPrompt(
+        rawQuery: rawQuery,
+        previousQuery: previousQuery,
+        metadataCandidateCount: metadataCandidateCount,
+        tagCandidateCount: tagCandidateCount,
+      ),
+      systemPrompt: _parserSystemPrompt,
+      jsonMode: true,
+      temperature: 0.0,
+      topP: 0.2,
+      requestTimeout: const Duration(seconds: 30),
     );
 
     final jsonObject = _decodeJsonObject(response);
     return _buildStructuredQueryFromJsonObject(
       rawQuery: rawQuery,
       jsonObject: jsonObject,
-      locationDictionary: locationDictionary,
       usedLlm: true,
       llmConfigured: true,
-      parserSource: 'llm',
-      baseNotes: _noteLlm,
+      parserSource: 'llm_empty_result_retry',
+      baseNotes: 'LLM retried after empty local index result',
     );
+  }
+
+  String _buildParserPrompt(String rawQuery) {
+    final now = DateTime.now();
+    final nowOffset = _formatUtcOffset(now.timeZoneOffset);
+    final nowIso = '${now.toIso8601String()}$nowOffset';
+    final coarseCatalog = _coarseSeeds
+        .map(
+          (item) => <String, dynamic>{
+            'id': item.id,
+            'label_en': item.labelEn,
+          },
+        )
+        .toList(growable: false);
+
+    return '''
+Convert the user's natural-language photo search into one strict JSON search plan.
+
+Current date and time: $nowIso.
+Device UTC offset: $nowOffset.
+Resolve relative dates against the current date above.
+
+Return exactly one JSON object. Do not return Markdown, comments, prose, or code fences.
+
+Required top-level schema:
+{
+  "query_type": "metadata | attribute | concrete | abstract | collection",
+  "time_ranges": [],
+  "local_time_windows": [],
+  "locations": [],
+  "coarse_tags": [],
+  "tag_strictness": "strict | prefer | optional",
+  "positive_semantics": [],
+  "recall_semantics": [],
+  "negative_semantics": [],
+  "estimated_result_count": {"min": 0, "max": 0, "confidence": 0.0},
+  "notes": ""
+}
+
+Rules:
+1. All values intended for visual or semantic matching must be English. MobileCLIP text alignment is English-first.
+2. time_ranges are calendar/date constraints only. Use ISO 8601 strings with UTC offsets.
+3. local_time_windows are local time-of-day constraints such as night, morning, dusk, sunrise, or sunset. They are not date ranges.
+4. For location queries, output a concise English canonical place name. Do not enumerate nearby districts or tourist areas unless the user explicitly named them.
+5. Do not put scene words such as beach, park, night view, grassland, or starry sky into locations unless they are part of an official place name.
+6. Preserve specificity. "Qingdao West Coast" is more specific than "Qingdao"; "Nanjing Confucius Temple" is more specific than "Nanjing".
+7. Choose coarse_tags only from the catalog below. Do not invent IDs.
+8. positive_semantics and recall_semantics must be English CLIP-friendly photo phrases, not single words and not Chinese.
+9. recall_semantics should broaden visual recall without changing explicit date or location constraints.
+10. Add negative_semantics for screenshots, documents, code, and software UI unless the user is explicitly searching for screen/document content.
+11. Use tag_strictness "strict" only when the user says the visual category is mandatory. Prefer "prefer" for normal natural-language searches.
+12. If the query is ambiguous, still produce a reasonable plan. Non-metadata queries must have positive_semantics and recall_semantics.
+13. Before returning, self-check that JSON is valid, enum values are allowed, dates include offsets, and non-metadata searches have semantic phrases.
+
+Few-shot examples:
+
+User: 去年夏天青岛海边的记忆
+JSON:
+{
+  "query_type": "collection",
+  "time_ranges": [
+    {"start": "2025-06-01T00:00:00+08:00", "end": "2025-09-30T23:59:59+08:00", "timezone": "Asia/Shanghai", "reason": "previous summer"}
+  ],
+  "local_time_windows": [],
+  "locations": [
+    {"text": "Qingdao", "type": "city", "aliases": ["Qingdao"], "timezone": "Asia/Shanghai", "utc_offset": "+08:00"}
+  ],
+  "coarse_tags": [
+    {"id": "beach_water", "label_en": "beach and water", "confidence": 0.9},
+    {"id": "travel_landmark", "label_en": "travel landmark", "confidence": 0.55}
+  ],
+  "tag_strictness": "prefer",
+  "positive_semantics": [
+    {"text": "a summer travel photo by the beach in Qingdao", "weight": 0.55},
+    {"text": "a seaside memory with ocean waves and coast", "weight": 0.45}
+  ],
+  "recall_semantics": [
+    {"text": "a photo of people or scenery near the sea during summer travel", "weight": 0.45},
+    {"text": "a coastal travel photo with beach, sea, sky, and vacation atmosphere", "weight": 0.55}
+  ],
+  "negative_semantics": [
+    {"text": "a screenshot of a text document or software interface", "weight": 1.0}
+  ],
+  "estimated_result_count": {"min": 8, "max": 120, "confidence": 0.72},
+  "notes": "English CLIP plan with date, city, and beach-water semantics."
+}
+
+User: 美国夏威夷夜晚的星空
+JSON:
+{
+  "query_type": "concrete",
+  "time_ranges": [],
+  "local_time_windows": [
+    {"start": "19:00", "end": "04:59", "timezone": "Pacific/Honolulu", "utc_offset": "-10:00", "reason": "night in Hawaii local time"}
+  ],
+  "locations": [
+    {"text": "Hawaii", "type": "province", "aliases": ["Hawaii"], "timezone": "Pacific/Honolulu", "utc_offset": "-10:00"}
+  ],
+  "coarse_tags": [
+    {"id": "sky_sunset", "label_en": "sky and sunset", "confidence": 0.88},
+    {"id": "natural_landscape", "label_en": "natural landscape", "confidence": 0.65}
+  ],
+  "tag_strictness": "prefer",
+  "positive_semantics": [
+    {"text": "a night sky photo full of stars in Hawaii", "weight": 0.7},
+    {"text": "a dark outdoor landscape under a starry sky", "weight": 0.3}
+  ],
+  "recall_semantics": [
+    {"text": "a photo of stars, night sky, and dark natural scenery", "weight": 0.6},
+    {"text": "an outdoor travel photo taken at night under the sky", "weight": 0.4}
+  ],
+  "negative_semantics": [
+    {"text": "a screenshot of a text document or software interface", "weight": 1.0}
+  ],
+  "estimated_result_count": {"min": 1, "max": 40, "confidence": 0.62},
+  "notes": "Uses Hawaii local night instead of device local night."
+}
+
+User: 南京夫子庙
+JSON:
+{
+  "query_type": "concrete",
+  "time_ranges": [],
+  "local_time_windows": [],
+  "locations": [
+    {"text": "Nanjing Confucius Temple", "type": "poi", "aliases": ["Nanjing Confucius Temple", "Fuzimiao"], "timezone": "Asia/Shanghai", "utc_offset": "+08:00"}
+  ],
+  "coarse_tags": [
+    {"id": "travel_landmark", "label_en": "travel landmark", "confidence": 0.86},
+    {"id": "city_street", "label_en": "city street", "confidence": 0.58}
+  ],
+  "tag_strictness": "prefer",
+  "positive_semantics": [
+    {"text": "a travel photo at Nanjing Confucius Temple", "weight": 0.58},
+    {"text": "a photo of traditional Chinese architecture and tourist streets", "weight": 0.42}
+  ],
+  "recall_semantics": [
+    {"text": "a sightseeing photo of a historic temple area in Nanjing", "weight": 0.5},
+    {"text": "a city travel photo with old buildings, lanterns, and a scenic street", "weight": 0.5}
+  ],
+  "negative_semantics": [
+    {"text": "a screenshot of a text document or software interface", "weight": 1.0}
+  ],
+  "estimated_result_count": {"min": 1, "max": 80, "confidence": 0.65},
+  "notes": "Keeps the POI specificity instead of reducing it to Nanjing."
+}
+
+Coarse tag catalog:
+${jsonEncode(coarseCatalog)}
+
+User query:
+$rawQuery
+''';
   }
 
   SemanticSearchQuery _buildStructuredQueryFromJsonObject({
     required String rawQuery,
     required Map<String, dynamic> jsonObject,
-    required Set<String> locationDictionary,
     required bool usedLlm,
     required bool llmConfigured,
     required String parserSource,
     required String baseNotes,
   }) {
+    final queryType = _requireQueryType(jsonObject['query_type']);
     final timeRanges = _readTimeRanges(
-      jsonObject['time_ranges'] ?? jsonObject['time'],
+      jsonObject['time_ranges'],
+      localTimeWindows: jsonObject['local_time_windows'],
     );
-    final locations = _readLocations(
-      jsonObject['locations'] ?? jsonObject['location'],
-      locationDictionary,
+    final locations = _readLocations(jsonObject['locations']);
+    final coarseTags = _readCoarseTags(jsonObject['coarse_tags']);
+    final positiveSemantics = _readSemanticItems(
+      jsonObject['positive_semantics'],
     );
-    final coarseTags = _readCoarseTags(
-      jsonObject['coarse_tags'] ?? jsonObject['tags'],
+    final recallSemantics = _readSemanticItems(jsonObject['recall_semantics']);
+    final negativeSemantics = _readSemanticItems(
+      jsonObject['negative_semantics'],
     );
-    var positiveSemantics = _readSemanticItems(
-      jsonObject['positive_semantics'] ?? jsonObject['semantic_query'],
+    final tagStrictness = _readTagStrictness(jsonObject['tag_strictness']);
+    final estimatedResultCount = _readEstimatedResultCount(
+      jsonObject['estimated_result_count'],
     );
-    var recallSemantics = _readSemanticItems(jsonObject['recall_semantics']);
-    var negativeSemantics = _readSemanticItems(
-      jsonObject['negative_semantics'] ?? jsonObject['negative_query'],
-    );
-    final queryType =
-        _readQueryType(jsonObject['query_type']) ?? _inferQueryType(rawQuery);
-    final tagStrictness =
-        _readTagStrictness(jsonObject['tag_strictness']) ??
-        _defaultTagStrictnessFor(queryType);
-    final estimatedResultCount =
-        _readEstimatedResultCount(jsonObject['estimated_result_count']) ??
-        _estimateResultCount(rawQuery, queryType);
 
-    var notes = baseNotes;
-    if (queryType == SemanticSearchQueryType.metadata) {
-      positiveSemantics = const <SemanticSearchSemanticItem>[];
-      recallSemantics = const <SemanticSearchSemanticItem>[];
-      negativeSemantics = const <SemanticSearchSemanticItem>[];
-    } else if (positiveSemantics.isEmpty) {
-      positiveSemantics = _buildPositiveSemantics(rawQuery, coarseTags);
-      if (recallSemantics.isEmpty) {
-        recallSemantics = _buildRecallSemantics(rawQuery, coarseTags);
-      }
-      notes = _appendNote(notes, _noteLlmSupplemented);
-    }
-    if (recallSemantics.isEmpty &&
-        queryType != SemanticSearchQueryType.metadata) {
-      recallSemantics = _buildRecallSemantics(rawQuery, coarseTags);
-    }
-    if (negativeSemantics.isEmpty &&
-        queryType != SemanticSearchQueryType.metadata) {
-      negativeSemantics = _buildNegativeSemantics(rawQuery);
-    }
+    _validateSearchPlan(
+      queryType: queryType,
+      locations: locations,
+      positiveSemantics: positiveSemantics,
+      recallSemantics: recallSemantics,
+      estimatedResultCount: estimatedResultCount,
+    );
 
     return SemanticSearchQuery(
       rawQuery: rawQuery,
@@ -228,72 +277,196 @@ $rawQuery
       locations: locations,
       coarseTags: coarseTags,
       tagStrictness: tagStrictness,
-      positiveSemantics: positiveSemantics,
-      recallSemantics: recallSemantics,
-      negativeSemantics: negativeSemantics,
+      positiveSemantics: queryType == SemanticSearchQueryType.metadata
+          ? const <SemanticSearchSemanticItem>[]
+          : positiveSemantics,
+      recallSemantics: queryType == SemanticSearchQueryType.metadata
+          ? const <SemanticSearchSemanticItem>[]
+          : recallSemantics,
+      negativeSemantics: queryType == SemanticSearchQueryType.metadata
+          ? const <SemanticSearchSemanticItem>[]
+          : negativeSemantics,
       estimatedResultCount: estimatedResultCount,
       usedLlm: usedLlm,
       llmConfigured: llmConfigured,
       parserSource: parserSource,
       debugJson: _prettyJson.convert(jsonObject),
-      notes: notes,
+      notes: (jsonObject['notes']?.toString().trim().isNotEmpty ?? false)
+          ? '$baseNotes; ${jsonObject['notes'].toString().trim()}'
+          : baseNotes,
     );
   }
 
-  SemanticSearchQuery _mergeQueries(
-    SemanticSearchQuery primary,
-    SemanticSearchQuery fallback,
-  ) {
-    return primary.copyWith(
-      queryType: primary.queryType,
-      timeRanges: primary.timeRanges.isNotEmpty
-          ? primary.timeRanges
-          : fallback.timeRanges,
-      locations: primary.locations.isNotEmpty
-          ? primary.locations
-          : fallback.locations,
-      coarseTags: primary.coarseTags.isNotEmpty
-          ? primary.coarseTags
-          : fallback.coarseTags,
-      tagStrictness: primary.tagStrictness,
-      positiveSemantics: primary.positiveSemantics.isNotEmpty
-          ? primary.positiveSemantics
-          : fallback.positiveSemantics,
-      recallSemantics: primary.recallSemantics.isNotEmpty
-          ? primary.recallSemantics
-          : fallback.recallSemantics,
-      negativeSemantics: primary.negativeSemantics.isNotEmpty
-          ? primary.negativeSemantics
-          : fallback.negativeSemantics,
-      estimatedResultCount: primary.estimatedResultCount.isMeaningful
-          ? primary.estimatedResultCount
-          : fallback.estimatedResultCount,
-      notes: [
-        primary.notes.trim(),
-        if (fallback.notes.trim().isNotEmpty) _noteFallbackMerged,
-      ].where((item) => item.isNotEmpty).join('\uff1b'),
+  void _validateSearchPlan({
+    required SemanticSearchQueryType queryType,
+    required List<SemanticSearchLocation> locations,
+    required List<SemanticSearchSemanticItem> positiveSemantics,
+    required List<SemanticSearchSemanticItem> recallSemantics,
+    required SemanticSearchEstimatedResultCount estimatedResultCount,
+  }) {
+    if (queryType != SemanticSearchQueryType.metadata &&
+        positiveSemantics.isEmpty) {
+      throw FormatException('search plan has no positive_semantics');
+    }
+    if (queryType != SemanticSearchQueryType.metadata &&
+        recallSemantics.isEmpty) {
+      throw FormatException('search plan has no recall_semantics');
+    }
+    if (!estimatedResultCount.isMeaningful) {
+      throw FormatException('search plan has invalid result estimate');
+    }
+    for (final location in locations) {
+      if (location.text.length < 2) {
+        throw FormatException('search plan has invalid location');
+      }
+    }
+  }
+
+  List<SemanticSearchTimeRange> _readTimeRanges(
+    dynamic dateRanges, {
+    required dynamic localTimeWindows,
+  }) {
+    final results = <SemanticSearchTimeRange>[];
+    if (dateRanges is List) {
+      for (final item in dateRanges.whereType<Map>()) {
+        final range = _readDateRange(item);
+        if (range != null) {
+          results.add(range);
+        }
+      }
+    }
+    if (localTimeWindows is List) {
+      for (final item in localTimeWindows.whereType<Map>()) {
+        final range = _readLocalTimeWindow(item);
+        if (range != null) {
+          results.add(range);
+        }
+      }
+    }
+    return results;
+  }
+
+  SemanticSearchTimeRange? _readDateRange(Map item) {
+    final startRaw = item['start'] ?? item['start_iso'] ?? item['start_time_ms'];
+    final endRaw = item['end'] ?? item['end_iso'] ?? item['end_time_ms'];
+    final startTimeMs = _toTimestampMs(startRaw);
+    final endTimeMs = _toTimestampMs(endRaw);
+    if (startTimeMs == null && endTimeMs == null) {
+      return null;
+    }
+    return SemanticSearchTimeRange(
+      startTimeMs: startTimeMs,
+      endTimeMs: endTimeMs,
+      reason: (item['reason'] ?? '').toString().trim(),
+      startIso: startRaw is String ? startRaw.trim() : null,
+      endIso: endRaw is String ? endRaw.trim() : null,
+      timezone: _readOptionalString(item['timezone']),
     );
   }
 
-  SemanticSearchQueryType? _readQueryType(dynamic value) {
+  SemanticSearchTimeRange? _readLocalTimeWindow(Map item) {
+    final startMinute = _readMinuteOfDay(item['start']);
+    final endMinute = _readMinuteOfDay(item['end']);
+    final offsetMinutes = _readUtcOffsetMinutes(item['utc_offset']);
+    if (startMinute == null || endMinute == null || offsetMinutes == null) {
+      return null;
+    }
+    return SemanticSearchTimeRange(
+      startTimeMs: null,
+      endTimeMs: null,
+      reason: (item['reason'] ?? '').toString().trim(),
+      timezone: _readOptionalString(item['timezone']),
+      utcOffsetMinutes: offsetMinutes,
+      localStartMinute: startMinute,
+      localEndMinute: endMinute,
+    );
+  }
+
+  List<SemanticSearchLocation> _readLocations(dynamic value) {
+    if (value is! List) {
+      return const <SemanticSearchLocation>[];
+    }
+    final locations = <String, SemanticSearchLocation>{};
+    for (final item in value.whereType<Map>()) {
+      final text = (item['text'] ?? '').toString().trim();
+      if (text.isEmpty || _isSceneWord(text)) {
+        continue;
+      }
+      final location = SemanticSearchLocation(
+        text: text,
+        type: _readLocationType(item['type']),
+        aliases: _readStringList(item['aliases']),
+        timezone: _readOptionalString(item['timezone']),
+        utcOffsetMinutes: _readUtcOffsetMinutes(item['utc_offset']),
+      );
+      locations[location.text] = location;
+    }
+    return locations.values.toList(growable: false);
+  }
+
+  List<SemanticSearchCoarseTag> _readCoarseTags(dynamic value) {
+    if (value is! List) {
+      return const <SemanticSearchCoarseTag>[];
+    }
+    final tags = <String, SemanticSearchCoarseTag>{};
+    for (final item in value.whereType<Map>()) {
+      final seed = _coarseSeedById[(item['id'] ?? '').toString().trim()];
+      if (seed == null) {
+        continue;
+      }
+      tags[seed.id] = SemanticSearchCoarseTag(
+        id: seed.id,
+        labelZh: seed.labelZh,
+        labelEn: seed.labelEn,
+        confidence: (_toDouble(item['confidence']) ?? 0.7)
+            .clamp(0.0, 1.0)
+            .toDouble(),
+      );
+    }
+    return tags.values.toList(growable: false);
+  }
+
+  List<SemanticSearchSemanticItem> _readSemanticItems(dynamic value) {
+    if (value is! List) {
+      return const <SemanticSearchSemanticItem>[];
+    }
+    final items = <SemanticSearchSemanticItem>[];
+    for (final item in value.whereType<Map>()) {
+      final text = (item['text'] ?? '').toString().trim();
+      if (text.isEmpty) {
+        continue;
+      }
+      items.add(
+        SemanticSearchSemanticItem(
+          text: text,
+          weight: (_toDouble(item['weight']) ?? 1.0)
+              .clamp(0.0, 10.0)
+              .toDouble(),
+        ),
+      );
+    }
+    return _normalizeSemanticWeights(items);
+  }
+
+  SemanticSearchQueryType _requireQueryType(dynamic value) {
     final text = value?.toString().trim().toLowerCase();
     switch (text) {
       case 'metadata':
         return SemanticSearchQueryType.metadata;
       case 'attribute':
         return SemanticSearchQueryType.attribute;
+      case 'concrete':
+        return SemanticSearchQueryType.concrete;
       case 'abstract':
         return SemanticSearchQueryType.abstract;
       case 'collection':
         return SemanticSearchQueryType.collection;
-      case 'concrete':
-        return SemanticSearchQueryType.concrete;
       default:
-        return null;
+        throw FormatException('search plan has invalid query_type');
     }
   }
 
-  SemanticSearchTagStrictness? _readTagStrictness(dynamic value) {
+  SemanticSearchTagStrictness _readTagStrictness(dynamic value) {
     final text = value?.toString().trim().toLowerCase();
     switch (text) {
       case 'strict':
@@ -303,20 +476,19 @@ $rawQuery
       case 'prefer':
         return SemanticSearchTagStrictness.prefer;
       default:
-        return null;
+        throw FormatException('search plan has invalid tag_strictness');
     }
   }
 
-  SemanticSearchEstimatedResultCount? _readEstimatedResultCount(dynamic value) {
+  SemanticSearchEstimatedResultCount _readEstimatedResultCount(dynamic value) {
     if (value is! Map) {
-      return null;
+      throw FormatException('search plan has no estimated_result_count');
     }
     final min = _toInt(value['min']) ?? 0;
     final max = _toInt(value['max']) ?? 0;
-    final confidence = (_toDouble(value['confidence']) ?? 0.0).clamp(0.0, 1.0);
-    if (min <= 0 && max <= 0) {
-      return null;
-    }
+    final confidence = (_toDouble(value['confidence']) ?? 0.0)
+        .clamp(0.0, 1.0)
+        .toDouble();
     return SemanticSearchEstimatedResultCount(
       min: min,
       max: max < min ? min : max,
@@ -324,181 +496,18 @@ $rawQuery
     );
   }
 
-  List<SemanticSearchTimeRange> _readTimeRanges(dynamic value) {
-    if (value is! List) {
-      return const <SemanticSearchTimeRange>[];
-    }
-    return value
-        .whereType<Map>()
-        .map((item) {
-          return SemanticSearchTimeRange(
-            startTimeMs: _toInt(item['start_time_ms'] ?? item['start']),
-            endTimeMs: _toInt(item['end_time_ms'] ?? item['end']),
-            reason: (item['reason'] ?? '').toString().trim(),
-          );
-        })
-        .toList(growable: false);
-  }
-
-  List<SemanticSearchLocation> _readLocations(
-    dynamic value,
-    Set<String> locationDictionary,
-  ) {
-    if (value is! List) {
-      return const <SemanticSearchLocation>[];
-    }
-    final results = <SemanticSearchLocation>[];
-    for (final item in value) {
-      if (item is String && item.trim().isNotEmpty) {
-        results.add(
-          SemanticSearchLocation(
-            text: item.trim(),
-            type: _guessLocationType(item.trim()),
-          ),
-        );
-        continue;
-      }
-      if (item is! Map) {
-        continue;
-      }
-      final text = (item['text'] ?? item['name'] ?? '').toString().trim();
-      if (text.isEmpty ||
-          text == '\u6d77\u8fb9' ||
-          text == '\u591c\u666f' ||
-          text == '\u8349\u5730') {
-        continue;
-      }
-      final type = (item['type'] ?? '').toString().trim();
-      final inDictionary = locationDictionary.any(
-        (candidate) =>
-            candidate.contains(text) ||
-            _stripLocationSuffixAscii(candidate) ==
-                _stripLocationSuffixAscii(text),
-      );
-      if (!inDictionary && type.isEmpty) {
-        continue;
-      }
-      results.add(
-        SemanticSearchLocation(
-          text: text,
-          type: type.isEmpty ? _guessLocationType(text) : type,
-        ),
-      );
-    }
-    final unique = <String, SemanticSearchLocation>{};
-    for (final item in results) {
-      unique[item.text] = item;
-    }
-    return unique.values.toList(growable: false);
-  }
-
-  List<SemanticSearchCoarseTag> _readCoarseTags(dynamic value) {
-    if (value is! List) {
-      return const <SemanticSearchCoarseTag>[];
-    }
-    final results = <SemanticSearchCoarseTag>[];
-    for (final item in value) {
-      if (item is String) {
-        final seed = _coarseTagFromLabelOrId(item);
-        if (seed != null) {
-          results.add(
-            SemanticSearchCoarseTag(
-              id: seed.id,
-              labelZh: seed.labelZh,
-              labelEn: seed.labelEn,
-              confidence: 0.72,
-            ),
-          );
-        }
-        continue;
-      }
-      if (item is! Map) {
-        continue;
-      }
-      final seed = _coarseTagFromLabelOrId(
-        (item['id'] ?? item['label_zh'] ?? item['label_en'] ?? '').toString(),
-      );
-      if (seed == null) {
-        continue;
-      }
-      results.add(
-        SemanticSearchCoarseTag(
-          id: seed.id,
-          labelZh: seed.labelZh,
-          labelEn: seed.labelEn,
-          confidence: _toDouble(item['confidence']) ?? 0.72,
-        ),
-      );
-    }
-    final unique = <String, SemanticSearchCoarseTag>{};
-    for (final item in results) {
-      unique[item.id] = item;
-    }
-    return unique.values.toList(growable: false);
-  }
-
-  List<SemanticSearchSemanticItem> _readSemanticItems(dynamic value) {
-    if (value is String && value.trim().isNotEmpty) {
-      return <SemanticSearchSemanticItem>[
-        SemanticSearchSemanticItem(text: value.trim(), weight: 1.0),
-      ];
-    }
-    if (value is! List) {
-      return const <SemanticSearchSemanticItem>[];
-    }
-    final results = <SemanticSearchSemanticItem>[];
-    for (final item in value) {
-      if (item is String && item.trim().isNotEmpty) {
-        results.add(SemanticSearchSemanticItem(text: item.trim(), weight: 1.0));
-        continue;
-      }
-      if (item is! Map) {
-        continue;
-      }
-      final text = (item['text'] ?? item['query'] ?? item['prompt'] ?? '')
-          .toString()
-          .trim();
-      if (text.isEmpty) {
-        continue;
-      }
-      results.add(
-        SemanticSearchSemanticItem(
-          text: text,
-          weight: _toDouble(item['weight']) ?? 1.0,
-        ),
-      );
-    }
-    return _normalizeSemanticWeights(results);
-  }
-
   Map<String, dynamic> _decodeJsonObject(String? response) {
     if (response == null || response.trim().isEmpty) {
-      throw const FormatException('Empty llm response');
+      throw const FormatException('empty LLM response');
     }
-    final trimmed = response.trim();
-    try {
-      final decoded = jsonDecode(trimmed);
-      if (decoded is Map<String, dynamic>) {
-        return decoded;
-      }
-      if (decoded is Map) {
-        return decoded.map((key, value) => MapEntry(key.toString(), value));
-      }
-    } catch (_) {}
-
-    final start = trimmed.indexOf('{');
-    final end = trimmed.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      final slice = trimmed.substring(start, end + 1);
-      final decoded = jsonDecode(slice);
-      if (decoded is Map<String, dynamic>) {
-        return decoded;
-      }
-      if (decoded is Map) {
-        return decoded.map((key, value) => MapEntry(key.toString(), value));
-      }
+    final decoded = jsonDecode(response.trim());
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
     }
-    throw const FormatException('Unable to parse llm json');
+    if (decoded is Map) {
+      return decoded.map((key, value) => MapEntry(key.toString(), value));
+    }
+    throw const FormatException('LLM response is not a JSON object');
   }
 
   List<SemanticSearchSemanticItem> _normalizeSemanticWeights(
@@ -509,72 +518,203 @@ $rawQuery
     }
     final merged = <String, double>{};
     for (final item in items) {
-      final text = item.text.trim();
-      if (text.isEmpty) {
-        continue;
-      }
-      merged[text] = (merged[text] ?? 0.0) + item.weight;
-    }
-    if (merged.isEmpty) {
-      return const <SemanticSearchSemanticItem>[];
+      merged[item.text] = (merged[item.text] ?? 0.0) + item.weight;
     }
     final total = merged.values.fold<double>(0.0, (sum, item) => sum + item);
+    if (total <= 0) {
+      final weight = 1 / merged.length;
+      return merged.keys
+          .map((text) => SemanticSearchSemanticItem(text: text, weight: weight))
+          .toList(growable: false);
+    }
     return merged.entries
         .map(
           (entry) => SemanticSearchSemanticItem(
             text: entry.key,
-            weight: total <= 0 ? 1 / merged.length : entry.value / total,
+            weight: entry.value / total,
           ),
         )
         .toList(growable: false);
   }
 
-  _CoarseSeed? _coarseTagFromLabelOrId(String raw) {
-    final text = raw.trim();
+  String _readLocationType(dynamic value) {
+    final text = value?.toString().trim().toLowerCase();
+    const allowed = <String>{
+      'country',
+      'province',
+      'city',
+      'district',
+      'scenic_area',
+      'poi',
+      'location',
+    };
+    if (allowed.contains(text)) {
+      return text == 'location' ? 'poi' : text!;
+    }
+    throw FormatException('search plan has invalid location type');
+  }
+
+  String? _readOptionalString(dynamic value) {
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? null : text;
+  }
+
+  List<String> _readStringList(dynamic value) {
+    if (value is! List) {
+      return const <String>[];
+    }
+    return value
+        .map((item) => item?.toString().trim() ?? '')
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  int? _toTimestampMs(dynamic value) {
+    final text = value?.toString().trim() ?? '';
     if (text.isEmpty) {
       return null;
     }
-    for (final seed in _coarseSeeds) {
-      if (seed.id == text || seed.labelZh == text || seed.labelEn == text) {
-        return seed;
-      }
-      if (seed.aliases.any((alias) => alias == text)) {
-        return seed;
-      }
+    final numeric = int.tryParse(text);
+    if (numeric != null) {
+      return numeric;
     }
-    return null;
+    return DateTime.tryParse(text)?.millisecondsSinceEpoch;
   }
 
-  String _appendNote(String current, String note) {
-    return <String>[
-      current.trim(),
-      note.trim(),
-    ].where((item) => item.isNotEmpty).join('\uff1b');
+  int? _readMinuteOfDay(dynamic value) {
+    final text = value?.toString().trim() ?? '';
+    final match = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(text);
+    if (match == null) {
+      return null;
+    }
+    final hour = int.tryParse(match.group(1) ?? '');
+    final minute = int.tryParse(match.group(2) ?? '');
+    if (hour == null || minute == null) {
+      return null;
+    }
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+      return null;
+    }
+    return hour * 60 + minute;
+  }
+
+  int? _readUtcOffsetMinutes(dynamic value) {
+    final text = value?.toString().trim() ?? '';
+    final match = RegExp(r'^([+-])(\d{1,2}):(\d{2})$').firstMatch(text);
+    if (match == null) {
+      return null;
+    }
+    final sign = match.group(1) == '-' ? -1 : 1;
+    final hours = int.tryParse(match.group(2) ?? '');
+    final minutes = int.tryParse(match.group(3) ?? '');
+    if (hours == null || minutes == null || hours > 14 || minutes > 59) {
+      return null;
+    }
+    return sign * (hours * 60 + minutes);
   }
 
   int? _toInt(dynamic value) {
-    if (value == null) {
-      return null;
-    }
     if (value is int) {
       return value;
     }
     if (value is double) {
       return value.round();
     }
-    return int.tryParse(value.toString());
+    return int.tryParse(value?.toString() ?? '');
   }
 
   double? _toDouble(dynamic value) {
-    if (value == null) {
-      return null;
-    }
     if (value is double) {
       return value;
     }
     if (value is int) {
       return value.toDouble();
     }
-    return double.tryParse(value.toString());
+    return double.tryParse(value?.toString() ?? '');
+  }
+
+  String _formatUtcOffset(Duration offset) {
+    final totalMinutes = offset.inMinutes;
+    final sign = totalMinutes < 0 ? '-' : '+';
+    final absolute = totalMinutes.abs();
+    final hours = absolute ~/ 60;
+    final minutes = absolute % 60;
+    return '$sign${hours.toString().padLeft(2, '0')}:'
+        '${minutes.toString().padLeft(2, '0')}';
+  }
+
+  bool _isSceneWord(String value) {
+    const sceneWords = <String>{
+      'beach',
+      'grassland',
+      'night view',
+      'starry sky',
+      'flower field',
+      'park',
+      'night',
+      'sky',
+    };
+    return sceneWords.contains(value.trim().toLowerCase());
   }
 }
+
+const JsonEncoder _prettyJson = JsonEncoder.withIndent('  ');
+
+const String _parserSystemPrompt =
+    'You are a query-planning agent for natural-language photo search. '
+    'Return exactly one JSON object that can directly drive local retrieval. '
+    'Do not explain, chat, or output Markdown.';
+
+  String _buildPlanRepairPrompt({
+    required String rawQuery,
+    required String? invalidResponse,
+    required Object? error,
+  }) {
+    return '''
+The previous response could not be parsed or validated as a search plan.
+
+User query:
+$rawQuery
+
+Validation error:
+${error ?? 'unknown error'}
+
+Invalid response:
+${invalidResponse ?? ''}
+
+Repair task:
+Return exactly one corrected JSON object following the same schema. Keep all semantic phrases in English. Do not include Markdown or explanation.
+''';
+  }
+
+  String _buildEmptyResultRepairPrompt({
+    required String rawQuery,
+    required SemanticSearchQuery previousQuery,
+    required int metadataCandidateCount,
+    required int tagCandidateCount,
+  }) {
+    return '''
+The previous search plan returned no photos from the local vector index.
+This may happen because visual tags or vector embeddings are sparse, noisy, or wrong.
+
+User query:
+$rawQuery
+
+Previous JSON plan:
+${previousQuery.debugJson}
+
+Local search diagnostics:
+- metadata_candidate_count: $metadataCandidateCount
+- tag_candidate_count: $tagCandidateCount
+
+Repair policy:
+1. Preserve explicit date constraints from the user.
+2. Do not invent a different place or time.
+3. If metadata_candidate_count is zero and the previous plan had a location, remove locations as hard metadata filters and move the place into English semantic phrases instead. This handles missing or unreliable GPS/reverse-geocode metadata.
+4. If tag_candidate_count is zero, make tag_strictness "optional" and keep coarse_tags broad.
+5. Broaden positive_semantics and recall_semantics with more visual, English CLIP-friendly descriptions.
+6. Avoid rare named entities in semantic phrases unless visually important; prefer visible scene descriptions.
+7. Return exactly one corrected JSON object. Do not include Markdown or explanation.
+''';
+  }

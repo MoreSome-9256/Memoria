@@ -8,6 +8,7 @@ import '../../service/album_tag_browser_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/semantic_photo_search_service.dart';
 import '../../service/story_queue_service.dart';
+import '../../utils/media_type_helper.dart';
 import '../widgets/deferred_path_image.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
 import 'story_queue_page.dart';
@@ -135,8 +136,11 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     });
 
     try {
-      final photos = ObjectBoxService().store.box<PhotoEntity>()
-          .getMany(ids).whereType<PhotoEntity>().toList(growable: false);
+      final photos = ObjectBoxService().store
+          .box<PhotoEntity>()
+          .getMany(ids)
+          .whereType<PhotoEntity>()
+          .toList(growable: false);
       final reconciled = await PhotoService().reconcileAccessiblePhotos(photos);
       final photoById = <int, PhotoEntity>{
         for (final photo in reconciled) photo.id: photo,
@@ -174,7 +178,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
       textInputAction: TextInputAction.search,
       onSubmitted: (_) => _performSearch(),
       decoration: InputDecoration(
-        hintText: '搜索时间、地点、场景或回忆',
+        hintText: '输入自然语言，例如：上周日本的夜景',
         prefixIcon: const Icon(Icons.manage_search_rounded),
         suffixIcon: IconButton(
           onPressed: _performSearch,
@@ -205,9 +209,9 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
               title.isEmpty ? '推荐结果' : title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
           ),
           const SizedBox(width: 10),
@@ -240,6 +244,94 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     );
   }
 
+  Widget _buildQueryPlanPanel(SemanticSearchResult result) {
+    final chips = _buildQueryPlanChips(result.query);
+    if (chips.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.92),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Wrap(spacing: 8, runSpacing: 8, children: chips),
+    );
+  }
+
+  List<Widget> _buildQueryPlanChips(SemanticSearchQuery query) {
+    final chips = <Widget>[];
+    for (final range in query.timeRanges.where(
+      (item) => item.hasDateBoundary,
+    )) {
+      chips.add(_planChip(Icons.event_rounded, _formatDateRange(range)));
+    }
+    for (final range in query.timeRanges.where(
+      (item) => item.hasLocalTimeWindow,
+    )) {
+      chips.add(_planChip(Icons.nights_stay_rounded, _formatLocalTime(range)));
+    }
+    for (final location in query.locations.take(4)) {
+      chips.add(_planChip(Icons.place_rounded, location.text));
+    }
+    for (final semantic in query.positiveSemantics.take(3)) {
+      chips.add(_planChip(Icons.auto_awesome_rounded, semantic.text));
+    }
+    return chips;
+  }
+
+  Widget _planChip(IconData icon, String label) {
+    return Chip(
+      avatar: Icon(icon, size: 16),
+      label: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.sizeOf(context).width - 112,
+        ),
+        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  String _formatDateRange(SemanticSearchTimeRange range) {
+    final start = range.startIso ?? _formatDateTimeMs(range.startTimeMs);
+    final end = range.endIso ?? _formatDateTimeMs(range.endTimeMs);
+    if (start.isNotEmpty && end.isNotEmpty) {
+      return '$start - $end';
+    }
+    return start.isNotEmpty ? start : end;
+  }
+
+  String _formatDateTimeMs(int? value) {
+    if (value == null) {
+      return '';
+    }
+    final date = DateTime.fromMillisecondsSinceEpoch(value);
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-'
+        '${date.day.toString().padLeft(2, '0')}';
+  }
+
+  String _formatLocalTime(SemanticSearchTimeRange range) {
+    final start = _formatMinuteOfDay(range.localStartMinute);
+    final end = _formatMinuteOfDay(range.localEndMinute);
+    final zone = (range.timezone ?? '').trim();
+    final prefix = zone.isEmpty ? '当地时间' : zone;
+    return '$prefix $start-$end';
+  }
+
+  String _formatMinuteOfDay(int? value) {
+    if (value == null) {
+      return '--:--';
+    }
+    final hour = value ~/ 60;
+    final minute = value % 60;
+    return '${hour.toString().padLeft(2, '0')}:'
+        '${minute.toString().padLeft(2, '0')}';
+  }
+
   Widget _buildControlPanel(
     List<PhotoEntity> allPhotos,
     Map<int, SemanticSearchHit> hits,
@@ -268,9 +360,9 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
           const SizedBox(height: 14),
           Text(
             '排序方式',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
           Wrap(
@@ -285,9 +377,9 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
             const SizedBox(height: 16),
             Text(
               '相关标签',
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 8),
             SingleChildScrollView(
@@ -361,9 +453,11 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
 
   Widget? _buildFloatingStoryActions(List<PhotoEntity> currentPhotos) {
     final visiblePhotos = _visiblePhotos(currentPhotos, _result);
-    final hasVisibleSelection = visiblePhotos
-        .any((photo) => _selectedPhotoIds.contains(photo.id));
-    final allVisibleSelected = visiblePhotos.isNotEmpty &&
+    final hasVisibleSelection = visiblePhotos.any(
+      (photo) => _selectedPhotoIds.contains(photo.id),
+    );
+    final allVisibleSelected =
+        visiblePhotos.isNotEmpty &&
         visiblePhotos.every((photo) => _selectedPhotoIds.contains(photo.id));
     final storyFab = _selectionMode
         ? Column(
@@ -437,18 +531,16 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
   }
 
   void _openStoryQueuePage() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => const StoryQueuePage(),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const StoryQueuePage()));
   }
 
   void _addSelectionToQueue() {
     if (_selectedPhotoIds.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请至少选择一张照片加入故事队列')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请至少选择一张照片加入故事队列')));
       return;
     }
 
@@ -493,28 +585,26 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
           crossAxisSpacing: 10,
           childAspectRatio: 0.82,
         ),
-        delegate: SliverChildBuilderDelegate(
-          (context, index) {
-            final photo = photos[index];
-            return _SearchPhotoTile(
-              photo: photo,
-              selectionMode: _selectionMode,
-              selected: _selectedPhotoIds.contains(photo.id),
-              onTap: () {
-                if (_selectionMode) {
-                  _toggleSelection(photo.id);
-                  return;
-                }
-                showFullscreenPhotoViewer(
-                  context,
-                  path: photo.path,
-                  heroTag: 'search-photo-${photo.id}',
-                );
-              },
-            );
-          },
-          childCount: photos.length,
-        ),
+        delegate: SliverChildBuilderDelegate((context, index) {
+          final photo = photos[index];
+          return _SearchPhotoTile(
+            photo: photo,
+            selectionMode: _selectionMode,
+            selected: _selectedPhotoIds.contains(photo.id),
+            onTap: () {
+              if (_selectionMode) {
+                _toggleSelection(photo.id);
+                return;
+              }
+              showFullscreenPhotoViewer(
+                context,
+                path: photo.path,
+                assetId: photo.assetId,
+                heroTag: 'search-photo-${photo.id}',
+              );
+            },
+          );
+        }, childCount: photos.length),
       ),
     );
   }
@@ -528,9 +618,9 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
             child: Text(
               group.title,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
           ),
         ),
@@ -543,28 +633,26 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
               crossAxisSpacing: 10,
               childAspectRatio: 0.82,
             ),
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final photo = group.photos[index];
-                return _SearchPhotoTile(
-                  photo: photo,
-                  selectionMode: _selectionMode,
-                  selected: _selectedPhotoIds.contains(photo.id),
-                  onTap: () {
-                    if (_selectionMode) {
-                      _toggleSelection(photo.id);
-                      return;
-                    }
-                    showFullscreenPhotoViewer(
-                      context,
-                      path: photo.path,
-                      heroTag: 'search-photo-${photo.id}',
-                    );
-                  },
-                );
-              },
-              childCount: group.photos.length,
-            ),
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final photo = group.photos[index];
+              return _SearchPhotoTile(
+                photo: photo,
+                selectionMode: _selectionMode,
+                selected: _selectedPhotoIds.contains(photo.id),
+                onTap: () {
+                  if (_selectionMode) {
+                    _toggleSelection(photo.id);
+                    return;
+                  }
+                  showFullscreenPhotoViewer(
+                    context,
+                    path: photo.path,
+                    assetId: photo.assetId,
+                    heroTag: 'search-photo-${photo.id}',
+                  );
+                },
+              );
+            }, childCount: group.photos.length),
           ),
         ),
       ],
@@ -596,20 +684,26 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     List<PhotoEntity> photos,
     SemanticSearchResult? result,
   ) {
-    final filtered = photos.where((photo) {
-      if (_selectedTag == null) {
-        return true;
-      }
-      final tags = _tagBrowserService.browsableTagsForPhoto(photo);
-      return tags.contains(_selectedTag);
-    }).toList(growable: false);
+    final filtered = photos
+        .where((photo) {
+          if (_selectedTag == null) {
+            return true;
+          }
+          final tags = _tagBrowserService.browsableTagsForPhoto(photo);
+          return tags.contains(_selectedTag);
+        })
+        .toList(growable: false);
 
     filtered.sort((a, b) {
       switch (_sortMode) {
         case _SearchSortMode.score:
           if (_isLockedResultMode) {
             final lockedRank = <int, int>{
-              for (var index = 0; index < widget.initialPhotoIds.length; index++)
+              for (
+                var index = 0;
+                index < widget.initialPhotoIds.length;
+                index++
+              )
                 widget.initialPhotoIds[index]: index,
             };
             final aRank = lockedRank[a.id] ?? 1 << 20;
@@ -660,7 +754,9 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
 
     return sorted
         .take(12)
-        .map((entry) => AlbumFineTagSummary(label: entry.key, count: entry.value))
+        .map(
+          (entry) => AlbumFineTagSummary(label: entry.key, count: entry.value),
+        )
         .toList(growable: false);
   }
 
@@ -677,7 +773,8 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         .map(
           (key) => _PhotoMonthGroup(
             title: _formatDayTitle(key),
-            photos: grouped[key]!..sort((a, b) => b.timestamp.compareTo(a.timestamp)),
+            photos: grouped[key]!
+              ..sort((a, b) => b.timestamp.compareTo(a.timestamp)),
           ),
         )
         .toList(growable: false);
@@ -717,20 +814,15 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
   }
 
   Widget _buildIdleState() {
-    return const Center(
-      child: Text('输入自然语言开始搜索，例如“春节团聚吃饺子的照片”'),
-    );
+    return const Center(child: Text('输入自然语言开始搜索，例如“去年夏天青岛海边的记忆”'));
   }
 
   Widget _buildEmptyState(SemanticSearchResult result) {
-    final message = result.relaxationMessage?.trim().isNotEmpty == true
-        ? '没有找到符合条件的图片。\n${result.relaxationMessage!}'
-        : '没有找到匹配的图片，可以尝试放宽时间、地点或语义描述。';
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(
-          message,
+          '没有找到匹配的图片，可以调整时间、地点或自然语言描述后重新搜索。',
           textAlign: TextAlign.center,
           style: TextStyle(color: Colors.grey[600], height: 1.5),
         ),
@@ -758,12 +850,18 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline_rounded, color: Colors.red, size: 46),
+            const Icon(
+              Icons.error_outline_rounded,
+              color: Colors.red,
+              size: 46,
+            ),
             const SizedBox(height: 12),
             Text(_errorMessage ?? '搜索失败'),
             const SizedBox(height: 12),
             FilledButton(
-              onPressed: _isLockedResultMode ? _loadInitialPhotos : _performSearch,
+              onPressed: _isLockedResultMode
+                  ? _loadInitialPhotos
+                  : _performSearch,
               child: const Text('重试'),
             ),
           ],
@@ -790,10 +888,9 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
             end: Alignment.bottomCenter,
             colors: [
               Theme.of(context).colorScheme.surface,
-              Theme.of(context)
-                  .colorScheme
-                  .surfaceContainerHighest
-                  .withValues(alpha: 0.28),
+              Theme.of(
+                context,
+              ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
             ],
           ),
         ),
@@ -826,6 +923,13 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                     child: _buildSearchBar(),
+                  ),
+                ),
+              if (!widget.hideSearchBar && result != null)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: _buildQueryPlanPanel(result),
                   ),
                 ),
               if (!widget.hideSearchBar &&
@@ -875,10 +979,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
                       child: Text(
                         '这组推荐图片暂时不可用，可以返回后等待后台重新刷新推荐。',
                         textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.grey[600],
-                          height: 1.5,
-                        ),
+                        style: TextStyle(color: Colors.grey[600], height: 1.5),
                       ),
                     ),
                   ),
@@ -906,41 +1007,41 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     );
   }
 
-// Widget _buildSelectionMenuButton({
-//   required ValueChanged<_SelectionMenuAction> onSelected,
-//   required bool enableSelectAll,
-// }) {
-//   return Material(
-//     color: Theme.of(context).colorScheme.surface,
-//     elevation: 4,
-//     shadowColor: Colors.black.withValues(alpha: 0.15),
-//     shape: const CircleBorder(),
-//     child: PopupMenuButton<_SelectionMenuAction>(
-//       tooltip: '选图操作',
-//       onSelected: onSelected,
-//       itemBuilder: (context) => <PopupMenuEntry<_SelectionMenuAction>>[
-//         PopupMenuItem<_SelectionMenuAction>(
-//           value: _SelectionMenuAction.selectAll,
-//           enabled: enableSelectAll,
-//           child: const Text('全选'),
-//         ),
-//         const PopupMenuItem<_SelectionMenuAction>(
-//           value: _SelectionMenuAction.clear,
-//           child: Text('清空'),
-//         ),
-//         const PopupMenuItem<_SelectionMenuAction>(
-//           value: _SelectionMenuAction.cancel,
-//           child: Text('取消'),
-//         ),
-//       ],
-//       child: const SizedBox(
-//         width: 48,
-//         height: 48,
-//         child: Icon(Icons.more_horiz_rounded),
-//       ),
-//     ),
-//   );
-// }
+  // Widget _buildSelectionMenuButton({
+  //   required ValueChanged<_SelectionMenuAction> onSelected,
+  //   required bool enableSelectAll,
+  // }) {
+  //   return Material(
+  //     color: Theme.of(context).colorScheme.surface,
+  //     elevation: 4,
+  //     shadowColor: Colors.black.withValues(alpha: 0.15),
+  //     shape: const CircleBorder(),
+  //     child: PopupMenuButton<_SelectionMenuAction>(
+  //       tooltip: '选图操作',
+  //       onSelected: onSelected,
+  //       itemBuilder: (context) => <PopupMenuEntry<_SelectionMenuAction>>[
+  //         PopupMenuItem<_SelectionMenuAction>(
+  //           value: _SelectionMenuAction.selectAll,
+  //           enabled: enableSelectAll,
+  //           child: const Text('全选'),
+  //         ),
+  //         const PopupMenuItem<_SelectionMenuAction>(
+  //           value: _SelectionMenuAction.clear,
+  //           child: Text('清空'),
+  //         ),
+  //         const PopupMenuItem<_SelectionMenuAction>(
+  //           value: _SelectionMenuAction.cancel,
+  //           child: Text('取消'),
+  //         ),
+  //       ],
+  //       child: const SizedBox(
+  //         width: 48,
+  //         height: 48,
+  //         child: Icon(Icons.more_horiz_rounded),
+  //       ),
+  //     ),
+  //   );
+  // }
 }
 
 class _SearchPhotoTile extends StatelessWidget {
@@ -968,7 +1069,16 @@ class _SearchPhotoTile extends StatelessWidget {
           children: [
             Hero(
               tag: 'search-photo-${photo.id}',
-              child: DeferredPathImage(path: photo.path, fit: BoxFit.cover),
+              child: DeferredPathImage(
+                path: photo.path,
+                assetId: photo.assetId,
+                kind: MediaTypeHelper.fromStorageValue(
+                  photo.mediaKind,
+                  path: photo.path,
+                ),
+                thumbnailBytes: photo.thumbnailBytes,
+                fit: BoxFit.cover,
+              ),
             ),
             if (selectionMode)
               if (!selected)

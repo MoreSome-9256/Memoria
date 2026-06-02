@@ -53,10 +53,10 @@ class _AnalysisInputLoader {
   final ThumbnailSize thumbnailSize;
 
   Future<_PreparedAnalysisInput?> load(PhotoEntity photo) async {
-    final file = File(photo.path);
-    if (!file.existsSync()) {
-      return null;
-    }
+    final file = await PhotoService().openOriginalMediaFile(
+      photo,
+      purpose: 'ai_service_input',
+    );
 
     final loadWatch = Stopwatch()..start();
     Uint8List? mobileClipBytes;

@@ -2,17 +2,14 @@
 
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../data/tag_taxonomy_v2.dart';
-import '../../service/mobileclip_vision_service.dart';
-import '../../service/ncnn_mobileclip_native_service.dart';
+import '../../service/mobileclip_litert_service.dart';
 import '../../service/semantic_matching_service.dart';
-import '../../service/vector_index_benchmark_service.dart';
 
 class MobileClipVectorProbePage extends StatefulWidget {
   const MobileClipVectorProbePage({super.key});
@@ -23,18 +20,13 @@ class MobileClipVectorProbePage extends StatefulWidget {
 }
 
 class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
-  final MobileClipVisionService _visionService = MobileClipVisionService();
-  final NcnnMobileClipNativeService _ncnnService =
-      NcnnMobileClipNativeService();
+  final MobileClipLiteRtService _visionService = MobileClipLiteRtService();
   final SemanticMatchingService _semanticService = SemanticMatchingService();
-  final VectorIndexStorageBenchmarkService _storageBenchmarkService =
-      VectorIndexStorageBenchmarkService();
 
   bool _isRunning = false;
   String? _errorMessage;
   String? _zeroShotWarning;
   String? _reportFilePath;
-  VectorIndexStorageBenchmarkReport? _storageBenchmarkReport;
   List<_VectorProbeResult> _results = const <_VectorProbeResult>[];
   List<_ZeroShotResult> _zeroShotResults = const <_ZeroShotResult>[];
 
@@ -49,12 +41,10 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
       _isRunning = true;
       _errorMessage = null;
       _zeroShotWarning = null;
-      _storageBenchmarkReport = null;
     });
 
     try {
       await _visionService.warmUp();
-      await _ncnnService.ensureModelInitialized();
       var zeroShotEnabled = true;
       try {
         await _semanticService.warmUp();
@@ -64,13 +54,7 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
       } catch (error) {
         zeroShotEnabled = false;
         final message = error.toString();
-        if (message.contains('ArgMax') || message.contains('/ArgMax')) {
-          _zeroShotWarning =
-              '当前设备内置 onnxruntime 不支持 ArgMax 算子，已自动跳过零样本打标，只保留视觉向量探针。\n\n'
-              '建议：升级 onnxruntime Android 运行库后再开启语义打标。';
-        } else {
-          _zeroShotWarning = '零样本打标初始化失败，已自动跳过：$message';
-        }
+        _zeroShotWarning = '零样本打标初始化失败，已自动跳过：$message';
       }
       final output = <_VectorProbeResult>[];
 
@@ -81,26 +65,21 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
         final input = await _visionService.preprocessImageBytesForBenchmark(
           bytes,
         );
-        final onnxVector = await _visionService.embedPreprocessedInput(input);
-        final ncnnVector = await _ncnnService.encodeImageBytes(bytes);
+        final liteRtVector = await _visionService.embedPreprocessedImageInput(
+          input,
+        );
 
         output.add(
-          _VectorProbeResult(
-            sample: sample,
-            onnxVector: onnxVector,
-            ncnnVector: ncnnVector,
-            cosine: _cosine(onnxVector, ncnnVector),
-            l2Distance: _l2Distance(onnxVector, ncnnVector),
-          ),
+          _VectorProbeResult(sample: sample, liteRtVector: liteRtVector),
         );
       }
 
-      // Zero-shot tagging: reuse the onnxVectors already computed above.
+      // Zero-shot tagging: reuse the LiteRT vectors already computed above.
       final zsOutput = <_ZeroShotResult>[];
       if (zeroShotEnabled) {
         for (final probeResult in output) {
           final scored = await _semanticService.scoreTagsForImage(
-            imageVector: probeResult.onnxVector,
+            imageVector: probeResult.liteRtVector,
             tagMap: memoriaMasterTaxonomyPromptToLabel,
             topK: 3,
           );
@@ -114,12 +93,8 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
         }
       }
 
-      final storageBenchmarkReport = await _storageBenchmarkService
-          .runPhotoEmbeddingReadBenchmark();
-
       final report = <String, Object?>{
         'results': output.map((item) => item.toJson()).toList(growable: false),
-        'storageBenchmark': storageBenchmarkReport.toJson(),
       };
       final reportFilePath = await _writeReportToFile(report);
       debugPrint('MOBILECLIP_VECTOR_PROBE_JSON=${jsonEncode(report)}');
@@ -132,7 +107,6 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
         _results = output;
         _zeroShotResults = zsOutput;
         _reportFilePath = reportFilePath;
-        _storageBenchmarkReport = storageBenchmarkReport;
       });
     } catch (error) {
       if (!mounted) {
@@ -173,7 +147,7 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            '固定测试三张图片，ONNX 使用当前 Flutter 预处理；NCNN 使用作者提供的 mobileclip_s2_export 模型和 native resize/normalize。完整 JSON 会输出到 debug log。',
+            '固定测试三张图片，LiteRT 使用当前 Flutter 预处理。完整 JSON 会输出到 debug log。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),
@@ -191,8 +165,6 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
                 ),
               ),
             ),
-          if (_storageBenchmarkReport != null)
-            _StorageBenchmarkCard(report: _storageBenchmarkReport!),
           if (_isRunning)
             const Card(
               child: Padding(
@@ -205,7 +177,7 @@ class _MobileClipVectorProbePageState extends State<MobileClipVectorProbePage> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                     SizedBox(width: 12),
-                    Expanded(child: Text('正在提取手机端 ONNX / NCNN 向量...')),
+                    Expanded(child: Text('正在提取手机端 LiteRT 向量...')),
                   ],
                 ),
               ),
@@ -285,12 +257,6 @@ class _VectorProbeCard extends StatelessWidget {
                       const SizedBox(height: 6),
                       SelectableText(result.sample.assetPath),
                       const SizedBox(height: 6),
-                      Text(
-                        'cosine(onnx, ncnn): ${result.cosine.toStringAsFixed(6)}',
-                      ),
-                      Text(
-                        'l2(onnx, ncnn): ${result.l2Distance.toStringAsFixed(6)}',
-                      ),
                     ],
                   ),
                 ),
@@ -298,11 +264,7 @@ class _VectorProbeCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             SelectableText(
-              'onnx first16: ${_formatVectorSlice(result.onnxVector, 16)}',
-            ),
-            const SizedBox(height: 8),
-            SelectableText(
-              'ncnn first16: ${_formatVectorSlice(result.ncnnVector, 16)}',
+              'litert first16: ${_formatVectorSlice(result.liteRtVector, 16)}',
             ),
             const SizedBox(height: 8),
             ExpansionTile(
@@ -326,28 +288,16 @@ class _ProbeSample {
 }
 
 class _VectorProbeResult {
-  const _VectorProbeResult({
-    required this.sample,
-    required this.onnxVector,
-    required this.ncnnVector,
-    required this.cosine,
-    required this.l2Distance,
-  });
+  const _VectorProbeResult({required this.sample, required this.liteRtVector});
 
   final _ProbeSample sample;
-  final List<double> onnxVector;
-  final List<double> ncnnVector;
-  final double cosine;
-  final double l2Distance;
+  final List<double> liteRtVector;
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'label': sample.label,
       'assetPath': sample.assetPath,
-      'onnxVector': onnxVector,
-      'ncnnVector': ncnnVector,
-      'cosine': cosine,
-      'l2Distance': l2Distance,
+      'liteRtVector': liteRtVector,
     };
   }
 }
@@ -357,25 +307,6 @@ const List<_ProbeSample> _probeSamples = <_ProbeSample>[
   _ProbeSample(label: 'test1', assetPath: 'ai_tools/test1.png'),
   _ProbeSample(label: 'youleyuan', assetPath: 'ai_tools/test_youleyuan.png'),
 ];
-
-double _cosine(List<double> left, List<double> right) {
-  final usable = math.min(left.length, right.length);
-  var dot = 0.0;
-  for (var index = 0; index < usable; index++) {
-    dot += left[index] * right[index];
-  }
-  return dot;
-}
-
-double _l2Distance(List<double> left, List<double> right) {
-  final usable = math.min(left.length, right.length);
-  var sum = 0.0;
-  for (var index = 0; index < usable; index++) {
-    final delta = left[index] - right[index];
-    sum += delta * delta;
-  }
-  return math.sqrt(sum);
-}
 
 String _formatVectorSlice(List<double> vector, int count) {
   final preview = vector.take(count).map((value) => value.toStringAsFixed(6));
@@ -450,72 +381,6 @@ class _ZeroShotCard extends StatelessWidget {
                 ),
               );
             }),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StorageBenchmarkCard extends StatelessWidget {
-  const _StorageBenchmarkCard({required this.report});
-
-  final VectorIndexStorageBenchmarkReport report;
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final speedup = report.speedupRatio;
-
-    return Card(
-      margin: const EdgeInsets.only(top: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Isar vs ObjectBox Read Benchmark',
-              style: textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            SelectableText('modelVersion: ${report.modelVersion}'),
-            SelectableText(
-              'samples: ${report.actualSampleCount}/${report.requestedSampleCount}, rounds: ${report.rounds}',
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Isar mean/p90: ${report.isarMeanReadMs.toStringAsFixed(3)} ms / ${report.isarP90ReadMs.toStringAsFixed(3)} ms',
-            ),
-            Text(
-              'ObjectBox mean/p90: ${report.objectBoxMeanReadMs.toStringAsFixed(3)} ms / ${report.objectBoxP90ReadMs.toStringAsFixed(3)} ms',
-            ),
-            if (speedup != null)
-              Text(
-                'speedup: ${speedup.toStringAsFixed(2)}x',
-                style: textTheme.bodyMedium?.copyWith(
-                  fontFeatures: const <FontFeature>[
-                    FontFeature.tabularFigures(),
-                  ],
-                ),
-              ),
-            const SizedBox(height: 8),
-            SelectableText(
-              'Isar rounds: ${report.isarReadRoundsMs.map((e) => e.toStringAsFixed(3)).join(', ')}',
-            ),
-            const SizedBox(height: 4),
-            SelectableText(
-              'ObjectBox rounds: ${report.objectBoxReadRoundsMs.map((e) => e.toStringAsFixed(3)).join(', ')}',
-            ),
-            if (report.warnings.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              ...report.warnings.map(
-                (warning) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(warning),
-                ),
-              ),
-            ],
           ],
         ),
       ),

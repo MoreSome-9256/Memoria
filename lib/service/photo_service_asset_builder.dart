@@ -12,28 +12,23 @@ class PhotoScanFilterProfile {
     this.minTimestampMs,
     this.minWidth,
     this.minHeight,
+    this.minPixels,
+    this.excludeExtremeAspectRatios = false,
   });
 
-  /// 现有筛选策略汇总：
-  /// - requireValidDimensions: 宽高必须有效
-  /// - requireCameraLikePath: 仅接收“相机路径/命名”照片
-  /// - requireValidTimestamp: 仅接收有效时间戳
-  /// - skipScreenshotByRatio: 跳过疑似截图比例
-  // 默认策略：不进行预先的截图/路径/时间戳筛选，仅可选的尺寸与时间阈值由用户偏好控制。
   static const PhotoScanFilterProfile strict = PhotoScanFilterProfile(
     requireValidDimensions: true,
   );
 
-  /// 用户自选相册：同样不做自动筛选（以用户偏好为准）。
-  static const PhotoScanFilterProfile userSelectedAlbums = PhotoScanFilterProfile(
-    requireValidDimensions: true,
-  );
+  static const PhotoScanFilterProfile userSelectedAlbums =
+      PhotoScanFilterProfile(requireValidDimensions: true);
 
   final bool requireValidDimensions;
-  // 可选的用户阈值（若为 null 则表示不限制）
   final int? minTimestampMs;
   final int? minWidth;
   final int? minHeight;
+  final int? minPixels;
+  final bool excludeExtremeAspectRatios;
 }
 
 class _PhotoAssetBuilder {
@@ -46,6 +41,7 @@ class _PhotoAssetBuilder {
     List<AssetEntity> assets, {
     required bool skipExisting,
     PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
+    bool resolveFile = true,
   }) async {
     final existingByAssetId = <String, PhotoEntity>{};
     final refreshedExisting = <PhotoEntity>[];
@@ -79,31 +75,24 @@ class _PhotoAssetBuilder {
       );
     }
 
-    var cursor = 0;
-    final workerCount = math.min(PhotoService._assetBuildWorkerCount, assets.length);
-    final workers = List<Future<void>>.generate(workerCount, (_) async {
-      while (true) {
-        final idx = cursor;
-        cursor++;
-        if (idx >= assets.length) break;
-        final asset = assets[idx];
-
-        if (skipExisting && existingByAssetId.containsKey(asset.id)) {
+    for (final asset in assets) {
+      if (skipExisting && existingByAssetId.containsKey(asset.id)) {
+        if (resolveFile) {
           final existing = existingByAssetId[asset.id]!;
           final refreshed = await _refreshIfChanged(existing, asset);
           if (refreshed != null) refreshedExisting.add(refreshed);
-          continue;
         }
-
-        buildResults.add(
-          await buildSingleAssetPhoto(
-            asset,
-            filterProfile: filterProfile,
-          ),
-        );
+        continue;
       }
-    });
-    await Future.wait(workers);
+
+      buildResults.add(
+        await buildSingleAssetPhoto(
+          asset,
+          filterProfile: filterProfile,
+          resolveFile: resolveFile,
+        ),
+      );
+    }
 
     if (refreshedExisting.isNotEmpty) {
       _service._store.runInTransaction(
@@ -112,9 +101,14 @@ class _PhotoAssetBuilder {
       );
     }
 
-    final photos = buildResults.map((r) => r.photo).whereType<PhotoEntity>().toList(growable: false);
+    final photos = buildResults
+        .map((r) => r.photo)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
     var stats = _ScanStats();
-    for (final r in buildResults) { stats = stats.merge(r); }
+    for (final r in buildResults) {
+      stats = stats.merge(r);
+    }
 
     return _ScanBuildResult(
       photos: photos,
@@ -126,91 +120,87 @@ class _PhotoAssetBuilder {
     );
   }
 
-  // ── 单张构建：关键优化 — file 与 latlng 并发 ────────────────────
+  // ── 单张构建：GPS 直接从 AssetEntity 读取（已在批量查询中加载），
+  //     file 解析延迟到后台（减少 N 次 ContentResolver 查询）
   Future<_SingleAssetBuildResult> buildSingleAssetPhoto(
     AssetEntity asset, {
     PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
+    bool resolveFile = false,
   }) async {
     final width = asset.width;
     final height = asset.height;
     if (filterProfile.requireValidDimensions && (width <= 0 || height <= 0)) {
-      return const _SingleAssetBuildResult(skippedNonCamera: 1);
-    }
-
-    // 并行发起 file 解析 与 GPS 查询
-    final fileFuture = resolveReadableFile(asset);
-    final latlngFuture = asset.latlngAsync();
-
-    final results = await (fileFuture, latlngFuture).wait;
-    final file = results.$1;
-    final latLong = results.$2;
-
-    if (file == null) {
-      // 无法直接解析到文件（例如 iCloud/受限或 thumbnail-only），
-      // 对于用户选定相册或默认策略，仍尽量建立最小可用实体，
-      // 后续 reconcileAccessiblePhotos 会尝试修复 path 或移除不可访问的条目。
-      final fallbackTimestamp = asset.createDateTime.millisecondsSinceEpoch;
-
-      final photo = PhotoEntity()
-        ..assetId = asset.id
-        ..timestamp = fallbackTimestamp
-        ..path = ''
-        ..width = width
-        ..height = height
-        ..isLocationProcessed = false
-        ..faceCount = 0
-        ..smileProb = 0.0;
-      // 应用用户指定的时间与分辨率阈值（若存在）
-      if (filterProfile.minTimestampMs != null &&
-          photo.timestamp < filterProfile.minTimestampMs!) {
-        return const _SingleAssetBuildResult(skippedInvalidTime: 1);
-      }
-      if (filterProfile.minWidth != null && filterProfile.minHeight != null) {
-        final selMax = math.max(filterProfile.minWidth!, filterProfile.minHeight!);
-        final selMin = math.min(filterProfile.minWidth!, filterProfile.minHeight!);
-        final pMax = math.max(photo.width, photo.height);
-        final pMin = math.min(photo.width, photo.height);
-        if (pMax < selMax || pMin < selMin) {
-          return const _SingleAssetBuildResult(skippedInvalidTime: 1);
-        }
-      }
-
-      return _SingleAssetBuildResult(
-        photo: photo,
-        insertedNoGps: 1,
+      return const _SingleAssetBuildResult(
+        skippedNonCamera: 1,
+        skippedScreenshot: 0,
       );
     }
-    final timestamp = resolveBestTimestampMs(asset, file);
+    if (filterProfile.minPixels != null &&
+        width > 0 &&
+        height > 0 &&
+        width * height < filterProfile.minPixels!) {
+      return const _SingleAssetBuildResult(skippedSmallResolution: 1);
+    }
+    if (filterProfile.excludeExtremeAspectRatios &&
+        PhotoFilterHelper.isExtremeAspectRatio(width, height)) {
+      return const _SingleAssetBuildResult(skippedExtremeAspectRatio: 1);
+    }
 
-    final hasGps = PhotoFilterHelper.hasValidGps(latLong?.latitude, latLong?.longitude);
+    final latLong = asset.latLng;
+    final mimeType = asset.mimeType;
+    final isLivePhoto = asset.isLivePhoto;
+    final file = resolveFile ? await resolveReadableFile(asset) : null;
+    final timestamp = file == null
+        ? asset.createDateTime.millisecondsSinceEpoch
+        : resolveBestTimestampMs(asset, file);
+    final mediaKind = _resolveMediaKind(
+      asset: asset,
+      path: file?.path ?? '',
+      mimeType: mimeType,
+      isLivePhoto: isLivePhoto,
+    );
+    final thumbnailBytes = await MediaThumbnailCacheService.instance
+        .generateCompressedBytes(asset);
+
+    final hasGps = PhotoFilterHelper.hasValidGps(
+      latLong?.latitude,
+      latLong?.longitude,
+    );
     final photo = PhotoEntity()
       ..assetId = asset.id
       ..timestamp = timestamp
-      ..path = file.path
+      ..path = file?.path ?? ''
       ..width = width
       ..height = height
+      ..mediaKind = MediaTypeHelper.toStorageValue(mediaKind)
+      ..mimeType = mimeType
+      ..isLivePhoto = isLivePhoto
+      ..thumbnailBytes = thumbnailBytes
       ..latitude = hasGps ? latLong!.latitude : null
       ..longitude = hasGps ? latLong!.longitude : null
       ..isLocationProcessed = false;
 
-    // 应用用户指定的时间与分辨率阈值（若存在）
-    if (filterProfile.minTimestampMs != null && photo.timestamp < filterProfile.minTimestampMs!) {
+    if (filterProfile.minTimestampMs != null &&
+        photo.timestamp < filterProfile.minTimestampMs!) {
       return const _SingleAssetBuildResult(skippedInvalidTime: 1);
     }
     if (filterProfile.minWidth != null && filterProfile.minHeight != null) {
-      final selMax = math.max(filterProfile.minWidth!, filterProfile.minHeight!);
-      final selMin = math.min(filterProfile.minWidth!, filterProfile.minHeight!);
+      final selMax = math.max(
+        filterProfile.minWidth!,
+        filterProfile.minHeight!,
+      );
+      final selMin = math.min(
+        filterProfile.minWidth!,
+        filterProfile.minHeight!,
+      );
       final pMax = math.max(photo.width, photo.height);
       final pMin = math.min(photo.width, photo.height);
       if (pMax < selMax || pMin < selMin) {
-        return const _SingleAssetBuildResult(skippedInvalidTime: 1);
+        return const _SingleAssetBuildResult(skippedSmallResolution: 1);
       }
     }
 
-    return _SingleAssetBuildResult(
-      photo: photo,
-      insertedNoGps: hasGps ? 0 : 1,
-    );
+    return _SingleAssetBuildResult(photo: photo, insertedNoGps: hasGps ? 0 : 1);
   }
 
   // ── File 解析：Android 跳过 originFile（快 2×）──────────────────
@@ -227,37 +217,97 @@ class _PhotoAssetBuilder {
   // ── 时间戳解析：最小值聚合 O(n) ──────────────────────────────────
   int resolveBestTimestampMs(AssetEntity asset, File file) {
     final candidates = <int>[];
-    final fileNameMs = PhotoFilterHelper.extractTimestampFromFileName(file.path);
+    final fileNameMs = PhotoFilterHelper.extractTimestampFromFileName(
+      file.path,
+    );
     if (fileNameMs != null && PhotoFilterHelper.hasValidTimestamp(fileNameMs)) {
       candidates.add(fileNameMs);
     }
     final createMs = asset.createDateTime.millisecondsSinceEpoch;
     if (PhotoFilterHelper.hasValidTimestamp(createMs)) candidates.add(createMs);
     final modifiedMs = asset.modifiedDateTime.millisecondsSinceEpoch;
-    if (PhotoFilterHelper.hasValidTimestamp(modifiedMs)) candidates.add(modifiedMs);
+    if (PhotoFilterHelper.hasValidTimestamp(modifiedMs)) {
+      candidates.add(modifiedMs);
+    }
     return candidates.isEmpty ? 0 : candidates.reduce(math.min);
   }
 
   // ── 仅当字段变化时刷新 ──────────────────────────────────────────
-  Future<PhotoEntity?> _refreshIfChanged(PhotoEntity existing, AssetEntity asset) async {
+  Future<PhotoEntity?> _refreshIfChanged(
+    PhotoEntity existing,
+    AssetEntity asset,
+  ) async {
     final file = await resolveReadableFile(asset);
     if (file == null) return null;
 
     var changed = false;
     final ts = resolveBestTimestampMs(asset, file);
     if (PhotoFilterHelper.hasValidTimestamp(ts) && existing.timestamp != ts) {
-      existing.timestamp = ts; changed = true;
+      existing.timestamp = ts;
+      changed = true;
     }
     if (file.path.isNotEmpty && existing.path != file.path) {
-      existing.path = file.path; changed = true;
+      existing.path = file.path;
+      changed = true;
     }
     if (asset.width > 0 && existing.width != asset.width) {
-      existing.width = asset.width; changed = true;
+      existing.width = asset.width;
+      changed = true;
     }
     if (asset.height > 0 && existing.height != asset.height) {
-      existing.height = asset.height; changed = true;
+      existing.height = asset.height;
+      changed = true;
+    }
+    final mimeType = asset.mimeType;
+    final isLivePhoto = asset.isLivePhoto;
+    final mediaKind = MediaTypeHelper.toStorageValue(
+      _resolveMediaKind(
+        asset: asset,
+        path: file.path,
+        mimeType: mimeType,
+        isLivePhoto: isLivePhoto,
+      ),
+    );
+    if (existing.mediaKind != mediaKind) {
+      existing.mediaKind = mediaKind;
+      changed = true;
+    }
+    if (existing.mimeType != mimeType) {
+      existing.mimeType = mimeType;
+      changed = true;
+    }
+    if (existing.isLivePhoto != isLivePhoto) {
+      existing.isLivePhoto = isLivePhoto;
+      changed = true;
+    }
+    final thumbnailBytes = await MediaThumbnailCacheService.instance
+        .generateCompressedBytes(asset);
+    if (thumbnailBytes != null && thumbnailBytes.isNotEmpty) {
+      existing.thumbnailBytes = thumbnailBytes;
+      changed = true;
     }
     return changed ? existing : null;
+  }
+
+  MemoriaMediaKind _resolveMediaKind({
+    required AssetEntity asset,
+    required String path,
+    required String? mimeType,
+    required bool isLivePhoto,
+  }) {
+    if (asset.type == AssetType.video ||
+        mimeType?.toLowerCase().startsWith('video/') == true ||
+        MediaTypeHelper.isVideoPath(path)) {
+      return MemoriaMediaKind.video;
+    }
+    final normalizedMime = mimeType?.toLowerCase() ?? '';
+    if (isLivePhoto ||
+        normalizedMime == 'image/gif' ||
+        normalizedMime == 'image/webp' ||
+        MediaTypeHelper.isDynamicImagePath(path)) {
+      return MemoriaMediaKind.dynamicImage;
+    }
+    return MemoriaMediaKind.image;
   }
 
   void logAssetExtInfo({

@@ -621,7 +621,7 @@
     },
     {
       "id": "8:8597624262250363654",
-      "lastPropertyId": "25:2523304659420016161",
+      "lastPropertyId": "31:8224221571986436293",
       "name": "PhotoEntity",
       "properties": [
         {
@@ -760,6 +760,35 @@
           "name": "eventId",
           "indexId": "25:4477625239667923326",
           "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "26:7583627293392505609",
+          "name": "mediaKind",
+          "indexId": "40:6858426564956238268",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "27:6192413369837109762",
+          "name": "mimeType",
+          "type": 9
+        },
+        {
+          "id": "28:1591879939755344233",
+          "name": "isLivePhoto",
+          "type": 1
+        },
+        {
+          "id": "30:5287670559240961596",
+          "name": "thumbnailBytes",
+          "type": 23
+        },
+        {
+          "id": "31:8224221571986436293",
+          "name": "isAiAnalysisCandidate",
+          "indexId": "41:7387194497188768424",
+          "type": 1,
           "flags": 8
         }
       ],
@@ -916,10 +945,153 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "12:6971177229072957296",
+      "lastPropertyId": "13:1537742791814627844",
+      "name": "AnalysisImageEntity",
+      "properties": [
+        {
+          "id": "1:2269141036459285670",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:1078439155169850414",
+          "name": "taskId",
+          "type": 9
+        },
+        {
+          "id": "3:7293897575405989774",
+          "name": "imageId",
+          "type": 9
+        },
+        {
+          "id": "4:5724338914730738888",
+          "name": "status",
+          "type": 6
+        },
+        {
+          "id": "5:6976830248417482390",
+          "name": "sortOrder",
+          "type": 6
+        },
+        {
+          "id": "6:4068519522687606924",
+          "name": "assetId",
+          "type": 9
+        },
+        {
+          "id": "7:3967508345696018799",
+          "name": "filePath",
+          "type": 9
+        },
+        {
+          "id": "8:2389482240915293954",
+          "name": "contentUri",
+          "type": 9
+        },
+        {
+          "id": "9:932586904554372459",
+          "name": "resultJson",
+          "type": 9
+        },
+        {
+          "id": "10:4028842578874218427",
+          "name": "resultPath",
+          "type": 9
+        },
+        {
+          "id": "11:5376594408039717078",
+          "name": "errorMessage",
+          "type": 9
+        },
+        {
+          "id": "12:691210647218982169",
+          "name": "createdAtMs",
+          "type": 6
+        },
+        {
+          "id": "13:1537742791814627844",
+          "name": "updatedAtMs",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "13:5122727067842506599",
+      "lastPropertyId": "12:6339322695399521919",
+      "name": "AnalysisTaskEntity",
+      "properties": [
+        {
+          "id": "1:7402840136966556997",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:6388268264365374347",
+          "name": "taskId",
+          "type": 9
+        },
+        {
+          "id": "3:3986794161411000247",
+          "name": "status",
+          "type": 6
+        },
+        {
+          "id": "4:2276566679528515916",
+          "name": "totalCount",
+          "type": 6
+        },
+        {
+          "id": "5:3242589314311251654",
+          "name": "completedCount",
+          "type": 6
+        },
+        {
+          "id": "6:5646782473180497919",
+          "name": "failedCount",
+          "type": 6
+        },
+        {
+          "id": "7:2124384247547157341",
+          "name": "currentItemId",
+          "type": 9
+        },
+        {
+          "id": "8:7769910519805742811",
+          "name": "percent",
+          "type": 8
+        },
+        {
+          "id": "9:7502138899987486401",
+          "name": "errorMessage",
+          "type": 9
+        },
+        {
+          "id": "10:7627601972581765636",
+          "name": "createdAtMs",
+          "type": 6
+        },
+        {
+          "id": "11:7829036743919990609",
+          "name": "updatedAtMs",
+          "type": 6
+        },
+        {
+          "id": "12:6339322695399521919",
+          "name": "resultJson",
+          "type": 9
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "11:1699499076567489273",
-  "lastIndexId": "33:3349099751825984572",
+  "lastEntityId": "13:5122727067842506599",
+  "lastIndexId": "41:7387194497188768424",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,
@@ -927,7 +1099,14 @@
   "retiredEntityUids": [
     1998729358182538669
   ],
-  "retiredIndexUids": [],
+  "retiredIndexUids": [
+    1373939091323798684,
+    6502638351452396319,
+    1097028065375104695,
+    6288581292023907335,
+    1872945558077952164,
+    6827518044726972568
+  ],
   "retiredPropertyUids": [
     3945062749267567143,
     7644336574004328075,
@@ -942,7 +1121,8 @@
     1053423065816094911,
     4540083781270415707,
     1514215392286596427,
-    4584622389087554935
+    4584622389087554935,
+    6330921796923913428
   ],
   "retiredRelationUids": [],
   "version": 1

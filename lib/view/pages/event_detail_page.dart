@@ -1,4 +1,4 @@
-﻿/// 事件详情页面，展示单个事件的照片、信息和操作。
+/// 事件详情页面，展示单个事件的照片、信息和操作。
 
 import 'dart:async';
 
@@ -10,13 +10,15 @@ import '../../models/entity/photo_entity.dart';
 import '../../models/vo/photo.dart';
 import '../../service/junk_photo_cleanup_service.dart';
 import '../../service/story_queue_service.dart';
+import '../../utils/media_type_helper.dart';
 import '../../utils/ocr_policy.dart';
 import '../widgets/deferred_path_image.dart';
 import '../widgets/fullscreen_photo_viewer.dart';
-import '../widgets/path_image.dart';
+import '../widgets/media_thumbnail.dart';
 import 'story_queue_page.dart';
 import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
+
 enum _EventActionMode { none, story, delete }
 
 class EventDetailPage extends StatefulWidget {
@@ -75,8 +77,10 @@ class _EventDetailPageState extends State<EventDetailPage> {
     }
 
     final _pb = ObjectBoxService().store.box<PhotoEntity>();
-    final _q = _pb.query(PhotoEntity_.eventId.equals(eventId))
-        .order(PhotoEntity_.timestamp).build();
+    final _q = _pb
+        .query(PhotoEntity_.eventId.equals(eventId))
+        .order(PhotoEntity_.timestamp)
+        .build();
     final entities = _q.find();
     _q.close();
 
@@ -99,6 +103,8 @@ class _EventDetailPageState extends State<EventDetailPage> {
               entity.district ??
               entity.city ??
               entity.province,
+          mediaKind: entity.mediaKind,
+          thumbnailBytes: entity.thumbnailBytes,
         ),
       );
     }
@@ -169,7 +175,16 @@ class _EventDetailPageState extends State<EventDetailPage> {
                     borderRadius: BorderRadius.circular(20),
                     child: AspectRatio(
                       aspectRatio: 1,
-                      child: PathImage(path: photo.path, fit: BoxFit.cover),
+                      child: MediaThumbnail(
+                        path: photo.path,
+                        assetId: photo.id,
+                        kind: MediaTypeHelper.fromStorageValue(
+                          photo.mediaKind,
+                          path: photo.path,
+                        ),
+                        thumbnailBytes: photo.thumbnailBytes,
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -217,7 +232,9 @@ class _EventDetailPageState extends State<EventDetailPage> {
                     Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Text(
@@ -253,11 +270,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
     );
   }
 
-  Widget _buildMetaRow(
-    BuildContext context,
-    IconData icon,
-    String text,
-  ) {
+  Widget _buildMetaRow(BuildContext context, IconData icon, String text) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -323,18 +336,16 @@ class _EventDetailPageState extends State<EventDetailPage> {
   }
 
   void _openStoryQueuePage() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => const StoryQueuePage(),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const StoryQueuePage()));
   }
 
   void _addSelectionToQueue() {
     if (_selectedPhotoIds.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请至少选择一张照片加入故事队列')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请至少选择一张照片加入故事队列')));
       return;
     }
 
@@ -361,9 +372,9 @@ class _EventDetailPageState extends State<EventDetailPage> {
 
   Future<void> _deleteSelectionFromLocalIndex() async {
     if (_selectedPhotoIds.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请至少选择一张照片再删除')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请至少选择一张照片再删除')));
       return;
     }
 
@@ -395,7 +406,9 @@ class _EventDetailPageState extends State<EventDetailPage> {
 
     final selectedAssetIds = _selectedPhotoIds.toList(growable: false);
     final _pb2 = ObjectBoxService().store.box<PhotoEntity>();
-    final _q2 = _pb2.query(PhotoEntity_.assetId.oneOf(selectedAssetIds)).build();
+    final _q2 = _pb2
+        .query(PhotoEntity_.assetId.oneOf(selectedAssetIds))
+        .build();
     final entities = _q2.find();
     _q2.close();
 
@@ -423,7 +436,9 @@ class _EventDetailPageState extends State<EventDetailPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
-        content: Text(removedCount > 0 ? '已删除 $removedCount 条本地记录' : '没有删除任何本地记录'),
+        content: Text(
+          removedCount > 0 ? '已删除 $removedCount 条本地记录' : '没有删除任何本地记录',
+        ),
       ),
     );
   }
@@ -462,8 +477,9 @@ class _EventDetailPageState extends State<EventDetailPage> {
                   const SizedBox(width: 10),
                   FilledButton.tonalIcon(
                     onPressed: () {
-                      final allSelected = _photos
-                          .every((p) => _selectedPhotoIds.contains(p.id));
+                      final allSelected = _photos.every(
+                        (p) => _selectedPhotoIds.contains(p.id),
+                      );
                       if (allSelected) {
                         setState(() {
                           _selectedPhotoIds.clear();
@@ -478,15 +494,17 @@ class _EventDetailPageState extends State<EventDetailPage> {
                     },
                     icon: Icon(
                       _photos.isNotEmpty &&
-                              _photos
-                                  .every((p) => _selectedPhotoIds.contains(p.id))
+                              _photos.every(
+                                (p) => _selectedPhotoIds.contains(p.id),
+                              )
                           ? Icons.deselect_rounded
                           : Icons.select_all_rounded,
                     ),
                     label: Text(
                       _photos.isNotEmpty &&
-                              _photos
-                                  .every((p) => _selectedPhotoIds.contains(p.id))
+                              _photos.every(
+                                (p) => _selectedPhotoIds.contains(p.id),
+                              )
                           ? '取消全选'
                           : '全选',
                     ),
@@ -506,8 +524,8 @@ class _EventDetailPageState extends State<EventDetailPage> {
                       _selectedPhotoIds.isEmpty
                           ? (_isDeleteMode ? '删除本地记录' : '加入故事队列')
                           : (_isDeleteMode
-                              ? '删除本地记录 ${_selectedPhotoIds.length}'
-                              : '加入故事队列 ${_selectedPhotoIds.length}'),
+                                ? '删除本地记录 ${_selectedPhotoIds.length}'
+                                : '加入故事队列 ${_selectedPhotoIds.length}'),
                     ),
                   ),
                 ],
@@ -639,8 +657,8 @@ class _EventDetailPageState extends State<EventDetailPage> {
                         ? '先展示这一组时刻的概要，图片会在滑到这里时继续懒加载。'
                         : _isSelectionMode
                         ? (_isDeleteMode
-                            ? '点击图片选择要从 App 本地数据库中删除的记录。'
-                            : '点击图片加入故事队列，再点右下角按钮继续。')
+                              ? '点击图片选择要从 App 本地数据库中删除的记录。'
+                              : '点击图片加入故事队列，再点右下角按钮继续。')
                         : '先预览照片内容，点击右下角按钮后再进入选图。',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).hintColor,
@@ -649,7 +667,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
                   if (_textRichSelectedPhotos.isNotEmpty) ...[
                     const SizedBox(height: 16),
                     Text(
-                        'OCR 摘要',
+                      'OCR 摘要',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
@@ -713,6 +731,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
                       showFullscreenPhotoViewer(
                         context,
                         path: photo.path,
+                        assetId: photo.id,
                         heroTag: 'event-photo-${photo.id}',
                       );
                     },
@@ -724,11 +743,19 @@ class _EventDetailPageState extends State<EventDetailPage> {
                           tag: 'event-photo-${photo.id}',
                           child: DeferredPathImage(
                             path: photo.path,
+                            assetId: photo.id,
+                            kind: MediaTypeHelper.fromStorageValue(
+                              photo.mediaKind,
+                              path: photo.path,
+                            ),
+                            thumbnailBytes: photo.thumbnailBytes,
                             fit: BoxFit.cover,
                           ),
                         ),
                         if (_isSelectionMode && !isSelected)
-                          Container(color: Colors.black.withValues(alpha: 0.32)),
+                          Container(
+                            color: Colors.black.withValues(alpha: 0.32),
+                          ),
                         Positioned(
                           left: 4,
                           bottom: 4,
@@ -761,8 +788,10 @@ class _EventDetailPageState extends State<EventDetailPage> {
                               decoration: BoxDecoration(
                                 color: isSelected
                                     ? (_isDeleteMode
-                                        ? Theme.of(context).colorScheme.error
-                                        : Theme.of(context).colorScheme.primary)
+                                          ? Theme.of(context).colorScheme.error
+                                          : Theme.of(
+                                              context,
+                                            ).colorScheme.primary)
                                     : Colors.white.withValues(alpha: 0.88),
                                 shape: BoxShape.circle,
                                 border: Border.all(
@@ -772,15 +801,17 @@ class _EventDetailPageState extends State<EventDetailPage> {
                               child: Icon(
                                 isSelected
                                     ? (_isDeleteMode
-                                        ? Icons.delete_rounded
-                                        : Icons.check_rounded)
+                                          ? Icons.delete_rounded
+                                          : Icons.check_rounded)
                                     : Icons.add_rounded,
                                 size: 16,
                                 color: isSelected
                                     ? Colors.white
                                     : (_isDeleteMode
-                                        ? Theme.of(context).colorScheme.error
-                                        : Theme.of(context).colorScheme.primary),
+                                          ? Theme.of(context).colorScheme.error
+                                          : Theme.of(
+                                              context,
+                                            ).colorScheme.primary),
                               ),
                             ),
                           ),

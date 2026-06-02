@@ -31,7 +31,6 @@ class RecommendationQueryTemplateService {
   SemanticSearchQuery? buildPresetQuery(
     String rawQuery, {
     DateTime? now,
-    Set<String> locationDictionary = const <String>{},
   }) {
     final resolvedJson = resolvePresetJson(rawQuery, now: now);
     if (resolvedJson == null) {
@@ -40,7 +39,6 @@ class RecommendationQueryTemplateService {
     return _parser.buildQueryFromStructuredJson(
       rawQuery: rawQuery,
       jsonObject: resolvedJson,
-      locationDictionary: locationDictionary,
     );
   }
 

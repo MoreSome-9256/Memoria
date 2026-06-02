@@ -27,7 +27,8 @@ class MediaSyncSummary {
 class MediaAssetSyncService {
   MediaAssetSyncService._internal();
 
-  static final MediaAssetSyncService _instance = MediaAssetSyncService._internal();
+  static final MediaAssetSyncService _instance =
+      MediaAssetSyncService._internal();
 
   factory MediaAssetSyncService() => _instance;
 
@@ -54,9 +55,7 @@ class MediaAssetSyncService {
     return true;
   }
 
-  Future<MediaSyncSummary> reconcile({
-    int pageSize = _defaultPageSize,
-  }) async {
+  Future<MediaSyncSummary> reconcile({int pageSize = _defaultPageSize}) async {
     if (_isReconciling) {
       return const MediaSyncSummary(
         discovered: 0,
@@ -76,7 +75,7 @@ class MediaAssetSyncService {
       final constrainedPageSize = pageSize.clamp(100, 300);
       final albums = await PhotoManager.getAssetPathList(
         onlyAll: true,
-        type: RequestType.image,
+        type: RequestType.common,
       );
       if (albums.isEmpty) {
         return MediaSyncSummary(
@@ -96,7 +95,10 @@ class MediaAssetSyncService {
         final end = (offset + constrainedPageSize > total)
             ? total
             : (offset + constrainedPageSize);
-        final assets = await allAlbum.getAssetListRange(start: offset, end: end);
+        final assets = await allAlbum.getAssetListRange(
+          start: offset,
+          end: end,
+        );
         if (assets.isEmpty) {
           continue;
         }
@@ -115,10 +117,8 @@ class MediaAssetSyncService {
           final entity = existing ?? MediaAssetEntity(assetId: asset.id);
           entity.width = asset.width;
           entity.height = asset.height;
-          entity.createTimeMs =
-              asset.createDateTime.millisecondsSinceEpoch;
-          entity.modifiedTimeMs =
-              asset.modifiedDateTime.millisecondsSinceEpoch;
+          entity.createTimeMs = asset.createDateTime.millisecondsSinceEpoch;
+          entity.modifiedTimeMs = asset.modifiedDateTime.millisecondsSinceEpoch;
           entity.durationMs = asset.duration * 1000;
           entity.subtype = asset.subtype;
           entity.contentHash = currentHash;
@@ -126,9 +126,11 @@ class MediaAssetSyncService {
           entity.embedding = null;
           entity.modelVersion = null;
           entity.embeddingUpdatedAtMs = null;
-          entity.setStatus(existing == null
-              ? MediaAssetStatus.pending
-              : MediaAssetStatus.dirty);
+          entity.setStatus(
+            existing == null
+                ? MediaAssetStatus.pending
+                : MediaAssetStatus.dirty,
+          );
           batch.add(entity);
         }
 

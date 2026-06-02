@@ -1,4 +1,4 @@
-/// 主题聚类服务，按语义特征把照片组织成可浏览的主题组。
+// 主题聚类服务，按语义特征把照片组织成可浏览的主题组。
 
 import 'dart:async';
 import 'dart:io';
@@ -10,6 +10,7 @@ import '../models/entity/photo_entity.dart';
 import '../models/theme_cluster_models.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
+import '../utils/media_type_helper.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/theme_subclustering.dart';
 import 'mobileclip_embedding_service.dart';
@@ -469,7 +470,8 @@ class ThemeClusterService {
       return _photosLoader();
     }
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final q = photoBox.query()
+    final q = photoBox
+        .query()
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
     q.limit = maxPhotosToScan;
@@ -520,8 +522,13 @@ class ThemeClusterService {
       for (final photo in photos) {
         processed++;
 
-        // Keep screenshot-like UI captures out of visual-theme retrieval.
-        if (photo.isProbablyScreenshot) {
+        // Keep screenshot-like UI captures and video-model vectors out of
+        // image visual-theme retrieval.
+        final mediaKind = MediaTypeHelper.fromStorageValue(
+          photo.mediaKind,
+          path: photo.path,
+        );
+        if (photo.isProbablyScreenshot || mediaKind != MemoriaMediaKind.image) {
           skippedScreenshots++;
           _emitEmbeddingProgress(
             processed: processed,
@@ -630,7 +637,10 @@ class ThemeClusterService {
 
     if (updated.isNotEmpty) {
       final store = ObjectBoxService().store;
-      store.runInTransaction(TxMode.write, () => store.box<PhotoEntity>().putMany(updated));
+      store.runInTransaction(
+        TxMode.write,
+        () => store.box<PhotoEntity>().putMany(updated),
+      );
     }
 
     debugPrint(

@@ -10,18 +10,12 @@ import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 
 class StoryQueueItem {
-  const StoryQueueItem({
-    required this.photo,
-    this.semanticSearchQuery,
-  });
+  const StoryQueueItem({required this.photo, this.semanticSearchQuery});
 
   final Photo photo;
   final String? semanticSearchQuery;
 
-  StoryQueueItem copyWith({
-    Photo? photo,
-    String? semanticSearchQuery,
-  }) {
+  StoryQueueItem copyWith({Photo? photo, String? semanticSearchQuery}) {
     return StoryQueueItem(
       photo: photo ?? this.photo,
       semanticSearchQuery: semanticSearchQuery ?? this.semanticSearchQuery,
@@ -63,10 +57,7 @@ class StoryQueueService {
     return queueListenable.value.any((item) => item.photo.id == photoId);
   }
 
-  int addPhotos(
-    List<Photo> photos, {
-    String? semanticSearchQuery,
-  }) {
+  int addPhotos(List<Photo> photos, {String? semanticSearchQuery}) {
     if (photos.isEmpty) {
       return 0;
     }
@@ -217,12 +208,13 @@ class StoryQueueService {
   static Photo mapPhotoEntityToQueuePhoto(PhotoEntity photo) {
     return Photo(
       id: photo.assetId,
-      location: (photo.locationName ??
-              photo.district ??
-              photo.city ??
-              photo.province ??
-              '')
-          .trim(),
+      location:
+          (photo.locationName ??
+                  photo.district ??
+                  photo.city ??
+                  photo.province ??
+                  '')
+              .trim(),
       path: photo.path,
       dateTaken: DateTime.fromMillisecondsSinceEpoch(photo.timestamp),
       tags: TagSanitizer.sanitizeVisualTags(photo.aiTags ?? const <String>[]),
@@ -234,6 +226,8 @@ class StoryQueueService {
       ),
       ocrTags: OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]),
       isSelected: true,
+      mediaKind: photo.mediaKind,
+      thumbnailBytes: photo.thumbnailBytes,
     );
   }
 

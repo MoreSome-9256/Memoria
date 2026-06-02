@@ -1,13 +1,23 @@
 /// MobileCLIP 标签服务，把图像向量映射到可读的视觉标签。
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../data/tag_taxonomy_v2.dart';
 import '../utils/tag_sanitizer.dart';
+import 'mobileclip_litert_service.dart';
 import 'semantic_matching_service.dart';
+
+typedef MobileClipTagWarmUpProgress = FutureOr<void> Function(
+  int completed,
+  int total,
+  String message,
+);
 
 class MobileClipTagService {
   MobileClipTagService._internal();
@@ -32,11 +42,8 @@ class MobileClipTagService {
       };
 
   static const Set<String> _blockedTags = <String>{
-    '套路',
-    '未婚妻',
-    '字幕',
-    '房主',
-    '采购员',
+
+    
   };
 
   final SemanticMatchingService _semanticService = SemanticMatchingService();
@@ -50,6 +57,8 @@ class MobileClipTagService {
   Future<void>? _warmUpFuture;
   int _workflowLeaseCount = 0;
   Timer? _idleDisposeTimer;
+  static const String _prototypeCacheFilename = 'tag_prototype_cache.json';
+  String? _prototypeCacheKey;
 
   Future<void> beginWorkflowSession() async {
     _workflowLeaseCount++;
@@ -66,6 +75,16 @@ class MobileClipTagService {
       _scheduleIdleDispose(idleDisposeDelay);
     }
   }
+
+  /// 可被 `compute()` 序列化的细粒度标签原型（标签名 → 向量）
+  Map<String, List<double>> get finePrototypes =>
+      Map<String, List<double>>.unmodifiable(_prototypeByLabel);
+
+  /// 可被 `compute()` 序列化的粗粒度类别原型（类别ID → 向量）
+  Map<String, List<double>> get coarsePrototypes =>
+      Map<String, List<double>>.unmodifiable(_coarsePrototypeById);
+
+  bool get isWarmedUp => _warmedUp;
 
   void _touchUsage() {
     _cancelIdleDisposeTimer();
@@ -105,33 +124,67 @@ class MobileClipTagService {
     unawaited(_runScheduledWarmUp(initialDelay: initialDelay));
   }
 
-  Future<void> warmUp() async {
+  Future<void> warmUp({MobileClipTagWarmUpProgress? onProgress}) async {
     _touchUsage();
     if (_warmedUp) {
+      await onProgress?.call(1, 1, '标签原型已就绪');
       return;
     }
     if (_warmUpFuture != null) {
       await _warmUpFuture;
+      await onProgress?.call(1, 1, '标签原型已就绪');
       return;
     }
     _warmUpFuture = Future<void>(() async {
+      _prototypeCacheKey = _computePrototypeCacheKey();
+      _prototypeByLabel.clear();
+      _coarsePrototypeById.clear();
+      if (await _tryLoadPrototypesFromCache()) {
+        _warmedUp = true;
+        await onProgress?.call(1, 1, '已读取标签原型缓存');
+        return;
+      }
+
+      final fineTotal = memoriaMasterTagDefinitions.length;
+      final coarseTotal = memoriaCoarseTagDefinitions
+          .where((definition) => definition.prompts.isNotEmpty)
+          .length;
+      final total = 1 + fineTotal + coarseTotal;
+      var completed = 0;
+      await onProgress?.call(completed, total, '加载文本语义模型');
       await _semanticService.warmUp();
+      completed++;
+      await onProgress?.call(completed, total, '构建细粒度标签原型');
       for (final definition in memoriaMasterTagDefinitions) {
-        debugPrint('🧠 正在预热 Master 标签: ${definition.label}'); // 加上这行
-        final promptVectors = await _embedPromptsSequentially(
-          definition.prompts,
-        );
-        _prototypeByLabel[definition.label] = _meanAndNormalize(promptVectors);
-        await Future<void>.delayed(Duration.zero);
-      }
-      for (final coarse in memoriaCoarseTagDefinitions) {
-        if (coarse.prompts.isEmpty) {
-          continue;
+        final prototype = await _buildPrototype(definition.prompts);
+        if (prototype.isNotEmpty) {
+          _prototypeByLabel[definition.label] = prototype;
         }
-        final promptVectors = await _embedPromptsSequentially(coarse.prompts);
-        _coarsePrototypeById[coarse.id] = _meanAndNormalize(promptVectors);
+        completed++;
+        await onProgress?.call(
+          completed,
+          total,
+          '构建细粒度标签原型 ${completed - 1}/$fineTotal',
+        );
         await Future<void>.delayed(Duration.zero);
       }
+      var coarseCompleted = 0;
+      for (final coarse in memoriaCoarseTagDefinitions) {
+        if (coarse.prompts.isEmpty) continue;
+        final prototype = await _buildPrototype(coarse.prompts);
+        if (prototype.isNotEmpty) {
+          _coarsePrototypeById[coarse.id] = prototype;
+        }
+        coarseCompleted++;
+        completed++;
+        await onProgress?.call(
+          completed,
+          total,
+          '构建粗粒度标签原型 $coarseCompleted/$coarseTotal',
+        );
+        await Future<void>.delayed(Duration.zero);
+      }
+      await _savePrototypesToCache();
       _warmedUp = true;
     });
     try {
@@ -139,6 +192,99 @@ class MobileClipTagService {
     } finally {
       _warmUpFuture = null;
     }
+  }
+
+  /// 生成标签定义的缓存键——拼接所有标签+prompts 然后做 base64
+  String _computePrototypeCacheKey() {
+    final buffer = StringBuffer();
+    buffer.write('mobileclip-tag-prototypes-real-text-v3');
+    buffer.write(MobileClipLiteRtService.modelVersion);
+    for (final def in memoriaMasterTagDefinitions) {
+      buffer.write(def.label);
+      for (final p in def.prompts) {
+        buffer.write(p);
+      }
+    }
+    for (final def in memoriaCoarseTagDefinitions) {
+      buffer.write(def.id);
+      buffer.write(def.label);
+      for (final p in def.prompts) {
+        buffer.write(p);
+      }
+    }
+    final bytes = utf8.encode(buffer.toString());
+    return base64Encode(bytes);
+  }
+
+  /// 从本地缓存加载原型向量，返回 true 表示加载成功
+  Future<bool> _tryLoadPrototypesFromCache() async {
+    try {
+      final file = await _prototypeCacheFile();
+      if (!await file.exists()) {
+        return false;
+      }
+      final json =
+          jsonDecode(await file.readAsString()) as Map<String, Object?>;
+      if ((json['key'] as String?) != _prototypeCacheKey) {
+        return false;
+      }
+      final fineRaw = json['fine'] as List<Object?>;
+      for (final entry in fineRaw) {
+        final pair = entry as List<Object?>;
+        final label = pair[0] as String;
+        final vec = (pair[1] as List<Object?>)
+            .cast<num>()
+            .map((n) => n.toDouble())
+            .toList();
+        _prototypeByLabel[label] = vec;
+      }
+      final coarseRaw = json['coarse'] as List<Object?>;
+      for (final entry in coarseRaw) {
+        final pair = entry as List<Object?>;
+        final id = pair[0] as String;
+        final vec = (pair[1] as List<Object?>)
+            .cast<num>()
+            .map((n) => n.toDouble())
+            .toList();
+        _coarsePrototypeById[id] = vec;
+      }
+      debugPrint(
+        '✅ 从缓存加载标签原型向量成功 fine=${_prototypeByLabel.length} coarse=${_coarsePrototypeById.length}',
+      );
+      return true;
+    } catch (e) {
+      debugPrint('⚠️ 标签原型缓存加载失败: $e');
+      return false;
+    }
+  }
+
+  /// 将原型向量保存到本地缓存
+  Future<void> _savePrototypesToCache() async {
+    try {
+      final fineList = _prototypeByLabel.entries
+          .map((e) => <Object?>[e.key, e.value])
+          .toList();
+      final coarseList = _coarsePrototypeById.entries
+          .map((e) => <Object?>[e.key, e.value])
+          .toList();
+      final json = <String, Object?>{
+        'key': _prototypeCacheKey,
+        'fine': fineList,
+        'coarse': coarseList,
+      };
+      final file = await _prototypeCacheFile();
+      await file.writeAsString(jsonEncode(json), flush: true);
+      debugPrint(
+        '✅ 已缓存标签原型向量 fine=${fineList.length} coarse=${coarseList.length}',
+      );
+    } catch (e) {
+      debugPrint('⚠️ 标签原型缓存写入失败: $e');
+    }
+  }
+
+  Future<File> _prototypeCacheFile() async {
+    final dir = await getTemporaryDirectory();
+    return File('${dir.path}/$_prototypeCacheFilename');
   }
 
   Future<void> _runScheduledWarmUp({required Duration initialDelay}) async {
@@ -165,6 +311,41 @@ class MobileClipTagService {
       await Future<void>.delayed(Duration.zero);
     }
     return vectors;
+  }
+
+  Future<List<double>> _buildPrototype(Iterable<String> prompts) async {
+    final vectors = await _embedPromptsSequentially(
+      prompts.where((prompt) => prompt.trim().isNotEmpty),
+    );
+    if (vectors.isEmpty) return const <double>[];
+    final dim = vectors.first.length;
+    if (dim == 0) return const <double>[];
+    final sum = List<double>.filled(dim, 0);
+    var count = 0;
+    for (final vector in vectors) {
+      if (vector.length != dim) continue;
+      for (var i = 0; i < dim; i++) {
+        sum[i] += vector[i];
+      }
+      count++;
+    }
+    if (count == 0) return const <double>[];
+    for (var i = 0; i < dim; i++) {
+      sum[i] /= count;
+    }
+    return _l2Normalize(sum);
+  }
+
+  List<double> _l2Normalize(List<double> vector) {
+    var norm = 0.0;
+    for (final value in vector) {
+      norm += value * value;
+    }
+    norm = math.sqrt(norm);
+    if (norm <= 0 || norm.isNaN || norm.isInfinite) {
+      return const <double>[];
+    }
+    return vector.map((value) => value / norm).toList(growable: false);
   }
 
   Future<List<String>> retrieveTags(

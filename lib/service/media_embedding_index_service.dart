@@ -2,12 +2,16 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:image/image.dart' as img;
 import 'package:photo_manager/photo_manager.dart';
 
 import '../storage/objectbox/entities/media_asset_entity.dart';
 import '../storage/objectbox/media_asset_repository.dart';
-import 'mobileclip_vision_service.dart';
+import '../storage/vector_index/vector_index_constants.dart';
+import '../utils/media_type_helper.dart';
+import 'app_ai_settings_service.dart';
+import 'media_embedding_service.dart';
+import 'mobileclip_backend_preference_service.dart';
+import 'mobileclip_litert_service.dart';
 import 'semantic_matching_service.dart';
 
 class MediaIndexProgress {
@@ -42,24 +46,24 @@ class MediaEmbeddingIndexService {
   factory MediaEmbeddingIndexService() => _instance;
 
   final MediaAssetRepository _repository = MediaAssetRepository();
-  final MobileClipVisionService _visionService = MobileClipVisionService();
   final SemanticMatchingService _semanticService = SemanticMatchingService();
 
   final ValueNotifier<MediaIndexProgress> progressNotifier =
       ValueNotifier<MediaIndexProgress>(
-        MediaIndexProgress(processed: 0, total: 0, running: false, lastError: null),
+        MediaIndexProgress(
+          processed: 0,
+          total: 0,
+          running: false,
+          lastError: null,
+        ),
       );
-
-  static const String _modelVersion = 'mobileclip2_vision_336_v1';
 
   bool _running = false;
 
   Future<void> encodePending({
     int maxConcurrency = 2,
     int batchSize = 240,
-    int inputSize = 336,
-    List<double> mean = const <double>[0.48145466, 0.4578275, 0.40821073],
-    List<double> std = const <double>[0.26862954, 0.26130258, 0.27577711],
+    int inputSize = MobileClipLiteRtService.inputImageSize,
   }) async {
     if (_running) {
       return;
@@ -94,14 +98,7 @@ class MediaEmbeddingIndexService {
             .toList(growable: false);
 
         await Future.wait(
-          slice.map(
-            (entity) => _encodeOne(
-              entity,
-              inputSize: inputSize,
-              mean: mean,
-              std: std,
-            ),
-          ),
+          slice.map((entity) => _encodeOne(entity, inputSize: inputSize)),
         );
 
         processed += slice.length;
@@ -136,37 +133,42 @@ class MediaEmbeddingIndexService {
     }
   }
 
-  Future<List<MediaSearchHit>> searchByText(String query, {int topK = 24}) async {
+  Future<List<MediaSearchHit>> searchByText(
+    String query, {
+    int topK = 24,
+  }) async {
     await _semanticService.warmUp();
     final vector = await _semanticService.embedText(query);
-    return _searchByVector(vector, topK);
+    final modelVersion = await _activePhotoModelVersion();
+    return _searchByVector(vector, topK, modelVersion: modelVersion);
   }
 
   Future<List<MediaSearchHit>> searchByImageBytes(
     Uint8List imageBytes, {
     int topK = 24,
-    int inputSize = 336,
-    List<double> mean = const <double>[0.48145466, 0.4578275, 0.40821073],
-    List<double> std = const <double>[0.26862954, 0.26130258, 0.27577711],
   }) async {
-    final input = await compute<_ImagePreprocessTask, Float32List>(
-      _preprocessToNchwFloat32,
-      _ImagePreprocessTask(
-        imageBytes: imageBytes,
-        inputSize: inputSize,
-        mean: mean,
-        std: std,
+    final backend = await MobileClipBackendPreferenceService()
+        .getSelectedBackend();
+    final settings = await AppAiSettingsService.instance.load();
+    final result = await MediaEmbeddingService().embedImageBytes(
+      imageBytes,
+      backend: backend,
+      liteRt: MobileClipLiteRtService.withRuntimeOptions(
+        accelerator: settings.inferenceAccelerator,
+        xnnpackThreadCount: settings.xnnpackThreadCount,
+        modelBatchSize: settings.analysisBatchSize,
       ),
     );
-    final vector = await _visionService.embedPreprocessedInput(input);
-    return _searchByVector(vector, topK);
+    return _searchByVector(
+      result.embedding,
+      topK,
+      modelVersion: result.modelVersion,
+    );
   }
 
   Future<void> _encodeOne(
     MediaAssetEntity entity, {
     required int inputSize,
-    required List<double> mean,
-    required List<double> std,
   }) async {
     try {
       final asset = await AssetEntity.fromId(entity.assetId);
@@ -186,18 +188,27 @@ class MediaEmbeddingIndexService {
         return;
       }
 
-      final input = await compute<_ImagePreprocessTask, Float32List>(
-        _preprocessToNchwFloat32,
-        _ImagePreprocessTask(
-          imageBytes: bytes,
-          inputSize: inputSize,
-          mean: mean,
-          std: std,
+      final settings = await AppAiSettingsService.instance.load();
+      final backend = await MobileClipBackendPreferenceService()
+          .getSelectedBackend();
+      final kind = asset.type == AssetType.video
+          ? MemoriaMediaKind.video
+          : asset.isLivePhoto
+          ? MemoriaMediaKind.dynamicImage
+          : MemoriaMediaKind.image;
+      final embedding = await MediaEmbeddingService().embedPreparedMediaBytes(
+        kind: kind,
+        imageOrThumbnailBytes: bytes,
+        mobileViClipEnabled: settings.mobileViClipEnabled,
+        backend: backend,
+        liteRt: MobileClipLiteRtService.withRuntimeOptions(
+          accelerator: settings.inferenceAccelerator,
+          xnnpackThreadCount: settings.xnnpackThreadCount,
+          modelBatchSize: settings.analysisBatchSize,
         ),
       );
-      final embedding = await _visionService.embedPreprocessedInput(input);
-      entity.embedding = _l2Normalize(embedding);
-      entity.modelVersion = _modelVersion;
+      entity.embedding = _l2Normalize(embedding.embedding);
+      entity.modelVersion = embedding.modelVersion;
       entity.embeddingUpdatedAtMs = DateTime.now().millisecondsSinceEpoch;
       entity.setStatus(MediaAssetStatus.ready);
       entity.errorMessage = null;
@@ -209,15 +220,27 @@ class MediaEmbeddingIndexService {
     }
   }
 
-  List<MediaSearchHit> _searchByVector(List<double> vector, int k) {
+  Future<String> _activePhotoModelVersion() async {
+    final backend = await MobileClipBackendPreferenceService()
+        .getSelectedBackend();
+    return buildPhotoEmbeddingModelVersion(backend);
+  }
+
+  List<MediaSearchHit> _searchByVector(
+    List<double> vector,
+    int k, {
+    required String modelVersion,
+  }) {
     final normalized = _l2Normalize(vector);
-    final rows = _repository.queryNearest(normalized, k);
+    final rows = _repository.queryNearest(
+      normalized,
+      k,
+      modelVersion: modelVersion,
+    );
     return rows
         .map(
-          (row) => MediaSearchHit(
-            assetId: row.object.assetId,
-            score: row.score,
-          ),
+          (row) =>
+              MediaSearchHit(assetId: row.object.assetId, score: row.score),
         )
         .toList(growable: false);
   }
@@ -231,50 +254,4 @@ class MediaEmbeddingIndexService {
     }
     return vector.map((value) => value / norm).toList(growable: false);
   }
-}
-
-class _ImagePreprocessTask {
-  const _ImagePreprocessTask({
-    required this.imageBytes,
-    required this.inputSize,
-    required this.mean,
-    required this.std,
-  });
-
-  final Uint8List imageBytes;
-  final int inputSize;
-  final List<double> mean;
-  final List<double> std;
-}
-
-Float32List _preprocessToNchwFloat32(_ImagePreprocessTask task) {
-  final decoded = img.decodeImage(task.imageBytes);
-  if (decoded == null) {
-    throw ArgumentError('decode image failed');
-  }
-
-  final oriented = img.bakeOrientation(decoded);
-  final resized = img.copyResize(
-    oriented,
-    width: task.inputSize,
-    height: task.inputSize,
-    interpolation: img.Interpolation.linear,
-  );
-
-  final out = Float32List(3 * task.inputSize * task.inputSize);
-  final planeSize = task.inputSize * task.inputSize;
-  for (var y = 0; y < task.inputSize; y++) {
-    for (var x = 0; x < task.inputSize; x++) {
-      final p = resized.getPixel(x, y);
-      final r = (p.r / 255.0 - task.mean[0]) / task.std[0];
-      final g = (p.g / 255.0 - task.mean[1]) / task.std[1];
-      final b = (p.b / 255.0 - task.mean[2]) / task.std[2];
-      final i = y * task.inputSize + x;
-      out[i] = r;
-      out[planeSize + i] = g;
-      out[2 * planeSize + i] = b;
-    }
-  }
-
-  return out;
 }

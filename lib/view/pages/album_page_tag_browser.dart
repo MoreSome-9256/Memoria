@@ -72,7 +72,16 @@ class _AlbumTagClusterCoverMosaic extends StatelessWidget {
     }
 
     if (photos.length <= 2) {
-      return _DeferredPathImage(path: photos.first.path, fit: BoxFit.cover);
+      return _DeferredPathImage(
+        path: photos.first.path,
+        assetId: photos.first.assetId,
+        kind: MediaTypeHelper.fromStorageValue(
+          photos.first.mediaKind,
+          path: photos.first.path,
+        ),
+        thumbnailBytes: photos.first.thumbnailBytes,
+        fit: BoxFit.cover,
+      );
     }
 
     final visible = photos.take(4).toList(growable: false);
@@ -86,7 +95,16 @@ class _AlbumTagClusterCoverMosaic extends StatelessWidget {
         crossAxisSpacing: 2,
       ),
       itemBuilder: (context, index) {
-        return _DeferredPathImage(path: visible[index].path, fit: BoxFit.cover);
+        return _DeferredPathImage(
+          path: visible[index].path,
+          assetId: visible[index].assetId,
+          kind: MediaTypeHelper.fromStorageValue(
+            visible[index].mediaKind,
+            path: visible[index].path,
+          ),
+          thumbnailBytes: visible[index].thumbnailBytes,
+          fit: BoxFit.cover,
+        );
       },
     );
   }
@@ -120,8 +138,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
   void initState() {
     super.initState();
     _photosStream = _debounceStream<void>(
-      ObjectBoxService()
-          .store
+      ObjectBoxService().store
           .box<PhotoEntity>()
           .query()
           .watch(triggerImmediately: true)
@@ -325,6 +342,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                                           showFullscreenPhotoViewer(
                                             context,
                                             path: photo.path,
+                                            assetId: photo.assetId,
                                             heroTag:
                                                 'album-tag-photo-${photo.id}',
                                           );
@@ -394,8 +412,9 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                     onPressed: clusterPhotos.isEmpty
                         ? null
                         : () {
-                            final allSelected = clusterPhotos
-                                .every((p) => _selectedPhotoIds.contains(p.id));
+                            final allSelected = clusterPhotos.every(
+                              (p) => _selectedPhotoIds.contains(p.id),
+                            );
                             if (allSelected) {
                               setState(() {
                                 _selectedPhotoIds.clear();
@@ -410,15 +429,17 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                           },
                     icon: Icon(
                       clusterPhotos.isNotEmpty &&
-                              clusterPhotos
-                                  .every((p) => _selectedPhotoIds.contains(p.id))
+                              clusterPhotos.every(
+                                (p) => _selectedPhotoIds.contains(p.id),
+                              )
                           ? Icons.deselect_rounded
                           : Icons.select_all_rounded,
                     ),
                     label: Text(
                       clusterPhotos.isNotEmpty &&
-                              clusterPhotos
-                                  .every((p) => _selectedPhotoIds.contains(p.id))
+                              clusterPhotos.every(
+                                (p) => _selectedPhotoIds.contains(p.id),
+                              )
                           ? '取消全选'
                           : '全选',
                     ),

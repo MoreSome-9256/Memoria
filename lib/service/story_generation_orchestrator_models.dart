@@ -29,6 +29,12 @@ class _StoryPhotoMaterial {
   }) {
     final storedVlmCaption = existingVlmCaption?.trim() ?? '';
     final hasStoredVlmCaption = storedVlmCaption.isNotEmpty;
+    final localCaptionCandidates =
+        localCaptionResult?.source == _CaptionSource.localVlm
+        ? localCaptionResult!.candidates
+        : hasStoredVlmCaption
+        ? <String>[storedVlmCaption]
+        : const <String>[];
     final localCaption = localCaptionResult?.source == _CaptionSource.localVlm
         ? localCaptionResult!.text
         : storedVlmCaption;
@@ -57,6 +63,7 @@ class _StoryPhotoMaterial {
       'ocr_summary': ocrSummary,
       'existing_caption': existingCaption ?? '',
       'local_vlm_caption': localCaption,
+      'local_vlm_caption_candidates': localCaptionCandidates,
       'local_vlm_caption_source':
           localCaptionResult?.source.apiValue ??
           (hasStoredVlmCaption
@@ -79,10 +86,20 @@ enum _CaptionSource {
 }
 
 class _CaptionResult {
-  const _CaptionResult._({required this.text, required this.source});
+  const _CaptionResult._({
+    required this.text,
+    required this.source,
+    this.alternatives = const <String>[],
+  });
 
-  factory _CaptionResult.localVlm(String text) =>
-      _CaptionResult._(text: text.trim(), source: _CaptionSource.localVlm);
+  factory _CaptionResult.localVlm(
+    String text, {
+    List<String> alternatives = const <String>[],
+  }) => _CaptionResult._(
+    text: text.trim(),
+    source: _CaptionSource.localVlm,
+    alternatives: alternatives,
+  );
 
   factory _CaptionResult.existingAiFallback(String text) => _CaptionResult._(
     text: text.trim(),
@@ -91,6 +108,18 @@ class _CaptionResult {
 
   final String text;
   final _CaptionSource source;
+  final List<String> alternatives;
+
+  List<String> get candidates {
+    final values = <String>[];
+    for (final item in <String>[text, ...alternatives]) {
+      final trimmed = item.trim();
+      if (trimmed.isNotEmpty && !values.contains(trimmed)) {
+        values.add(trimmed);
+      }
+    }
+    return values;
+  }
 
   String toDisplayText() {
     if (text.trim().isEmpty) {

@@ -1,5 +1,7 @@
 /// 照片元数据的核心 ObjectBox 实体，保存尺寸、位置、标签和向量信息。
 
+import 'dart:typed_data';
+
 import 'package:objectbox/objectbox.dart';
 
 @Entity()
@@ -17,6 +19,14 @@ class PhotoEntity {
   // 📐 图片尺寸信息 (用于过滤截图和UI占位)
   late int width;
   late int height;
+
+  // 媒体索引信息：扫描阶段写入，UI 阶段只读本地字段，避免逐张反查系统相册。
+  @Index()
+  String mediaKind = 'image'; // image / dynamicImage / video
+  String? mimeType;
+  bool isLivePhoto = false;
+  @Property(type: PropertyType.byteVector)
+  Uint8List? thumbnailBytes;
 
   // 📍 地理坐标 (WGS84 标准坐标)
   double? latitude;
@@ -42,6 +52,8 @@ class PhotoEntity {
   List<String>? aiTags; // AI 识别的标签（美食、海滩等）
   @Index()
   bool isAiAnalyzed = false; // AI 分析状态标记
+  @Index()
+  bool isAiAnalysisCandidate = false; // 已明确加入某轮 AI 任务但尚未完成
   String? aiCaption; // 单张照片的一句话描述
   List<double>? imageEmbedding; // MobileCLIP 图像向量，用于后续聚类
   String? ocrText; // OCR 提取出的原始文本

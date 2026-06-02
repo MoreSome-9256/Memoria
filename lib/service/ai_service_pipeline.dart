@@ -464,7 +464,9 @@ extension AIServicePipeline on AIService {
       final p = photoBox.get(photo.id);
       if (p == null) return;
 
-      p.aiTags = result.tags;
+      p.aiTags = result.isJunk
+          ? <String>[JunkPhotoFilterService.pendingJunkCandidateTag]
+          : result.tags;
       p.isAiAnalyzed = false;
       p.isAiAnalysisCandidate = true;
       p.aiCaption = result.aiCaption.isEmpty ? null : result.aiCaption;

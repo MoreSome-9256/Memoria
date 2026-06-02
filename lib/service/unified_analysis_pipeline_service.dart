@@ -213,11 +213,43 @@ class UnifiedAnalysisPipelineService {
     unawaited(_writeForegroundStopRequested(true));
     _queue.clear();
     _clearStoppedCandidates();
-    _updateProgress(
-      stage: UnifiedAnalysisStage.processing,
-      message: '正在停止：不再扫描新项目，当前图片处理完后结束。',
-    );
+
+    final currentStage = _progressNotifier.value.stage;
+    final isTerminal = currentStage == UnifiedAnalysisStage.completed ||
+        currentStage == UnifiedAnalysisStage.failed;
+
+    if (!isTerminal) {
+      _updateProgress(
+        stage: UnifiedAnalysisStage.processing,
+        message: '正在停止：不再扫描新项目，当前图片处理完后结束。',
+      );
+    }
     debugPrint('[pipeline] 已请求停止扫描和 AI 消费者');
+  }
+
+  Future<int> deleteCurrentTaskAndClearAnalysisData() async {
+    _stopRequested = true;
+    await _writeForegroundStopRequested(true);
+    _queue.clear();
+    _clearStoppedCandidates();
+    _junkCandidates.clear();
+
+    await AiBackgroundTaskService.instance.stop();
+    await AiBackgroundTaskService.instance.clearPendingUnifiedPipelineRequest();
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    final clearedCount = await PhotoService().clearAllAiAnalysisData();
+
+    _scanCompleted = 0;
+    _scanTotal = 0;
+    _aiCompleted = 0;
+    _aiTotal = 0;
+    _aiFailed = 0;
+    _scanCompletedNormally = false;
+    _isRunning = false;
+    await UnifiedAnalysisProgressStore.instance.clear();
+
+    debugPrint('[pipeline] 已删除当前任务并清空 AI 分析字段 cleared=$clearedCount');
+    return clearedCount;
   }
 
   Future<void> startPendingAnalysisCandidates() async {
@@ -675,7 +707,7 @@ class UnifiedAnalysisPipelineService {
       ocrText: ocrText ?? '',
     );
     final finalTags = junkDecision.shouldFilter
-        ? <String>[JunkPhotoFilterService.junkCandidateTag]
+        ? <String>[JunkPhotoFilterService.pendingJunkCandidateTag]
         : tags;
     final finalOcrTags = junkDecision.shouldFilter ? <String>[] : ocrTags;
 
@@ -779,10 +811,14 @@ class UnifiedAnalysisPipelineService {
     final elapsedMs = _startedAt != null
         ? DateTime.now().difference(_startedAt!).inMilliseconds
         : 0;
+    final startedAtMs = _startedAt?.millisecondsSinceEpoch ?? 0;
+
+    final isTerminal = stage == UnifiedAnalysisStage.completed ||
+        stage == UnifiedAnalysisStage.failed;
 
     final progress = UnifiedAnalysisProgress(
       stage: stage,
-      isRunning: true,
+      isRunning: !isTerminal,
       scanCompleted: _scanCompleted,
       scanTotal: _scanTotal,
       aiCompleted: _aiCompleted,
@@ -791,6 +827,7 @@ class UnifiedAnalysisPipelineService {
       queueSize: _queue.size,
       message: message,
       elapsedMs: elapsedMs,
+      startedAtMs: startedAtMs,
       scanDone: _scanCompletedNormally,
       scanStopped: _queue.isClosed && !_scanCompletedNormally,
       analysisEnabled: _analysisEnabled,

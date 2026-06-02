@@ -68,14 +68,19 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
       _foregroundStopTimer = null;
       return;
     }
-    
+
     if (progress.stage == UnifiedAnalysisStage.completed) {
       unawaited(AIService().refreshJunkCleanupReportFromDatabase());
     }
-    
+
     _foregroundStopTimer ??= Timer(const Duration(seconds: 2), () {
       _foregroundStopTimer = null;
       unawaited(AiBackgroundTaskService.instance.stop());
+      if (mounted) {
+        setState(() {
+          _progressBannerHidden = true;
+        });
+      }
     });
   }
 
@@ -215,6 +220,9 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
           title: _extractUnifiedTitle(progress),
           message: progress.message,
           progress: progress.overallFraction,
+          elapsed: progress.elapsed,
+          estimatedRemaining: progress.estimatedRemainingDuration,
+          isCompleted: progress.stage == UnifiedAnalysisStage.completed,
           onHide: () {
             setState(() {
               _progressBannerHidden = true;
@@ -286,22 +294,85 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
   }
 }
 
-class _TopProgressBanner extends StatelessWidget {
+class _TopProgressBanner extends StatefulWidget {
   const _TopProgressBanner({
     super.key,
     required this.title,
     required this.message,
     required this.progress,
+    required this.elapsed,
+    this.estimatedRemaining,
+    this.isCompleted = false,
     this.onHide,
   });
 
   final String title;
   final String message;
   final double progress;
+  final Duration elapsed;
+  final Duration? estimatedRemaining;
+  final bool isCompleted;
   final VoidCallback? onHide;
 
   @override
+  State<_TopProgressBanner> createState() => _TopProgressBannerState();
+}
+
+class _TopProgressBannerState extends State<_TopProgressBanner> {
+  Timer? _elapsedTimer;
+  late Duration _displayElapsed;
+
+  @override
+  void initState() {
+    super.initState();
+    _displayElapsed = widget.elapsed;
+    _startElapsedTimer();
+  }
+
+  @override
+  void didUpdateWidget(_TopProgressBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.elapsed != widget.elapsed) {
+      _displayElapsed = widget.elapsed;
+    }
+    if (widget.isCompleted && !oldWidget.isCompleted) {
+      _elapsedTimer?.cancel();
+      _elapsedTimer = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _elapsedTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startElapsedTimer() {
+    _elapsedTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {
+        _displayElapsed = _displayElapsed + const Duration(seconds: 1);
+      });
+    });
+  }
+
+  String _formatDuration(Duration d) {
+    final seconds = d.inSeconds;
+    if (seconds < 60) return '${seconds}s';
+    final minutes = d.inMinutes;
+    final remainingSeconds = seconds % 60;
+    if (minutes < 60) return '${minutes}m ${remainingSeconds}s';
+    final hours = d.inHours;
+    final remainingMinutes = minutes % 60;
+    return '${hours}h ${remainingMinutes}m ${remainingSeconds}s';
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final timeText = widget.estimatedRemaining != null
+        ? '已用 ${_formatDuration(_displayElapsed)}  ·  预计剩余 ${_formatDuration(widget.estimatedRemaining!)}'
+        : '已用 ${_formatDuration(_displayElapsed)}';
+
     return SafeArea(
       child: Align(
         alignment: Alignment.topCenter,
@@ -327,31 +398,37 @@ class _TopProgressBanner extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    title,
+                    widget.title,
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    message,
+                    widget.message,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: Colors.grey[700], fontSize: 12),
                   ),
+                  const SizedBox(height: 4),
+                  Text(
+                    timeText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Colors.grey[600], fontSize: 11),
+                  ),
                   const SizedBox(height: 10),
                   LinearProgressIndicator(
-                    value: progress.clamp(0, 1),
+                    value: widget.progress.clamp(0, 1),
                     minHeight: 6,
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ],
               ),
-              // 隐藏按钮（仅在有 onHide 回调时显示）
-              if (onHide != null)
+              if (widget.onHide != null)
                 Positioned(
                   top: 0,
                   right: 0,
                   child: GestureDetector(
-                    onTap: onHide,
+                    onTap: widget.onHide,
                     child: Padding(
                       padding: const EdgeInsets.all(8.0),
                       child: Icon(

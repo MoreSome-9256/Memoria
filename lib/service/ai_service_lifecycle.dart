@@ -18,7 +18,7 @@ extension AIServiceLifecycle on AIService {
     if (!replaceExisting && current != null && current.hasCandidates) {
       return current;
     }
-    final photos = await PhotoService().loadJunkCandidatePhotos();
+    final photos = await PhotoService().loadPendingJunkCandidatePhotos();
     if (photos.isEmpty) {
       clearPendingJunkCleanupReport();
       return null;

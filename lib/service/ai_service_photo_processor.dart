@@ -344,7 +344,9 @@ class _AiPhotoProcessor {
             ),
             persistenceRequest: _AiPhotoWriteRequest(
               photoId: request.photo.id,
-              tags: const <String>[JunkPhotoFilterService.junkCandidateTag],
+              tags: const <String>[
+                JunkPhotoFilterService.pendingJunkCandidateTag,
+              ],
               imageEmbedding: embedding,
               aiCaption: '',
               ocrText: '',

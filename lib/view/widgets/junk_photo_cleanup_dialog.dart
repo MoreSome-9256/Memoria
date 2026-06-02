@@ -1,4 +1,4 @@
-/// 垃圾照片清理确认对话框，用于执行删除前的二次确认。
+/// 垃圾照片清理确认对话框，用于确认低价值候选标记。
 
 import 'package:flutter/material.dart';
 
@@ -317,8 +317,8 @@ class _JunkPhotoCleanupDialogState extends State<JunkPhotoCleanupDialog> {
                             : () => Navigator.of(
                                 context,
                               ).pop(_selectedPhotoIds.toList(growable: false)),
-                        icon: const Icon(Icons.delete_outline),
-                        label: const Text('删除所选本地记录'),
+                        icon: const Icon(Icons.recycling),
+                        label: const Text('标记为低价值'),
                       ),
                     ],
                   ),

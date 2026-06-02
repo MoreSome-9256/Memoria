@@ -20,6 +20,7 @@ class UnifiedAnalysisProgress {
     required this.queueSize,
     required this.message,
     required this.elapsedMs,
+    this.startedAtMs = 0,
     this.scanDone = false,
     this.scanStopped = false,
     this.analysisEnabled = true,
@@ -118,15 +119,17 @@ class UnifiedAnalysisProgress {
   final int queueSize;
   final String message;
   final int elapsedMs;
+  final int startedAtMs;
   final bool scanDone;
   final bool scanStopped;
   final bool analysisEnabled;
 
-  bool get isVisible =>
-      isRunning ||
-      stage == UnifiedAnalysisStage.completed ||
-      stage == UnifiedAnalysisStage.failed ||
-      scanStopped;
+  bool get isVisible {
+    if (stage == UnifiedAnalysisStage.completed) {
+      return false;
+    }
+    return isRunning || stage == UnifiedAnalysisStage.failed || scanStopped;
+  }
   bool get isScanning => stage == UnifiedAnalysisStage.scanning;
   bool get isProcessing => stage == UnifiedAnalysisStage.processing;
   bool get hasCacheWork =>
@@ -168,6 +171,8 @@ class UnifiedAnalysisProgress {
   }
 
   Duration? get estimatedRemainingDuration {
+    if (stage == UnifiedAnalysisStage.warmingUp) return null;
+
     final scanRemaining = _estimatedRemaining(
       completed: scanCompleted,
       total: scanTotal,
@@ -181,7 +186,16 @@ class UnifiedAnalysisProgress {
     return scanRemaining > aiRemaining ? scanRemaining : aiRemaining;
   }
 
-  Duration get elapsed => Duration(milliseconds: elapsedMs);
+  Duration get elapsed {
+    if (startedAtMs > 0 && isRunning) {
+      final runningElapsed =
+          DateTime.now().millisecondsSinceEpoch - startedAtMs;
+      if (runningElapsed > elapsedMs) {
+        return Duration(milliseconds: runningElapsed);
+      }
+    }
+    return Duration(milliseconds: elapsedMs);
+  }
 
   double? _averageSeconds({required int completed}) {
     if (completed <= 0 || elapsedMs <= 0) return null;
@@ -209,6 +223,7 @@ class UnifiedAnalysisProgress {
     int? queueSize,
     String? message,
     int? elapsedMs,
+    int? startedAtMs,
     bool? scanDone,
     bool? scanStopped,
     bool? analysisEnabled,
@@ -224,6 +239,7 @@ class UnifiedAnalysisProgress {
       queueSize: queueSize ?? this.queueSize,
       message: message ?? this.message,
       elapsedMs: elapsedMs ?? this.elapsedMs,
+      startedAtMs: startedAtMs ?? this.startedAtMs,
       scanDone: scanDone ?? this.scanDone,
       scanStopped: scanStopped ?? this.scanStopped,
       analysisEnabled: analysisEnabled ?? this.analysisEnabled,

@@ -84,10 +84,19 @@ class UnifiedAnalysisProgressStore {
     final aiCompleted = math.max(previous.aiCompleted, next.aiCompleted);
     final aiTotal = math.max(previous.aiTotal, next.aiTotal);
     final aiFailed = math.max(previous.aiFailed, next.aiFailed);
+    final startedAtMs = next.startedAtMs > 0
+        ? next.startedAtMs
+        : previous.startedAtMs;
+
+    final mergedStage = _mergeStage(previous, next);
+    final mergedIsTerminal = mergedStage == UnifiedAnalysisStage.completed ||
+        mergedStage == UnifiedAnalysisStage.failed;
 
     return UnifiedAnalysisProgress(
-      stage: _mergeStage(previous, next),
-      isRunning: next.isRunning || previous.isRunning,
+      stage: mergedStage,
+      isRunning: mergedIsTerminal
+          ? false
+          : (next.isRunning || previous.isRunning),
       scanCompleted: scanCompleted,
       scanTotal: scanTotal,
       aiCompleted: aiCompleted,
@@ -96,6 +105,7 @@ class UnifiedAnalysisProgressStore {
       queueSize: next.queueSize,
       message: next.message.isNotEmpty ? next.message : previous.message,
       elapsedMs: math.max(previous.elapsedMs, next.elapsedMs),
+      startedAtMs: startedAtMs,
       scanDone: previous.scanDone || next.scanDone,
       scanStopped: previous.scanStopped || next.scanStopped,
       analysisEnabled: next.analysisEnabled,
@@ -136,6 +146,7 @@ class UnifiedAnalysisProgressStore {
       'queueSize': p.queueSize,
       'message': p.message,
       'elapsedMs': p.elapsedMs,
+      'startedAtMs': p.startedAtMs,
       'scanDone': p.scanDone,
       'scanStopped': p.scanStopped,
       'analysisEnabled': p.analysisEnabled,
@@ -159,6 +170,7 @@ class UnifiedAnalysisProgressStore {
         queueSize: json['queueSize'] as int? ?? 0,
         message: json['message'] as String? ?? '',
         elapsedMs: json['elapsedMs'] as int? ?? 0,
+        startedAtMs: json['startedAtMs'] as int? ?? 0,
         scanDone: json['scanDone'] == true,
         scanStopped: json['scanStopped'] == true,
         analysisEnabled: json['analysisEnabled'] != false,

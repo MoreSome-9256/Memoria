@@ -76,8 +76,8 @@ enum _AlbumViewMode { tags, moments }
 class _AlbumPageState extends State<AlbumPage> {
   static const double _contentBottomInset = 118;
   static const int _tagBrowserYieldChunk = 120;
-  bool _isClearingCache = false;
   bool _isStartingImport = false;
+  bool _isDeletingCurrentTask = false;
   bool _tagBrowserAiRecoveryTriggered = false;
   bool _hiddenPendingAnalysisPromptForSession = false;
   bool _autoResumePendingStarted = false;
@@ -93,6 +93,8 @@ class _AlbumPageState extends State<AlbumPage> {
   final GlobalKey _momentsFastScrollerTrackKey = GlobalKey();
   _AlbumViewMode _viewMode = _AlbumViewMode.tags;
   Timer? _momentsFastScrollerHideTimer;
+  Timer? _foregroundCardElapsedTimer;
+  DateTime? _foregroundCardStartedAt;
   bool _showMomentsFastScroller = false;
   bool _draggingMomentsFastScroller = false;
   String? _momentsFastScrollerLabel;
@@ -106,7 +108,12 @@ class _AlbumPageState extends State<AlbumPage> {
     bool clearCacheFirst = false,
     bool analyzeWithAi = true,
   }) {
-    if (_isClearingCache) {
+    final foregroundProgress =
+        UnifiedAnalysisProgressStore.instance.progress.value;
+    if (_isStartingImport ||
+        AlbumRefreshService().isRunning ||
+        foregroundProgress.isRunning ||
+        AIService().isAnalyzing) {
       return;
     }
     setState(() => _isStartingImport = true);
@@ -163,6 +170,16 @@ class _AlbumPageState extends State<AlbumPage> {
         }
       }),
     );
+  }
+
+  void _handleScanButtonPressed() {
+    if (_isStartingImport ||
+        AlbumRefreshService().isRunning ||
+        UnifiedAnalysisProgressStore.instance.progress.value.isRunning ||
+        AIService().isAnalyzing) {
+      return;
+    }
+    _showRefreshOptions();
   }
 
   Future<void> _refreshPendingAnalysisPrompt() async {
@@ -248,49 +265,47 @@ class _AlbumPageState extends State<AlbumPage> {
     );
   }
 
-  Future<void> _clearLocalCacheOnly() async {
-    if (_isClearingCache || AlbumRefreshService().isRunning) return;
-
+  Future<void> _deleteCurrentAnalysisTask() async {
+    if (_isDeletingCurrentTask) {
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('清空本地缓存'),
-          content: const Text(
-            '将清空本 app 的本地数据库缓存（ObjectBox，包括照片、事件、故事、已扫描结果与向量索引），'
-            '不会删除或修改手机系统相册中的任何图片。是否继续？',
+      builder: (context) => AlertDialog(
+        title: const Text('删除当前任务'),
+        content: const Text(
+          '将中断当前前台任务，并清空本地数据库中的 AI 分析结果、候选队列、事件聚类、向量索引和低价值标记。照片记录和系统相册原图不会删除。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('继续'),
-            ),
-          ],
-        );
-      },
+          FilledButton.icon(
+            onPressed: () => Navigator.of(context).pop(true),
+            icon: const Icon(Icons.delete_sweep_outlined),
+            label: const Text('删除任务'),
+          ),
+        ],
+      ),
     );
-
     if (confirmed != true || !mounted) {
       return;
     }
 
-    setState(() => _isClearingCache = true);
+    setState(() => _isDeletingCurrentTask = true);
     try {
-      await AIService().endCurrentRoundSafely();
-      await PhotoService().clearAllCachedData();
+      final clearedCount = await UnifiedAnalysisPipelineService()
+          .deleteCurrentTaskAndClearAnalysisData();
       AIService().clearPendingJunkCleanupReport();
-      _lastPromptedJunkCleanupReportId = null;
+      await _refreshPendingAnalysisPrompt();
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('已清空本地缓存。系统相册原图未受影响，可点击右上角 + 重新导入。'),
+          content: Text('已删除当前任务，并清空 $clearedCount 张照片的 AI 分析字段。'),
         ),
       );
     } catch (error) {
@@ -300,12 +315,12 @@ class _AlbumPageState extends State<AlbumPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('清空本地缓存失败: $error'),
+          content: Text('删除当前任务失败: $error'),
         ),
       );
     } finally {
       if (mounted) {
-        setState(() => _isClearingCache = false);
+        setState(() => _isDeletingCurrentTask = false);
       }
     }
   }
@@ -383,10 +398,6 @@ class _AlbumPageState extends State<AlbumPage> {
   }
 
   Future<void> _showRefreshOptions() async {
-    if (_isClearingCache) {
-      return;
-    }
-
     // ── 确保有相册权限 ──
     // 先申请图片权限
     final imageState = await _requestPhotoPermission(
@@ -579,10 +590,10 @@ class _AlbumPageState extends State<AlbumPage> {
     if (!mounted) {
       return;
     }
-    await _deleteSelectedJunkRecords(report, selectedPhotoIds ?? const <int>[]);
+    await _markSelectedJunkRecords(report, selectedPhotoIds ?? const <int>[]);
   }
 
-  Future<void> _deleteSelectedJunkRecords(
+  Future<void> _markSelectedJunkRecords(
     JunkPhotoCleanupReport report,
     List<int> selectedPhotoIds,
   ) async {
@@ -590,12 +601,15 @@ class _AlbumPageState extends State<AlbumPage> {
       final selectedCandidates = report.candidates
           .where((candidate) => selectedPhotoIds.contains(candidate.photoId))
           .toList(growable: false);
-      final removedCount = await JunkPhotoCleanupService()
-          .removeCandidatesFromLocalIndex(selectedCandidates);
+      final markedCount = await JunkPhotoCleanupService()
+          .markCandidatesAsLowValue(selectedCandidates);
       final remainingCandidates = report.candidates
           .where((candidate) => !selectedPhotoIds.contains(candidate.photoId))
           .toList(growable: false);
       if (remainingCandidates.isNotEmpty) {
+        await JunkPhotoCleanupService().markCandidatesAsKept(
+          remainingCandidates,
+        );
         AIService().markJunkCandidatesAsKept(
           remainingCandidates.map((candidate) => candidate.photoId),
         );
@@ -605,13 +619,13 @@ class _AlbumPageState extends State<AlbumPage> {
       }
       AIService().clearPendingJunkCleanupReport();
       final keptCount = remainingCandidates.length;
-      final message = removedCount <= 0
+      final message = markedCount <= 0
           ? keptCount > 0
-                ? '未删除本地记录，已保留 $keptCount 张低质量候选，不会自动重新打标。'
-                : '没有删除任何本地数据库记录。'
+                ? '未标记新的低价值照片，已保留 $keptCount 张候选，不会自动重新打标。'
+                : '没有标记新的低价值照片。'
           : keptCount > 0
-          ? '已删除 $removedCount 张低质量图片记录，并保留其余 $keptCount 张候选，不会自动重新打标。'
-          : '已从本地数据库删除 $removedCount 张低质量图片记录，系统相册原图未受影响。';
+          ? '已标记 $markedCount 张低价值照片，并保留其余 $keptCount 张候选，不会自动重新打标。'
+          : '已标记 $markedCount 张低价值照片，可在低价值照片回收站查看。';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(behavior: SnackBarBehavior.floating, content: Text(message)),
       );
@@ -622,7 +636,7 @@ class _AlbumPageState extends State<AlbumPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('删除本地数据库记录失败: $error'),
+          content: Text('标记低价值照片失败: $error'),
         ),
       );
     }
@@ -638,6 +652,14 @@ class _AlbumPageState extends State<AlbumPage> {
     AIService().junkCleanupReportListenable.addListener(
       _onJunkCleanupReportChanged,
     );
+    UnifiedAnalysisProgressStore.instance.progress.addListener(
+      _onForegroundProgressForCardChanged,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _onForegroundProgressForCardChanged();
+      }
+    });
     final uiEventsSource = _debounceStream<List<EventEntity>>(
       EventService().watchEvents(),
       const Duration(milliseconds: 420),
@@ -717,12 +739,57 @@ class _AlbumPageState extends State<AlbumPage> {
     AIService().junkCleanupReportListenable.removeListener(
       _onJunkCleanupReportChanged,
     );
+    UnifiedAnalysisProgressStore.instance.progress.removeListener(
+      _onForegroundProgressForCardChanged,
+    );
     _pendingAnalysisSubscription?.cancel();
     _momentsFastScrollerHideTimer?.cancel();
+    _foregroundCardElapsedTimer?.cancel();
     _momentsScrollController.dispose();
     _semanticSearchController.dispose();
     _semanticSearchFocusNode.dispose();
     super.dispose();
+  }
+
+  void _onForegroundProgressForCardChanged() {
+    final progress = UnifiedAnalysisProgressStore.instance.progress.value;
+    final syncedElapsed = Duration(milliseconds: progress.elapsedMs);
+    if (!progress.isVisible) {
+      _foregroundCardElapsedTimer?.cancel();
+      _foregroundCardElapsedTimer = null;
+      if (_foregroundCardStartedAt != null && mounted) {
+        setState(() => _foregroundCardStartedAt = null);
+      }
+      return;
+    }
+
+    final syncedStartedAt = progress.startedAtMs > 0
+        ? DateTime.fromMillisecondsSinceEpoch(progress.startedAtMs)
+        : DateTime.now().subtract(syncedElapsed);
+    final shouldResetStart =
+        _foregroundCardStartedAt == null ||
+        _foregroundCardStartedAt!.difference(syncedStartedAt).abs() >
+            const Duration(seconds: 2);
+    if (shouldResetStart) {
+      if (mounted) {
+        setState(() => _foregroundCardStartedAt = syncedStartedAt);
+      } else {
+        _foregroundCardStartedAt = syncedStartedAt;
+      }
+    }
+
+    if (progress.isRunning) {
+      _foregroundCardElapsedTimer ??=
+          Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {});
+      });
+    } else {
+      _foregroundCardElapsedTimer?.cancel();
+      _foregroundCardElapsedTimer = null;
+    }
   }
 
   void _onJunkCleanupReportChanged() {
@@ -820,28 +887,35 @@ class _AlbumPageState extends State<AlbumPage> {
             valueListenable: UnifiedAnalysisProgressStore.instance.progress,
             builder: (context, foregroundProgress, _) {
               final isBusy =
-                  _isClearingCache ||
                   _isStartingImport ||
-                  AlbumRefreshService().isRunning ||
-                  foregroundProgress.isRunning;
+                  AlbumRefreshService().isRunning;
+              final isLaunching = _isStartingImport ||
+                  AlbumRefreshService().isRunning;
               return Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.cleaning_services),
-                    onPressed: isBusy ? null : _clearLocalCacheOnly,
-                    tooltip: '清空本地缓存',
+                    icon: _isDeletingCurrentTask
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.cleaning_services),
+                    onPressed: _isDeletingCurrentTask
+                        ? null
+                        : () => unawaited(_deleteCurrentAnalysisTask()),
+                    tooltip: '删除当前任务并清空 AI 分析字段',
                   ),
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: IconButton.filledTonal(
-                      icon: isBusy
+                      icon: isLaunching
                           ? const SizedBox.square(
                               dimension: 20,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.add, size: 22),
-                      onPressed: isBusy ? null : _showRefreshOptions,
+                      onPressed: isBusy ? null : _handleScanButtonPressed,
                       tooltip: '选择刷新范围',
                     ),
                   ),
@@ -1050,11 +1124,27 @@ class _AlbumPageState extends State<AlbumPage> {
   Widget _buildUnifiedWorkProgressBanner(UnifiedAnalysisProgress progress) {
     final cacheFraction = progress.scanFraction;
     final aiFraction = progress.aiFraction;
-    final elapsedLabel = _formatDurationCompact(
-      Duration(milliseconds: progress.elapsedMs),
-    );
-    final remainingLabel = progress.estimatedRemainingDuration != null
-        ? _formatDurationCompact(progress.estimatedRemainingDuration!)
+    final startedAt = _foregroundCardStartedAt ??
+        (progress.startedAtMs > 0
+            ? DateTime.fromMillisecondsSinceEpoch(progress.startedAtMs)
+            : null);
+    final displayedElapsed = startedAt != null && progress.isRunning
+        ? DateTime.now().difference(startedAt)
+        : Duration(milliseconds: progress.elapsedMs);
+    final elapsedLabel = _formatDurationCompact(displayedElapsed);
+    final syncedElapsed = Duration(milliseconds: progress.elapsedMs);
+    final localTickDelta = displayedElapsed > syncedElapsed
+        ? displayedElapsed - syncedElapsed
+        : Duration.zero;
+    final estimatedRemaining = progress.estimatedRemainingDuration;
+    final displayedRemaining =
+        estimatedRemaining != null && estimatedRemaining > localTickDelta
+        ? estimatedRemaining - localTickDelta
+        : estimatedRemaining != null
+        ? Duration.zero
+        : null;
+    final remainingLabel = displayedRemaining != null
+        ? _formatDurationCompact(displayedRemaining)
         : null;
     
     final isWarmingUp = progress.stage == UnifiedAnalysisStage.warmingUp;

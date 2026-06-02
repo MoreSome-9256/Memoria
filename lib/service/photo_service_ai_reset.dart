@@ -3,7 +3,61 @@
 part of 'photo_service.dart';
 
 extension PhotoServiceAiReset on PhotoService {
+  Future<int> clearAllAiAnalysisData() async {
+    final query = _photoBox.query().build();
+    final photos = query.find();
+    query.close();
+    if (photos.isEmpty) {
+      _store.runInTransaction(TxMode.write, () {
+        _albumBookBox.removeAll();
+        _recommendationBox.removeAll();
+        _storyBox.removeAll();
+        _eventBox.removeAll();
+        _faceBox.removeAll();
+      });
+      _photoEmbeddingIndexRepository.deleteAll();
+      _faceEmbeddingIndexRepository.deleteAll();
+      return 0;
+    }
+
+    for (final photo in photos) {
+      photo.isAiAnalyzed = false;
+      photo.isAiAnalysisCandidate = false;
+      photo.aiTags = <String>[];
+      photo.aiCaption = null;
+      photo.imageEmbedding = null;
+      photo.ocrText = null;
+      photo.ocrTags = <String>[];
+      photo.faceCount = 0;
+      photo.smileProb = 0.0;
+      photo.joyScore = 0.0;
+      photo.eventId = null;
+    }
+
+    _store.runInTransaction(TxMode.write, () {
+      _albumBookBox.removeAll();
+      _recommendationBox.removeAll();
+      _storyBox.removeAll();
+      _eventBox.removeAll();
+      _faceBox.removeAll();
+      _photoBox.putMany(photos);
+    });
+    _photoEmbeddingIndexRepository.deleteAll();
+    _faceEmbeddingIndexRepository.deleteAll();
+
+    debugPrint('🧹 已清空 ${photos.length} 张照片的 AI 分析字段和派生索引');
+    return photos.length;
+  }
+
   Future<List<PhotoEntity>> loadJunkCandidatePhotos() async {
+    return _loadPhotosWithAiTag(JunkPhotoFilterService.junkCandidateTag);
+  }
+
+  Future<List<PhotoEntity>> loadPendingJunkCandidatePhotos() async {
+    return _loadPhotosWithAiTag(JunkPhotoFilterService.pendingJunkCandidateTag);
+  }
+
+  Future<List<PhotoEntity>> _loadPhotosWithAiTag(String tag) async {
     final query = _photoBox
         .query(PhotoEntity_.isAiAnalyzed.equals(true))
         .order(PhotoEntity_.timestamp, flags: Order.descending)
@@ -13,8 +67,7 @@ extension PhotoServiceAiReset on PhotoService {
     final junkPhotos = photos
         .where(
           (photo) =>
-              photo.aiTags?.contains(JunkPhotoFilterService.junkCandidateTag) ??
-              false,
+              photo.aiTags?.contains(tag) ?? false,
         )
         .toList(growable: false);
     return reconcileAccessiblePhotos(junkPhotos);
@@ -38,6 +91,7 @@ extension PhotoServiceAiReset on PhotoService {
       '视频',
       memoriaOtherLabel,
       JunkPhotoFilterService.junkCandidateTag,
+      JunkPhotoFilterService.pendingJunkCandidateTag,
     };
 
     var updatedCount = 0;
@@ -46,8 +100,9 @@ extension PhotoServiceAiReset on PhotoService {
     for (final photo in photos) {
       final aiTags = photo.aiTags ?? const <String>[];
       final isJunkCandidate = aiTags.contains(
-        JunkPhotoFilterService.junkCandidateTag,
-      );
+            JunkPhotoFilterService.junkCandidateTag,
+          ) ||
+          aiTags.contains(JunkPhotoFilterService.pendingJunkCandidateTag);
       final needsReset =
           photo.isAiAnalyzed &&
           !isJunkCandidate &&

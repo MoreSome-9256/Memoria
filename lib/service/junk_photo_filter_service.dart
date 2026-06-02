@@ -1,4 +1,4 @@
-/// 垃圾照片过滤服务，用于识别截图、模糊图和低质量内容。
+/// 垃圾照片过滤服务，用于识别严重模糊、遮挡和低事件价值内容。
 
 import 'dart:math' as math;
 
@@ -131,6 +131,7 @@ class JunkPhotoFilterService {
   JunkPhotoFilterService._internal();
 
   static const String junkCandidateTag = '__junk_candidate__';
+  static const String pendingJunkCandidateTag = '__junk_pending__';
 
   static final JunkPhotoFilterService _instance =
       JunkPhotoFilterService._internal();
@@ -139,54 +140,6 @@ class JunkPhotoFilterService {
 
   static const List<JunkPhotoCategoryDefinition> _definitions =
       <JunkPhotoCategoryDefinition>[
-        JunkPhotoCategoryDefinition(
-          id: 'screenshot',
-          label: '截图/界面',
-          description: '聊天截图、支付页、设置页、APP 界面一类的屏幕内容。',
-          prototypePrompts: <String>[
-            'a mobile phone screenshot',
-            'a screenshot of a chat application',
-            'a screenshot of a payment app',
-            'a screenshot of a settings page',
-            'a screenshot of a shopping app interface',
-          ],
-          threshold: 0.24,
-          screenshotBoost: 0.08,
-          ocrBoostThreshold: 24,
-          ocrBoost: 0.02,
-          extraKeywordHints: <String>['screenshot', 'screen', 'ui'],
-        ),
-        JunkPhotoCategoryDefinition(
-          id: 'document',
-          label: '文档/表格',
-          description: '纸质文件、课件、报表、白板文字、拍屏文档等。',
-          prototypePrompts: <String>[
-            'a photo of a printed document',
-            'a scanned paper document',
-            'a close-up photo of text on paper',
-            'a spreadsheet or report document',
-            'a photo of presentation slides on a screen',
-          ],
-          threshold: 0.255,
-          ocrBoostThreshold: 40,
-          ocrBoost: 0.035,
-          extraKeywordHints: <String>['document', 'paper', 'text'],
-        ),
-        JunkPhotoCategoryDefinition(
-          id: 'receipt',
-          label: '票据/账单',
-          description: '小票、发票、快递面单、支付凭证、收据等工具型图片。',
-          prototypePrompts: <String>[
-            'a photo of a receipt',
-            'a bill or invoice document',
-            'a shipping label on a package',
-            'a payment receipt with text',
-          ],
-          threshold: 0.27,
-          ocrBoostThreshold: 28,
-          ocrBoost: 0.03,
-          extraKeywordHints: <String>['receipt', 'invoice', 'bill'],
-        ),
         JunkPhotoCategoryDefinition(
           id: 'code',
           label: '二维码/海报码',
@@ -250,23 +203,6 @@ class JunkPhotoFilterService {
           ocrBoostThreshold: 16,
           ocrBoost: 0.02,
           extraKeywordHints: <String>['广告', '海报', '推广', 'promo', 'sale'],
-        ),
-        JunkPhotoCategoryDefinition(
-          id: 'internet_content',
-          label: '网页/新闻/社交媒体',
-          description: '网页、新闻报道、社交媒体、地图、行情图、聊天记录和互联网超文本截图。',
-          prototypePrompts: <String>[
-            'a screenshot of a news article webpage',
-            'a screenshot of a social media feed',
-            'a stock market candlestick chart screenshot',
-            'a map application screenshot',
-            'a browser webpage screenshot with text',
-          ],
-          threshold: 0.26,
-          screenshotBoost: 0.06,
-          ocrBoostThreshold: 20,
-          ocrBoost: 0.025,
-          extraKeywordHints: <String>['http', 'www', '新闻', '地图', 'k线', '微博'],
         ),
         JunkPhotoCategoryDefinition(
           id: 'abstract_low_value',

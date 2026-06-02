@@ -123,8 +123,6 @@ class AlbumRefreshService {
       );
       rethrow;
     } finally {
-      // 短暂停留让用户看到 handoff 完成消息，再回到 idle
-      await Future<void>.delayed(const Duration(milliseconds: 1800));
       _progressNotifier.value = AlbumRefreshProgress.idle();
       _isRunning = false;
       debugPrint(

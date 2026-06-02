@@ -14,8 +14,6 @@ class AiModelWeightsPage extends StatefulWidget {
 
 class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
   late Future<List<AiModelWeightStatus>> _future;
-  final Map<AiModelWeightId, double> _downloadProgress = {};
-  final Map<AiModelWeightId, TaskStatus> _downloadStatus = {};
 
   @override
   void initState() {
@@ -42,61 +40,44 @@ class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
   }
 
   Future<void> _download(AiModelWeightId id) async {
-    setState(() {
-      _downloadProgress[id] = 0.0;
-      _downloadStatus[id] = TaskStatus.running;
-    });
-    
-    await AiModelWeightService.instance.downloadWeights(
-      id,
-      onProgress: (progress, status) {
-        if (mounted) {
-          setState(() {
-            _downloadProgress[id] = progress;
-            _downloadStatus[id] = status;
-          });
-        }
-      },
-    );
-    
-    if (!mounted) return;
-    _reload();
-    
-    if (_downloadStatus[id] == TaskStatus.complete) {
+    try {
+      await AiModelWeightService.instance.downloadWeights(id);
+      if (!mounted) return;
+      _reload();
+      final snapshot =
+          AiModelWeightService.instance.downloadsListenable.value[id];
+      if (snapshot?.status == TaskStatus.complete) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text('已下载 ${id.label}'),
+          ),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      _reload();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('已下载 ${id.label}'),
+          content: Text('${id.label} 下载失败: $error'),
         ),
       );
     }
   }
-  
+
   Future<void> _pauseDownload(AiModelWeightId id) async {
     await AiModelWeightService.instance.pauseDownload(id);
-    if (mounted) {
-      setState(() {
-        _downloadStatus[id] = TaskStatus.paused;
-      });
-    }
   }
-  
+
   Future<void> _resumeDownload(AiModelWeightId id) async {
     await AiModelWeightService.instance.resumeDownload(id);
-    if (mounted) {
-      setState(() {
-        _downloadStatus[id] = TaskStatus.running;
-      });
-    }
   }
-  
+
   Future<void> _cancelDownload(AiModelWeightId id) async {
     await AiModelWeightService.instance.cancelDownload(id);
     if (mounted) {
-      setState(() {
-        _downloadProgress.remove(id);
-        _downloadStatus.remove(id);
-      });
+      _reload();
     }
   }
 
@@ -104,84 +85,140 @@ class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('AI 模型权重')),
-      body: FutureBuilder<List<AiModelWeightStatus>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final statuses = snapshot.data!;
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: statuses.length,
-            separatorBuilder: (context, index) => const Divider(height: 1),
-            itemBuilder: (context, index) {
-              final status = statuses[index];
-              final id = status.id;
-              return ListTile(
-                contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                leading: Icon(
-                  status.checkPassed
-                      ? Icons.check_circle_outline
-                      : Icons.error_outline,
-                  color: status.checkPassed ? Colors.green : Colors.red,
-                ),
-                title: Text(id.label),
-                subtitle: Text(
-                  '${id.description}\n'
-                  '当前检查：${status.checkPassed ? '可推理' : '缺少权重'}'
-                  '${status.hasDownloadedFiles ? ' · 已下载 ${status.presentFiles.length} 个文件' : ''}',
-                ),
-                isThreeLine: true,
-                trailing: _buildTrailing(context, id, status),
+      body:
+          ValueListenableBuilder<
+            Map<AiModelWeightId, AiModelWeightDownloadSnapshot>
+          >(
+            valueListenable: AiModelWeightService.instance.downloadsListenable,
+            builder: (context, downloads, _) {
+              return FutureBuilder<List<AiModelWeightStatus>>(
+                future: _future,
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final statuses = snapshot.data!;
+                  return ListView.separated(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: statuses.length,
+                    separatorBuilder: (context, index) =>
+                        const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final status = statuses[index];
+                      final id = status.id;
+                      final download = downloads[id];
+                      return ListTile(
+                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                        leading: Icon(
+                          _leadingIcon(status, download),
+                          color: _leadingColor(context, status, download),
+                        ),
+                        title: Text(id.label),
+                        subtitle: Text(_subtitleFor(status, download)),
+                        isThreeLine: true,
+                        trailing: _buildTrailing(context, id, status, download),
+                      );
+                    },
+                  );
+                },
               );
             },
-          );
-        },
-      ),
+          ),
     );
   }
-  
-  Widget _buildTrailing(BuildContext context, AiModelWeightId id, AiModelWeightStatus status) {
-    final isDownloading = AiModelWeightService.instance.isDownloading(id);
-    final progress = _downloadProgress[id] ?? 0.0;
-    final downloadStatus = _downloadStatus[id];
-    
-    if (isDownloading || downloadStatus != null) {
+
+  IconData _leadingIcon(
+    AiModelWeightStatus status,
+    AiModelWeightDownloadSnapshot? download,
+  ) {
+    if (download?.isActive == true) return Icons.downloading;
+    if (download?.status == TaskStatus.failed) return Icons.error_outline;
+    if (status.checkPassed) return Icons.check_circle_outline;
+    if (status.hasDownloadedFiles) return Icons.pending_outlined;
+    return Icons.error_outline;
+  }
+
+  Color _leadingColor(
+    BuildContext context,
+    AiModelWeightStatus status,
+    AiModelWeightDownloadSnapshot? download,
+  ) {
+    if (download?.status == TaskStatus.failed) {
+      return Theme.of(context).colorScheme.error;
+    }
+    if (download?.isActive == true) {
+      return Theme.of(context).colorScheme.primary;
+    }
+    if (status.checkPassed) return Colors.green;
+    if (status.hasDownloadedFiles) return Colors.orange;
+    return Theme.of(context).colorScheme.error;
+  }
+
+  String _subtitleFor(
+    AiModelWeightStatus status,
+    AiModelWeightDownloadSnapshot? download,
+  ) {
+    final parts = <String>[
+      status.id.description,
+      '当前检查：${status.checkPassed ? '可推理' : '缺少权重'}',
+    ];
+    if (status.hasDownloadedFiles) {
+      parts.add(
+        '已下载 ${status.presentFiles.length}/${status.id.relativePaths.length} 个文件',
+      );
+    }
+    if (download != null && download.isActive) {
+      parts.add(
+        '${download.message} · ${download.completedFiles}/${download.totalFiles} 文件',
+      );
+      final currentFile = download.currentFile;
+      if (currentFile != null && currentFile.isNotEmpty) {
+        parts.add(currentFile);
+      }
+    } else if (download?.status == TaskStatus.failed) {
+      parts.add(download!.error ?? download.message);
+    }
+    return parts.join('\n');
+  }
+
+  Widget _buildTrailing(
+    BuildContext context,
+    AiModelWeightId id,
+    AiModelWeightStatus status,
+    AiModelWeightDownloadSnapshot? download,
+  ) {
+    if (download != null && download.isActive) {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (downloadStatus == TaskStatus.running ||
-              downloadStatus == TaskStatus.paused)
-            SizedBox(
-              width: 100,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  LinearProgressIndicator(value: progress),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${(progress * 100).toStringAsFixed(0)}%',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
+          SizedBox(
+            width: 116,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                LinearProgressIndicator(value: download.progress),
+                const SizedBox(height: 4),
+                Text(
+                  '${(download.progress * 100).toStringAsFixed(0)}%',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
             ),
+          ),
           const SizedBox(width: 8),
-          if (downloadStatus == TaskStatus.running)
+          if (download.canPause)
             IconButton(
               onPressed: () => _pauseDownload(id),
               icon: const Icon(Icons.pause),
               tooltip: '暂停',
             ),
-          if (downloadStatus == TaskStatus.paused)
+          if (download.canResume)
             IconButton(
               onPressed: () => _resumeDownload(id),
               icon: const Icon(Icons.play_arrow),
               tooltip: '继续',
             ),
-          if (downloadStatus == TaskStatus.running ||
-              downloadStatus == TaskStatus.paused)
+          if (download.canCancel)
             IconButton(
               onPressed: () => _cancelDownload(id),
               icon: const Icon(Icons.cancel),
@@ -190,16 +227,13 @@ class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
         ],
       );
     }
-    
+
     if (status.hasDownloadedFiles) {
-      return TextButton(
-        onPressed: () => _delete(id),
-        child: const Text('删除'),
-      );
+      return TextButton(onPressed: () => _delete(id), child: const Text('删除'));
     }
-    
+
     return TextButton(
-      onPressed: () => _download(id),
+      onPressed: () => unawaited(_download(id)),
       child: const Text('下载'),
     );
   }

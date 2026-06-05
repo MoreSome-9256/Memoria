@@ -7,3 +7,6 @@
 [submodule "third_party/flutter_foreground_task"]
 	path = third_party/flutter_foreground_task
 	url = https://github.com/szw0407/flutter_foreground_task.git
+[submodule "third_party/music_feat_analyzer"]
+	path = third_party/music_feat_analyzer
+	url = https://github.com/szw0407/music_feature_analyzer.git

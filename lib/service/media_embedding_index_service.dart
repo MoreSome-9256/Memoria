@@ -199,7 +199,6 @@ class MediaEmbeddingIndexService {
       final embedding = await MediaEmbeddingService().embedPreparedMediaBytes(
         kind: kind,
         imageOrThumbnailBytes: bytes,
-        mobileViClipEnabled: settings.mobileViClipEnabled,
         backend: backend,
         liteRt: MobileClipLiteRtService.withRuntimeOptions(
           accelerator: settings.inferenceAccelerator,

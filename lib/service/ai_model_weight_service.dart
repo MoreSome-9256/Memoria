@@ -7,32 +7,21 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-enum AiModelWeightId {
-  mobileclip2LiteRt,
-  mobileclipNcnn,
-  mobileViClipSmall,
-  smolVlm2,
-}
+enum AiModelWeightId { mobileclip2LiteRt, smolVlm2 }
 
 extension AiModelWeightIdX on AiModelWeightId {
   String get storageKey => switch (this) {
     AiModelWeightId.mobileclip2LiteRt => 'mobileclip2_litert',
-    AiModelWeightId.mobileclipNcnn => 'mobileclip_ncnn',
-    AiModelWeightId.mobileViClipSmall => 'mobileviclip_small',
     AiModelWeightId.smolVlm2 => 'smolvlm2',
   };
 
   String get label => switch (this) {
     AiModelWeightId.mobileclip2LiteRt => 'MobileCLIP2 LiteRT',
-    AiModelWeightId.mobileclipNcnn => 'MobileCLIP NCNN',
-    AiModelWeightId.mobileViClipSmall => 'MobileViCLIP Small',
     AiModelWeightId.smolVlm2 => 'SmolVLM2 描述模型',
   };
 
   String get description => switch (this) {
-    AiModelWeightId.mobileclip2LiteRt => '图片标签、文本向量和图片语义检索',
-    AiModelWeightId.mobileclipNcnn => 'NCNN/Vulkan 方向的图片向量后端',
-    AiModelWeightId.mobileViClipSmall => '视频和动态照片的时序向量',
+    AiModelWeightId.mobileclip2LiteRt => '图片、视频/GIF 帧聚合、文本向量和语义检索',
     AiModelWeightId.smolVlm2 => '开发者工具中的图片/视频描述',
   };
 
@@ -40,17 +29,6 @@ extension AiModelWeightIdX on AiModelWeightId {
     AiModelWeightId.mobileclip2LiteRt => const <String>[
       'mobileclip2/s2/mobileclip2_s2_image.tflite',
       'mobileclip2/s2/mobileclip2_s2_text.tflite',
-    ],
-    AiModelWeightId.mobileclipNcnn => const <String>[
-      'ncnn/mobileclip_s2/image_encoder.ncnn.param',
-      'ncnn/mobileclip_s2/image_encoder.ncnn.bin',
-      'ncnn/mobileclip_s2/text_encoder.ncnn.param',
-      'ncnn/mobileclip_s2/text_encoder.ncnn.bin',
-      'ncnn/mobileclip_s2/projection_layer.ncnn.param',
-      'ncnn/mobileclip_s2/projection_layer.ncnn.bin',
-    ],
-    AiModelWeightId.mobileViClipSmall => const <String>[
-      'mobileviclip/small/mobileviclip_small_vision.onnx',
     ],
     AiModelWeightId.smolVlm2 => const <String>[
       'smolvlm2/smolvlm2.gguf',
@@ -62,17 +40,6 @@ extension AiModelWeightIdX on AiModelWeightId {
     AiModelWeightId.mobileclip2LiteRt => const <String>[
       'https://memoria-static-ai-models.earthnpc.online/MobileCLIP2/mobileclip2_s2_image.tflite',
       'https://memoria-static-ai-models.earthnpc.online/MobileCLIP2/mobileclip2_s2_text.tflite',
-    ],
-    AiModelWeightId.mobileclipNcnn => const <String>[
-      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/image_encoder.ncnn.param',
-      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/image_encoder.ncnn.bin',
-      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/text_encoder.ncnn.param',
-      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/text_encoder.ncnn.bin',
-      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/projection_layer.ncnn.param',
-      'https://memoria-static-ai-models.earthnpc.online/NCNN/mobileclip_s2/projection_layer.ncnn.bin',
-    ],
-    AiModelWeightId.mobileViClipSmall => const <String>[
-      'https://memoria-static-ai-models.earthnpc.online/MobileViCLIP/mobileviclip_small_vision.onnx',
     ],
     AiModelWeightId.smolVlm2 => const <String>[
       'https://memoria-static-ai-models.earthnpc.online/SmolVLM2/SmolVLM2-256M-Video-Instruct-Q8_0.gguf',

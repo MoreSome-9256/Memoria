@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   amplify_db_common
   audioplayers_windows
+  ffmpeg_kit_flutter_new
   file_selector_windows
   gal
   objectbox_flutter_libs
@@ -19,7 +20,6 @@ list(APPEND FLUTTER_FFI_PLUGIN_LIST
   flutter_local_notifications_windows
   jni
   onnxruntime
-  tflite_flutter
 )
 
 set(PLUGIN_BUNDLED_LIBRARIES)

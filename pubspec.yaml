@@ -73,7 +73,8 @@ dependencies:
   open_file: ^3.5.11
   video_player: ^2.11.1
   open_file_manager: ^2.0.1
-  music_feature_analyzer: ^1.0.3
+  music_feature_analyzer:
+    path: third_party/music_feat_analyzer
   zstandard: ^1.5.0
   pool: ^1.5.1
   flutter_litert: ^2.5.8
@@ -116,19 +117,8 @@ flutter:
     - assets/images/logo.png
     - assets/images/welcome_bg.jpg
     - assets/expanded_tags_taxonomy.json
-    - assets/ncnn/README.md
-    - assets/ncnn/mobileclip_s2/image_encoder.ncnn.param
-    - assets/ncnn/mobileclip_s2/image_encoder.ncnn.bin
-    - assets/ncnn/mobileclip_s2/text_encoder.ncnn.param
-    - assets/ncnn/mobileclip_s2/text_encoder.ncnn.bin
-    - assets/ncnn/mobileclip_s2/projection_layer.ncnn.param
-    - assets/ncnn/mobileclip_s2/projection_layer.ncnn.bin
-    - assets/mobileclip2/s2/vision_model.onnx
-    - assets/mobileclip2/s2/text_model.onnx
     - assets/mobileclip2/s2/mobileclip2_s2_image.tflite
     - assets/mobileclip2/s2/mobileclip2_s2_text.tflite
-    - assets/mobileviclip/small/mobileviclip_small_vision.onnx
-#    - assets/mobileviclip/small/mobileviclip_small_metadata.json
     - assets/face/   
     - ai_tools/test_student.png
     - ai_tools/test1.png

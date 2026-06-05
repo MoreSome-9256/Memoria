@@ -8,7 +8,6 @@ class AppAiSettings {
     required this.ocrEnabled,
     required this.faceAnalysisEnabled,
     required this.includeVideos,
-    required this.mobileViClipEnabled,
     required this.androidForegroundServiceEnabled,
     required this.requestUnrestrictedBatteryEnabled,
     required this.iosContinuedProcessingEnabled,
@@ -23,7 +22,6 @@ class AppAiSettings {
     ocrEnabled: true,
     faceAnalysisEnabled: true,
     includeVideos: true,
-    mobileViClipEnabled: true,
     androidForegroundServiceEnabled: true,
     requestUnrestrictedBatteryEnabled: true,
     iosContinuedProcessingEnabled: true,
@@ -37,7 +35,6 @@ class AppAiSettings {
   final bool ocrEnabled;
   final bool faceAnalysisEnabled;
   final bool includeVideos;
-  final bool mobileViClipEnabled;
   final bool androidForegroundServiceEnabled;
   final bool requestUnrestrictedBatteryEnabled;
   final bool iosContinuedProcessingEnabled;
@@ -54,7 +51,6 @@ class AppAiSettings {
     bool? ocrEnabled,
     bool? faceAnalysisEnabled,
     bool? includeVideos,
-    bool? mobileViClipEnabled,
     bool? androidForegroundServiceEnabled,
     bool? requestUnrestrictedBatteryEnabled,
     bool? iosContinuedProcessingEnabled,
@@ -68,7 +64,6 @@ class AppAiSettings {
       ocrEnabled: ocrEnabled ?? this.ocrEnabled,
       faceAnalysisEnabled: faceAnalysisEnabled ?? this.faceAnalysisEnabled,
       includeVideos: includeVideos ?? this.includeVideos,
-      mobileViClipEnabled: mobileViClipEnabled ?? this.mobileViClipEnabled,
       androidForegroundServiceEnabled:
           androidForegroundServiceEnabled ??
           this.androidForegroundServiceEnabled,
@@ -93,7 +88,6 @@ class AppAiSettingsService {
   static const _ocrKey = 'ai_settings_ocr_enabled';
   static const _faceKey = 'ai_settings_face_enabled';
   static const _includeVideosKey = 'ai_settings_include_videos';
-  static const _mobileViClipKey = 'ai_settings_mobileviclip_enabled';
   static const _localVlmDescriptionKey =
       'ai_settings_local_vlm_description_enabled';
   static const _androidForegroundServiceKey =
@@ -134,7 +128,7 @@ class AppAiSettingsService {
     await prefs.setBool(_ocrKey, settings.ocrEnabled);
     await prefs.setBool(_faceKey, settings.faceAnalysisEnabled);
     await prefs.setBool(_includeVideosKey, settings.includeVideos);
-    await prefs.setBool(_mobileViClipKey, settings.mobileViClipEnabled);
+    await prefs.remove('ai_settings_mobileviclip_enabled');
     await prefs.remove(_localVlmDescriptionKey);
     await prefs.setBool(
       _androidForegroundServiceKey,
@@ -175,9 +169,6 @@ class AppAiSettingsService {
       includeVideos:
           prefs.getBool(_includeVideosKey) ??
           AppAiSettings.defaults.includeVideos,
-      mobileViClipEnabled:
-          prefs.getBool(_mobileViClipKey) ??
-          AppAiSettings.defaults.mobileViClipEnabled,
       androidForegroundServiceEnabled:
           prefs.getBool(_androidForegroundServiceKey) ??
           AppAiSettings.defaults.androidForegroundServiceEnabled,

@@ -104,9 +104,7 @@ class UnifiedAnalysisPipelineService {
       await UnifiedAnalysisProgressStore.instance.clear();
       _updateProgress(
         stage: UnifiedAnalysisStage.scanning,
-        message: analyzeWithAi
-            ? '已交给前台服务：正在缓存并串行分析媒体'
-            : '已交给前台服务：正在更新相册缓存',
+        message: analyzeWithAi ? '已交给前台服务：正在缓存并串行分析媒体' : '已交给前台服务：正在更新相册缓存',
       );
       await AiBackgroundTaskService.instance.startUnifiedPipelineWorker(
         clearCacheFirst: clearCacheFirst,
@@ -160,11 +158,11 @@ class UnifiedAnalysisPipelineService {
         preferAttach: true,
       );
       await PhotoService().init();
-      
+
       if (analyzeWithAi) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool(_foregroundStopRequestedKey, false);
-        
+
         if (clearCacheFirst) {
           _updateProgress(
             stage: UnifiedAnalysisStage.scanning,
@@ -172,18 +170,15 @@ class UnifiedAnalysisPipelineService {
           );
           await PhotoService().clearAllCachedData();
         }
-        await _runProducer(
-          enqueueForConsumer: false,
-          requestPermission: false,
-        );
+        await _runProducer(enqueueForConsumer: false, requestPermission: false);
         _scanCompletedNormally = !_stopRequested;
-        
+
         _aiTotal = PhotoService().countPendingAnalysisCandidates();
         if (_aiTotal > 0) {
           await _runSerialConsumerFromDatabase();
         }
         await _onPipelineCompleted();
-        
+
         await AiBackgroundTaskService.instance.stop();
       } else if (clearCacheFirst) {
         await _runFullRebuildPipeline(
@@ -215,7 +210,8 @@ class UnifiedAnalysisPipelineService {
     _clearStoppedCandidates();
 
     final currentStage = _progressNotifier.value.stage;
-    final isTerminal = currentStage == UnifiedAnalysisStage.completed ||
+    final isTerminal =
+        currentStage == UnifiedAnalysisStage.completed ||
         currentStage == UnifiedAnalysisStage.failed;
 
     if (!isTerminal) {
@@ -662,20 +658,13 @@ class UnifiedAnalysisPipelineService {
     } else {
       final mediaInput = await _readAnalysisImageInputFromAsset(photo);
       sourceFileForOcr = mediaInput.sourceFile;
-      final mediaEmbedding =
-          settings.mobileViClipEnabled &&
-              (mediaKind == MemoriaMediaKind.video ||
-                  mediaKind == MemoriaMediaKind.dynamicImage) &&
-              mediaInput.videoFrameBytes.isNotEmpty
-          ? await MediaEmbeddingService().embedVideoFrameBytes(
-              mediaInput.videoFrameBytes,
-            )
-          : await MediaEmbeddingService().embedPreparedMediaBytes(
+      final mediaEmbedding = await MediaEmbeddingService()
+          .embedPreparedMediaBytes(
             kind: mediaKind,
             imageOrThumbnailBytes: mediaInput.imageBytes,
-            mobileViClipEnabled: settings.mobileViClipEnabled,
             backend: backend,
             liteRt: liteRt,
+            frameBytes: mediaInput.videoFrameBytes,
           );
       embedding = mediaEmbedding.embedding;
       embeddingModelVersion = mediaEmbedding.modelVersion;
@@ -813,7 +802,8 @@ class UnifiedAnalysisPipelineService {
         : 0;
     final startedAtMs = _startedAt?.millisecondsSinceEpoch ?? 0;
 
-    final isTerminal = stage == UnifiedAnalysisStage.completed ||
+    final isTerminal =
+        stage == UnifiedAnalysisStage.completed ||
         stage == UnifiedAnalysisStage.failed;
 
     final progress = UnifiedAnalysisProgress(
@@ -833,19 +823,17 @@ class UnifiedAnalysisPipelineService {
       analysisEnabled: _analysisEnabled,
     );
     _progressNotifier.value = progress;
-    
+
     debugPrint(
       '[pipeline-progress] stage=$stage scan=$_scanCompleted/$_scanTotal ai=$_aiCompleted/$_aiTotal msg=$message',
     );
-    
+
     unawaited(UnifiedAnalysisProgressStore.instance.publish(progress));
 
     if (!_suppressForegroundTaskChannelCalls) {
       unawaited(
         AiBackgroundTaskService.instance.updateNotification(
-          title: _analysisEnabled
-              ? 'Memoria 正在缓存并分析媒体'
-              : 'Memoria 正在更新相册缓存',
+          title: _analysisEnabled ? 'Memoria 正在缓存并分析媒体' : 'Memoria 正在更新相册缓存',
           text: message,
         ),
       );
@@ -887,9 +875,7 @@ class UnifiedAnalysisPipelineService {
       }
       final imageAlbums = await _loadNonEmptyAlbums(RequestType.image);
       if (imageAlbums.isNotEmpty) {
-        debugPrint(
-          '[pipeline] image 真实相册列表 count=${imageAlbums.length}',
-        );
+        debugPrint('[pipeline] image 真实相册列表 count=${imageAlbums.length}');
         return imageAlbums;
       }
     }
@@ -897,7 +883,9 @@ class UnifiedAnalysisPipelineService {
     return const <AssetPathEntity>[];
   }
 
-  Future<AssetPathEntity?> _loadAllAlbumIfUsable(RequestType requestType) async {
+  Future<AssetPathEntity?> _loadAllAlbumIfUsable(
+    RequestType requestType,
+  ) async {
     final albums = await PhotoManager.getAssetPathList(
       onlyAll: true,
       type: requestType,

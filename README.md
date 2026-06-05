@@ -208,15 +208,6 @@ flutter run --dart-define-from-file=config/profiles/dev.json
 
 运行参数统一放在 profile 文件中，由 `--dart-define-from-file` 一次性注入。
 
-如果要切换 MobileCLIP2 模型来源，可以追加：
-
-```bash
---dart-define=MOBILECLIP2_ONNX_FILE=/absolute/path/to/vision_model.onnx
---dart-define=MOBILECLIP2_ONNX_ASSET=assets/mobileclip2/s2/vision_model.onnx
---dart-define=MOBILECLIP2_TEXT_ONNX_FILE=/absolute/path/to/text_model.onnx
---dart-define=MOBILECLIP_ONNX_INPUT_SIZE=256
-```
-
 如果要切换 probe 模式：
 
 ```bash
@@ -239,7 +230,6 @@ flutter run \
 
 项目内置了 `MobileCLIPVectorProbePage`，用于：
 
-- 对比 ONNX / NCNN 向量差异
 - 输出完整向量 probe JSON
 - 查看 zero-shot tagging 结果
 - 对比 Isar/ObjectBox 向量读取耗时
@@ -294,7 +284,7 @@ flutter run \
 仓库中部分模型和向量产物体积较大，默认按“可重新生成”思路维护。对 Memoria 来说：
 
 - `checkpoints/mobileclip_s2.pt` 是更可信的源模型
-- `ONNX` 和未来的 `ncnn` 都是从该 checkpoint 派生的运行时产物
+- 运行时只打包 MobileCLIP2 S2 LiteRT 图像/文本模型；视频和 GIF 使用同一模型对抽样帧聚合
 
 首次准备端侧视觉模型时，将基模放到：
 
@@ -306,9 +296,6 @@ flutter run \
 - `mobileclip`
 - `jieba`
 - `requests`
-- `onnx`
-- `onnxsim`
-- `onnx2tf`
 
 再执行：
 
@@ -317,27 +304,6 @@ python ai_tools/build_vocab.py
 python ai_tools/expand_brain.py
 python ai_tools/export_model.py --output-folder saved_model
 ```
-
-## NCNN 模型说明
-
-当前仓库不再推荐本地重新导出 MobileCLIP 的 NCNN 模型。直接使用作者提供的现成导出包即可：
-
-- https://drive.google.com/file/d/1WFQEwWxUCFhDASbXv7fAlXUHn1BnVGGI/view
-
-下载后把 `mobileclip_s2_export/` 放到：
-
-- `third_party/mobileclip_s2_export/`
-
-Flutter 运行时使用的是同步后的 assets 副本：
-
-- `assets/ncnn/mobileclip_s2/image_encoder.ncnn.param`
-- `assets/ncnn/mobileclip_s2/image_encoder.ncnn.bin`
-- `assets/ncnn/mobileclip_s2/text_encoder.ncnn.param`
-- `assets/ncnn/mobileclip_s2/text_encoder.ncnn.bin`
-- `assets/ncnn/mobileclip_s2/projection_layer.ncnn.param`
-- `assets/ncnn/mobileclip_s2/projection_layer.ncnn.bin`
-
-当前 Memoria 中的 NCNN 路径已经接入 Android 原生推理，但实际运行仍然是 CPU 路径，不是 Vulkan 计算路径。
 
 ## 团队协作约定
 
@@ -348,15 +314,13 @@ Flutter 运行时使用的是同步后的 assets 副本：
 
 群文件至少应包含：
 
-- `mobileclip_s2_export.zip`
-- `ncnn-20260113-android-vulkan.zip`
-- 如需重新走导出链，再额外提供 `pnnx-*.zip`
+- MobileCLIP2 S2 LiteRT 图像/文本模型
+- SmolVLM2 描述模型
 
 队友拿到群文件后，按下面方式放置：
 
-- 解压 `mobileclip_s2_export.zip` 到 `third_party/mobileclip_s2_export/`
-- 将其中 6 个 `.param/.bin` 文件同步到 `assets/ncnn/mobileclip_s2/`
-- 解压 `ncnn-20260113-android-vulkan.zip` 到 `third_party/ncnn-20260113-android-vulkan/`
+- 将 MobileCLIP2 S2 LiteRT 模型同步到 `assets/mobileclip2/s2/`
+- 将 SmolVLM2 模型同步到应用文档目录下的模型目录，或通过应用内模型下载页获取
 
 ## 常见问题
 
@@ -365,9 +329,9 @@ Flutter 运行时使用的是同步后的 assets 副本：
 请优先检查：
 
 - `checkpoints/mobileclip_s2.pt`
-- `assets/mobileclip_vision_float16.tflite`
+- `assets/mobileclip2/s2/mobileclip2_s2_image.tflite`
+- `assets/mobileclip2/s2/mobileclip2_s2_text.tflite`
 - `assets/expanded_tags_vectors.json`
-- `third_party/mobileclip_s2_export/`
 
 ### 2. ObjectBox 代码生成后为什么要提交 `objectbox-model.json`
 

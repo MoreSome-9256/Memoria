@@ -30,7 +30,6 @@ import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_litert_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'media_embedding_service.dart';
-import 'mobileviclip_video_service.dart';
 import 'ocr_service.dart';
 import 'semantic_matching_service.dart';
 
@@ -213,15 +212,13 @@ class SpoolAnalysisWorker {
     final backend = await MobileClipBackendPreferenceService()
         .getSelectedBackend();
     final enableFaceAnalysis = settings.faceAnalysisEnabled;
-    final hasVideoItems = await _manifestMayContainVideo(manifest);
-    final enableVideoEmbedding = settings.mobileViClipEnabled && hasVideoItems;
-    warmUpTotal = enableVideoEmbedding ? 4 : 3;
+    warmUpTotal = 3;
     var tagWarmUpUnits = 1;
 
     debugPrint(
       '[spool-worker] 选定后端: ${backend.label} '
       'enableFaceAnalysis=$enableFaceAnalysis '
-      'enableVideoEmbedding=$enableVideoEmbedding',
+      'videoEmbedding=MobileCLIP2 S2 frame pooling',
     );
 
     // 预热引擎
@@ -286,7 +283,7 @@ class SpoolAnalysisWorker {
     await _tagService.warmUp(
       onProgress: (completed, total, message) async {
         tagWarmUpUnits = math.max(1, total);
-        warmUpTotal = 2 + tagWarmUpUnits + (enableVideoEmbedding ? 1 : 0);
+        warmUpTotal = 2 + tagWarmUpUnits;
         warmUpCompleted = 1 + completed;
         await _writeProgress(
           spool,
@@ -311,7 +308,7 @@ class SpoolAnalysisWorker {
       succeeded,
       failed,
       skipped,
-      enableVideoEmbedding ? '正在预热引擎：加载视频模型…' : '正在预热引擎：加载低价值过滤模板…',
+      '正在预热引擎：加载低价值过滤模板…',
       warmUpCompleted: warmUpCompleted,
       warmUpTotal: warmUpTotal,
     );
@@ -338,47 +335,6 @@ class SpoolAnalysisWorker {
       );
       return;
     }
-    if (enableVideoEmbedding) {
-      final wVideo = DateTime.now();
-      await MobileViClipVideoService().warmUp();
-      warmUpCompleted = 1 + tagWarmUpUnits + 1;
-      await _writeProgress(
-        spool,
-        jobId,
-        totalItems,
-        processed,
-        succeeded,
-        failed,
-        skipped,
-        '正在预热引擎：加载低价值过滤模板…',
-        warmUpCompleted: warmUpCompleted,
-        warmUpTotal: warmUpTotal,
-      );
-      debugPrint(
-        '[spool-worker] MobileViClip 预热耗时: ${DateTime.now().difference(wVideo).inMilliseconds}ms',
-      );
-      if (!await _waitIfPausedOrStopped(
-        spool,
-        jobId,
-        totalItems,
-        processed,
-        succeeded,
-        failed,
-        skipped,
-      )) {
-        await _finishJob(
-          spool,
-          jobId,
-          totalItems,
-          processed,
-          succeeded,
-          failed,
-          skipped,
-        );
-        return;
-      }
-    }
-
     final w2 = DateTime.now();
     await _warmUpJunkFilter();
     warmUpCompleted = warmUpTotal;
@@ -664,23 +620,6 @@ class SpoolAnalysisWorker {
     );
     await spool.writeDoneMarker(jobId);
     debugPrint('[spool-worker] ✅ done.marker 已写入');
-  }
-
-  Future<bool> _manifestMayContainVideo(AnalysisJobManifest manifest) async {
-    for (final item in manifest.items) {
-      if (MediaTypeHelper.isVideoPath(item.path)) {
-        return true;
-      }
-      try {
-        final asset = await AssetEntity.fromId(item.photoKey);
-        if (asset?.type == AssetType.video) {
-          return true;
-        }
-      } catch (_) {
-        // Fall back to extension-only detection for inaccessible assets.
-      }
-    }
-    return false;
   }
 
   Future<bool> _waitIfPausedOrStopped(
@@ -988,7 +927,7 @@ class SpoolAnalysisWorker {
       '[spool-worker]   媒体加载成功: ${input.width}x${input.height} kind=${input.kind.name} path=${input.file.path}',
     );
 
-    // 2. Embedding（图片使用 MobileCLIP2，视频使用 MobileViClip）
+    // 2. Embedding（图片和视频/GIF 都使用 MobileCLIP2 S2）
     final t1 = DateTime.now();
     List<double> embedding;
     late final String embeddingModelVersion;
@@ -997,9 +936,9 @@ class SpoolAnalysisWorker {
           .embedPreparedMediaBytes(
             kind: input.kind,
             imageOrThumbnailBytes: input.mobileClipBytes,
-            mobileViClipEnabled: _settings.mobileViClipEnabled,
             backend: backend,
             liteRt: liteRt,
+            frameBytes: <Uint8List>[input.mobileClipBytes],
           );
       embedding = mediaEmbedding.embedding;
       embeddingModelVersion = mediaEmbedding.modelVersion;

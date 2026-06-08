@@ -1,32 +1,28 @@
-/// MobileCLIP 后端偏好服务，记录当前可用推理后端及其选择策略。
+// MobileCLIP 后端偏好服务，记录当前可用推理后端及其选择策略。
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum MobileClipBackend { mobileclip2LiteRt, ncnn }
+enum MobileClipBackend { mobileclip2LiteRt }
 
 extension MobileClipBackendX on MobileClipBackend {
   String get storageValue => switch (this) {
     MobileClipBackend.mobileclip2LiteRt => 'mobileclip2_litert',
-    MobileClipBackend.ncnn => 'ncnn',
   };
 
   String get label => switch (this) {
     MobileClipBackend.mobileclip2LiteRt => 'MobileCLIP2 LiteRT',
-    MobileClipBackend.ncnn => 'NCNN FFI',
   };
 
   String get description => switch (this) {
     MobileClipBackend.mobileclip2LiteRt =>
       'LiteRT MobileCLIP2，默认使用 XNNPACK 以保证标签结果稳定',
-    MobileClipBackend.ncnn => 'Android 原生 FFI 桥接，优先尝试 NCNN Vulkan GPU',
   };
 
   static MobileClipBackend fromStorageValue(String? value) {
     return switch (value) {
       'mobileclip2_litert' => MobileClipBackend.mobileclip2LiteRt,
       'mobileclip2_onnx' => MobileClipBackend.mobileclip2LiteRt,
-      'ncnn' => MobileClipBackend.ncnn,
       _ => MobileClipBackend.mobileclip2LiteRt,
     };
   }

@@ -1,7 +1,5 @@
 // MobileCLIP 基准测试页面，用于测试模型性能和资源占用。
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../../models/mobileclip_benchmark.dart';
@@ -91,9 +89,7 @@ class _MobileClipBenchmarkPageState extends State<MobileClipBenchmarkPage> {
         padding: const EdgeInsets.all(16),
         children: [
           Text(
-            Platform.isAndroid
-                ? '从相册选择同一批图片，对比 MobileCLIP2 LiteRT XNNPACK、CPU 与 NCNN 路径上的 embedding、标签和速度。'
-                : '从相册选择同一批图片，对比当前平台可用的 LiteRT 后端 embedding、标签和速度。',
+            '从相册选择同一批图片，对比当前平台可用的 LiteRT 后端 embedding、标签和速度。',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: 16),

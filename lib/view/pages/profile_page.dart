@@ -387,25 +387,10 @@ class _ProfilePageState extends State<ProfilePage> {
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                       const SizedBox(height: 10),
-                      SegmentedButton<MobileClipBackend>(
-                        segments: const <ButtonSegment<MobileClipBackend>>[
-                          ButtonSegment<MobileClipBackend>(
-                            value: MobileClipBackend.mobileclip2LiteRt,
-                            label: Text('MobileCLIP2 LiteRT'),
-                            icon: Icon(Icons.auto_awesome_outlined),
-                          ),
-                          ButtonSegment<MobileClipBackend>(
-                            value: MobileClipBackend.ncnn,
-                            label: Text('NCNN FFI'),
-                            icon: Icon(Icons.memory_outlined),
-                          ),
-                        ],
-                        selected: <MobileClipBackend>{selected},
-                        onSelectionChanged: (selection) {
-                          setSheetState(() {
-                            selected = selection.first;
-                          });
-                        },
+                      const ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.auto_awesome_outlined),
+                        title: Text('MobileCLIP2 LiteRT'),
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -1153,9 +1138,7 @@ class _ProfilePageState extends State<ProfilePage> {
                             ListTile(
                               leading: const Icon(Icons.analytics_outlined),
                               title: const Text('MobileCLIP Benchmark'),
-                              subtitle: const Text(
-                                '对比 LiteRT/NCNN 路径，标签主路径默认使用 XNNPACK',
-                              ),
+                              subtitle: const Text('对比当前平台可用的 LiteRT 推理路径'),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () {
                                 Navigator.of(context).push(

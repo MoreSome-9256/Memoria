@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'dart:collection';
 import 'package:photo_manager/photo_manager.dart';
 import '../../data/tag_taxonomy_v2.dart';
@@ -298,6 +299,9 @@ class _AlbumPageState extends State<AlbumPage> {
       final clearedCount = await UnifiedAnalysisPipelineService()
           .deleteCurrentTaskAndClearAnalysisData();
       AIService().clearPendingJunkCleanupReport();
+      _DeferredImageLoadScheduler.reset();
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
       await _refreshPendingAnalysisPrompt();
       if (!mounted) {
         return;
@@ -779,13 +783,15 @@ class _AlbumPageState extends State<AlbumPage> {
     }
 
     if (progress.isRunning) {
-      _foregroundCardElapsedTimer ??=
-          Timer.periodic(const Duration(seconds: 1), (_) {
-        if (!mounted) {
-          return;
-        }
-        setState(() {});
-      });
+      _foregroundCardElapsedTimer ??= Timer.periodic(
+        const Duration(seconds: 1),
+        (_) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {});
+        },
+      );
     } else {
       _foregroundCardElapsedTimer?.cancel();
       _foregroundCardElapsedTimer = null;
@@ -887,10 +893,9 @@ class _AlbumPageState extends State<AlbumPage> {
             valueListenable: UnifiedAnalysisProgressStore.instance.progress,
             builder: (context, foregroundProgress, _) {
               final isBusy =
-                  _isStartingImport ||
-                  AlbumRefreshService().isRunning;
-              final isLaunching = _isStartingImport ||
-                  AlbumRefreshService().isRunning;
+                  _isStartingImport || AlbumRefreshService().isRunning;
+              final isLaunching =
+                  _isStartingImport || AlbumRefreshService().isRunning;
               return Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1124,7 +1129,8 @@ class _AlbumPageState extends State<AlbumPage> {
   Widget _buildUnifiedWorkProgressBanner(UnifiedAnalysisProgress progress) {
     final cacheFraction = progress.scanFraction;
     final aiFraction = progress.aiFraction;
-    final startedAt = _foregroundCardStartedAt ??
+    final startedAt =
+        _foregroundCardStartedAt ??
         (progress.startedAtMs > 0
             ? DateTime.fromMillisecondsSinceEpoch(progress.startedAtMs)
             : null);
@@ -1146,9 +1152,9 @@ class _AlbumPageState extends State<AlbumPage> {
     final remainingLabel = displayedRemaining != null
         ? _formatDurationCompact(displayedRemaining)
         : null;
-    
+
     final isWarmingUp = progress.stage == UnifiedAnalysisStage.warmingUp;
-    
+
     final cacheTitle = progress.scanDone
         ? '相册缓存已更新 ${progress.scanCompleted}/${progress.scanTotal}'
         : progress.scanStopped
@@ -1199,7 +1205,11 @@ class _AlbumPageState extends State<AlbumPage> {
               if (remainingLabel != null && !isWarmingUp)
                 Text(
                   '剩余 $remainingLabel',
-                  style: TextStyle(color: Colors.indigo[700], fontSize: 12, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    color: Colors.indigo[700],
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 )
               else
                 Text(
@@ -1226,7 +1236,9 @@ class _AlbumPageState extends State<AlbumPage> {
               icon: isWarmingUp ? Icons.whatshot : Icons.auto_awesome,
               title: aiTitle,
               detail: aiDetail,
-              value: isWarmingUp ? null : (progress.aiTotal > 0 ? aiFraction : null),
+              value: isWarmingUp
+                  ? null
+                  : (progress.aiTotal > 0 ? aiFraction : null),
               color: Colors.teal,
             ),
           ],
@@ -1347,7 +1359,7 @@ class _AlbumPageState extends State<AlbumPage> {
         }
 
         return CustomScrollView(
-          cacheExtent: 700,
+          scrollCacheExtent: const ScrollCacheExtent.pixels(700),
           slivers: [
             SliverPadding(
               padding: EdgeInsets.fromLTRB(

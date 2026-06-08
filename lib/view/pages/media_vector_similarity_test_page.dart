@@ -339,10 +339,6 @@ class _RuntimeOptionsCard extends StatelessWidget {
                   value: MobileClipBackend.mobileclip2LiteRt,
                   label: Text('LiteRT'),
                 ),
-                ButtonSegment<MobileClipBackend>(
-                  value: MobileClipBackend.ncnn,
-                  label: Text('NCNN'),
-                ),
               ],
               selected: <MobileClipBackend>{selectedBackend},
               onSelectionChanged: isRunning
@@ -361,9 +357,7 @@ class _RuntimeOptionsCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              selectedBackend == MobileClipBackend.ncnn
-                  ? 'NCNN 图像向量走原生 FFI；文本向量仍使用 ${selectedAccelerator.label} LiteRT。'
-                  : '图片和文本都会使用 ${selectedAccelerator.label} LiteRT；视频默认走 MobileViCLIP。',
+              '图片和文本都会使用 ${selectedAccelerator.label} LiteRT；视频默认走 MobileViCLIP。',
               style: TextStyle(color: Colors.grey[700], fontSize: 12),
             ),
           ],

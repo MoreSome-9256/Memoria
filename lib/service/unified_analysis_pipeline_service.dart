@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -45,6 +44,7 @@ class UnifiedAnalysisPipelineService {
   );
   static const int _handoffBatchSize = 10;
   static const Duration _consumerIdleGrace = Duration(seconds: 300);
+  static const Duration _consumerIdlePollInterval = Duration(milliseconds: 200);
   AnalysisPipelineQueue _queue = AnalysisPipelineQueue(
     capacity: 200,
     highWaterMark: 160,
@@ -104,9 +104,7 @@ class UnifiedAnalysisPipelineService {
       await UnifiedAnalysisProgressStore.instance.clear();
       _updateProgress(
         stage: UnifiedAnalysisStage.scanning,
-        message: analyzeWithAi
-            ? '已交给前台服务：正在缓存并串行分析媒体'
-            : '已交给前台服务：正在更新相册缓存',
+        message: analyzeWithAi ? '已交给前台服务：正在缓存并串行分析媒体' : '已交给前台服务：正在更新相册缓存',
       );
       await AiBackgroundTaskService.instance.startUnifiedPipelineWorker(
         clearCacheFirst: clearCacheFirst,
@@ -140,7 +138,7 @@ class UnifiedAnalysisPipelineService {
     _scanCompletedNormally = false;
     _analysisEnabled = analyzeWithAi;
     _suppressForegroundTaskChannelCalls = false;
-    _queue = AnalysisPipelineQueue(capacity: 1, highWaterMark: 1);
+    _queue = AnalysisPipelineQueue(capacity: 24, highWaterMark: 16);
     _scanCompleted = 0;
     _scanTotal = 0;
     _aiCompleted = 0;
@@ -160,30 +158,17 @@ class UnifiedAnalysisPipelineService {
         preferAttach: true,
       );
       await PhotoService().init();
-      
+
       if (analyzeWithAi) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool(_foregroundStopRequestedKey, false);
-        
+
         if (clearCacheFirst) {
-          _updateProgress(
-            stage: UnifiedAnalysisStage.scanning,
-            message: '正在清空缓存…',
-          );
-          await PhotoService().clearAllCachedData();
+          await _runFullRebuildPipeline(requestPermission: false);
+        } else {
+          await _runIncrementalPipeline(requestPermission: false);
         }
-        await _runProducer(
-          enqueueForConsumer: false,
-          requestPermission: false,
-        );
-        _scanCompletedNormally = !_stopRequested;
-        
-        _aiTotal = PhotoService().countPendingAnalysisCandidates();
-        if (_aiTotal > 0) {
-          await _runSerialConsumerFromDatabase();
-        }
-        await _onPipelineCompleted();
-        
+
         await AiBackgroundTaskService.instance.stop();
       } else if (clearCacheFirst) {
         await _runFullRebuildPipeline(
@@ -215,7 +200,8 @@ class UnifiedAnalysisPipelineService {
     _clearStoppedCandidates();
 
     final currentStage = _progressNotifier.value.stage;
-    final isTerminal = currentStage == UnifiedAnalysisStage.completed ||
+    final isTerminal =
+        currentStage == UnifiedAnalysisStage.completed ||
         currentStage == UnifiedAnalysisStage.failed;
 
     if (!isTerminal) {
@@ -358,18 +344,24 @@ class UnifiedAnalysisPipelineService {
       debugPrint(
         '[pipeline] 扫描相册 id=${album.id} name=${album.name} count=$albumCount',
       );
-      for (var offset = 0; offset < albumCount; offset += pageSize) {
+      for (var pageIndex = 0; ; pageIndex++) {
         if (_stopRequested || await _readForegroundStopRequested()) break;
 
-        final end = math.min(albumCount, offset + pageSize);
-        final page = await album.getAssetListRange(start: offset, end: end);
+        final page = await album.getAssetListPaged(
+          page: pageIndex,
+          size: pageSize,
+        );
 
         if (page.isEmpty) {
-          debugPrint(
-            '[pipeline] 相册分页为空 id=${album.id} name=${album.name} range=$offset-$end',
-          );
-          continue;
+          if (pageIndex == 0) {
+            debugPrint('[pipeline] 相册分页为空 id=${album.id} name=${album.name}');
+          }
+          break;
         }
+
+        page.sort((a, b) => b.createDateTime.compareTo(a.createDateTime));
+        final reachedEstimatedEnd =
+            page.length < pageSize || (pageIndex + 1) * pageSize >= albumCount;
 
         for (final asset in page) {
           if (_stopRequested || await _readForegroundStopRequested()) break;
@@ -382,7 +374,9 @@ class UnifiedAnalysisPipelineService {
           final photo = await _buildAndSavePhotoEntity(asset);
           if (photo != null) {
             accepted++;
-            if (_analysisEnabled && !photo.isAiAnalyzed) {
+            if (_analysisEnabled &&
+                !photo.isAiAnalyzed &&
+                !_activeCandidatePhotoIds.contains(photo.id)) {
               handoffBatch.add(
                 PipelineQueueItem(
                   photoId: photo.id,
@@ -414,6 +408,9 @@ class UnifiedAnalysisPipelineService {
                   : '正在更新相册缓存……($scanned/$_scanTotal)',
             );
           }
+        }
+        if (reachedEstimatedEnd) {
+          break;
         }
       }
     }
@@ -453,6 +450,8 @@ class UnifiedAnalysisPipelineService {
 
     debugPrint('[pipeline] AI 引擎预热完成');
 
+    await _enqueueExistingAnalysisCandidates();
+
     _updateProgress(
       stage: UnifiedAnalysisStage.processing,
       message: _aiTotal > 0 ? '开始处理 $_aiTotal 张照片' : 'AI 已预热，等待扫描移交任务…',
@@ -460,8 +459,14 @@ class UnifiedAnalysisPipelineService {
 
     var idleStartedAt = DateTime.now();
     while (!_queue.isClosed || _queue.isNotEmpty) {
-      if (_stopRequested) {
+      if (_stopRequested || await _readForegroundStopRequested()) {
         break;
+      }
+      if (_queue.isEmpty) {
+        final resumedCount = await _enqueueExistingAnalysisCandidates();
+        if (resumedCount > 0) {
+          idleStartedAt = DateTime.now();
+        }
       }
       final item = await _dequeueWithIdleGrace(idleStartedAt);
       if (item == null) {
@@ -502,75 +507,6 @@ class UnifiedAnalysisPipelineService {
 
     debugPrint('[pipeline] 消费者结束: completed=$_aiCompleted failed=$_aiFailed');
 
-    if (_stopRequested) {
-      _clearStoppedCandidates();
-    }
-  }
-
-  Future<void> _runSerialConsumerFromDatabase() async {
-    AppAiSettings? settings;
-    MobileClipBackend? backend;
-    MobileClipLiteRtService? liteRt;
-    var warmedUp = false;
-
-    while (!_stopRequested && !await _readForegroundStopRequested()) {
-      final pending = PhotoService().loadPendingAnalysisCandidatePhotos(
-        limit: 1,
-      );
-      if (pending.isEmpty) {
-        debugPrint('[pipeline] AI 队列为空，消费者结束');
-        break;
-      }
-
-      if (!warmedUp) {
-        _updateProgress(
-          stage: UnifiedAnalysisStage.warmingUp,
-          message: 'AI 模型正在预热，请稍候…',
-        );
-        settings = await AppAiSettingsService.instance.load();
-        backend = await MobileClipBackendPreferenceService()
-            .getSelectedBackend();
-        liteRt = MobileClipLiteRtService.withRuntimeOptions(
-          accelerator: settings.inferenceAccelerator,
-          xnnpackThreadCount: settings.xnnpackThreadCount,
-          modelBatchSize: settings.analysisBatchSize,
-        );
-        await liteRt.warmUp();
-        await MobileClipTagService().warmUp();
-        await JunkPhotoFilterService().warmUp();
-        warmedUp = true;
-      }
-
-      final photo = pending.first;
-      _aiTotal = math.max(
-        _aiTotal,
-        PhotoService().countPendingAnalysisCandidates() + _aiCompleted,
-      );
-      try {
-        await _processSinglePhoto(
-          photo,
-          settings: settings!,
-          backend: backend!,
-          liteRt: liteRt!,
-        );
-        _aiCompleted++;
-        _updateProgress(
-          stage: UnifiedAnalysisStage.processing,
-          message: '已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed',
-        );
-      } catch (error) {
-        debugPrint('[pipeline] 串行处理失败 photoId=${photo.id}: $error');
-        _aiFailed++;
-        PhotoService().clearAiAnalysisCandidatesByIds(<int>[photo.id]);
-        _updateProgress(
-          stage: UnifiedAnalysisStage.processing,
-          message: '已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed',
-        );
-      }
-    }
-
-    debugPrint('[pipeline] 消费者结束: completed=$_aiCompleted failed=$_aiFailed');
-
     if (_stopRequested || await _readForegroundStopRequested()) {
       _clearStoppedCandidates();
     }
@@ -602,6 +538,45 @@ class UnifiedAnalysisPipelineService {
     batch.clear();
   }
 
+  Future<int> _enqueueExistingAnalysisCandidates() async {
+    final existing = PhotoService().loadPendingAnalysisCandidatePhotos(
+      limit: _queue.capacity,
+    );
+    if (existing.isEmpty) {
+      return 0;
+    }
+
+    final resumed = <PipelineQueueItem>[];
+    for (final photo in existing) {
+      if (_activeCandidatePhotoIds.contains(photo.id)) {
+        continue;
+      }
+      resumed.add(
+        PipelineQueueItem(
+          photoId: photo.id,
+          photo: photo,
+          enqueuedAt: DateTime.now(),
+        ),
+      );
+    }
+    if (resumed.isEmpty) {
+      return 0;
+    }
+
+    _aiTotal += resumed.length;
+    _activeCandidatePhotoIds.addAll(resumed.map((item) => item.photoId));
+    for (final item in resumed) {
+      if (_stopRequested || await _readForegroundStopRequested()) {
+        break;
+      }
+      await _queue.enqueue(item);
+    }
+    debugPrint(
+      '[pipeline] 已恢复 ${resumed.length} 张未完成 AI 候选，total=$_aiTotal queue=${_queue.size}',
+    );
+    return resumed.length;
+  }
+
   Future<PipelineQueueItem?> _dequeueWithIdleGrace(
     DateTime idleStartedAt,
   ) async {
@@ -609,6 +584,9 @@ class UnifiedAnalysisPipelineService {
       return _queue.dequeue();
     }
     while (!_queue.isClosed && _queue.isEmpty) {
+      if (_stopRequested || await _readForegroundStopRequested()) {
+        return null;
+      }
       final idleFor = DateTime.now().difference(idleStartedAt);
       if (idleFor >= _consumerIdleGrace) {
         return null;
@@ -619,7 +597,7 @@ class UnifiedAnalysisPipelineService {
         message:
             'AI 已预热，等待扫描移交任务…剩余等待 ${remaining.inSeconds.clamp(0, _consumerIdleGrace.inSeconds)} 秒',
       );
-      await Future<void>.delayed(const Duration(seconds: 1));
+      await Future<void>.delayed(_consumerIdlePollInterval);
     }
     return _queue.dequeue();
   }
@@ -671,12 +649,12 @@ class UnifiedAnalysisPipelineService {
               mediaInput.videoFrameBytes,
             )
           : await MediaEmbeddingService().embedPreparedMediaBytes(
-            kind: mediaKind,
-            imageOrThumbnailBytes: mediaInput.imageBytes,
-            mobileViClipEnabled: settings.mobileViClipEnabled,
-            backend: backend,
-            liteRt: liteRt,
-          );
+              kind: mediaKind,
+              imageOrThumbnailBytes: mediaInput.imageBytes,
+              mobileViClipEnabled: settings.mobileViClipEnabled,
+              backend: backend,
+              liteRt: liteRt,
+            );
       embedding = mediaEmbedding.embedding;
       embeddingModelVersion = mediaEmbedding.modelVersion;
       tagEmbedding = embedding;
@@ -813,7 +791,8 @@ class UnifiedAnalysisPipelineService {
         : 0;
     final startedAtMs = _startedAt?.millisecondsSinceEpoch ?? 0;
 
-    final isTerminal = stage == UnifiedAnalysisStage.completed ||
+    final isTerminal =
+        stage == UnifiedAnalysisStage.completed ||
         stage == UnifiedAnalysisStage.failed;
 
     final progress = UnifiedAnalysisProgress(
@@ -833,19 +812,17 @@ class UnifiedAnalysisPipelineService {
       analysisEnabled: _analysisEnabled,
     );
     _progressNotifier.value = progress;
-    
+
     debugPrint(
       '[pipeline-progress] stage=$stage scan=$_scanCompleted/$_scanTotal ai=$_aiCompleted/$_aiTotal msg=$message',
     );
-    
+
     unawaited(UnifiedAnalysisProgressStore.instance.publish(progress));
 
     if (!_suppressForegroundTaskChannelCalls) {
       unawaited(
         AiBackgroundTaskService.instance.updateNotification(
-          title: _analysisEnabled
-              ? 'Memoria 正在缓存并分析媒体'
-              : 'Memoria 正在更新相册缓存',
+          title: _analysisEnabled ? 'Memoria 正在缓存并分析媒体' : 'Memoria 正在更新相册缓存',
           text: message,
         ),
       );
@@ -857,7 +834,10 @@ class UnifiedAnalysisPipelineService {
     required Set<String> selectedIds,
   }) async {
     if (selectedIds.isNotEmpty) {
-      final albums = await PhotoManager.getAssetPathList(type: requestType);
+      final albums = await PhotoManager.getAssetPathList(
+        type: requestType,
+        filterOption: _createDateDescFilter(),
+      );
       await _logAlbumCandidates(
         albums,
         label: 'selected',
@@ -887,9 +867,7 @@ class UnifiedAnalysisPipelineService {
       }
       final imageAlbums = await _loadNonEmptyAlbums(RequestType.image);
       if (imageAlbums.isNotEmpty) {
-        debugPrint(
-          '[pipeline] image 真实相册列表 count=${imageAlbums.length}',
-        );
+        debugPrint('[pipeline] image 真实相册列表 count=${imageAlbums.length}');
         return imageAlbums;
       }
     }
@@ -897,10 +875,13 @@ class UnifiedAnalysisPipelineService {
     return const <AssetPathEntity>[];
   }
 
-  Future<AssetPathEntity?> _loadAllAlbumIfUsable(RequestType requestType) async {
+  Future<AssetPathEntity?> _loadAllAlbumIfUsable(
+    RequestType requestType,
+  ) async {
     final albums = await PhotoManager.getAssetPathList(
       onlyAll: true,
       type: requestType,
+      filterOption: _createDateDescFilter(),
     );
     await _logAlbumCandidates(
       albums,
@@ -918,7 +899,10 @@ class UnifiedAnalysisPipelineService {
   Future<List<AssetPathEntity>> _loadNonEmptyAlbums(
     RequestType requestType,
   ) async {
-    final albums = await PhotoManager.getAssetPathList(type: requestType);
+    final albums = await PhotoManager.getAssetPathList(
+      type: requestType,
+      filterOption: _createDateDescFilter(),
+    );
     await _logAlbumCandidates(
       albums,
       label: 'all:${requestType.value}',
@@ -931,6 +915,14 @@ class UnifiedAnalysisPipelineService {
       }
     }
     return result;
+  }
+
+  FilterOptionGroup _createDateDescFilter() {
+    return FilterOptionGroup(
+      orders: <OrderOption>[
+        OrderOption(type: OrderOptionType.createDate, asc: false),
+      ],
+    );
   }
 
   Future<void> _logAlbumCandidates(

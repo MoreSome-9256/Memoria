@@ -58,7 +58,7 @@ MODEL_SPECS = {
 
 class VideoEncoderONNX(nn.Module):
     """
-    NCNN-friendly input:
+    Fixed-frame video input:
       frames: [8, 3, 256, 256]
     Output:
       normalized embedding: [1, 512]

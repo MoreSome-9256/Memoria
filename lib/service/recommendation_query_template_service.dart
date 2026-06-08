@@ -1,4 +1,4 @@
-/// 推荐查询模板服务，负责把自然语言意图映射成结构化查询。
+// 推荐查询模板服务，负责把自然语言意图映射成结构化查询。
 
 import '../data/recommendation_query_json_library.dart';
 import '../models/vo/semantic_search_models.dart';

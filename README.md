@@ -239,7 +239,7 @@ flutter run \
 
 项目内置了 `MobileCLIPVectorProbePage`，用于：
 
-- 对比 ONNX / NCNN 向量差异
+- 输出当前 MobileCLIP 向量与标签结果
 - 输出完整向量 probe JSON
 - 查看 zero-shot tagging 结果
 - 对比 Isar/ObjectBox 向量读取耗时
@@ -294,7 +294,7 @@ flutter run \
 仓库中部分模型和向量产物体积较大，默认按“可重新生成”思路维护。对 Memoria 来说：
 
 - `checkpoints/mobileclip_s2.pt` 是更可信的源模型
-- `ONNX` 和未来的 `ncnn` 都是从该 checkpoint 派生的运行时产物
+- `ONNX` 与 `LiteRT` 资产都应从该 checkpoint 派生
 
 首次准备端侧视觉模型时，将基模放到：
 
@@ -318,26 +318,17 @@ python ai_tools/expand_brain.py
 python ai_tools/export_model.py --output-folder saved_model
 ```
 
-## NCNN 模型说明
+## LiteRT 模型说明
 
-当前仓库不再推荐本地重新导出 MobileCLIP 的 NCNN 模型。直接使用作者提供的现成导出包即可：
+当前 Android 主路径使用 MobileCLIP2 LiteRT 资产：
 
-- https://drive.google.com/file/d/1WFQEwWxUCFhDASbXv7fAlXUHn1BnVGGI/view
+- `assets/mobileclip2/s2/mobileclip2_s2_image.tflite`
+- `assets/mobileclip2/s2/mobileclip2_s2_text.tflite`
 
-下载后把 `mobileclip_s2_export/` 放到：
+ONNX 资产仍保留给导出、调试和部分兼容工具使用：
 
-- `third_party/mobileclip_s2_export/`
-
-Flutter 运行时使用的是同步后的 assets 副本：
-
-- `assets/ncnn/mobileclip_s2/image_encoder.ncnn.param`
-- `assets/ncnn/mobileclip_s2/image_encoder.ncnn.bin`
-- `assets/ncnn/mobileclip_s2/text_encoder.ncnn.param`
-- `assets/ncnn/mobileclip_s2/text_encoder.ncnn.bin`
-- `assets/ncnn/mobileclip_s2/projection_layer.ncnn.param`
-- `assets/ncnn/mobileclip_s2/projection_layer.ncnn.bin`
-
-当前 Memoria 中的 NCNN 路径已经接入 Android 原生推理，但实际运行仍然是 CPU 路径，不是 Vulkan 计算路径。
+- `assets/mobileclip2/s2/vision_model.onnx`
+- `assets/mobileclip2/s2/text_model.onnx`
 
 ## 团队协作约定
 
@@ -349,14 +340,12 @@ Flutter 运行时使用的是同步后的 assets 副本：
 群文件至少应包含：
 
 - `mobileclip_s2_export.zip`
-- `ncnn-20260113-android-vulkan.zip`
-- 如需重新走导出链，再额外提供 `pnnx-*.zip`
+- MobileCLIP2 LiteRT / ONNX 资产包
 
 队友拿到群文件后，按下面方式放置：
 
 - 解压 `mobileclip_s2_export.zip` 到 `third_party/mobileclip_s2_export/`
-- 将其中 6 个 `.param/.bin` 文件同步到 `assets/ncnn/mobileclip_s2/`
-- 解压 `ncnn-20260113-android-vulkan.zip` 到 `third_party/ncnn-20260113-android-vulkan/`
+- 将 LiteRT / ONNX 模型同步到 `assets/mobileclip2/s2/`
 
 ## 常见问题
 

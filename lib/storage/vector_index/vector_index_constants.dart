@@ -11,9 +11,6 @@ const String kMobileViClipSmallVideoEmbeddingModelVersion =
     '${kVideoEmbeddingModelFamily}_small_onnx_v1';
 
 String buildPhotoEmbeddingModelVersion(MobileClipBackend backend) {
-  if (backend == MobileClipBackend.ncnn) {
-    return '${kPhotoEmbeddingModelFamily}_ncnn_v1';
-  }
   return '${kPhotoEmbeddingModelFamily}_${backend.storageValue}_fp32_split_v1';
 }
 

@@ -6,7 +6,6 @@ import 'app_ai_settings_service.dart';
 import 'clip_tokenizer_service.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_litert_service.dart';
-import 'ncnn_mobileclip_native_service.dart';
 import 'mobileviclip_video_service.dart';
 import 'semantic_matching_service.dart';
 
@@ -20,8 +19,6 @@ class MediaEmbeddingService {
 
   final SemanticMatchingService _semanticService = SemanticMatchingService();
   final ClipTokenizerService _tokenizer = ClipTokenizerService();
-  final NcnnMobileClipNativeService _ncnnService =
-      NcnnMobileClipNativeService();
 
   Future<MediaEmbeddingResult> embedImageBytes(
     Uint8List bytes, {
@@ -49,17 +46,6 @@ class MediaEmbeddingService {
           modelLabel:
               'MobileCLIP2 LiteRT (${effectiveLiteRt.executionProviderLabel})',
           preprocessMs: profile.decodeMs + profile.resizeNormalizeMs,
-          inferenceMs: profile.inferenceMs,
-          isSameSpaceAsMobileClipText: true,
-        );
-      case MobileClipBackend.ncnn:
-        final profile = await _ncnnService.profileEncodeImageBytes(bytes);
-        return MediaEmbeddingResult(
-          kind: MemoriaMediaKind.image,
-          embedding: profile.embedding,
-          modelVersion: buildPhotoEmbeddingModelVersion(effectiveBackend),
-          modelLabel: 'NCNN FFI (${_ncnnService.getStatus().version})',
-          preprocessMs: profile.preprocessMs,
           inferenceMs: profile.inferenceMs,
           isSameSpaceAsMobileClipText: true,
         );
@@ -119,17 +105,10 @@ class MediaEmbeddingService {
     required String text,
     MobileClipLiteRtService? liteRt,
   }) async {
-    if (media.modelVersion == MobileViClipVideoService.modelVersion ||
-        media.modelVersion ==
-            buildPhotoEmbeddingModelVersion(MobileClipBackend.ncnn)) {
-      final tokenIds = await _tokenizer.tokenize(text);
-      final textVector = await _ncnnService.encodeTextTokens(tokenIds);
-      return MediaTextSimilarityResult(
+    if (media.modelVersion == MobileViClipVideoService.modelVersion) {
+      return MediaTextSimilarityResult.unavailable(
         text: text,
-        textVector: textVector,
-        score: _semanticService.calculateSimilarity(media.embedding, textVector),
-        isSameEmbeddingSpace: true,
-        unavailableReason: null,
+        reason: 'MobileViCLIP 视频向量不与 MobileCLIP 文本向量共空间。',
       );
     }
     final textVector = liteRt == null

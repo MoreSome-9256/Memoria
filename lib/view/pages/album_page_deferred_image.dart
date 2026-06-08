@@ -46,6 +46,15 @@ class _DeferredImageLoadScheduler {
     _pump();
   }
 
+  static void reset() {
+    while (_queue.isNotEmpty) {
+      final (ticket, _) = _queue.removeFirst();
+      ticket.completed = true;
+    }
+    _active = 0;
+    _setPendingCount(0);
+  }
+
   static void _setPendingCount(int value) {
     _pendingCount = value;
     _scheduleFlush();

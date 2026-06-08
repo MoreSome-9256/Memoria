@@ -81,8 +81,8 @@ class OnnxFaceEmbeddingService extends FaceEmbeddingService {
       _isAvailable = false;
       _unavailableReason = error.toString();
       debugPrint(
-        '⚠️ Face ONNX 不可用，回退 baseline: $error '
-        'backend=fallback_mobileclip',
+        '⚠️ Face ONNX 不可用${_fallbackService == null ? "" : "，回退备用人脸向量服务"}: $error '
+        'backend=${_fallbackService == null ? "none" : "fallback_face_embedding"}',
       );
       if (_fallbackService != null) {
         await _fallbackService.warmUp();
@@ -155,7 +155,7 @@ class OnnxFaceEmbeddingService extends FaceEmbeddingService {
       }
     } catch (error) {
       debugPrint(
-        '⚠️ Face ONNX 推理失败，回退 baseline: $error'
+        '⚠️ Face ONNX 推理失败${_fallbackService == null ? "" : "，回退备用人脸向量服务"}: $error'
         '${_unavailableReason == null ? '' : ' ($_unavailableReason)'}',
       );
       return _fallbackService?.embedFaceCropBytes(imageBytes);

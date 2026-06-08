@@ -499,7 +499,6 @@ class SemanticPhotoSearchService {
     final embedding = _photoEmbeddingIndexRepository.readEmbeddingForPhoto(
       photo,
       modelVersion: activeModelVersion,
-      allowLegacyFallback: false,
     );
     if (embedding == null || embedding.isEmpty) {
       return null;

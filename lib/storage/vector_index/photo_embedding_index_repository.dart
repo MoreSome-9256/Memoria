@@ -20,19 +20,16 @@ class PhotoEmbeddingIndexRepository {
   List<double>? readEmbeddingForPhoto(
     PhotoEntity photo, {
     required String modelVersion,
-    bool allowLegacyFallback = false,
   }) {
     final indexed = readIndexedEmbeddingsByPhotoIds(<int>[
       photo.id,
     ], modelVersion: modelVersion)[photo.id];
-    return indexed ??
-        (allowLegacyFallback ? _normalizedVector(photo.imageEmbedding) : null);
+    return indexed;
   }
 
   Map<int, List<double>> readEmbeddingsForPhotos(
     Iterable<PhotoEntity> photos, {
     required String modelVersion,
-    bool allowLegacyFallback = false,
   }) {
     final photoList = photos
         .where((photo) => photo.id > 0)
@@ -52,14 +49,6 @@ class PhotoEmbeddingIndexRepository {
       if (indexedVector != null) {
         result[photo.id] = indexedVector;
         continue;
-      }
-
-      if (!allowLegacyFallback) {
-        continue;
-      }
-      final legacy = _normalizedVector(photo.imageEmbedding);
-      if (legacy != null) {
-        result[photo.id] = legacy;
       }
     }
 

@@ -17,21 +17,12 @@ class FaceEmbeddingIndexRepository {
 
   bool get isReady => _boxOrNull != null;
 
-  List<double>? readEmbeddingForFace(
-    FaceEntity face, {
-    bool allowLegacyFallback = true,
-  }) {
-    final indexed = readEmbeddingsForFaces(<FaceEntity>[
-      face,
-    ], allowLegacyFallback: false)[face.id];
-    return indexed ??
-        (allowLegacyFallback ? _normalizedVector(face.embedding) : null);
+  List<double>? readEmbeddingForFace(FaceEntity face) {
+    final indexed = readEmbeddingsForFaces(<FaceEntity>[face])[face.id];
+    return indexed;
   }
 
-  Map<int, List<double>> readEmbeddingsForFaces(
-    Iterable<FaceEntity> faces, {
-    bool allowLegacyFallback = true,
-  }) {
+  Map<int, List<double>> readEmbeddingsForFaces(Iterable<FaceEntity> faces) {
     final faceList = faces.where((face) => face.id > 0).toList(growable: false);
     if (faceList.isEmpty) {
       return const <int, List<double>>{};
@@ -55,14 +46,6 @@ class FaceEmbeddingIndexRepository {
       if (indexedVector != null) {
         result[face.id] = indexedVector;
         continue;
-      }
-
-      if (!allowLegacyFallback) {
-        continue;
-      }
-      final legacy = _normalizedVector(face.embedding);
-      if (legacy != null) {
-        result[face.id] = legacy;
       }
     }
 

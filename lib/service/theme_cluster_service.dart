@@ -759,27 +759,34 @@ class ThemeClusterService {
       return score;
     }
 
+    final embeddingScore = score;
+    final nearEmbeddingMatch =
+        embeddingScore >= definition.minSimilarity - 0.03;
+    if (!nearEmbeddingMatch) {
+      return embeddingScore;
+    }
+
     final bag = ThemeClusterComputeHelpers.buildTokenBag(photo);
     final lexicalHits = definition.keywords
         .where((keyword) => bag.contains(keyword.toLowerCase()))
         .length;
     if (lexicalHits > 0) {
-      // Small lexical bonus to stabilize near-threshold Chinese terms.
-      score += math.min(0.06, lexicalHits * 0.015);
+      // Keep lexical evidence as a tie-breaker; MobileCLIP2 S2 remains primary.
+      score += math.min(0.03, lexicalHits * 0.01);
     }
 
     if (definition.id == 'people') {
       if (photo.faceCount > 0) {
-        score += 0.08;
+        score += 0.04;
       }
       if ((photo.joyScore ?? 0) >= 0.45) {
-        score += 0.03;
+        score += 0.015;
       }
     }
 
     if (definition.id == 'books' &&
         OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]).isNotEmpty) {
-      score += 0.04;
+      score += 0.02;
     }
 
     return score;

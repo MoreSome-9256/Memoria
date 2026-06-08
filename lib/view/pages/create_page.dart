@@ -1,7 +1,6 @@
 // 创作流程页面，承载故事生成的具体操作步骤。
 
 import 'dart:io';
-import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
@@ -9,9 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/photo_entity.dart';
-import '../../service/mobileclip_embedding_service.dart';
-import '../../service/semantic_matching_service.dart';
-import '../../storage/vector_index/photo_embedding_index_repository.dart';
+import '../../service/semantic_photo_search_service.dart';
 import '../../utils/ocr_policy.dart';
 import '../../utils/tag_sanitizer.dart';
 import '../../models/event.dart';
@@ -19,127 +16,6 @@ import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import '../widgets/path_image.dart';
 import 'story_config_page.dart';
-import '../../objectbox.g.dart';
-import '../../storage/objectbox/objectbox_service.dart';
-
-class _CreatePhotoSearchRecord {
-  const _CreatePhotoSearchRecord({
-    required this.photoId,
-    required this.timestamp,
-    required this.isProbablyScreenshot,
-    required this.locationParts,
-    required this.tags,
-  });
-
-  factory _CreatePhotoSearchRecord.fromEntity(PhotoEntity photo) {
-    return _CreatePhotoSearchRecord(
-      photoId: photo.id,
-      timestamp: photo.timestamp,
-      isProbablyScreenshot: photo.isProbablyScreenshot,
-      locationParts: <String>[
-        photo.locationName ?? '',
-        photo.district ?? '',
-        photo.city ?? '',
-        photo.province ?? '',
-      ],
-      tags: TagSanitizer.sanitizeVisualTags(photo.aiTags ?? const <String>[]),
-    );
-  }
-
-  final int photoId;
-  final int timestamp;
-  final bool isProbablyScreenshot;
-  final List<String> locationParts;
-  final List<String> tags;
-
-  String get locationText => locationParts.join(' ');
-}
-
-class _CreateSearchFilterRequest {
-  const _CreateSearchFilterRequest({
-    required this.query,
-    required this.locations,
-    required this.records,
-  });
-
-  final String query;
-  final List<String> locations;
-  final List<_CreatePhotoSearchRecord> records;
-}
-
-class _CreateSearchFilterResult {
-  const _CreateSearchFilterResult({
-    required this.candidateIds,
-    required this.remainingQuery,
-    required this.matchedLocations,
-    this.targetYear,
-  });
-
-  final List<int> candidateIds;
-  final String remainingQuery;
-  final List<String> matchedLocations;
-  final String? targetYear;
-}
-
-class _CreateSemanticScoringInput {
-  const _CreateSemanticScoringInput({
-    required this.photoId,
-    required this.tags,
-    required this.imageEmbedding,
-  });
-
-  final int photoId;
-  final List<String> tags;
-  final List<double> imageEmbedding;
-}
-
-class _CreateSemanticScoringRequest {
-  const _CreateSemanticScoringRequest({
-    required this.inputs,
-    required this.textVector,
-    required this.query,
-    required this.taxonomyLabel,
-    required this.minSimilarity,
-    required this.strictTaxonomyThreshold,
-    required this.maxResults,
-  });
-
-  final List<_CreateSemanticScoringInput> inputs;
-  final List<double> textVector;
-  final String query;
-  final String? taxonomyLabel;
-  final double minSimilarity;
-  final double strictTaxonomyThreshold;
-  final int maxResults;
-}
-
-class _CreateSemanticScoringResult {
-  const _CreateSemanticScoringResult({
-    required this.matchedIds,
-    required this.preview,
-    required this.filteredCount,
-    required this.scoredCount,
-  });
-
-  final List<int> matchedIds;
-  final String preview;
-  final int filteredCount;
-  final int scoredCount;
-}
-
-class _CreateVisualTagFallbackRequest {
-  const _CreateVisualTagFallbackRequest({
-    required this.records,
-    required this.query,
-    required this.taxonomyLabel,
-    required this.maxResults,
-  });
-
-  final List<_CreatePhotoSearchRecord> records;
-  final String query;
-  final String? taxonomyLabel;
-  final int maxResults;
-}
 
 class _CreateLaunchPhotoRecord {
   const _CreateLaunchPhotoRecord({
@@ -211,235 +87,6 @@ class _CreateLaunchResult {
   int get startYear => startDate.year;
 }
 
-const Set<String> _createSemanticStopWords = <String>{
-  '照片',
-  '图片',
-  '相片',
-  '相册',
-  '回忆',
-  '那次',
-  '那年',
-  '那天',
-  '时候',
-  '一下',
-  '看看',
-  '想看',
-  '一下子',
-  '一下下',
-  '给我',
-  '帮我',
-};
-
-Set<String> _buildCreateLocationDictionary(
-  List<_CreatePhotoSearchRecord> records,
-) {
-  final allLocations = <String>{};
-  for (final record in records) {
-    for (final loc in record.locationParts) {
-      if (loc.trim().isEmpty) {
-        continue;
-      }
-      final cleanLoc = loc.trim();
-      allLocations.add(cleanLoc);
-      final strippedLoc = cleanLoc.replaceAll(RegExp(r'[省市自治区县盟旗]'), '').trim();
-      if (strippedLoc.length >= 2) {
-        allLocations.add(strippedLoc);
-      }
-    }
-  }
-  return allLocations;
-}
-
-_CreateSearchFilterResult _filterCreateSearchCandidates(
-  _CreateSearchFilterRequest request,
-) {
-  var remainingQuery = request.query.trim();
-  String? targetYear;
-  final matchedLocations = <String>[];
-
-  final yearMatch = RegExp(r'(20\d{2})').firstMatch(remainingQuery);
-  if (yearMatch != null) {
-    targetYear = yearMatch.group(0);
-    remainingQuery = remainingQuery.replaceAll(targetYear!, '');
-  }
-
-  final sortedLocations = List<String>.from(request.locations)
-    ..sort((a, b) => b.length.compareTo(a.length));
-  for (final loc in sortedLocations) {
-    if (remainingQuery.contains(loc)) {
-      matchedLocations.add(loc);
-      remainingQuery = remainingQuery.replaceAll(loc, '');
-    }
-  }
-  final dedupedLocations = matchedLocations.toSet().toList(growable: false);
-  remainingQuery = _stripCreateSemanticStopWords(remainingQuery);
-
-  final candidateIds = <int>[];
-  for (final record in request.records) {
-    if (record.isProbablyScreenshot) {
-      continue;
-    }
-    if (targetYear != null) {
-      final year = DateTime.fromMillisecondsSinceEpoch(
-        record.timestamp,
-      ).year.toString();
-      if (year != targetYear) {
-        continue;
-      }
-    }
-    if (dedupedLocations.isNotEmpty &&
-        !dedupedLocations.any(record.locationText.contains)) {
-      continue;
-    }
-    candidateIds.add(record.photoId);
-  }
-
-  return _CreateSearchFilterResult(
-    candidateIds: candidateIds,
-    remainingQuery: remainingQuery,
-    matchedLocations: dedupedLocations,
-    targetYear: targetYear,
-  );
-}
-
-String _stripCreateSemanticStopWords(String value) {
-  var cleaned = value;
-  for (final stopWord in _createSemanticStopWords) {
-    cleaned = cleaned.replaceAll(stopWord, '');
-  }
-  cleaned = cleaned.replaceAll(RegExp(r'[的在]'), '');
-  cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ').trim();
-  return cleaned;
-}
-
-_CreateSemanticScoringResult _scoreCreateSemanticCandidates(
-  _CreateSemanticScoringRequest request,
-) {
-  final scored = <MapEntry<_CreateSemanticScoringInput, double>>[];
-  for (final input in request.inputs) {
-    if (input.imageEmbedding.length != request.textVector.length ||
-        input.imageEmbedding.isEmpty) {
-      continue;
-    }
-    final score = _createCosineSimilarity(
-      request.textVector,
-      input.imageEmbedding,
-    );
-    scored.add(
-      MapEntry(
-        input,
-        _boostCreateSemanticScore(
-          tags: input.tags,
-          query: request.query,
-          taxonomyLabel: request.taxonomyLabel,
-          semanticScore: score,
-        ),
-      ),
-    );
-  }
-  scored.sort((a, b) => b.value.compareTo(a.value));
-  final filtered = scored
-      .where((entry) => entry.value >= request.minSimilarity)
-      .take(request.maxResults)
-      .toList(growable: false);
-  final matchedIds = _rankCreateFilteredMatches(
-    filtered: filtered,
-    taxonomyLabel: request.taxonomyLabel,
-    strictTaxonomyThreshold: request.strictTaxonomyThreshold,
-  );
-  final preview = scored
-      .take(5)
-      .map((entry) => '${entry.value.toStringAsFixed(4)}#${entry.key.photoId}')
-      .join(', ');
-  return _CreateSemanticScoringResult(
-    matchedIds: matchedIds,
-    preview: preview,
-    filteredCount: filtered.length,
-    scoredCount: scored.length,
-  );
-}
-
-List<int> _fallbackCreateSearchByVisualTags(
-  _CreateVisualTagFallbackRequest request,
-) {
-  final query = request.query.trim();
-  final ids = <int>[];
-  for (final record in request.records) {
-    if (request.taxonomyLabel != null &&
-        record.tags.contains(request.taxonomyLabel)) {
-      ids.add(record.photoId);
-    } else if (query.length >= 2 && record.tags.contains(query)) {
-      ids.add(record.photoId);
-    }
-    if (ids.length >= request.maxResults) {
-      break;
-    }
-  }
-  return ids;
-}
-
-double _boostCreateSemanticScore({
-  required List<String> tags,
-  required String query,
-  required String? taxonomyLabel,
-  required double semanticScore,
-}) {
-  var boosted = semanticScore;
-  if (taxonomyLabel != null && tags.contains(taxonomyLabel)) {
-    boosted += 0.10;
-  } else if (query.trim().length >= 2 && tags.contains(query.trim())) {
-    boosted += 0.05;
-  }
-  return boosted;
-}
-
-List<int> _rankCreateFilteredMatches({
-  required List<MapEntry<_CreateSemanticScoringInput, double>> filtered,
-  required String? taxonomyLabel,
-  required double strictTaxonomyThreshold,
-}) {
-  if (filtered.isEmpty) {
-    return <int>[];
-  }
-  if (taxonomyLabel == null) {
-    return filtered.map((entry) => entry.key.photoId).toList(growable: false);
-  }
-
-  final exactTagMatches = <int>[];
-  final semanticOnlyMatches = <int>[];
-  for (final entry in filtered) {
-    if (entry.key.tags.contains(taxonomyLabel)) {
-      exactTagMatches.add(entry.key.photoId);
-      continue;
-    }
-    if (entry.value >= strictTaxonomyThreshold) {
-      semanticOnlyMatches.add(entry.key.photoId);
-    }
-  }
-  final merged = <int>[...exactTagMatches, ...semanticOnlyMatches];
-  return merged.isNotEmpty
-      ? merged
-      : filtered.map((entry) => entry.key.photoId).toList(growable: false);
-}
-
-double _createCosineSimilarity(List<double> a, List<double> b) {
-  var dot = 0.0;
-  var normA = 0.0;
-  var normB = 0.0;
-  for (var i = 0; i < a.length; i++) {
-    final av = a[i];
-    final bv = b[i];
-    dot += av * bv;
-    normA += av * av;
-    normB += bv * bv;
-  }
-  if (normA <= 0 || normB <= 0) {
-    return 0.0;
-  }
-  final similarity = dot / (math.sqrt(normA) * math.sqrt(normB));
-  return similarity.isFinite ? similarity : 0.0;
-}
-
 _CreateLaunchResult _buildCreateLaunchResult(_CreateLaunchRequest request) {
   final photos = request.records
       .map(
@@ -476,23 +123,15 @@ class CreatePage extends StatefulWidget {
 
 class _CreatePageState extends State<CreatePage> {
   final TextEditingController _searchController = TextEditingController();
-  final SemanticMatchingService _semanticService = SemanticMatchingService();
-  final MobileClipEmbeddingService _mobileClipEmbeddingService =
-      MobileClipEmbeddingService();
-  final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
-      PhotoEmbeddingIndexRepository();
+  final SemanticPhotoSearchService _semanticPhotoSearchService =
+      SemanticPhotoSearchService();
   bool _isSearching = false;
-  static const double _minSemanticSimilarity = 0.18;
   static const int _maxSemanticResults = 300;
-  static const double _strictTaxonomySemanticThreshold = 0.22;
 
   // 搜索结果
   List<PhotoEntity> _searchResults = [];
   // 用户勾选的照片集合（存 ID）
   final Set<int> _selectedPhotoIds = {};
-  List<PhotoEntity>? _cachedAnalyzedPhotos;
-  List<_CreatePhotoSearchRecord>? _cachedSearchRecords;
-  Set<String>? _cachedLocations;
 
   List<String> get _candidateLabels {
     final input = _searchController.text.trim();
@@ -536,33 +175,7 @@ class _CreatePageState extends State<CreatePage> {
     });
   }
 
-  Future<List<PhotoEntity>> _loadAnalyzedPhotos() async {
-    if (_cachedAnalyzedPhotos != null &&
-        _cachedSearchRecords != null &&
-        _cachedLocations != null) {
-      return _cachedAnalyzedPhotos!;
-    }
-
-    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final query = photoBox
-        .query(PhotoEntity_.isAiAnalyzed.equals(true))
-        .order(PhotoEntity_.timestamp, flags: Order.descending)
-        .build();
-    final photos = query.find();
-    query.close();
-
-    _cachedAnalyzedPhotos = photos;
-    _cachedSearchRecords = photos
-        .map(_CreatePhotoSearchRecord.fromEntity)
-        .toList(growable: false);
-    _cachedLocations = await compute(
-      _buildCreateLocationDictionary,
-      _cachedSearchRecords!,
-    );
-    return photos;
-  }
-
-  // 🧠 语义检索版：本地实体截流 (时间/地点) + Text Embedding 余弦排序
+  // 创作入口复用统一语义检索链路，避免与相册搜索、推荐卡片出现两套算法。
   Future<void> _performSearch(String query) async {
     if (query.trim().isEmpty) {
       _resetSearchState();
@@ -575,150 +188,31 @@ class _CreatePageState extends State<CreatePage> {
       _selectedPhotoIds.clear();
     });
 
-    final allAnalyzedPhotos = await _loadAnalyzedPhotos();
-
-    if (allAnalyzedPhotos.isEmpty) {
-      _resetSearchState();
-      return;
-    }
-
-    final allLocations = _cachedLocations ?? const <String>{};
-    final searchRecords =
-        _cachedSearchRecords ?? const <_CreatePhotoSearchRecord>[];
-    final photosById = <int, PhotoEntity>{
-      for (final photo in allAnalyzedPhotos) photo.id: photo,
-    };
-
-    // ==========================================
-    // 💡 阶段二：本地命名实体识别 (NER)
-    // ==========================================
-    final filterResult = await compute(
-      _filterCreateSearchCandidates,
-      _CreateSearchFilterRequest(
-        query: query,
-        locations: allLocations.toList(growable: false),
-        records: searchRecords,
-      ),
-    );
-
-    _logDebug(
-      "🔍 [意图分析] 提取年份: ${filterResult.targetYear ?? '无'}, 提取地点: ${filterResult.matchedLocations}, 剩余需AI解析的语义词: '${filterResult.remainingQuery.isEmpty ? '无' : filterResult.remainingQuery}'",
-    );
-
-    // ==========================================
-    // 💡 阶段三：先做时空过滤，缩小候选集合
-    // ==========================================
-    final candidates = filterResult.candidateIds
-        .map((id) => photosById[id])
-        .whereType<PhotoEntity>()
-        .toList(growable: false);
-
-    if (candidates.isEmpty) {
-      _logDebug('🎯 [综合过滤] 时空过滤后候选为 0');
-      if (mounted) {
-        setState(() {
-          _searchResults = <PhotoEntity>[];
-          _isSearching = false;
-        });
-      }
-      return;
-    }
-
-    // ==========================================
-    // 💡 阶段四：文本向量检索（语义排序）
-    // ==========================================
-    final semanticQuery = filterResult.remainingQuery.isNotEmpty
-        ? filterResult.remainingQuery
-        : query.trim();
-    final semanticPrompt = _resolveSemanticPrompt(semanticQuery);
-    final taxonomyLabel = _resolveTaxonomyLabel(query.trim());
     List<PhotoEntity> matchedPhotos;
-
-    // 纯时空查询：直接返回候选集合（已是时间倒序）
-    if (semanticQuery.replaceAll(RegExp(r'\s+'), '').isEmpty) {
-      matchedPhotos = List<PhotoEntity>.from(candidates);
-    } else {
-      try {
-        await _semanticService.warmUp();
-        final activeModelVersion = await _mobileClipEmbeddingService
-            .getSelectedModelVersion();
-        final textVector = await _semanticService.embedText(semanticPrompt);
-
-        final scoringInputs = <_CreateSemanticScoringInput>[];
-        for (final photo in candidates) {
-          final imageEmbedding = _photoEmbeddingIndexRepository
-              .readEmbeddingForPhoto(photo, modelVersion: activeModelVersion);
-          if (imageEmbedding == null || imageEmbedding.isEmpty) {
-            continue;
-          }
-          if (imageEmbedding.length != textVector.length) {
-            continue;
-          }
-          scoringInputs.add(
-            _CreateSemanticScoringInput(
-              photoId: photo.id,
-              tags: TagSanitizer.sanitizeVisualTags(
-                photo.aiTags ?? const <String>[],
-              ),
-              imageEmbedding: imageEmbedding,
-            ),
-          );
+    try {
+      final result = await _semanticPhotoSearchService.search(query.trim());
+      final merged = <PhotoEntity>[];
+      final seen = <int>{};
+      for (final photo in [...result.exactPhotos, ...result.relatedPhotos]) {
+        if (photo.isProbablyScreenshot) {
+          continue;
         }
-
-        if (scoringInputs.isEmpty) {
-          _logDebug('⚠️ [语义检索] 候选集中没有可用图像向量，返回 0 条');
-          final fallbackIds = await compute(
-            _fallbackCreateSearchByVisualTags,
-            _CreateVisualTagFallbackRequest(
-              records: _recordsForCandidates(candidates),
-              query: semanticQuery,
-              taxonomyLabel: taxonomyLabel,
-              maxResults: _maxSemanticResults,
-            ),
-          );
-          matchedPhotos = _photosForIds(fallbackIds, photosById);
-        } else {
-          final scoreResult = await compute(
-            _scoreCreateSemanticCandidates,
-            _CreateSemanticScoringRequest(
-              inputs: scoringInputs,
-              textVector: textVector,
-              query: semanticQuery,
-              taxonomyLabel: taxonomyLabel,
-              minSimilarity: _minSemanticSimilarity,
-              strictTaxonomyThreshold: _strictTaxonomySemanticThreshold,
-              maxResults: _maxSemanticResults,
-            ),
-          );
-          matchedPhotos = _photosForIds(scoreResult.matchedIds, photosById);
-
-          if (scoreResult.filteredCount == 0) {
-            final fallbackIds = await compute(
-              _fallbackCreateSearchByVisualTags,
-              _CreateVisualTagFallbackRequest(
-                records: _recordsForCandidates(candidates),
-                query: semanticQuery,
-                taxonomyLabel: taxonomyLabel,
-                maxResults: _maxSemanticResults,
-              ),
-            );
-            matchedPhotos = _photosForIds(fallbackIds, photosById);
-            _logDebug(
-              '⚠️ [语义检索] 全部低于阈值 $_minSemanticSimilarity，'
-              '回退到 AI 标签过滤 ${matchedPhotos.length} 条',
-            );
-          }
-
-          _logDebug(
-            '🧠 [语义检索] raw="$semanticQuery" prompt="$semanticPrompt" '
-            'top5=[${scoreResult.preview}] threshold=$_minSemanticSimilarity '
-            'filtered=${scoreResult.filteredCount}/${scoreResult.scoredCount}',
-          );
+        if (seen.add(photo.id)) {
+          merged.add(photo);
         }
-      } catch (e) {
-        _logDebug('⚠️ 语义检索失败，降级为时空过滤结果: $e');
-        matchedPhotos = List<PhotoEntity>.from(candidates);
+        if (merged.length >= _maxSemanticResults) {
+          break;
+        }
       }
+      matchedPhotos = merged;
+      _logDebug(
+        '🧠 [统一语义检索] exact=${result.exactPhotos.length} '
+        'related=${result.relatedPhotos.length} '
+        'metadata=${result.metadataCandidateCount} tag=${result.tagCandidateCount}',
+      );
+    } catch (e) {
+      _logDebug('⚠️ 统一语义检索失败: $e');
+      matchedPhotos = const <PhotoEntity>[];
     }
 
     _logDebug("🎯 [综合过滤] 最终命中照片数: ${matchedPhotos.length}");
@@ -732,64 +226,6 @@ class _CreatePageState extends State<CreatePage> {
         _isSearching = false;
       });
     }
-  }
-
-  String _resolveSemanticPrompt(String query) {
-    final trimmed = query.trim();
-    if (trimmed.isEmpty) {
-      return trimmed;
-    }
-
-    final mapped = memoriaMasterTaxonomy[trimmed];
-    if (mapped != null && mapped.isNotEmpty) {
-      return mapped;
-    }
-
-    // 优先匹配推荐词，避免把中文短语直接喂给英文主训练的 Text Encoder。
-    for (final entry in memoriaMasterTaxonomy.entries) {
-      if (trimmed.contains(entry.key) || entry.key.contains(trimmed)) {
-        return entry.value;
-      }
-    }
-
-    return trimmed;
-  }
-
-  String? _resolveTaxonomyLabel(String query) {
-    final trimmed = query.trim();
-    if (trimmed.isEmpty) {
-      return null;
-    }
-
-    if (memoriaMasterTaxonomy.containsKey(trimmed)) {
-      return trimmed;
-    }
-
-    for (final label in memoriaMasterTaxonomy.keys) {
-      if (trimmed.contains(label) || label.contains(trimmed)) {
-        return label;
-      }
-    }
-
-    return null;
-  }
-
-  List<_CreatePhotoSearchRecord> _recordsForCandidates(
-    List<PhotoEntity> candidates,
-  ) {
-    return candidates
-        .map(_CreatePhotoSearchRecord.fromEntity)
-        .toList(growable: false);
-  }
-
-  List<PhotoEntity> _photosForIds(
-    List<int> ids,
-    Map<int, PhotoEntity> photosById,
-  ) {
-    return ids
-        .map((id) => photosById[id])
-        .whereType<PhotoEntity>()
-        .toList(growable: false);
   }
 
   // 👆 勾选/取消勾选照片

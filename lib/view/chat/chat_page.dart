@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
-import 'dart:convert';
-import 'package:objectbox/objectbox.dart';
 
 import '../../models/chat_message.dart';
 import '../../service/chat_service.dart';
 import '../../service/photo_service.dart';
+import '../../service/semantic_photo_search_service.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
@@ -24,6 +23,8 @@ class _ChatPageState extends State<ChatPage> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final ChatService _chatService = ChatService();
+  final SemanticPhotoSearchService _semanticSearchService =
+      SemanticPhotoSearchService();
   bool _isLoading = false;
 
   @override
@@ -36,9 +37,7 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _loadHistory() async {
     final store = ObjectBoxService().store;
     final chatBox = store.box<ChatMessage>();
-    final query = chatBox.query()
-        .order(ChatMessage_.timestampMs)
-        .build();
+    final query = chatBox.query().order(ChatMessage_.timestampMs).build();
     query.limit = 200;
     final history = query.find();
     query.close();
@@ -90,197 +89,20 @@ class _ChatPageState extends State<ChatPage> {
     if (match == null) return null;
 
     try {
-      final jsonStr = match.group(1)!.trim();
-      final queryParams = jsonDecode(jsonStr);
-
-      final List<dynamic> rawTags = queryParams['tags'] ?? [];
-
-      List<String> tags = rawTags
-          .map((t) => t.toString().toLowerCase().trim())
-          .map((t) => t.replaceAll(RegExp(r'的照片|照片|图片'), '')) // 清理废话
-          .where((t) => t.isNotEmpty)
-          .toList();
-
-      final ut = userText.toLowerCase();
-
-      // ==========================================
-      // 🌟 1. 年份提取
-      // ==========================================
-      int? targetYear;
-      final now = DateTime.now();
-
-      if (ut.contains('今年'))
-        targetYear = now.year;
-      else if (ut.contains('去年'))
-        targetYear = now.year - 1;
-      else if (ut.contains('前年'))
-        targetYear = now.year - 2;
-      else {
-        final yearMatch = RegExp(r'(20\d{2})年').firstMatch(ut);
-        if (yearMatch != null) {
-          targetYear = int.tryParse(yearMatch.group(1)!);
+      final result = await _semanticSearchService.search(userText);
+      final merged = <PhotoEntity>[];
+      final seen = <int>{};
+      for (final photo in [...result.exactPhotos, ...result.relatedPhotos]) {
+        if (seen.add(photo.id)) {
+          merged.add(photo);
+        }
+        if (merged.length >= 15) {
+          break;
         }
       }
-
-      // ==========================================
-      // 🌟 2. 季节与月份提取
-      // ==========================================
-      List<int>? targetMonths;
-
-      final springKeys = ['春天', '春日', '春季', '春', 'spring'];
-      final summerKeys = ['夏天', '夏日', '夏季', '夏', 'summer'];
-      final autumnKeys = ['秋天', '秋日', '秋季', '秋', 'autumn', 'fall'];
-      final winterKeys = ['冬天', '冬日', '冬季', '冬', 'winter'];
-
-      final monthRegExp = RegExp(
-        r'(1[0-2]|[1-9])月份?|(一|二|三|四|五|六|七|八|九|十|十一|十二)月份?',
-      );
-      final monthMatch = monthRegExp.firstMatch(ut);
-
-      if (monthMatch != null) {
-        String mStr = monthMatch.group(1) ?? monthMatch.group(2) ?? '';
-        int? m = int.tryParse(mStr);
-        if (m == null) {
-          const zhMonths = {
-            '一': 1,
-            '二': 2,
-            '三': 3,
-            '四': 4,
-            '五': 5,
-            '六': 6,
-            '七': 7,
-            '八': 8,
-            '九': 9,
-            '十': 10,
-            '十一': 11,
-            '十二': 12,
-          };
-          m = zhMonths[mStr];
-        }
-        if (m != null) targetMonths = [m];
-      } else {
-        if (springKeys.any(ut.contains)) {
-          targetMonths = [3, 4, 5];
-        } else if (summerKeys.any(ut.contains)) {
-          targetMonths = [6, 7, 8];
-        } else if (autumnKeys.any(ut.contains)) {
-          targetMonths = [9, 10, 11];
-        } else if (winterKeys.any(ut.contains)) {
-          targetMonths = [12, 1, 2];
-        }
-      }
-
-      // ==========================================
-      // 🌟 3. 意图纯净度检测（专门猎杀 AI 幻觉）
-      // ==========================================
-      // 抠掉所有的功能词、时间词
-      String pureIntent = ut
-          .replaceAll(RegExp(r'帮我|查找|找找|看看|推荐|一下|的|照片|图片|回忆'), '')
-          .replaceAll(monthRegExp, '');
-      for (var key in [
-        ...springKeys,
-        ...summerKeys,
-        ...autumnKeys,
-        ...winterKeys,
-      ]) {
-        pureIntent = pureIntent.replaceAll(key, '');
-      }
-      pureIntent = pureIntent.replaceAll(RegExp(r'今年|去年|前年|20\d{2}年'), '');
-
-      // 如果用户仅仅说了时间（比如"冬天的照片"、"一月份照片"），直接清空 AI 瞎编的视觉 tags！
-      if (pureIntent.trim().isEmpty) {
-        tags.clear();
-      } else {
-        // 如果用户不仅说了时间，还说了景物（如"冬天海边"），正常清洗时间词，保留视觉词
-        for (int i = 0; i < tags.length; i++) {
-          for (var key in [
-            ...springKeys,
-            ...summerKeys,
-            ...autumnKeys,
-            ...winterKeys,
-          ]) {
-            tags[i] = tags[i].replaceAll(key, '');
-          }
-          tags[i] = tags[i].replaceAll(monthRegExp, '');
-          tags[i] = tags[i].replaceAll('的', '').trim();
-        }
-        tags.removeWhere((t) => t.isEmpty);
-      }
-
-      // ==========================================
-      // 4. ObjectBox 查询（🌟 完美兼容 10 位和 13 位时间戳）
-      // ==========================================
-      final store = ObjectBoxService().store;
-      final photoBox = store.box<PhotoEntity>();
-
-      QueryBuilder<PhotoEntity> queryBuilder;
-      if (targetYear != null) {
-        final startMillis = DateTime(targetYear, 1, 1).millisecondsSinceEpoch;
-        final endMillis = DateTime(
-          targetYear,
-          12,
-          31,
-          23,
-          59,
-          59,
-          999,
-        ).millisecondsSinceEpoch;
-
-        queryBuilder = photoBox.query(
-          PhotoEntity_.timestamp
-              .between(startMillis, endMillis)
-              .or(
-                PhotoEntity_.timestamp.between(
-                  startMillis ~/ 1000,
-                  endMillis ~/ 1000,
-                ),
-              ),
-        );
-      } else {
-        queryBuilder = photoBox.query();
-      }
-
-      queryBuilder.order(PhotoEntity_.timestamp, flags: Order.descending);
-      final query = queryBuilder.build();
-      query.limit = 500;
-      final candidates = query.find();
-      query.close();
-
-      // ==========================================
-      // 5. 内存精细过滤
-      // ==========================================
-      final filtered = candidates.where((p) {
-        // 🌟 时空修复：把 10 位秒级时间戳强行放大回毫秒级
-        int ts = p.timestamp;
-        if (ts < 10000000000) ts *= 1000;
-        final photoMonth = DateTime.fromMillisecondsSinceEpoch(ts).month;
-
-        if (targetMonths != null) {
-          if (!targetMonths!.contains(photoMonth)) return false;
-        }
-
-        if (tags.isNotEmpty) {
-          if (p.aiTags == null || p.aiTags!.isEmpty) return false;
-          final pTagsLower = p.aiTags!.map((t) => t.toLowerCase()).toList();
-
-          final tagMatched = tags.any((searchTag) {
-            return pTagsLower.any((photoTag) {
-              if (photoTag.contains(searchTag)) return true;
-              if (photoTag.length >= 2 && searchTag.contains(photoTag))
-                return true;
-              return false;
-            });
-          });
-
-          if (!tagMatched) return false;
-        }
-        return true;
-      }).toList();
-
-      final output = filtered.take(15).toList(growable: false);
-      return await PhotoService().reconcileAccessiblePhotos(output);
+      return await PhotoService().reconcileAccessiblePhotos(merged);
     } catch (e) {
-      debugPrint("本地解析或搜索失败: $e");
+      debugPrint("语义照片搜索失败: $e");
       return null;
     }
   }
@@ -335,14 +157,15 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   // 🌟 5. 跳转到二次确认页的逻辑
-  void _navigateToCreateAndGenerate(List<String> photoPaths, String topic) async {
+  void _navigateToCreateAndGenerate(
+    List<String> photoPaths,
+    String topic,
+  ) async {
     // 根据路径反向查出实体（因为传给下一页需要实体）
     if (photoPaths.isEmpty) return;
     final store = ObjectBoxService().store;
     final photoBox = store.box<PhotoEntity>();
-    final query = photoBox.query(
-      PhotoEntity_.path.oneOf(photoPaths),
-    ).build();
+    final query = photoBox.query(PhotoEntity_.path.oneOf(photoPaths)).build();
     final photos = query.find();
     query.close();
 
@@ -363,7 +186,10 @@ class _ChatPageState extends State<ChatPage> {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text('记忆助理', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        title: const Text(
+          '记忆助理',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+        ),
         backgroundColor: Colors.white.withOpacity(0.5),
         elevation: 0,
         centerTitle: true,
@@ -384,7 +210,8 @@ class _ChatPageState extends State<ChatPage> {
                   controller: _scrollController,
                   padding: const EdgeInsets.fromLTRB(16, 110, 16, 20),
                   itemCount: _messages.length,
-                  itemBuilder: (context, index) => _buildMessageBubble(_messages[index]),
+                  itemBuilder: (context, index) =>
+                      _buildMessageBubble(_messages[index]),
                 ),
               ),
               _buildInputArea(),
@@ -403,12 +230,28 @@ class _ChatPageState extends State<ChatPage> {
         child: Stack(
           children: [
             Positioned(
-              top: -100, left: -50,
-              child: Container(width: 300, height: 300, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0x88FFB6C1))),
+              top: -100,
+              left: -50,
+              child: Container(
+                width: 300,
+                height: 300,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0x88FFB6C1),
+                ),
+              ),
             ),
             Positioned(
-              top: -20, right: -80,
-              child: Container(width: 250, height: 250, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0x77E0B0FF))),
+              top: -20,
+              right: -80,
+              child: Container(
+                width: 250,
+                height: 250,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0x77E0B0FF),
+                ),
+              ),
             ),
           ],
         ),
@@ -418,19 +261,27 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _buildMessageBubble(ChatMessage message) {
     bool isUser = message.sender == MessageSender.user;
-    bool hasPhotos = message.relatedPhotoPaths != null && message.relatedPhotoPaths!.isNotEmpty;
+    bool hasPhotos =
+        message.relatedPhotoPaths != null &&
+        message.relatedPhotoPaths!.isNotEmpty;
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Column(
-        crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment: isUser
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
         children: [
           Container(
             margin: const EdgeInsets.symmetric(vertical: 8),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.85,
+            ),
             decoration: BoxDecoration(
-              color: isUser ? const Color.fromARGB(255, 255, 64, 129) : Colors.white.withOpacity(0.9),
+              color: isUser
+                  ? const Color.fromARGB(255, 255, 64, 129)
+                  : Colors.white.withOpacity(0.9),
               borderRadius: BorderRadius.only(
                 topLeft: const Radius.circular(20),
                 topRight: const Radius.circular(20),
@@ -438,7 +289,11 @@ class _ChatPageState extends State<ChatPage> {
                 bottomRight: Radius.circular(isUser ? 0 : 20),
               ),
               boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8, offset: const Offset(0, 3)),
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
               ],
             ),
             child: Column(
@@ -447,7 +302,11 @@ class _ChatPageState extends State<ChatPage> {
                 if (message.text.isNotEmpty)
                   Text(
                     message.text,
-                    style: TextStyle(color: isUser ? Colors.white : Colors.black87, fontSize: 15, height: 1.4),
+                    style: TextStyle(
+                      color: isUser ? Colors.white : Colors.black87,
+                      fontSize: 15,
+                      height: 1.4,
+                    ),
                   ),
                 if (hasPhotos) ...[
                   const SizedBox(height: 12),
@@ -467,22 +326,37 @@ class _ChatPageState extends State<ChatPage> {
                   message.searchTopic ?? "我的瞬间",
                 ),
                 icon: const Icon(Icons.movie_creation_outlined, size: 18),
-                label: const Text("以此回忆生成视频", style: TextStyle(fontWeight: FontWeight.bold)),
+                label: const Text(
+                  "以此回忆生成视频",
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
                 style: TextButton.styleFrom(
                   foregroundColor: const Color.fromARGB(255, 255, 64, 129),
                   backgroundColor: Colors.white.withOpacity(0.6),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                 ),
               ),
             ),
 
-          if (message.relatedPhotoPaths != null && message.relatedPhotoPaths!.isEmpty) ...[
+          if (message.relatedPhotoPaths != null &&
+              message.relatedPhotoPaths!.isEmpty) ...[
             const SizedBox(height: 8),
             Container(
               padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8)),
-              child: const Text("（在本地记忆库中没有找到匹配的画面）", style: TextStyle(color: Colors.grey, fontSize: 12)),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                "（在本地记忆库中没有找到匹配的画面）",
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
             ),
           ],
         ],
@@ -512,7 +386,12 @@ class _ChatPageState extends State<ChatPage> {
 
   Widget _buildInputArea() {
     return Container(
-      padding: EdgeInsets.fromLTRB(16, 12, 16, MediaQuery.of(context).padding.bottom + 12),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        12,
+        16,
+        MediaQuery.of(context).padding.bottom + 12,
+      ),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.9),
         border: Border(top: BorderSide(color: Colors.grey.withOpacity(0.1))),
@@ -525,10 +404,16 @@ class _ChatPageState extends State<ChatPage> {
               decoration: InputDecoration(
                 hintText: "描述你想找的回忆...",
                 hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(25), borderSide: BorderSide.none),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(25),
+                  borderSide: BorderSide.none,
+                ),
                 filled: true,
                 fillColor: Colors.grey[100]?.withOpacity(0.7),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 10,
+                ),
               ),
               onSubmitted: (_) => _handleSend(),
             ),
@@ -539,12 +424,25 @@ class _ChatPageState extends State<ChatPage> {
             child: Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: _isLoading ? Colors.grey : const Color.fromARGB(255, 255, 64, 129),
+                color: _isLoading
+                    ? Colors.grey
+                    : const Color.fromARGB(255, 255, 64, 129),
                 shape: BoxShape.circle,
               ),
-              child: _isLoading 
-                ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                : const Icon(Icons.send_rounded, color: Colors.white, size: 22),
+              child: _isLoading
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Icon(
+                      Icons.send_rounded,
+                      color: Colors.white,
+                      size: 22,
+                    ),
             ),
           ),
         ],

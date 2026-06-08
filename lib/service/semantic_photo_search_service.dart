@@ -1,15 +1,14 @@
 // 语义照片搜索服务，串联查询解析、向量检索和结果排序。
 
 import 'package:flutter/foundation.dart';
-import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
 import '../models/vo/semantic_search_models.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
-import '../utils/tag_sanitizer.dart';
 import 'mobileclip_embedding_service.dart';
 import 'semantic_matching_service.dart';
+import 'semantic_search_metadata_matcher.dart';
 import 'semantic_query_parser_service.dart';
 
 class SemanticPhotoSearchService {
@@ -26,11 +25,16 @@ class SemanticPhotoSearchService {
       MobileClipEmbeddingService();
   final PhotoEmbeddingIndexRepository _photoEmbeddingIndexRepository =
       PhotoEmbeddingIndexRepository();
+  final SemanticSearchMetadataMatcher _metadataMatcher =
+      const SemanticSearchMetadataMatcher();
 
   static const double _positiveSemanticParticipationThreshold = 0.16;
   static const double _exactPositiveThreshold = 0.22;
   static const double _relatedSemanticThreshold = 0.11;
   static const double _negativePenaltyAlpha = 0.6;
+  static const double _preferCoarseTagBonus = 0.035;
+  static const double _optionalCoarseTagBonus = 0.018;
+  static const double _locationScoreBonus = 0.025;
   static const double _minimumFinalScore = 0.03;
   static const int _maxResultsPerBucket = 240;
 
@@ -124,6 +128,7 @@ class SemanticPhotoSearchService {
       vectors: vectors,
       coarseTags: query.coarseTags,
       locations: query.locations,
+      tagStrictness: query.tagStrictness,
     );
 
     final exactPhotos = _orderedPhotosForHits(
@@ -231,85 +236,14 @@ class SemanticPhotoSearchService {
   }
 
   bool _matchesAnyTimeRange(PhotoEntity photo, SemanticSearchQuery query) {
-    final dateRanges = query.timeRanges
-        .where((range) => range.hasDateBoundary)
-        .toList(growable: false);
-    final localTimeWindows = query.timeRanges
-        .where((range) => range.hasLocalTimeWindow)
-        .toList(growable: false);
-
-    if (dateRanges.isNotEmpty &&
-        !dateRanges.any((range) => _matchesDateRange(photo, range))) {
-      return false;
-    }
-    if (localTimeWindows.isNotEmpty &&
-        !localTimeWindows.any(
-          (range) => _matchesLocalTimeWindow(photo, range),
-        )) {
-      return false;
-    }
-    return true;
-  }
-
-  bool _matchesDateRange(PhotoEntity photo, SemanticSearchTimeRange range) {
-    final start = range.startTimeMs;
-    final end = range.endTimeMs;
-    if (start != null && photo.timestamp < start) {
-      return false;
-    }
-    if (end != null && photo.timestamp > end) {
-      return false;
-    }
-    return true;
-  }
-
-  bool _matchesLocalTimeWindow(
-    PhotoEntity photo,
-    SemanticSearchTimeRange range,
-  ) {
-    final localStart = range.localStartMinute;
-    final localEnd = range.localEndMinute;
-    final offset = range.utcOffsetMinutes;
-    if (localStart == null || localEnd == null || offset == null) {
-      return true;
-    }
-
-    final localTime = DateTime.fromMillisecondsSinceEpoch(
-      photo.timestamp,
-      isUtc: true,
-    ).add(Duration(minutes: offset));
-    final minuteOfDay = localTime.hour * 60 + localTime.minute;
-    if (localStart <= localEnd) {
-      return minuteOfDay >= localStart && minuteOfDay <= localEnd;
-    }
-    return minuteOfDay >= localStart || minuteOfDay <= localEnd;
+    return _metadataMatcher.matchesTime(photo, query);
   }
 
   bool _matchesAnyLocation(
     PhotoEntity photo,
     List<SemanticSearchLocation> locations,
   ) {
-    final locationParts = _photoLocationParts(photo);
-    if (locationParts.isEmpty) {
-      return false;
-    }
-
-    final locationText = locationParts.join(' ').toLowerCase();
-    for (final location in locations) {
-      final terms = <String>{
-        location.text.trim(),
-        ...location.aliases.map((item) => item.trim()),
-      }.where((item) => item.isNotEmpty);
-      for (final term in terms) {
-        final normalizedTerm = term.toLowerCase();
-        final stripped = _stripLocationSuffix(normalizedTerm);
-        if (locationText.contains(normalizedTerm) ||
-            (stripped.isNotEmpty && locationText.contains(stripped))) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return _metadataMatcher.matchesLocation(photo, locations);
   }
 
   List<PhotoEntity> _applyTagStrategy(
@@ -340,7 +274,7 @@ class SemanticPhotoSearchService {
     final targetIds = coarseTags.map((item) => item.id).toSet();
     return photos
         .where((photo) {
-          final coarseIds = _photoCoarseIds(photo);
+          final coarseIds = _metadataMatcher.photoCoarseIds(photo);
           return coarseIds.any(targetIds.contains);
         })
         .toList(growable: false);
@@ -402,6 +336,7 @@ class SemanticPhotoSearchService {
     required _SemanticVectorBundle vectors,
     required List<SemanticSearchCoarseTag> coarseTags,
     required List<SemanticSearchLocation> locations,
+    required SemanticSearchTagStrictness tagStrictness,
     double semanticThreshold = _relatedSemanticThreshold,
   }) {
     final hits = <int, SemanticSearchHit>{};
@@ -412,6 +347,7 @@ class SemanticPhotoSearchService {
         vectors: vectors,
         coarseTags: coarseTags,
         locations: locations,
+        tagStrictness: tagStrictness,
         semanticThreshold: semanticThreshold,
       );
       if (hit == null) {
@@ -428,6 +364,7 @@ class SemanticPhotoSearchService {
     required _SemanticVectorBundle vectors,
     required List<SemanticSearchCoarseTag> coarseTags,
     required List<SemanticSearchLocation> locations,
+    required SemanticSearchTagStrictness tagStrictness,
     required double semanticThreshold,
   }) {
     final embeddingChoice = _readSearchEmbedding(
@@ -459,9 +396,17 @@ class SemanticPhotoSearchService {
       embeddingChoice.embedding,
       negativeVectors,
     );
+    final coarseTagMatch = _metadataMatcher.matchCoarseTags(photo, coarseTags);
+    final locationMatch = _metadataMatcher.matchLocation(photo, locations);
+    final coarseTagBonus = _coarseTagBonus(coarseTagMatch, tagStrictness);
+    final locationBonus = locations.isEmpty
+        ? 0.0
+        : locationMatch.score * _locationScoreBonus;
     final finalScore =
         positive.qualifiedPositiveScore -
-        (_negativePenaltyAlpha * negative.negativeScore);
+        (_negativePenaltyAlpha * negative.negativeScore) +
+        coarseTagBonus +
+        locationBonus;
 
     final isExact =
         positive.qualifiedPositiveScore >= _exactPositiveThreshold &&
@@ -473,20 +418,8 @@ class SemanticPhotoSearchService {
       return null;
     }
 
-    final matchedCoarseTags = <String>[];
-    final photoCoarseIds = _photoCoarseIds(photo);
-    for (final coarseTag in coarseTags) {
-      if (photoCoarseIds.contains(coarseTag.id)) {
-        matchedCoarseTags.add(coarseTag.labelZh);
-      }
-    }
-
-    final matchedLocations = <String>[];
-    for (final location in locations) {
-      if (_matchesAnyLocation(photo, <SemanticSearchLocation>[location])) {
-        matchedLocations.add(location.text);
-      }
-    }
+    final matchedCoarseTags = coarseTagMatch.matchedLabels;
+    final matchedLocations = locationMatch.matchedLocations;
 
     final explanation = <String>[];
     if (positive.bestPositiveSemantic != null) {
@@ -508,7 +441,7 @@ class SemanticPhotoSearchService {
       semanticScore: positive.semanticScore,
       qualifiedPositiveScore: positive.qualifiedPositiveScore,
       negativeScore: negative.negativeScore,
-      coarseTagBonus: 0.0,
+      coarseTagBonus: coarseTagBonus,
       matchedCoarseTags: matchedCoarseTags,
       matchedLocations: matchedLocations,
       bestPositiveSemantic: positive.bestPositiveSemantic,
@@ -516,6 +449,22 @@ class SemanticPhotoSearchService {
       explanation: explanation,
       isExactMatch: isExact,
     );
+  }
+
+  double _coarseTagBonus(
+    CoarseTagMatchResult match,
+    SemanticSearchTagStrictness strictness,
+  ) {
+    if (match.matchedLabels.isEmpty) {
+      return 0.0;
+    }
+    return switch (strictness) {
+      SemanticSearchTagStrictness.strict => _preferCoarseTagBonus,
+      SemanticSearchTagStrictness.prefer =>
+        _preferCoarseTagBonus * match.confidence,
+      SemanticSearchTagStrictness.optional =>
+        _optionalCoarseTagBonus * match.confidence,
+    };
   }
 
   List<_SemanticVector> _combinePositiveAndRecallVectors(
@@ -624,38 +573,6 @@ class SemanticPhotoSearchService {
       return 0.0;
     }
     return similarity.clamp(0.0, 1.0);
-  }
-
-  Set<String> _photoCoarseIds(PhotoEntity photo) {
-    final tags = TagSanitizer.sanitizeVisualTags(
-      photo.aiTags ?? const <String>[],
-    );
-    final coarseIds = <String>{};
-    for (final tag in tags) {
-      final coarseId = memoriaAlbumTagLabelToCoarseId[tag];
-      if (coarseId != null && coarseId != memoriaOtherCoarseId) {
-        coarseIds.add(coarseId);
-      }
-    }
-    return coarseIds;
-  }
-
-  List<String> _photoLocationParts(PhotoEntity photo) {
-    return <String?>[
-          photo.locationName,
-          photo.district,
-          photo.city,
-          photo.province,
-          photo.formattedAddress,
-        ]
-        .whereType<String>()
-        .map((item) => item.trim())
-        .where((item) => item.isNotEmpty)
-        .toList(growable: false);
-  }
-
-  String _stripLocationSuffix(String value) {
-    return value.replaceAll(RegExp('(省|市|区|县|自治州|自治区|特别行政区)\$'), '').trim();
   }
 
   List<PhotoEntity> _orderedPhotosForHits(

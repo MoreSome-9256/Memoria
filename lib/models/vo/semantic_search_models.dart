@@ -2,9 +2,7 @@
 
 import '../entity/photo_entity.dart';
 
-enum SemanticSearchRouteType {
-  llmStructured,
-}
+enum SemanticSearchRouteType { llmStructured }
 
 enum SemanticSearchQueryType {
   metadata,
@@ -14,11 +12,7 @@ enum SemanticSearchQueryType {
   collection,
 }
 
-enum SemanticSearchTagStrictness {
-  strict,
-  prefer,
-  optional,
-}
+enum SemanticSearchTagStrictness { strict, prefer, optional }
 
 class SemanticSearchTimeRange {
   const SemanticSearchTimeRange({
@@ -45,9 +39,7 @@ class SemanticSearchTimeRange {
 
   bool get hasDateBoundary => startTimeMs != null || endTimeMs != null;
   bool get hasLocalTimeWindow =>
-      localStartMinute != null &&
-      localEndMinute != null &&
-      utcOffsetMinutes != null;
+      localStartMinute != null && localEndMinute != null;
   bool get hasConstraint => hasDateBoundary || hasLocalTimeWindow;
 
   Map<String, dynamic> toJson() {
@@ -115,19 +107,13 @@ class SemanticSearchCoarseTag {
 }
 
 class SemanticSearchSemanticItem {
-  const SemanticSearchSemanticItem({
-    required this.text,
-    required this.weight,
-  });
+  const SemanticSearchSemanticItem({required this.text, required this.weight});
 
   final String text;
   final double weight;
 
   Map<String, dynamic> toJson() {
-    return <String, dynamic>{
-      'text': text,
-      'weight': weight,
-    };
+    return <String, dynamic>{'text': text, 'weight': weight};
   }
 }
 
@@ -145,11 +131,7 @@ class SemanticSearchEstimatedResultCount {
   bool get isMeaningful => max > 0 || min > 0;
 
   Map<String, dynamic> toJson() {
-    return <String, dynamic>{
-      'min': min,
-      'max': max,
-      'confidence': confidence,
-    };
+    return <String, dynamic>{'min': min, 'max': max, 'confidence': confidence};
   }
 }
 

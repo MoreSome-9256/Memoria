@@ -47,7 +47,9 @@ extension _SemanticQueryParserLlm on SemanticQueryParserService {
       }
     }
 
-    throw FormatException('LLM search plan is invalid after repair: $lastError');
+    throw FormatException(
+      'LLM search plan is invalid after repair: $lastError',
+    );
   }
 
   Future<SemanticSearchQuery> _repairSearchPlanAfterEmptyResult({
@@ -87,10 +89,7 @@ extension _SemanticQueryParserLlm on SemanticQueryParserService {
     final nowIso = '${now.toIso8601String()}$nowOffset';
     final coarseCatalog = _coarseSeeds
         .map(
-          (item) => <String, dynamic>{
-            'id': item.id,
-            'label_en': item.labelEn,
-          },
+          (item) => <String, dynamic>{'id': item.id, 'label_en': item.labelEn},
         )
         .toList(growable: false);
 
@@ -121,8 +120,8 @@ Required top-level schema:
 Rules:
 1. All values intended for visual or semantic matching must be English. MobileCLIP text alignment is English-first.
 2. time_ranges are calendar/date constraints only. Use ISO 8601 strings with UTC offsets.
-3. local_time_windows are local time-of-day constraints such as night, morning, dusk, sunrise, or sunset. They are not date ranges.
-4. For location queries, output a concise English canonical place name. Do not enumerate nearby districts or tourist areas unless the user explicitly named them.
+3. local_time_windows are local time-of-day constraints such as night, morning, dusk, sunrise, or sunset. They are not date ranges. Include utc_offset when the place is known; otherwise still return the local window and leave utc_offset null.
+4. For location queries, output a concise English canonical place name. Put the exact user-supplied surface form, native-language local names, common abbreviations, and romanizations in aliases. For scenic areas and POIs, aliases are critical. Do not enumerate nearby districts or tourist areas unless the user explicitly named them.
 5. Do not put scene words such as beach, park, night view, grassland, or starry sky into locations unless they are part of an official place name.
 6. Preserve specificity. "Qingdao West Coast" is more specific than "Qingdao"; "Nanjing Confucius Temple" is more specific than "Nanjing".
 7. Choose coarse_tags only from the catalog below. Do not invent IDs.
@@ -144,7 +143,7 @@ JSON:
   ],
   "local_time_windows": [],
   "locations": [
-    {"text": "Qingdao", "type": "city", "aliases": ["Qingdao"], "timezone": "Asia/Shanghai", "utc_offset": "+08:00"}
+    {"text": "Qingdao", "type": "city", "aliases": ["青岛", "青岛市", "Qingdao"], "timezone": "Asia/Shanghai", "utc_offset": "+08:00"}
   ],
   "coarse_tags": [
     {"id": "beach_water", "label_en": "beach and water", "confidence": 0.9},
@@ -204,7 +203,7 @@ JSON:
   "time_ranges": [],
   "local_time_windows": [],
   "locations": [
-    {"text": "Nanjing Confucius Temple", "type": "poi", "aliases": ["Nanjing Confucius Temple", "Fuzimiao"], "timezone": "Asia/Shanghai", "utc_offset": "+08:00"}
+    {"text": "Nanjing Confucius Temple", "type": "poi", "aliases": ["南京夫子庙", "夫子庙", "Fuzimiao", "Confucius Temple"], "timezone": "Asia/Shanghai", "utc_offset": "+08:00"}
   ],
   "coarse_tags": [
     {"id": "travel_landmark", "label_en": "travel landmark", "confidence": 0.86},
@@ -347,7 +346,8 @@ $rawQuery
   }
 
   SemanticSearchTimeRange? _readDateRange(Map item) {
-    final startRaw = item['start'] ?? item['start_iso'] ?? item['start_time_ms'];
+    final startRaw =
+        item['start'] ?? item['start_iso'] ?? item['start_time_ms'];
     final endRaw = item['end'] ?? item['end_iso'] ?? item['end_time_ms'];
     final startTimeMs = _toTimestampMs(startRaw);
     final endTimeMs = _toTimestampMs(endRaw);
@@ -368,7 +368,7 @@ $rawQuery
     final startMinute = _readMinuteOfDay(item['start']);
     final endMinute = _readMinuteOfDay(item['end']);
     final offsetMinutes = _readUtcOffsetMinutes(item['utc_offset']);
-    if (startMinute == null || endMinute == null || offsetMinutes == null) {
+    if (startMinute == null || endMinute == null) {
       return null;
     }
     return SemanticSearchTimeRange(
@@ -577,7 +577,7 @@ $rawQuery
     }
     final numeric = int.tryParse(text);
     if (numeric != null) {
-      return numeric;
+      return numeric > 0 && numeric < 10000000000 ? numeric * 1000 : numeric;
     }
     return DateTime.tryParse(text)?.millisecondsSinceEpoch;
   }
@@ -666,12 +666,12 @@ const String _parserSystemPrompt =
     'Return exactly one JSON object that can directly drive local retrieval. '
     'Do not explain, chat, or output Markdown.';
 
-  String _buildPlanRepairPrompt({
-    required String rawQuery,
-    required String? invalidResponse,
-    required Object? error,
-  }) {
-    return '''
+String _buildPlanRepairPrompt({
+  required String rawQuery,
+  required String? invalidResponse,
+  required Object? error,
+}) {
+  return '''
 The previous response could not be parsed or validated as a search plan.
 
 User query:
@@ -686,15 +686,15 @@ ${invalidResponse ?? ''}
 Repair task:
 Return exactly one corrected JSON object following the same schema. Keep all semantic phrases in English. Do not include Markdown or explanation.
 ''';
-  }
+}
 
-  String _buildEmptyResultRepairPrompt({
-    required String rawQuery,
-    required SemanticSearchQuery previousQuery,
-    required int metadataCandidateCount,
-    required int tagCandidateCount,
-  }) {
-    return '''
+String _buildEmptyResultRepairPrompt({
+  required String rawQuery,
+  required SemanticSearchQuery previousQuery,
+  required int metadataCandidateCount,
+  required int tagCandidateCount,
+}) {
+  return '''
 The previous search plan returned no photos from the local vector index.
 This may happen because visual tags or vector embeddings are sparse, noisy, or wrong.
 
@@ -717,4 +717,4 @@ Repair policy:
 6. Avoid rare named entities in semantic phrases unless visually important; prefer visible scene descriptions.
 7. Return exactly one corrected JSON object. Do not include Markdown or explanation.
 ''';
-  }
+}

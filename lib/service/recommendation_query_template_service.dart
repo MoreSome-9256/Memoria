@@ -14,10 +14,7 @@ class RecommendationQueryTemplateService {
 
   final SemanticQueryParserService _parser = SemanticQueryParserService();
 
-  Map<String, dynamic>? resolvePresetJson(
-    String rawQuery, {
-    DateTime? now,
-  }) {
+  Map<String, dynamic>? resolvePresetJson(String rawQuery, {DateTime? now}) {
     final preset = RecommendationQueryJsonLibrary.byQuery[rawQuery];
     if (preset == null) {
       return null;
@@ -28,10 +25,7 @@ class RecommendationQueryTemplateService {
     );
   }
 
-  SemanticSearchQuery? buildPresetQuery(
-    String rawQuery, {
-    DateTime? now,
-  }) {
+  SemanticSearchQuery? buildPresetQuery(String rawQuery, {DateTime? now}) {
     final resolvedJson = resolvePresetJson(rawQuery, now: now);
     if (resolvedJson == null) {
       return null;
@@ -78,18 +72,18 @@ class RecommendationQueryTemplateService {
         'previous_year' => _yearRange(now.year - 1, reason),
         'current_month' => _monthRange(now.year, now.month, reason),
         'previous_month' => _monthRange(
-            DateTime(now.year, now.month - 1).year,
-            DateTime(now.year, now.month - 1).month,
-            reason,
-          ),
+          DateTime(now.year, now.month - 1).year,
+          DateTime(now.year, now.month - 1).month,
+          reason,
+        ),
         'same_day_last_year' => _dayRange(
-            DateTime(now.year - 1, now.month, now.day),
-            reason,
-          ),
+          DateTime(now.year - 1, now.month, now.day),
+          reason,
+        ),
         'same_day_two_years_ago' => _dayRange(
-            DateTime(now.year - 2, now.month, now.day),
-            reason,
-          ),
+          DateTime(now.year - 2, now.month, now.day),
+          reason,
+        ),
         _ => null,
       };
 
@@ -102,8 +96,11 @@ class RecommendationQueryTemplateService {
 
   Map<String, Object?> _yearRange(int year, String reason) {
     final start = DateTime(year, 1, 1);
-    final end =
-        DateTime(year + 1, 1, 1).subtract(const Duration(milliseconds: 1));
+    final end = DateTime(
+      year + 1,
+      1,
+      1,
+    ).subtract(const Duration(milliseconds: 1));
     return <String, Object?>{
       'start_time_ms': start.millisecondsSinceEpoch,
       'end_time_ms': end.millisecondsSinceEpoch,
@@ -113,8 +110,11 @@ class RecommendationQueryTemplateService {
 
   Map<String, Object?> _monthRange(int year, int month, String reason) {
     final start = DateTime(year, month, 1);
-    final end =
-        DateTime(year, month + 1, 1).subtract(const Duration(milliseconds: 1));
+    final end = DateTime(
+      year,
+      month + 1,
+      1,
+    ).subtract(const Duration(milliseconds: 1));
     return <String, Object?>{
       'start_time_ms': start.millisecondsSinceEpoch,
       'end_time_ms': end.millisecondsSinceEpoch,

@@ -8,6 +8,7 @@
 
 #include <amplify_db_common/amplify_db_common_plugin.h>
 #include <audioplayers_windows/audioplayers_windows_plugin.h>
+#include <ffmpeg_kit_flutter_new/f_fmpeg_kit_flutter_plugin.h>
 #include <file_selector_windows/file_selector_windows.h>
 #include <gal/gal_plugin_c_api.h>
 #include <objectbox_flutter_libs/objectbox_flutter_libs_plugin.h>
@@ -21,6 +22,8 @@ void RegisterPlugins(flutter::PluginRegistry* registry) {
       registry->GetRegistrarForPlugin("AmplifyDbCommonPlugin"));
   AudioplayersWindowsPluginRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("AudioplayersWindowsPlugin"));
+  FFmpegKitFlutterPluginRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("FFmpegKitFlutterPlugin"));
   FileSelectorWindowsRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("FileSelectorWindows"));
   GalPluginCApiRegisterWithRegistrar(

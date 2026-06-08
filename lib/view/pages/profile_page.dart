@@ -381,20 +381,13 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       const SizedBox(height: 20),
 
-                      // 模型类型
                       Text(
                         '模型类型',
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
-                      const SizedBox(height: 10),
-                      const ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(Icons.auto_awesome_outlined),
-                        title: Text('MobileCLIP2 LiteRT'),
-                      ),
                       const SizedBox(height: 8),
                       Text(
-                        '当前选择: ${selected.label} · ${selected.description}',
+                        '${MobileClipBackend.mobileclip2LiteRt.label} · ${MobileClipBackend.mobileclip2LiteRt.description}',
                         style: TextStyle(color: Colors.grey[700], fontSize: 12),
                       ),
                       const SizedBox(height: 20),
@@ -498,21 +491,6 @@ class _ProfilePageState extends State<ProfilePage> {
                           setSheetState(() {
                             aiSettings = aiSettings.copyWith(
                               includeVideos: value,
-                            );
-                          });
-                        },
-                      ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('MobileViClip 视频标签'),
-                        subtitle: const Text(
-                          '模型资产可用时用于视频、Live Photo 和 motion 内容',
-                        ),
-                        value: aiSettings.mobileViClipEnabled,
-                        onChanged: (value) {
-                          setSheetState(() {
-                            aiSettings = aiSettings.copyWith(
-                              mobileViClipEnabled: value,
                             );
                           });
                         },
@@ -1138,7 +1116,7 @@ class _ProfilePageState extends State<ProfilePage> {
                             ListTile(
                               leading: const Icon(Icons.analytics_outlined),
                               title: const Text('MobileCLIP Benchmark'),
-                              subtitle: const Text('对比当前平台可用的 LiteRT 推理路径'),
+                              subtitle: const Text('对比当前平台可用的 LiteRT 后端'),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () {
                                 Navigator.of(context).push(

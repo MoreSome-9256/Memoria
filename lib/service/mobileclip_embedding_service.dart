@@ -61,10 +61,7 @@ class MobileClipEmbeddingService {
   }) async {
     _touchUsage();
 
-    final effectiveBackend = backend ?? await getSelectedBackend();
-    final activeModelVersion = await getSelectedModelVersion(
-      backend: effectiveBackend,
-    );
+    final activeModelVersion = await getSelectedModelVersion();
     final existing = _photoEmbeddingIndexRepository.readEmbeddingForPhoto(
       photo,
       modelVersion: activeModelVersion,
@@ -74,7 +71,7 @@ class MobileClipEmbeddingService {
       return MobileClipEmbeddingResolution(
         reusedCache: true,
         profile: MobileClipEmbeddingProfile(
-          backendLabel: effectiveBackend.label,
+          backendLabel: MobileClipBackend.mobileclip2LiteRt.label,
           providerLabel: 'ObjectBox cache',
         ),
       );
@@ -87,10 +84,7 @@ class MobileClipEmbeddingService {
             photo,
             purpose: 'mobileclip_embedding',
           );
-    final profile = await _profileEmbedding(
-      imageBytes: imageBytes,
-      backend: effectiveBackend,
-    );
+    final profile = await _profileEmbedding(imageBytes: imageBytes);
     final embedding = profile.embedding;
 
     if (embedding.length != expectedEmbeddingDim) {
@@ -157,20 +151,14 @@ class MobileClipEmbeddingService {
   }
 
   Future<void> releaseBackend(MobileClipBackend backend) async {
-    switch (backend) {
-      case MobileClipBackend.mobileclip2LiteRt:
-        await _mobileclip2LiteRtService.dispose();
-    }
+    await _mobileclip2LiteRtService.dispose();
   }
 
   Future<String?> validateBackend(MobileClipBackend backend) async {
     _touchUsage();
-    switch (backend) {
-      case MobileClipBackend.mobileclip2LiteRt:
-        _mobileclip2LiteRtService = await _resolveLiteRtService();
-        await _mobileclip2LiteRtService.warmUp();
-        return null;
-    }
+    _mobileclip2LiteRtService = await _resolveLiteRtService();
+    await _mobileclip2LiteRtService.warmUp();
+    return null;
   }
 
   Future<void> warmUpBackend(MobileClipBackend backend) async {
@@ -180,11 +168,8 @@ class MobileClipEmbeddingService {
       throw StateError(error);
     }
 
-    switch (backend) {
-      case MobileClipBackend.mobileclip2LiteRt:
-        _mobileclip2LiteRtService = await _resolveLiteRtService();
-        await _mobileclip2LiteRtService.warmUp();
-    }
+    _mobileclip2LiteRtService = await _resolveLiteRtService();
+    await _mobileclip2LiteRtService.warmUp();
   }
 
   Future<void> switchBackendAndPersist(MobileClipBackend newBackend) async {
@@ -209,11 +194,8 @@ class MobileClipEmbeddingService {
       throw ArgumentError('图片文件不存在: ${imageFile.path}');
     }
 
-    switch (backend) {
-      case MobileClipBackend.mobileclip2LiteRt:
-        _mobileclip2LiteRtService = await _resolveLiteRtService();
-        return _mobileclip2LiteRtService.embedImageFile(imageFile);
-    }
+    _mobileclip2LiteRtService = await _resolveLiteRtService();
+    return _mobileclip2LiteRtService.embedImageFile(imageFile);
   }
 
   Future<List<double>> embedImageBytesWithBackend(
@@ -225,33 +207,26 @@ class MobileClipEmbeddingService {
       throw ArgumentError('图片字节为空');
     }
 
-    switch (backend) {
-      case MobileClipBackend.mobileclip2LiteRt:
-        _mobileclip2LiteRtService = await _resolveLiteRtService();
-        return _mobileclip2LiteRtService.embedImageBytes(imageBytes);
-    }
+    _mobileclip2LiteRtService = await _resolveLiteRtService();
+    return _mobileclip2LiteRtService.embedImageBytes(imageBytes);
   }
 
   Future<MobileClipEmbeddingProfile> _profileEmbedding({
     required Uint8List imageBytes,
-    required MobileClipBackend backend,
   }) async {
-    switch (backend) {
-      case MobileClipBackend.mobileclip2LiteRt:
-        _mobileclip2LiteRtService = await _resolveLiteRtService();
-        final profile = await _mobileclip2LiteRtService.profileImageBytes(
-          imageBytes,
-        );
-        return MobileClipEmbeddingProfile(
-          embedding: profile.embedding,
-          backendLabel: backend.label,
-          providerLabel: _mobileclip2LiteRtService.executionProviderLabel,
-          decodeMs: profile.decodeMs,
-          resizeNormalizeMs: profile.resizeNormalizeMs,
-          tensorBuildMs: profile.tensorBuildMs,
-          inferenceMs: profile.inferenceMs,
-        );
-    }
+    _mobileclip2LiteRtService = await _resolveLiteRtService();
+    final profile = await _mobileclip2LiteRtService.profileImageBytes(
+      imageBytes,
+    );
+    return MobileClipEmbeddingProfile(
+      embedding: profile.embedding,
+      backendLabel: MobileClipBackend.mobileclip2LiteRt.label,
+      providerLabel: _mobileclip2LiteRtService.executionProviderLabel,
+      decodeMs: profile.decodeMs,
+      resizeNormalizeMs: profile.resizeNormalizeMs,
+      tensorBuildMs: profile.tensorBuildMs,
+      inferenceMs: profile.inferenceMs,
+    );
   }
 
   Future<MobileClipLiteRtService> _resolveLiteRtService() async {

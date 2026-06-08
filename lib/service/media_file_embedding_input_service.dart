@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
@@ -7,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../utils/media_type_helper.dart';
-import 'mobileviclip_video_service.dart';
+import 'mobileclip2_semantic_index_service.dart';
 
 class MediaFileEmbeddingInput {
   const MediaFileEmbeddingInput({
@@ -59,9 +58,9 @@ class MediaFileEmbeddingInputService {
   Future<_ExtractedFrames> _extractVideoFrames(String path) async {
     final dir = await getTemporaryDirectory();
     final runId = DateTime.now().microsecondsSinceEpoch;
-    final framePattern = '${dir.path}/memoria_viclip_${runId}_%02d.jpg';
+    final framePattern = '${dir.path}/memoria_mobileclip2_${runId}_%02d.jpg';
     final command =
-        '-y -i ${_quote(path)} -vf fps=1,scale=512:-1 -frames:v ${MobileViClipVideoService.frameCount} ${_quote(framePattern)}';
+        '-y -i ${_quote(path)} -vf fps=1,scale=512:-1 -frames:v $defaultVideoMaxFrames ${_quote(framePattern)}';
     final session = await FFmpegKit.execute(command);
     final returnCode = await session.getReturnCode();
     if (!ReturnCode.isSuccess(returnCode)) {
@@ -71,9 +70,9 @@ class MediaFileEmbeddingInputService {
 
     final frames = <Uint8List>[];
     final paths = <String>[];
-    for (var i = 1; i <= MobileViClipVideoService.frameCount; i++) {
+    for (var i = 1; i <= defaultVideoMaxFrames; i++) {
       final framePath =
-          '${dir.path}/memoria_viclip_${runId}_${i.toString().padLeft(2, '0')}.jpg';
+          '${dir.path}/memoria_mobileclip2_${runId}_${i.toString().padLeft(2, '0')}.jpg';
       final frameFile = File(framePath);
       if (!frameFile.existsSync()) continue;
       paths.add(framePath);
@@ -88,10 +87,7 @@ class MediaFileEmbeddingInputService {
 }
 
 class _ExtractedFrames {
-  const _ExtractedFrames({
-    required this.frames,
-    required this.paths,
-  });
+  const _ExtractedFrames({required this.frames, required this.paths});
 
   final List<Uint8List> frames;
   final List<String> paths;

@@ -6,7 +6,7 @@ import 'app_ai_settings_service.dart';
 import 'clip_tokenizer_service.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_litert_service.dart';
-import 'mobileviclip_video_service.dart';
+import 'mobileclip2_semantic_index_service.dart';
 import 'semantic_matching_service.dart';
 
 class MediaEmbeddingService {
@@ -28,67 +28,93 @@ class MediaEmbeddingService {
     final effectiveBackend =
         backend ??
         await MobileClipBackendPreferenceService().getSelectedBackend();
-    switch (effectiveBackend) {
-      case MobileClipBackend.mobileclip2LiteRt:
-        final settings = await AppAiSettingsService.instance.load();
-        final effectiveLiteRt =
-            liteRt ??
-            MobileClipLiteRtService.withRuntimeOptions(
-              accelerator: settings.inferenceAccelerator,
-              xnnpackThreadCount: settings.xnnpackThreadCount,
-              modelBatchSize: settings.analysisBatchSize,
-            );
-        final profile = await effectiveLiteRt.profileImageBytes(bytes);
-        return MediaEmbeddingResult(
-          kind: MemoriaMediaKind.image,
-          embedding: profile.embedding,
-          modelVersion: buildPhotoEmbeddingModelVersion(effectiveBackend),
-          modelLabel:
-              'MobileCLIP2 LiteRT (${effectiveLiteRt.executionProviderLabel})',
-          preprocessMs: profile.decodeMs + profile.resizeNormalizeMs,
-          inferenceMs: profile.inferenceMs,
-          isSameSpaceAsMobileClipText: true,
+    final settings = await AppAiSettingsService.instance.load();
+    final effectiveLiteRt =
+        liteRt ??
+        MobileClipLiteRtService.withRuntimeOptions(
+          accelerator: settings.inferenceAccelerator,
+          xnnpackThreadCount: settings.xnnpackThreadCount,
+          modelBatchSize: settings.analysisBatchSize,
         );
-    }
+    final profile = await effectiveLiteRt.profileImageBytes(bytes);
+    return MediaEmbeddingResult(
+      kind: MemoriaMediaKind.image,
+      embedding: profile.embedding,
+      modelVersion: buildPhotoEmbeddingModelVersion(effectiveBackend),
+      modelLabel:
+          'MobileCLIP2 LiteRT (${effectiveLiteRt.executionProviderLabel})',
+      preprocessMs: profile.decodeMs + profile.resizeNormalizeMs,
+      inferenceMs: profile.inferenceMs,
+      isSameSpaceAsMobileClipText: true,
+    );
   }
 
   Future<MediaEmbeddingResult> embedVideoFrameBytes(
-    List<Uint8List> frameBytes,
-  ) async {
-    final profile = await MobileViClipVideoService().profileFrameBytes(
-      frameBytes,
-    );
+    List<Uint8List> frameBytes, {
+    MemoriaMediaKind kind = MemoriaMediaKind.video,
+    MobileClipLiteRtService? liteRt,
+  }) async {
+    if (frameBytes.isEmpty) {
+      throw ArgumentError('frameBytes is empty');
+    }
+    final settings = await AppAiSettingsService.instance.load();
+    final effectiveLiteRt =
+        liteRt ??
+        MobileClipLiteRtService.withRuntimeOptions(
+          accelerator: settings.inferenceAccelerator,
+          xnnpackThreadCount: settings.xnnpackThreadCount,
+          modelBatchSize: settings.analysisBatchSize,
+        );
+    final kept = <Float32List>[];
+    var preprocessMs = 0.0;
+    var inferenceMs = 0.0;
+    for (final bytes in frameBytes) {
+      if (bytes.isEmpty) {
+        continue;
+      }
+      final profile = await effectiveLiteRt.profileImageBytes(bytes);
+      final vector = Float32List.fromList(profile.embedding);
+      if (kept.isEmpty ||
+          MobileClip2VectorMath.dot(vector, kept.last) < frameDedupThreshold) {
+        kept.add(vector);
+      }
+      preprocessMs += profile.decodeMs + profile.resizeNormalizeMs;
+      inferenceMs += profile.inferenceMs;
+    }
+    if (kept.isEmpty) {
+      throw StateError('no usable MobileCLIP2 frame embeddings');
+    }
+    final embedding = MobileClip2VectorMath.meanPool(
+      kept,
+    ).toList(growable: false);
     return MediaEmbeddingResult(
-      kind: MemoriaMediaKind.video,
-      embedding: profile.embedding,
-      modelVersion: MobileViClipVideoService.modelVersion,
-      modelLabel: 'MobileViCLIP Small',
-      preprocessMs: profile.preprocessMs,
-      inferenceMs: profile.inferenceMs,
-      isSameSpaceAsMobileClipText: false,
+      kind: kind,
+      embedding: embedding,
+      modelVersion: buildPhotoEmbeddingModelVersion(),
+      modelLabel:
+          'MobileCLIP2 S2 frame mean-pool (${effectiveLiteRt.executionProviderLabel})',
+      preprocessMs: preprocessMs,
+      inferenceMs: inferenceMs,
+      isSameSpaceAsMobileClipText: true,
     );
   }
 
   Future<MediaEmbeddingResult> embedPreparedMediaBytes({
     required MemoriaMediaKind kind,
     required Uint8List imageOrThumbnailBytes,
-    required bool mobileViClipEnabled,
     required MobileClipBackend backend,
     required MobileClipLiteRtService liteRt,
+    List<Uint8List> frameBytes = const <Uint8List>[],
   }) async {
     final shouldUseVideoEncoder =
-        (kind == MemoriaMediaKind.video ||
-            kind == MemoriaMediaKind.dynamicImage) &&
-        mobileViClipEnabled;
+        kind == MemoriaMediaKind.video || kind == MemoriaMediaKind.dynamicImage;
     if (shouldUseVideoEncoder) {
       final result = await embedVideoFrameBytes(
-        List<Uint8List>.filled(
-          MobileViClipVideoService.frameCount,
-          imageOrThumbnailBytes,
-          growable: false,
-        ),
+        frameBytes.isEmpty ? <Uint8List>[imageOrThumbnailBytes] : frameBytes,
+        kind: kind,
+        liteRt: liteRt,
       );
-      return result.copyWith(kind: kind);
+      return result;
     }
     final result = await embedImageBytes(
       imageOrThumbnailBytes,
@@ -105,12 +131,6 @@ class MediaEmbeddingService {
     required String text,
     MobileClipLiteRtService? liteRt,
   }) async {
-    if (media.modelVersion == MobileViClipVideoService.modelVersion) {
-      return MediaTextSimilarityResult.unavailable(
-        text: text,
-        reason: 'MobileViCLIP 视频向量不与 MobileCLIP 文本向量共空间。',
-      );
-    }
     final textVector = liteRt == null
         ? await _semanticService.embedText(text)
         : await liteRt.embedTextTokens(await _tokenizer.tokenize(text));

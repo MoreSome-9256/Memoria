@@ -66,10 +66,7 @@ class CreateRecommendationService {
       _ResolvedRecommendationPreset preset,
     ) async {
       final current = existingByKey[preset.recommendationKey];
-      final result = await _searchPreset(
-        preset,
-        now: now,
-      );
+      final result = await _searchPreset(preset, now: now);
       final matchedPhotos = _mergeRecommendationPhotos(result);
       final matchedCount = matchedPhotos.length;
       final fingerprint = _buildFingerprint(matchedPhotos);
@@ -86,7 +83,9 @@ class CreateRecommendationService {
         ..title = preset.title
         ..subtitle = preset.subtitleBuilder(matchedCount)
         ..query = preset.query
-        ..photoIds = matchedPhotos.map((photo) => photo.id).toList(growable: false)
+        ..photoIds = matchedPhotos
+            .map((photo) => photo.id)
+            .toList(growable: false)
         ..coverPhotoIds = representativeCover == null
             ? const <int>[]
             : <int>[representativeCover.id]
@@ -101,15 +100,16 @@ class CreateRecommendationService {
       if (matchedCount >= preset.minPhotoCount) {
         final keepDismissed =
             !force &&
-                current?.status == CreateRecommendationStatus.dismissed &&
-                sameQuery &&
-                sameFingerprint;
+            current?.status == CreateRecommendationStatus.dismissed &&
+            sameQuery &&
+            sameFingerprint;
         entity
           ..status = keepDismissed
               ? CreateRecommendationStatus.dismissed
               : CreateRecommendationStatus.active
-          ..lastRecommendedAt =
-              keepDismissed ? current?.lastRecommendedAt : nowMs;
+          ..lastRecommendedAt = keepDismissed
+              ? current?.lastRecommendedAt
+              : nowMs;
       } else {
         entity
           ..status = CreateRecommendationStatus.expired
@@ -119,13 +119,17 @@ class CreateRecommendationService {
       return entity;
     }
 
-    for (var start = 0;
-        start < duePresets.length;
-        start += _recommendationRefreshConcurrency) {
+    for (
+      var start = 0;
+      start < duePresets.length;
+      start += _recommendationRefreshConcurrency
+    ) {
       final end = start + _recommendationRefreshConcurrency > duePresets.length
           ? duePresets.length
           : start + _recommendationRefreshConcurrency;
-      updates.addAll(await Future.wait(duePresets.sublist(start, end).map(buildUpdate)));
+      updates.addAll(
+        await Future.wait(duePresets.sublist(start, end).map(buildUpdate)),
+      );
     }
 
     for (final entity in existing) {
@@ -169,9 +173,13 @@ class CreateRecommendationService {
     final recBox = store.box<CreateRecommendationEntity>();
     final photoBox = store.box<PhotoEntity>();
 
-    final q = recBox.query(
-      CreateRecommendationEntity_.status.equals(CreateRecommendationStatus.active),
-    ).build();
+    final q = recBox
+        .query(
+          CreateRecommendationEntity_.status.equals(
+            CreateRecommendationStatus.active,
+          ),
+        )
+        .build();
     final entities = q.find();
     q.close();
 
@@ -188,8 +196,13 @@ class CreateRecommendationService {
         .expand((entity) => entity.coverPhotoIds.take(1))
         .toSet()
         .toList(growable: false);
-    final coverPhotos = photoBox.getMany(coverIds).whereType<PhotoEntity>().toList(growable: false);
-    final reconciled = await PhotoService().reconcileAccessiblePhotos(coverPhotos);
+    final coverPhotos = photoBox
+        .getMany(coverIds)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
+    final reconciled = await PhotoService().reconcileAccessiblePhotos(
+      coverPhotos,
+    );
     final coverById = <int, PhotoEntity>{
       for (final photo in reconciled) photo.id: photo,
     };
@@ -668,23 +681,25 @@ class CreateRecommendationService {
     required bool force,
     required Set<String> excludeRecommendationKeys,
   }) {
-    final candidates = presets.where((preset) {
-      if (excludeRecommendationKeys.contains(preset.recommendationKey)) {
-        return false;
-      }
-      final current = existingByKey[preset.recommendationKey];
-      if (current == null) {
-        return true;
-      }
-      if (force) {
-        return true;
-      }
-      if (preset.alwaysRefresh) {
-        return true;
-      }
-      final nextCheckAt = current.nextCheckAt;
-      return nextCheckAt == null || nextCheckAt <= nowMs;
-    }).toList(growable: false);
+    final candidates = presets
+        .where((preset) {
+          if (excludeRecommendationKeys.contains(preset.recommendationKey)) {
+            return false;
+          }
+          final current = existingByKey[preset.recommendationKey];
+          if (current == null) {
+            return true;
+          }
+          if (force) {
+            return true;
+          }
+          if (preset.alwaysRefresh) {
+            return true;
+          }
+          final nextCheckAt = current.nextCheckAt;
+          return nextCheckAt == null || nextCheckAt <= nowMs;
+        })
+        .toList(growable: false);
 
     candidates.sort((left, right) {
       final leftCurrent = existingByKey[left.recommendationKey];
@@ -723,10 +738,7 @@ class CreateRecommendationService {
           'query_type': 'metadata',
           'time_ranges': const <Map<String, Object?>>[],
           'locations': <Map<String, Object?>>[
-            <String, Object?>{
-              'text': preset.locationText!,
-              'type': 'location',
-            },
+            <String, Object?>{'text': preset.locationText!, 'type': 'location'},
           ],
           'coarse_tags': const <Map<String, Object?>>[],
           'tag_strictness': 'optional',
@@ -795,7 +807,8 @@ class CreateRecommendationService {
     score += (1.2 - aspectDelta).clamp(0.0, 1.2);
 
     final hasVisualTags =
-        (photo.aiTags?.isNotEmpty ?? false) || (photo.ocrTags?.isNotEmpty ?? false);
+        (photo.aiTags?.isNotEmpty ?? false) ||
+        (photo.ocrTags?.isNotEmpty ?? false);
     if (hasVisualTags) {
       score += 0.15;
     }
@@ -864,7 +877,9 @@ class CreateRecommendationService {
       });
 
     return sorted
-        .where((entry) => entry.value >= timeAndLocationMinimumRecommendedPhotos)
+        .where(
+          (entry) => entry.value >= timeAndLocationMinimumRecommendedPhotos,
+        )
         .take(_maxLocationPresets)
         .map((entry) => entry.key)
         .toList(growable: false);

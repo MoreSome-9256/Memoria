@@ -1,5 +1,7 @@
 import 'service/event_service_test.dart' as event_service_test;
 import 'service/face_cluster_service_test.dart' as face_cluster_service_test;
+import 'service/mobileclip2_semantic_index_service_test.dart'
+    as mobileclip2_semantic_index_service_test;
 import 'service/story_location_manifest_simulation_test.dart'
     as story_location_manifest_simulation_test;
 import 'service/theme_cluster_service_test.dart' as theme_cluster_service_test;
@@ -19,6 +21,7 @@ void main() {
   album_page_split_compile_test.main();
   event_service_test.main();
   face_cluster_service_test.main();
+  mobileclip2_semantic_index_service_test.main();
   story_location_manifest_simulation_test.main();
   theme_cluster_service_test.main();
   travel_memory_detector_test.main();

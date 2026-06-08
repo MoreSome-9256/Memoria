@@ -1,4 +1,4 @@
-// MobileCLIP 后端偏好服务，记录当前可用推理后端及其选择策略。
+// MobileCLIP 后端偏好服务。当前只保留 MobileCLIP2 LiteRT。
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -64,10 +64,6 @@ class MobileClipBackendPreferenceService {
 
   Future<void> setSelectedBackend(MobileClipBackend backend) async {
     await initialize();
-    if (_backendNotifier.value == backend) {
-      return;
-    }
-
     await _preferences!.setString(_backendKey, backend.storageValue);
     _backendNotifier.value = backend;
   }

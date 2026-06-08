@@ -640,21 +640,14 @@ class UnifiedAnalysisPipelineService {
     } else {
       final mediaInput = await _readAnalysisImageInputFromAsset(photo);
       sourceFileForOcr = mediaInput.sourceFile;
-      final mediaEmbedding =
-          settings.mobileViClipEnabled &&
-              (mediaKind == MemoriaMediaKind.video ||
-                  mediaKind == MemoriaMediaKind.dynamicImage) &&
-              mediaInput.videoFrameBytes.isNotEmpty
-          ? await MediaEmbeddingService().embedVideoFrameBytes(
-              mediaInput.videoFrameBytes,
-            )
-          : await MediaEmbeddingService().embedPreparedMediaBytes(
-              kind: mediaKind,
-              imageOrThumbnailBytes: mediaInput.imageBytes,
-              mobileViClipEnabled: settings.mobileViClipEnabled,
-              backend: backend,
-              liteRt: liteRt,
-            );
+      final mediaEmbedding = await MediaEmbeddingService()
+          .embedPreparedMediaBytes(
+            kind: mediaKind,
+            imageOrThumbnailBytes: mediaInput.imageBytes,
+            backend: backend,
+            liteRt: liteRt,
+            frameBytes: mediaInput.videoFrameBytes,
+          );
       embedding = mediaEmbedding.embedding;
       embeddingModelVersion = mediaEmbedding.modelVersion;
       tagEmbedding = embedding;

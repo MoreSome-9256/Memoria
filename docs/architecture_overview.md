@@ -77,7 +77,7 @@ Memoria 是一个"智能影记"应用,核心能力是通过 AI 对本地照片�
 | 状态管理 | Riverpod + StatefulWidget 本地状态 | 页面状态 |
 | 用户认证 | AWS Amplify + Cognito | 登录/注册/密码重置 |
 | 照片读取 | photo_manager | 系统相册读取 |
-| AI 推理 | LiteRT + onnxruntime (ONNX) | MobileCLIP2 / MobileViCLIP 模型推理 |
+| AI 推理 | LiteRT + onnxruntime (人脸) | MobileCLIP2 S2 与人脸模型推理 |
 | 人脸检测 | Google ML Kit | 人脸检测与特征点 |
 | OCR | Google ML Kit (默认禁用) | 文字识别 |
 | 视频编码 | FlutterQuickVideoEncoder | 硬件加速视频渲染 |
@@ -267,7 +267,7 @@ ObjectBox `@Entity`, 使用 `@HnswIndex(dimensions:512, cosine)` 注解:
 - `kPhotoEmbeddingVectorDimensions = 512`
 - `kFaceEmbeddingVectorDimensions = 512`
 - `kPhotoEmbeddingModelFamily = 'mobileclip_image'`
-- `buildPhotoEmbeddingModelVersion(backend)` → `'mobileclip_image_mobileclip2_litert_fp32_split_v1'` 等
+- `buildPhotoEmbeddingModelVersion()` → `'mobileclip_image_mobileclip2_litert_fp32_split_v1'`
 
 ### 4.5 PhotoEmbeddingIndexRepository
 
@@ -405,14 +405,13 @@ PhotoEntity (new)
 ### 7.3 MobileCLIP 推理
 
 **服务文件:**
-- `mobileclip_vision_service.dart` — 图像编码器 (`encodeImage()` → 512维向量)
+- `mobileclip_litert_service.dart` — 图像/文本编码器 (`embedImageBytes()` / `embedTextTokens()` → 512维向量)
 - `mobileclip_text_service.dart` — 文本编码器 (`encodeText()` → 512维向量)
 - `mobileclip_tag_service.dart` — 标签分类 (`classifyTags()` — 零样本分类)
 - `mobileclip_embedding_service.dart` — 全量 Embedding 流程
-- `mobileclip_backend_preference_service.dart` — MobileCLIP2 LiteRT 后端偏好
+- `media_embedding_service.dart` — 图片、视频和 GIF 的 MobileCLIP2 S2 embedding
 
 **模型资产:**
-- ONNX: `assets/mobileclip2/s2/text_model.onnx`, `vision_model.onnx`
 - LiteRT: `assets/mobileclip2/s2/mobileclip2_s2_image.tflite`, `mobileclip2_s2_text.tflite`
 
 **Clip Tokenizer:** `assets/clip_tokenizer/` — BPE tokenizer 文件
@@ -1072,8 +1071,8 @@ UI 结构:
 
 | 页面 | 入口 | 说明 |
 |------|------|------|
-| MobileCLIP Benchmark | Profile → 开发者设置 | 对比 LiteRT 可用推理路径性能 |
-| MobileCLIP Vector Probe | Profile → 开发者设置 / Dart-Define | 对比当前 MobileCLIP 向量与标签输出 |
+| MobileCLIP Benchmark | Profile → 开发者设置 | 对比 ONNX CPU vs NNAPI 性能 |
+| MobileCLIP Vector Probe | Profile → 开发者设置 / Dart-Define | 检查 LiteRT 向量 |
 | Face Cluster Debug | Profile → 开发者设置 | 查看人脸聚类结果 |
 | Theme Clusters | 底部导航 | 主题聚类浏览 |
 | InternVL Lab | 仅代码入口 | VLM 结构化分析实验 |
@@ -1089,7 +1088,7 @@ UI 结构:
 
 **MobileClipVectorProbePage** (`lib/view/pages/mobileclip_vector_probe_page.dart`, 524 行):
 - 3 张固定测试图片
-- MobileCLIP 向量比较
+- LiteRT 向量检查
 - 零样本标签分类测试
 - Isar vs ObjectBox 读取性能对比
 

@@ -127,15 +127,17 @@ class _MediaVectorSimilarityTestPageState
       );
       final mediaResult =
           input.kind == MemoriaMediaKind.video &&
-              settings.mobileViClipEnabled &&
               input.videoFrameBytes.isNotEmpty
-          ? await _embeddingService.embedVideoFrameBytes(input.videoFrameBytes)
+          ? await _embeddingService.embedVideoFrameBytes(
+              input.videoFrameBytes,
+              liteRt: liteRt,
+            )
           : await _embeddingService.embedPreparedMediaBytes(
               kind: input.kind,
               imageOrThumbnailBytes: input.imageOrThumbnailBytes,
-              mobileViClipEnabled: settings.mobileViClipEnabled,
               backend: _selectedBackend,
               liteRt: liteRt,
+              frameBytes: input.videoFrameBytes,
             );
       final query = _queryController.text.trim();
       final similarity = query.isEmpty
@@ -198,9 +200,6 @@ class _MediaVectorSimilarityTestPageState
             selectedBackend: _selectedBackend,
             selectedAccelerator: _selectedAccelerator,
             isRunning: _isRunning,
-            onBackendChanged: (backend) {
-              setState(() => _selectedBackend = backend);
-            },
             onAcceleratorChanged: (accelerator) {
               setState(() => _selectedAccelerator = accelerator);
             },
@@ -273,14 +272,12 @@ class _RuntimeOptionsCard extends StatelessWidget {
     required this.selectedBackend,
     required this.selectedAccelerator,
     required this.isRunning,
-    required this.onBackendChanged,
     required this.onAcceleratorChanged,
   });
 
   final MobileClipBackend selectedBackend;
   final LocalInferenceAccelerator selectedAccelerator;
   final bool isRunning;
-  final ValueChanged<MobileClipBackend> onBackendChanged;
   final ValueChanged<LocalInferenceAccelerator> onAcceleratorChanged;
 
   @override
@@ -333,17 +330,9 @@ class _RuntimeOptionsCard extends StatelessWidget {
             const SizedBox(height: 12),
             Text('图像后端', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
-            SegmentedButton<MobileClipBackend>(
-              segments: const <ButtonSegment<MobileClipBackend>>[
-                ButtonSegment<MobileClipBackend>(
-                  value: MobileClipBackend.mobileclip2LiteRt,
-                  label: Text('LiteRT'),
-                ),
-              ],
-              selected: <MobileClipBackend>{selectedBackend},
-              onSelectionChanged: isRunning
-                  ? null
-                  : (selection) => onBackendChanged(selection.first),
+            Text(
+              selectedBackend.label,
+              style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 12),
             Text('LiteRT 推理方式', style: Theme.of(context).textTheme.titleSmall),
@@ -357,7 +346,7 @@ class _RuntimeOptionsCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '图片和文本都会使用 ${selectedAccelerator.label} LiteRT；视频默认走 MobileViCLIP。',
+              '图片、文本和视频/GIF 帧都会使用 ${selectedAccelerator.label} LiteRT 的 MobileCLIP2 S2 向量空间。',
               style: TextStyle(color: Colors.grey[700], fontSize: 12),
             ),
           ],

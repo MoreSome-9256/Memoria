@@ -7,10 +7,8 @@ import '../models/vo/semantic_search_models.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
-import '../utils/media_type_helper.dart';
 import '../utils/tag_sanitizer.dart';
 import 'mobileclip_embedding_service.dart';
-import 'mobileviclip_video_service.dart';
 import 'semantic_matching_service.dart';
 import 'semantic_query_parser_service.dart';
 
@@ -544,22 +542,6 @@ class SemanticPhotoSearchService {
     PhotoEntity photo, {
     required String activeModelVersion,
   }) {
-    final kind = MediaTypeHelper.fromStorageValue(
-      photo.mediaKind,
-      path: photo.path,
-    );
-    final isVideoLike =
-        kind == MemoriaMediaKind.video || kind == MemoriaMediaKind.dynamicImage;
-    if (isVideoLike) {
-      final videoEmbedding = _photoEmbeddingIndexRepository
-          .readEmbeddingForPhoto(
-            photo,
-            modelVersion: MobileViClipVideoService.modelVersion,
-          );
-      if (videoEmbedding != null && videoEmbedding.isNotEmpty) {
-        return _SearchEmbeddingChoice(embedding: videoEmbedding);
-      }
-    }
     final embedding = _photoEmbeddingIndexRepository.readEmbeddingForPhoto(
       photo,
       modelVersion: activeModelVersion,

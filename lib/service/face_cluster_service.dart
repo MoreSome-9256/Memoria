@@ -11,6 +11,7 @@ import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/face_embedding_index_repository.dart';
 import '../utils/tag_sanitizer.dart';
+import 'face_embedding_service.dart';
 
 typedef FaceEntitiesLoader = Future<List<FaceEntity>> Function();
 typedef PhotoEntitiesLoader = Future<List<PhotoEntity>> Function();
@@ -36,23 +37,26 @@ class FaceClusterService {
     );
   }
 
-  static const double defaultMinQualityScore = 0.03;
-  static const double defaultSeedQualityScore = 0.10;
-  static const double defaultMinAttachFaceAreaRatio = 0.008;
-  static const double defaultMinSeedFaceAreaRatio = 0.015;
+  static const double defaultMinQualityScore = 0.08;
+  static const double defaultSeedQualityScore = 0.16;
+  static const double defaultMinAttachFaceAreaRatio = 0.006;
+  static const double defaultMinSeedFaceAreaRatio = 0.012;
   static const int defaultMinClusterSize = 2;
-  static const double defaultSeedToCentroidThreshold = 0.83;
-  static const double defaultSeedToCoverThreshold = 0.85;
-  static const double defaultSmallClusterCentroidMergeThreshold = 0.75;
-  static const double defaultSmallClusterCoverMergeThreshold = 0.72;
-  static const double defaultSmallClusterPairMergeThreshold = 0.74;
+  static const double defaultSeedToCentroidThreshold = 0.88;
+  static const double defaultSeedToCoverThreshold = 0.90;
+  static const double defaultSeedToMemberThreshold = 0.84;
+  static const double defaultSmallClusterCentroidMergeThreshold = 0.86;
+  static const double defaultSmallClusterCoverMergeThreshold = 0.88;
+  static const double defaultSmallClusterPairMergeThreshold = 0.84;
   static const int defaultSmallClusterMergeMaxSize = 4;
-  static const double defaultMergeSmallClusterThreshold = 0.78;
-  static const double defaultAttachToClusterThreshold = 0.76;
-  static const double defaultAttachToCoverThreshold = 0.74;
-  static const double defaultClusterCentroidMergeThreshold = 0.86;
-  static const double defaultClusterCoverMergeThreshold = 0.84;
-  static const int defaultMaxClusterSize = 12;
+  static const double defaultMergeSmallClusterThreshold = 0.86;
+  static const double defaultAttachToClusterThreshold = 0.82;
+  static const double defaultAttachToCoverThreshold = 0.84;
+  static const double defaultAttachToMemberThreshold = 0.80;
+  static const double defaultClusterCentroidMergeThreshold = 0.90;
+  static const double defaultClusterCoverMergeThreshold = 0.92;
+  static const double defaultClusterMemberMergeThreshold = 0.86;
+  static const int defaultMaxClusterSize = 200;
 
   static const Set<String> _nonHumanPhotoTags = <String>{
     '宠物',
@@ -96,6 +100,7 @@ class FaceClusterService {
     int minClusterSize = defaultMinClusterSize,
     double seedToCentroidThreshold = defaultSeedToCentroidThreshold,
     double seedToCoverThreshold = defaultSeedToCoverThreshold,
+    double seedToMemberThreshold = defaultSeedToMemberThreshold,
     double smallClusterCentroidMergeThreshold =
         defaultSmallClusterCentroidMergeThreshold,
     double smallClusterCoverMergeThreshold =
@@ -106,8 +111,10 @@ class FaceClusterService {
     double mergeSmallClusterThreshold = defaultMergeSmallClusterThreshold,
     double attachToClusterThreshold = defaultAttachToClusterThreshold,
     double attachToCoverThreshold = defaultAttachToCoverThreshold,
+    double attachToMemberThreshold = defaultAttachToMemberThreshold,
     double clusterCentroidMergeThreshold = defaultClusterCentroidMergeThreshold,
     double clusterCoverMergeThreshold = defaultClusterCoverMergeThreshold,
+    double clusterMemberMergeThreshold = defaultClusterMemberMergeThreshold,
     int maxClusterSize = defaultMaxClusterSize,
   }) async {
     final allFaces = await _loadAllFaces();
@@ -184,6 +191,7 @@ class FaceClusterService {
         faces,
         seedToCentroidThreshold: seedToCentroidThreshold,
         seedToCoverThreshold: seedToCoverThreshold,
+        seedToMemberThreshold: seedToMemberThreshold,
         maxClusterSize: maxClusterSize,
       );
       final grownClusters = rawClusters
@@ -214,6 +222,7 @@ class FaceClusterService {
           smallCluster,
           stableClusters,
           minSimilarity: mergeSmallClusterThreshold,
+          memberThreshold: smallClusterPairMergeThreshold,
         );
         if (bestIndex >= 0) {
           stableClusters[bestIndex].addAll(smallCluster);
@@ -228,6 +237,7 @@ class FaceClusterService {
         stableClusters,
         centroidThreshold: clusterCentroidMergeThreshold,
         coverThreshold: clusterCoverMergeThreshold,
+        memberThreshold: clusterMemberMergeThreshold,
         maxClusterSize: maxClusterSize,
       );
 
@@ -253,6 +263,7 @@ class FaceClusterService {
           stableClusters,
           minSimilarity: attachToClusterThreshold,
           coverThreshold: attachToCoverThreshold,
+          memberThreshold: attachToMemberThreshold,
         );
         if (bestIndex >= 0 &&
             stableClusters[bestIndex].length < maxClusterSize) {
@@ -353,7 +364,10 @@ class FaceClusterService {
       return const <PhotoEntity>[];
     }
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    return photoBox.getMany(photoIds).whereType<PhotoEntity>().toList(growable: false);
+    return photoBox
+        .getMany(photoIds)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
   }
 
   bool _isAttachCandidateFace(
@@ -364,6 +378,10 @@ class FaceClusterService {
   }) {
     final embedding = face.embedding;
     if (embedding == null || embedding.isEmpty) {
+      return false;
+    }
+    if (face.embeddingModelVersion == kMobileClipFaceEmbeddingModelVersion ||
+        face.embeddingModelVersion == kUnavailableFaceEmbeddingModelVersion) {
       return false;
     }
     if (_isRejectedPhoto(photo)) {
@@ -462,6 +480,7 @@ class FaceClusterService {
     List<FaceEntity> faces, {
     required double seedToCentroidThreshold,
     required double seedToCoverThreshold,
+    required double seedToMemberThreshold,
     required int maxClusterSize,
   }) {
     final sortedFaces = List<FaceEntity>.from(faces)
@@ -503,6 +522,9 @@ class FaceClusterService {
         if (coverSimilarity < seedToCoverThreshold) {
           continue;
         }
+        if (_minSimilarityToCluster(face, cluster) < seedToMemberThreshold) {
+          continue;
+        }
 
         final score = (centroidSimilarity + coverSimilarity) / 2;
         if (score > bestScore) {
@@ -527,6 +549,7 @@ class FaceClusterService {
     List<List<FaceEntity>> stableClusters, {
     required double minSimilarity,
     double? coverThreshold,
+    double? memberThreshold,
   }) {
     if (stableClusters.isEmpty) {
       return -1;
@@ -557,6 +580,14 @@ class FaceClusterService {
           continue;
         }
       }
+      if (memberThreshold != null &&
+          _minCrossPairSimilarity(smallCluster, stableCluster) <
+              memberThreshold) {
+        continue;
+      }
+      if (_sharesPhoto(smallCluster, stableCluster)) {
+        continue;
+      }
       if (similarity > bestSimilarity) {
         bestSimilarity = similarity;
         bestIndex = index;
@@ -573,12 +604,14 @@ class FaceClusterService {
     List<List<FaceEntity>> stableClusters, {
     required double centroidThreshold,
     required double coverThreshold,
+    required double memberThreshold,
     required int maxClusterSize,
   }) {
     _mergeClustersInPlace(
       stableClusters,
       centroidThreshold: centroidThreshold,
       coverThreshold: coverThreshold,
+      memberThreshold: memberThreshold,
       maxClusterSize: maxClusterSize,
     );
   }
@@ -628,16 +661,20 @@ class FaceClusterService {
             continue;
           }
 
-          final maxPairSimilarity = _maxPairSimilarity(
+          if (_sharesPhoto(leftCluster, rightCluster)) {
+            continue;
+          }
+
+          final minPairSimilarity = _minCrossPairSimilarity(
             leftCluster,
             rightCluster,
           );
-          if (maxPairSimilarity < pairThreshold) {
+          if (minPairSimilarity < pairThreshold) {
             continue;
           }
 
           final score =
-              (centroidSimilarity + coverSimilarity + maxPairSimilarity) / 3;
+              (centroidSimilarity + coverSimilarity + minPairSimilarity) / 3;
           if (score > bestScore) {
             bestScore = score;
             bestLeft = left;
@@ -659,6 +696,7 @@ class FaceClusterService {
     List<List<FaceEntity>> clusters, {
     required double centroidThreshold,
     required double coverThreshold,
+    required double memberThreshold,
     required int maxClusterSize,
   }) {
     if (clusters.length < 2) {
@@ -677,6 +715,9 @@ class FaceClusterService {
           if (leftCluster.length + rightCluster.length > maxClusterSize) {
             continue;
           }
+          if (_sharesPhoto(leftCluster, rightCluster)) {
+            continue;
+          }
 
           final centroidSimilarity = _cosineSimilarity(
             _centroid(leftCluster),
@@ -693,8 +734,16 @@ class FaceClusterService {
           if (coverSimilarity < coverThreshold) {
             continue;
           }
+          final memberSimilarity = _minCrossPairSimilarity(
+            leftCluster,
+            rightCluster,
+          );
+          if (memberSimilarity < memberThreshold) {
+            continue;
+          }
 
-          final score = (centroidSimilarity + coverSimilarity) / 2;
+          final score =
+              (centroidSimilarity + coverSimilarity + memberSimilarity) / 3;
           if (score > bestScore) {
             bestScore = score;
             bestLeft = left;
@@ -813,20 +862,42 @@ class FaceClusterService {
     return dot / (math.sqrt(leftNorm) * math.sqrt(rightNorm));
   }
 
-  double _maxPairSimilarity(List<FaceEntity> left, List<FaceEntity> right) {
-    var best = -double.infinity;
+  double _minSimilarityToCluster(FaceEntity face, List<FaceEntity> cluster) {
+    var worst = double.infinity;
+    for (final member in cluster) {
+      if (member.photoId == face.photoId) {
+        return -double.infinity;
+      }
+      final similarity = _cosineSimilarity(face.embedding!, member.embedding!);
+      if (similarity < worst) {
+        worst = similarity;
+      }
+    }
+    return worst == double.infinity ? 0.0 : worst;
+  }
+
+  double _minCrossPairSimilarity(
+    List<FaceEntity> left,
+    List<FaceEntity> right,
+  ) {
+    var worst = double.infinity;
     for (final leftFace in left) {
       for (final rightFace in right) {
         final similarity = _cosineSimilarity(
           leftFace.embedding!,
           rightFace.embedding!,
         );
-        if (similarity > best) {
-          best = similarity;
+        if (similarity < worst) {
+          worst = similarity;
         }
       }
     }
-    return best;
+    return worst == double.infinity ? 0.0 : worst;
+  }
+
+  bool _sharesPhoto(List<FaceEntity> left, List<FaceEntity> right) {
+    final leftPhotoIds = left.map((face) => face.photoId).toSet();
+    return right.any((face) => leftPhotoIds.contains(face.photoId));
   }
 
   Future<void> _persistAssignments({

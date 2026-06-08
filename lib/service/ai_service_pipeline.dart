@@ -571,9 +571,7 @@ extension AIServicePipeline on AIService {
           );
           if (cropped != null) {
             final cropBytes = FaceCropUtil.encodeFaceImageToJpegBytes(cropped);
-            embeddingService ??= OnnxFaceEmbeddingService(
-              fallbackService: MobileClipFaceEmbeddingService(),
-            );
+            embeddingService ??= OnnxFaceEmbeddingService();
             final result = await embeddingService.embedFaceCropBytes(cropBytes);
             if (result != null) {
               embedding = result.embedding;
@@ -581,6 +579,9 @@ extension AIServicePipeline on AIService {
             }
           }
         } catch (_) {}
+      }
+      if (modelVersion.isEmpty) {
+        modelVersion = kUnavailableFaceEmbeddingModelVersion;
       }
 
       faces.add(

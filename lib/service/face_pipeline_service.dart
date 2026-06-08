@@ -29,11 +29,7 @@ class _ExistingFaceSnapshot {
 
 class FacePipelineService {
   FacePipelineService({FaceEmbeddingService? embeddingService})
-    : _embeddingService =
-          embeddingService ??
-          OnnxFaceEmbeddingService(
-            fallbackService: MobileClipFaceEmbeddingService(),
-          );
+    : _embeddingService = embeddingService ?? OnnxFaceEmbeddingService();
 
   static const bool _persistDebugCrops = bool.fromEnvironment(
     'FACE_DEBUG_CROPS',
@@ -235,7 +231,7 @@ class FacePipelineService {
           ..embedding = embeddingResult?.embedding
           ..embeddingModelVersion =
               embeddingResult?.modelVersion ??
-              kMobileClipFaceEmbeddingModelVersion
+              kUnavailableFaceEmbeddingModelVersion
           ..qualityScore = qualityScore
           ..clusterId = null
           ..isPrimaryFace = index == primaryIndex
@@ -309,7 +305,8 @@ class FacePipelineService {
       putWatch.start();
       faceBox.putMany(results);
       putWatch.stop();
-    });    if (embeddingBackups != null) {
+    });
+    if (embeddingBackups != null) {
       for (var index = 0; index < results.length; index++) {
         results[index].embedding = embeddingBackups[index];
       }
@@ -367,7 +364,10 @@ class FacePipelineService {
       final existing = q.find();
       final ids = existing.map((f) => f.id).toList(growable: false);
       if (!includeDebugCropPaths || ids.isEmpty) {
-        return _ExistingFaceSnapshot(ids: ids, debugCropPaths: const <String>[]);
+        return _ExistingFaceSnapshot(
+          ids: ids,
+          debugCropPaths: const <String>[],
+        );
       }
       final paths = existing
           .map((f) => f.debugCropPath)

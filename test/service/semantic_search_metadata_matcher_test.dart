@@ -152,6 +152,41 @@ void main() {
         isTrue,
       );
     });
+
+    test('does not treat broad POI context as an exact POI hit', () {
+      final query = const <SemanticSearchLocation>[
+        SemanticSearchLocation(
+          text: '情侣园',
+          type: 'poi',
+          aliases: <String>['南京情侣园', '玄武湖景区', '锁金村'],
+        ),
+      ];
+      final exactPoi = _photo(
+        id: 7,
+        timestamp: 1,
+        city: '南京市',
+        locationName: '情侣园',
+        formattedAddress: '江苏省南京市玄武区情侣园',
+      );
+      final scenicContext = _photo(
+        id: 8,
+        timestamp: 1,
+        city: '南京市',
+        locationName: '玄武湖景区',
+        formattedAddress: '江苏省南京市玄武区玄武湖景区',
+      );
+      final villageContext = _photo(
+        id: 9,
+        timestamp: 1,
+        city: '南京市',
+        locationName: '锁金村',
+        formattedAddress: '江苏省南京市玄武区锁金村',
+      );
+
+      expect(matcher.matchesLocation(exactPoi, query), isTrue);
+      expect(matcher.matchesLocation(scenicContext, query), isFalse);
+      expect(matcher.matchesLocation(villageContext, query), isFalse);
+    });
   });
 
   test('maps sanitized visual tags to coarse tag matches', () {

@@ -7,6 +7,7 @@ class SemanticSearchMetadataMatcher {
   const SemanticSearchMetadataMatcher();
 
   static const double strictLocationThreshold = 0.62;
+  static const double poiContextThreshold = 0.56;
 
   bool matchesTime(PhotoEntity photo, SemanticSearchQuery query) {
     final dateRanges = query.timeRanges
@@ -161,19 +162,29 @@ class SemanticSearchMetadataMatcher {
     return null;
   }
 
+  double scoreLocation(PhotoEntity photo, SemanticSearchLocation location) {
+    return _scoreLocation(photo, location);
+  }
+
   double _scoreLocation(PhotoEntity photo, SemanticSearchLocation location) {
     final weightedParts = <_WeightedLocationPart>[
-      _WeightedLocationPart(photo.locationName, 1.0),
-      _WeightedLocationPart(photo.formattedAddress, 0.92),
-      _WeightedLocationPart(photo.district, 0.82),
-      _WeightedLocationPart(photo.city, 0.72),
-      _WeightedLocationPart(photo.province, 0.58),
-      _WeightedLocationPart(photo.adcode, 0.50),
+      _WeightedLocationPart(photo.locationName, 1.0, _LocationFieldScope.poi),
+      _WeightedLocationPart(
+        photo.formattedAddress,
+        0.92,
+        _LocationFieldScope.address,
+      ),
+      _WeightedLocationPart(photo.district, 0.82, _LocationFieldScope.district),
+      _WeightedLocationPart(photo.city, 0.72, _LocationFieldScope.city),
+      _WeightedLocationPart(photo.province, 0.58, _LocationFieldScope.province),
+      _WeightedLocationPart(photo.adcode, 0.50, _LocationFieldScope.code),
     ];
-    final terms = <String>{
-      location.text,
-      ...location.aliases,
-    }.map(_normalizeLocationText).where((item) => item.isNotEmpty).toList();
+    final primary = _normalizeLocationText(location.text);
+    final terms = <_LocationTerm>[
+      _LocationTerm(primary, isPrimary: true),
+      for (final alias in location.aliases)
+        _LocationTerm(_normalizeLocationText(alias), isPrimary: false),
+    ].where((term) => term.value.isNotEmpty).toList(growable: false);
     if (terms.isEmpty) {
       return 0.0;
     }
@@ -189,7 +200,9 @@ class SemanticSearchMetadataMatcher {
           normalizedPart,
           term,
           part.weight,
+          part.scope,
           location.type,
+          primary,
         );
         if (score > best) {
           best = score;
@@ -201,28 +214,37 @@ class SemanticSearchMetadataMatcher {
 
   double _scoreNormalizedLocation(
     String part,
-    String term,
+    _LocationTerm term,
     double fieldWeight,
+    _LocationFieldScope fieldScope,
     String locationType,
+    String primaryTerm,
   ) {
-    if (part == term) {
-      return 1.0 * fieldWeight;
+    final termValue = term.value;
+    final scopeCap = _scopeCap(
+      locationType: locationType,
+      fieldScope: fieldScope,
+      term: term,
+      primaryTerm: primaryTerm,
+    );
+    if (part == termValue) {
+      return mathMin(1.0 * fieldWeight, scopeCap);
     }
     final strippedPart = _stripLocationSuffix(part);
-    final strippedTerm = _stripLocationSuffix(term);
+    final strippedTerm = _stripLocationSuffix(termValue);
     if (strippedPart.isNotEmpty && strippedPart == strippedTerm) {
-      return 0.94 * fieldWeight;
+      return mathMin(0.94 * fieldWeight, scopeCap);
     }
-    if (part.contains(term) || term.contains(part)) {
-      final ratio = _overlapRatio(part, term);
+    if (part.contains(termValue) || termValue.contains(part)) {
+      final ratio = _overlapRatio(part, termValue);
       final base = locationType == 'poi' || locationType == 'scenic_area'
           ? 0.74
           : 0.66;
-      return (base + ratio * 0.22) * fieldWeight;
+      return mathMin((base + ratio * 0.22) * fieldWeight, scopeCap);
     }
 
     final partTokens = _locationTokens(part);
-    final termTokens = _locationTokens(term);
+    final termTokens = _locationTokens(termValue);
     if (partTokens.isEmpty || termTokens.isEmpty) {
       return 0.0;
     }
@@ -234,7 +256,44 @@ class SemanticSearchMetadataMatcher {
     final strictTypePenalty = locationType == 'poi' && coverage < 1.0
         ? 0.82
         : 1.0;
-    return coverage * 0.70 * fieldWeight * strictTypePenalty;
+    return mathMin(coverage * 0.70 * fieldWeight * strictTypePenalty, scopeCap);
+  }
+
+  double _scopeCap({
+    required String locationType,
+    required _LocationFieldScope fieldScope,
+    required _LocationTerm term,
+    required String primaryTerm,
+  }) {
+    final isPoiLike = locationType == 'poi' || locationType == 'scenic_area';
+    if (!isPoiLike) {
+      return 1.0;
+    }
+    if (fieldScope == _LocationFieldScope.poi ||
+        fieldScope == _LocationFieldScope.address) {
+      if (term.isPrimary || _isSpecificPoiAlias(term.value, primaryTerm)) {
+        return 1.0;
+      }
+      return _looksLikeBroadContext(term.value) ? poiContextThreshold : 0.86;
+    }
+    return 0.48;
+  }
+
+  bool _isSpecificPoiAlias(String alias, String primaryTerm) {
+    if (primaryTerm.isEmpty) {
+      return false;
+    }
+    if (alias.contains(primaryTerm) || primaryTerm.contains(alias)) {
+      return true;
+    }
+    if (_looksLikeBroadContext(alias)) {
+      return false;
+    }
+    return alias.length <= primaryTerm.length + 2;
+  }
+
+  bool _looksLikeBroadContext(String value) {
+    return RegExp('(景区|风景区|区域|片区|街道|社区|村|城区|市区|玄武湖|公园|湖)\$').hasMatch(value);
   }
 
   String _normalizeLocationText(String? value) {
@@ -273,6 +332,8 @@ class SemanticSearchMetadataMatcher {
     }
     return shorter / longer;
   }
+
+  double mathMin(double left, double right) => left < right ? left : right;
 }
 
 class LocationMatchResult {
@@ -309,8 +370,18 @@ class CoarseTagMatchResult {
 }
 
 class _WeightedLocationPart {
-  const _WeightedLocationPart(this.value, this.weight);
+  const _WeightedLocationPart(this.value, this.weight, this.scope);
 
   final String? value;
   final double weight;
+  final _LocationFieldScope scope;
 }
+
+class _LocationTerm {
+  const _LocationTerm(this.value, {required this.isPrimary});
+
+  final String value;
+  final bool isPrimary;
+}
+
+enum _LocationFieldScope { poi, address, district, city, province, code }

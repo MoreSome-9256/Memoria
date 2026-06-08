@@ -32,9 +32,6 @@ class SemanticPhotoSearchService {
   static const double _exactPositiveThreshold = 0.22;
   static const double _relatedSemanticThreshold = 0.11;
   static const double _negativePenaltyAlpha = 0.6;
-  static const double _preferCoarseTagBonus = 0.035;
-  static const double _optionalCoarseTagBonus = 0.018;
-  static const double _locationScoreBonus = 0.025;
   static const double _minimumFinalScore = 0.03;
   static const int _maxResultsPerBucket = 240;
 
@@ -98,9 +95,10 @@ class SemanticPhotoSearchService {
       if (strictMetadataCandidates.isEmpty) {
         return _emptyResult(query, photos.length);
       }
-      final metadataOnlyPhotos = strictMetadataCandidates.toList(
-        growable: false,
-      )..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      final metadataOnlyPhotos = _sortMetadataOnlyPhotos(
+        strictMetadataCandidates,
+        query,
+      );
       return SemanticSearchResult(
         query: query,
         exactPhotos: metadataOnlyPhotos,
@@ -128,7 +126,6 @@ class SemanticPhotoSearchService {
       vectors: vectors,
       coarseTags: query.coarseTags,
       locations: query.locations,
-      tagStrictness: query.tagStrictness,
     );
 
     final exactPhotos = _orderedPhotosForHits(
@@ -336,7 +333,6 @@ class SemanticPhotoSearchService {
     required _SemanticVectorBundle vectors,
     required List<SemanticSearchCoarseTag> coarseTags,
     required List<SemanticSearchLocation> locations,
-    required SemanticSearchTagStrictness tagStrictness,
     double semanticThreshold = _relatedSemanticThreshold,
   }) {
     final hits = <int, SemanticSearchHit>{};
@@ -347,7 +343,6 @@ class SemanticPhotoSearchService {
         vectors: vectors,
         coarseTags: coarseTags,
         locations: locations,
-        tagStrictness: tagStrictness,
         semanticThreshold: semanticThreshold,
       );
       if (hit == null) {
@@ -364,7 +359,6 @@ class SemanticPhotoSearchService {
     required _SemanticVectorBundle vectors,
     required List<SemanticSearchCoarseTag> coarseTags,
     required List<SemanticSearchLocation> locations,
-    required SemanticSearchTagStrictness tagStrictness,
     required double semanticThreshold,
   }) {
     final embeddingChoice = _readSearchEmbedding(
@@ -398,15 +392,9 @@ class SemanticPhotoSearchService {
     );
     final coarseTagMatch = _metadataMatcher.matchCoarseTags(photo, coarseTags);
     final locationMatch = _metadataMatcher.matchLocation(photo, locations);
-    final coarseTagBonus = _coarseTagBonus(coarseTagMatch, tagStrictness);
-    final locationBonus = locations.isEmpty
-        ? 0.0
-        : locationMatch.score * _locationScoreBonus;
     final finalScore =
         positive.qualifiedPositiveScore -
-        (_negativePenaltyAlpha * negative.negativeScore) +
-        coarseTagBonus +
-        locationBonus;
+        (_negativePenaltyAlpha * negative.negativeScore);
 
     final isExact =
         positive.qualifiedPositiveScore >= _exactPositiveThreshold &&
@@ -441,7 +429,7 @@ class SemanticPhotoSearchService {
       semanticScore: positive.semanticScore,
       qualifiedPositiveScore: positive.qualifiedPositiveScore,
       negativeScore: negative.negativeScore,
-      coarseTagBonus: coarseTagBonus,
+      coarseTagBonus: 0.0,
       matchedCoarseTags: matchedCoarseTags,
       matchedLocations: matchedLocations,
       bestPositiveSemantic: positive.bestPositiveSemantic,
@@ -451,20 +439,37 @@ class SemanticPhotoSearchService {
     );
   }
 
-  double _coarseTagBonus(
-    CoarseTagMatchResult match,
-    SemanticSearchTagStrictness strictness,
+  List<PhotoEntity> _sortMetadataOnlyPhotos(
+    List<PhotoEntity> photos,
+    SemanticSearchQuery query,
   ) {
-    if (match.matchedLabels.isEmpty) {
-      return 0.0;
+    final sorted = photos.toList(growable: false);
+    sorted.sort((left, right) {
+      if (query.locations.isNotEmpty) {
+        final rightLocation = _bestLocationScore(right, query.locations);
+        final leftLocation = _bestLocationScore(left, query.locations);
+        final locationCompare = rightLocation.compareTo(leftLocation);
+        if (locationCompare != 0) {
+          return locationCompare;
+        }
+      }
+      return right.timestamp.compareTo(left.timestamp);
+    });
+    return sorted;
+  }
+
+  double _bestLocationScore(
+    PhotoEntity photo,
+    List<SemanticSearchLocation> locations,
+  ) {
+    var best = 0.0;
+    for (final location in locations) {
+      final score = _metadataMatcher.scoreLocation(photo, location);
+      if (score > best) {
+        best = score;
+      }
     }
-    return switch (strictness) {
-      SemanticSearchTagStrictness.strict => _preferCoarseTagBonus,
-      SemanticSearchTagStrictness.prefer =>
-        _preferCoarseTagBonus * match.confidence,
-      SemanticSearchTagStrictness.optional =>
-        _optionalCoarseTagBonus * match.confidence,
-    };
+    return best;
   }
 
   List<_SemanticVector> _combinePositiveAndRecallVectors(

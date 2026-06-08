@@ -32,6 +32,25 @@ class AIService {
     replacePendingJunkCleanupReport(null);
   }
 
+  void unmarkJunkCandidatesAsKept(Iterable<int> photoIds) {
+    final ids = photoIds.where((id) => id > 0).toSet();
+    if (ids.isEmpty) {
+      return;
+    }
+    final current = latestJunkCleanupReport;
+    if (current == null || current.candidates.isEmpty) {
+      return;
+    }
+    final remaining = current.candidates
+        .where((candidate) => !ids.contains(candidate.photoId))
+        .toList(growable: false);
+    replacePendingJunkCleanupReport(
+      remaining.isEmpty
+          ? null
+          : JunkPhotoCleanupReport.fromCandidates(remaining),
+    );
+  }
+
   Future<JunkPhotoCleanupReport?> refreshJunkCleanupReportFromDatabase({
     bool replaceExisting = true,
   }) async {

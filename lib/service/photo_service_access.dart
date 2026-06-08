@@ -249,19 +249,31 @@ extension PhotoServiceAccess on PhotoService {
         continue;
       }
 
+      var needsUpdate = false;
+      
       if (_refreshPhotoFromAssetMetadata(photo, asset)) {
+        needsUpdate = true;
+      }
+      
+      if (photo.thumbnailBytes == null || photo.thumbnailBytes!.isEmpty) {
+        final thumbnailBytes = await MediaThumbnailCacheService.instance
+            .generateCompressedBytes(asset);
+        if (thumbnailBytes != null && thumbnailBytes.isNotEmpty) {
+          photo.thumbnailBytes = thumbnailBytes;
+          needsUpdate = true;
+        }
+      }
+      
+      if (needsUpdate) {
         if (photo.id > 0) {
           repairedIds.add(photo.id);
         }
         repairedCount++;
-        _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
-          checkedAtMs: nowMs,
-        );
-      } else {
-        _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
-          checkedAtMs: nowMs,
-        );
       }
+      
+      _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
+        checkedAtMs: nowMs,
+      );
     }
 
     final repairedPhotos = repairedIds.isEmpty
@@ -424,10 +436,6 @@ extension PhotoServiceAccess on PhotoService {
     }
     if (photo.isLivePhoto != asset.isLivePhoto) {
       photo.isLivePhoto = asset.isLivePhoto;
-      changed = true;
-    }
-    if (photo.path.isNotEmpty) {
-      photo.path = '';
       changed = true;
     }
     return changed;

@@ -11,7 +11,8 @@ import '../../models/entity/story_entity.dart';
 import '../../service/create_recommendation_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_service.dart';
-import '../widgets/path_image.dart';
+import '../../utils/media_type_helper.dart';
+import '../widgets/media_thumbnail.dart';
 import 'album_search_page.dart';
 import 'create_page.dart';
 import 'stories_page.dart';
@@ -888,7 +889,16 @@ class _RecommendationCover extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            PathImage(path: photo!.path, fit: BoxFit.cover),
+            MediaThumbnail(
+              path: photo!.path,
+              assetId: photo!.assetId,
+              kind: MediaTypeHelper.fromStorageValue(
+                photo!.mediaKind,
+                path: photo!.path,
+              ),
+              thumbnailBytes: photo!.thumbnailBytes,
+              fit: BoxFit.cover,
+            ),
             DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -949,7 +959,16 @@ class _SavedStoryCard extends StatelessWidget {
                               alignment: Alignment.center,
                               child: const Icon(Icons.menu_book_outlined, size: 40),
                             )
-                          : PathImage(path: item.cover!.path, fit: BoxFit.cover),
+                          : MediaThumbnail(
+                              path: item.cover!.path,
+                              assetId: item.cover!.assetId,
+                              kind: MediaTypeHelper.fromStorageValue(
+                                item.cover!.mediaKind,
+                                path: item.cover!.path,
+                              ),
+                              thumbnailBytes: item.cover!.thumbnailBytes,
+                              fit: BoxFit.cover,
+                            ),
                     ),
                     if (isUnsaved)
                       Positioned(

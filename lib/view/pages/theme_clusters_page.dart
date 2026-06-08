@@ -8,7 +8,8 @@ import 'package:flutter/material.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/theme_cluster_models.dart';
 import '../../service/theme_cluster_service.dart';
-import '../widgets/path_image.dart';
+import '../../utils/media_type_helper.dart';
+import '../widgets/deferred_path_image.dart';
 import 'stories_page.dart';
 
 class ThemeClustersPage extends StatefulWidget {
@@ -129,24 +130,7 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          ValueListenableBuilder<int>(
-            valueListenable:
-                _DeferredThemeImageScheduler.pendingCountListenable,
-            builder: (context, pendingCount, _) {
-              return SizedBox(
-                height: 2.5,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 180),
-                  opacity: pendingCount > 0 ? 1 : 0,
-                  child: const LinearProgressIndicator(minHeight: 2.5),
-                ),
-              );
-            },
-          ),
-          Expanded(
-            child: FutureBuilder<List<ThemeCluster>>(
+      body: FutureBuilder<List<ThemeCluster>>(
               future: _clustersFuture,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
@@ -262,85 +246,7 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
                 );
               },
             ),
-          ),
-        ],
-      ),
     );
-  }
-}
-
-class _DeferredThemeImageTicket {
-  _DeferredThemeImageTicket();
-
-  bool started = false;
-  bool completed = false;
-}
-
-class _DeferredThemeImageScheduler {
-  static const int _maxConcurrent = 4;
-  static final ValueNotifier<int> pendingCountListenable = ValueNotifier<int>(
-    0,
-  );
-  static final Queue<(_DeferredThemeImageTicket, VoidCallback)> _queue =
-      Queue<(_DeferredThemeImageTicket, VoidCallback)>();
-  static int _active = 0;
-  static int _pendingCount = 0;
-  static bool _flushScheduled = false;
-
-  static void enqueue(_DeferredThemeImageTicket ticket, VoidCallback starter) {
-    if (ticket.completed) {
-      return;
-    }
-    _setPendingCount(_pendingCount + 1);
-    _queue.add((ticket, starter));
-    _pump();
-  }
-
-  static void complete(_DeferredThemeImageTicket ticket) {
-    if (ticket.completed) {
-      return;
-    }
-    ticket.completed = true;
-
-    if (ticket.started && _active > 0) {
-      _active -= 1;
-    } else {
-      _queue.removeWhere((entry) => identical(entry.$1, ticket));
-    }
-
-    final next = _pendingCount - 1;
-    _setPendingCount(next < 0 ? 0 : next);
-    _pump();
-  }
-
-  static void _setPendingCount(int value) {
-    _pendingCount = value;
-    _scheduleFlush();
-  }
-
-  static void _scheduleFlush() {
-    if (_flushScheduled) {
-      return;
-    }
-    _flushScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _flushScheduled = false;
-      if (pendingCountListenable.value != _pendingCount) {
-        pendingCountListenable.value = _pendingCount;
-      }
-    });
-  }
-
-  static void _pump() {
-    while (_active < _maxConcurrent && _queue.isNotEmpty) {
-      final (ticket, starter) = _queue.removeFirst();
-      if (ticket.completed) {
-        continue;
-      }
-      ticket.started = true;
-      _active += 1;
-      starter();
-    }
   }
 }
 
@@ -604,13 +510,19 @@ class _SubclusterSummaryCard extends StatelessWidget {
                       return Expanded(
                         child: Padding(
                           padding: const EdgeInsets.only(right: 8),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(14),
-                            child: _DeferredThemeImage(
-                              path: photo.path,
-                              fit: BoxFit.cover,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(14),
+                              child: DeferredPathImage(
+                                path: photo.path,
+                                assetId: photo.assetId,
+                                kind: MediaTypeHelper.fromStorageValue(
+                                  photo.mediaKind,
+                                  path: photo.path,
+                                ),
+                                thumbnailBytes: photo.thumbnailBytes,
+                                fit: BoxFit.cover,
+                              ),
                             ),
-                          ),
                         ),
                       );
                     })
@@ -687,13 +599,19 @@ class _SubclusterSelectorCard extends StatelessWidget {
                       return Expanded(
                         child: Padding(
                           padding: const EdgeInsets.only(right: 6),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: _DeferredThemeImage(
-                              path: photo.path,
-                              fit: BoxFit.cover,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: DeferredPathImage(
+                                path: photo.path,
+                                assetId: photo.assetId,
+                                kind: MediaTypeHelper.fromStorageValue(
+                                  photo.mediaKind,
+                                  path: photo.path,
+                                ),
+                                thumbnailBytes: photo.thumbnailBytes,
+                                fit: BoxFit.cover,
+                              ),
                             ),
-                          ),
                         ),
                       );
                     })
@@ -746,33 +664,7 @@ class _IntroCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: <Color>[Color(0xFFF7F3EA), Color(0xFFE8F1F8)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '先用 MobileCLIP2 512维向量做一层主题聚类',
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '这版不是替代事件聚类，而是补一层“人物 / 食物 / 书 / 车 / 风景”视角。这样你就能按主题回看，再感受它们随着时间变化。',
-            style: TextStyle(color: Colors.grey[800], height: 1.45),
-          ),
-        ],
-      ),
-    );
+    return Container();
   }
 }
 
@@ -855,13 +747,19 @@ class _ThemeClusterCard extends StatelessWidget {
                         return Expanded(
                           child: Padding(
                             padding: const EdgeInsets.only(right: 8),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: _DeferredThemeImage(
-                                path: photo.path,
-                                fit: BoxFit.cover,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(16),
+                                child: DeferredPathImage(
+                                  path: photo.path,
+                                  assetId: photo.assetId,
+                                  kind: MediaTypeHelper.fromStorageValue(
+                                    photo.mediaKind,
+                                    path: photo.path,
+                                  ),
+                                  thumbnailBytes: photo.thumbnailBytes,
+                                  fit: BoxFit.cover,
+                                ),
                               ),
-                            ),
                           ),
                         );
                       })
@@ -1091,7 +989,16 @@ class _ThemePhotoTile extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            _DeferredThemeImage(path: photo.path, fit: BoxFit.cover),
+            DeferredPathImage(
+              path: photo.path,
+              assetId: photo.assetId,
+              kind: MediaTypeHelper.fromStorageValue(
+                photo.mediaKind,
+                path: photo.path,
+              ),
+              thumbnailBytes: photo.thumbnailBytes,
+              fit: BoxFit.cover,
+            ),
             Positioned(
               left: 6,
               right: 6,
@@ -1156,78 +1063,6 @@ class _EmptyThemeView extends StatelessWidget {
               style: TextStyle(color: Colors.grey[600], height: 1.5),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DeferredThemeImage extends StatefulWidget {
-  const _DeferredThemeImage({required this.path, this.fit = BoxFit.cover});
-
-  final String path;
-  final BoxFit fit;
-
-  @override
-  State<_DeferredThemeImage> createState() => _DeferredThemeImageState();
-}
-
-class _DeferredThemeImageState extends State<_DeferredThemeImage> {
-  final _DeferredThemeImageTicket _ticket = _DeferredThemeImageTicket();
-  bool _ready = false;
-  bool _firstFrameReported = false;
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _DeferredThemeImageScheduler.enqueue(_ticket, _startDeferredLoad);
-  }
-
-  void _startDeferredLoad() {
-    final delayMs = 30 + (widget.path.hashCode.abs() % 11) * 28;
-    _timer = Timer(Duration(milliseconds: delayMs), () {
-      if (!mounted || _ticket.completed) {
-        return;
-      }
-      setState(() {
-        _ready = true;
-      });
-    });
-  }
-
-  void _onFirstFrame() {
-    if (_firstFrameReported) {
-      return;
-    }
-    _firstFrameReported = true;
-    _DeferredThemeImageScheduler.complete(_ticket);
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _DeferredThemeImageScheduler.complete(_ticket);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_ready) {
-      return PathImage(
-        path: widget.path,
-        fit: widget.fit,
-        onFirstFrame: _onFirstFrame,
-      );
-    }
-
-    return DecoratedBox(
-      decoration: BoxDecoration(color: Colors.grey.shade200),
-      child: const Center(
-        child: SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2),
         ),
       ),
     );

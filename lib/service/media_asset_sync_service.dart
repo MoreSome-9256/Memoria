@@ -73,9 +73,15 @@ class MediaAssetSyncService {
       }
 
       final constrainedPageSize = pageSize.clamp(100, 300);
+      final filter = FilterOptionGroup(
+        orders: <OrderOption>[
+          OrderOption(type: OrderOptionType.createDate, asc: false),
+        ],
+      );
       final albums = await PhotoManager.getAssetPathList(
         onlyAll: true,
         type: RequestType.common,
+        filterOption: filter,
       );
       if (albums.isEmpty) {
         return MediaSyncSummary(
@@ -91,13 +97,14 @@ class MediaAssetSyncService {
       final discoveredAssetIds = <String>{};
       var insertedOrUpdated = 0;
 
-      for (var offset = 0; offset < total; offset += constrainedPageSize) {
-        final end = (offset + constrainedPageSize > total)
-            ? total
-            : (offset + constrainedPageSize);
-        final assets = await allAlbum.getAssetListRange(
-          start: offset,
-          end: end,
+      for (
+        var pageIndex = 0;
+        pageIndex * constrainedPageSize < total;
+        pageIndex += 1
+      ) {
+        final assets = await allAlbum.getAssetListPaged(
+          page: pageIndex,
+          size: constrainedPageSize,
         );
         if (assets.isEmpty) {
           continue;

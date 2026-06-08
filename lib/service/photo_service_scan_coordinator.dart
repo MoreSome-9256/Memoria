@@ -243,6 +243,7 @@ class _PhotoScanCoordinator {
       final albums = await PhotoManager.getAssetPathList(
         onlyAll: true,
         type: requestType,
+        filterOption: _createDateDescFilter(),
       );
       if (albums.isEmpty) {
         return const _IncrementalScanSource(albums: <_IncrementalAlbumState>[]);
@@ -253,7 +254,10 @@ class _PhotoScanCoordinator {
         _IncrementalAlbumState(album: allAlbum, totalCount: count),
       );
     } else {
-      final allAlbums = await PhotoManager.getAssetPathList(type: requestType);
+      final allAlbums = await PhotoManager.getAssetPathList(
+        type: requestType,
+        filterOption: _createDateDescFilter(),
+      );
       final targetAlbums = allAlbums
           .where((album) => _isSelectedAlbum(album, selectedIds))
           .toList(growable: false);
@@ -283,16 +287,24 @@ class _PhotoScanCoordinator {
 
     if (source.albums.length == 1) {
       final state = source.albums.first;
+      final startOffset = math.max(0, offsetFromNewest);
       for (
-        var offset = math.max(0, offsetFromNewest);
-        offset < state.totalCount;
-        offset += pageSize
+        var pageIndex = startOffset ~/ pageSize;
+        pageIndex * pageSize < state.totalCount;
+        pageIndex += 1
       ) {
-        final end = math.min(state.totalCount, offset + pageSize);
-        final page = await state.album.getAssetListRange(
-          start: offset,
-          end: end,
+        var page = await state.album.getAssetListPaged(
+          page: pageIndex,
+          size: pageSize,
         );
+        if (pageIndex == startOffset ~/ pageSize) {
+          final skipWithinPage = startOffset % pageSize;
+          if (skipWithinPage > 0 && skipWithinPage < page.length) {
+            page = page.sublist(skipWithinPage);
+          } else if (skipWithinPage >= page.length) {
+            page = const <AssetEntity>[];
+          }
+        }
         if (page.isEmpty) break;
         yield page;
       }
@@ -304,12 +316,11 @@ class _PhotoScanCoordinator {
       final pageAssets = <AssetEntity>[];
       for (final state in source.albums) {
         if (state.exhausted) continue;
-        final end = math.min(state.totalCount, state.offset + pageSize);
-        final page = await state.album.getAssetListRange(
-          start: state.offset,
-          end: end,
+        final page = await state.album.getAssetListPaged(
+          page: state.offset ~/ pageSize,
+          size: pageSize,
         );
-        state.offset = end;
+        state.offset += pageSize;
         if (page.isEmpty || state.offset >= state.totalCount) {
           state.exhausted = true;
         }
@@ -374,7 +385,10 @@ class _PhotoScanCoordinator {
     }
 
     // 按选定相册分别加载
-    final allAlbums = await PhotoManager.getAssetPathList(type: requestType);
+    final allAlbums = await PhotoManager.getAssetPathList(
+      type: requestType,
+      filterOption: _createDateDescFilter(),
+    );
     final targetAlbums = allAlbums
         .where((album) => _isSelectedAlbum(album, selectedIds))
         .toList(growable: false);
@@ -400,9 +414,15 @@ class _PhotoScanCoordinator {
     for (final album in targetAlbums) {
       final count = await album.assetCountAsync;
       const pageSize = 1000;
-      for (var offset = 0; offset < count; offset += pageSize) {
-        final end = math.min(count, offset + pageSize);
-        final page = await album.getAssetListRange(start: offset, end: end);
+      for (
+        var pageIndex = 0;
+        pageIndex * pageSize < count;
+        pageIndex += 1
+      ) {
+        final page = await album.getAssetListPaged(
+          page: pageIndex,
+          size: pageSize,
+        );
         allAssets.addAll(page);
       }
     }
@@ -435,6 +455,14 @@ class _PhotoScanCoordinator {
     return selectedIds.contains(album.name.toLowerCase());
   }
 
+  FilterOptionGroup _createDateDescFilter() {
+    return FilterOptionGroup(
+      orders: <OrderOption>[
+        OrderOption(type: OrderOptionType.createDate, asc: false),
+      ],
+    );
+  }
+
   /// 回退路径：加载系统全部照片（用户未选择特定相册时）。
   Future<_AlbumBundle> _resolveAllAlbums(
     RequestType requestType,
@@ -444,6 +472,7 @@ class _PhotoScanCoordinator {
     final albums = await PhotoManager.getAssetPathList(
       onlyAll: true,
       type: requestType,
+      filterOption: _createDateDescFilter(),
     );
     if (albums.isEmpty) {
       _cachedAssets = const <AssetEntity>[];
@@ -463,9 +492,15 @@ class _PhotoScanCoordinator {
 
     final assets = <AssetEntity>[];
     const batchPageSize = 1000;
-    for (var offset = 0; offset < total; offset += batchPageSize) {
-      final end = math.min(total, offset + batchPageSize);
-      final page = await allAlbum.getAssetListRange(start: offset, end: end);
+    for (
+      var pageIndex = 0;
+      pageIndex * batchPageSize < total;
+      pageIndex += 1
+    ) {
+      final page = await allAlbum.getAssetListPaged(
+        page: pageIndex,
+        size: batchPageSize,
+      );
       assets.addAll(page);
     }
     assets.sort((a, b) => b.createDateTime.compareTo(a.createDateTime));

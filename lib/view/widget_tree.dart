@@ -72,7 +72,7 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
       return;
     }
 
-    if (progress.stage == UnifiedAnalysisStage.completed) {
+    if (isTerminal) {
       unawaited(AIService().refreshJunkCleanupReportFromDatabase());
     }
 

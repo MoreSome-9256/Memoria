@@ -46,8 +46,7 @@ class MediaAnalysisFrameFiles {
 
 class MediaAnalysisImageReader {
   MediaAnalysisImageReader._();
-  static final MediaAnalysisImageReader instance =
-      MediaAnalysisImageReader._();
+  static final MediaAnalysisImageReader instance = MediaAnalysisImageReader._();
 
   static const int defaultImageSize = 384;
   static const int defaultAnalysisSize = 1024;
@@ -58,13 +57,9 @@ class MediaAnalysisImageReader {
     int imageSize = defaultImageSize,
     int analysisSize = defaultAnalysisSize,
     int frameCount = defaultFrameCount,
-    File? fallbackFile,
-    bool allowFileFallback = true,
   }) async {
-    final kind = _kindForAsset(asset, fallbackFile?.path);
-    final sourceFile = allowFileFallback
-        ? fallbackFile ?? await _bestReadableAssetFile(asset)
-        : null;
+    final kind = _kindForAsset(asset, null);
+    const File? sourceFile = null;
     final dims = _boundedSize(
       width: asset.width,
       height: asset.height,
@@ -124,8 +119,6 @@ class MediaAnalysisImageReader {
     int imageSize = defaultImageSize,
     int analysisSize = defaultAnalysisSize,
     int frameCount = defaultFrameCount,
-    File? fallbackFile,
-    bool allowFileFallback = true,
   }) async {
     final asset = await AssetEntity.fromId(assetId);
     if (asset == null) {
@@ -136,40 +129,17 @@ class MediaAnalysisImageReader {
       imageSize: imageSize,
       analysisSize: analysisSize,
       frameCount: frameCount,
-      fallbackFile: fallbackFile,
-      allowFileFallback: allowFileFallback,
     );
   }
 
   Future<MediaAnalysisFrameFiles> readFrameFilesFromAsset(
     String assetId, {
     required bool videoLike,
-    File? fallbackFile,
-    bool allowFileFallback = false,
     int maxFrames = defaultFrameCount,
   }) async {
     final asset = await AssetEntity.fromId(assetId);
     if (asset != null) {
       if (asset.type == AssetType.video || asset.isLivePhoto || videoLike) {
-        final sourceFile = await _bestReadableAssetFile(asset);
-        if (sourceFile != null) {
-          final fromVideo = await _extractFrameFiles(
-            sourceFile,
-            maxFrames: maxFrames,
-          );
-          if (fromVideo.frames.isNotEmpty) {
-            return fromVideo;
-          }
-          if (asset.isLivePhoto || _isGifLike(asset)) {
-            final decoded = await _decodeGifFrameFiles(
-              sourceFile,
-              maxFrames: maxFrames,
-            );
-            if (decoded.frames.isNotEmpty) {
-              return decoded;
-            }
-          }
-        }
         final frameBytes = await _readAssetFrameBytes(
           asset,
           sourceFile: null,
@@ -191,13 +161,6 @@ class MediaAnalysisImageReader {
       if (bytes != null && bytes.isNotEmpty) {
         return _writeFrameBytes(bytes, prefix: 'memoria_asset_vlm');
       }
-    }
-    if (allowFileFallback && fallbackFile != null) {
-      return readFrameFilesFromFile(
-        fallbackFile,
-        videoLike: videoLike,
-        maxFrames: maxFrames,
-      );
     }
     return const MediaAnalysisFrameFiles(
       frames: <File>[],
@@ -287,16 +250,17 @@ class MediaAnalysisImageReader {
         maxFrames: frameCount,
       );
       if (extracted.frames.isNotEmpty) {
-        return Future.wait(extracted.frames.map((file) => file.readAsBytes()))
-            .whenComplete(() => _deletePaths(extracted.cleanupPaths));
+        return Future.wait(
+          extracted.frames.map((file) => file.readAsBytes()),
+        ).whenComplete(() => _deletePaths(extracted.cleanupPaths));
       }
     }
 
     final durationSeconds = math.max(1, asset.duration);
     final frames = <Uint8List>[];
     for (var i = 0; i < frameCount; i++) {
-      final frameMicros =
-          (((i + 0.5) / frameCount) * durationSeconds * 1000000).round();
+      final frameMicros = (((i + 0.5) / frameCount) * durationSeconds * 1000000)
+          .round();
       final bytes = await _readAssetThumbnail(
         asset,
         ThumbnailSize.square(imageSize),
@@ -308,26 +272,6 @@ class MediaAnalysisImageReader {
       }
     }
     return frames;
-  }
-
-  Future<File?> _bestReadableAssetFile(AssetEntity asset) async {
-    try {
-      if (asset.isLivePhoto && (Platform.isIOS || Platform.isMacOS)) {
-        final liveVideo = await asset.loadFile(
-          isOrigin: false,
-          withSubtype: true,
-          darwinFileType: PMDarwinAVFileType.mov,
-        );
-        if (liveVideo != null && liveVideo.path.isNotEmpty) {
-          return liveVideo;
-        }
-      }
-    } catch (_) {}
-    try {
-      return await asset.file ?? await asset.originFile;
-    } catch (_) {
-      return null;
-    }
   }
 
   Future<Uint8List?> _decodeFileAsJpegBytes(
@@ -478,12 +422,9 @@ class MediaAnalysisImageReader {
     if (mime == 'image/gif') {
       return MemoriaMediaKind.dynamicImage;
     }
-    return path == null ? MemoriaMediaKind.image : MediaTypeHelper.fromPath(path);
-  }
-
-  bool _isGifLike(AssetEntity asset) {
-    final mime = asset.mimeType?.toLowerCase() ?? '';
-    return mime == 'image/gif' || mime == 'image/webp';
+    return path == null
+        ? MemoriaMediaKind.image
+        : MediaTypeHelper.fromPath(path);
   }
 
   (int, int) _boundedSize({
@@ -495,7 +436,10 @@ class MediaAnalysisImageReader {
       return (maxSide, maxSide);
     }
     final scale = math.min(1.0, maxSide / math.max(width, height));
-    return (math.max(1, (width * scale).round()), math.max(1, (height * scale).round()));
+    return (
+      math.max(1, (width * scale).round()),
+      math.max(1, (height * scale).round()),
+    );
   }
 
   img.Image _resizeToMaxSide(img.Image source, int maxSide) {

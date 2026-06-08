@@ -79,17 +79,11 @@ class OcrService {
     script: TextRecognitionScript.latin,
   );
 
-  static bool shouldRunOcr(
-    List<String> tags, {
-    double? aspectRatio,
-  }) {
+  static bool shouldRunOcr(List<String> tags) {
     if (!OcrPolicy.mlKitEnabled) {
       return false;
     }
-    final hasHintTag = tags.any(_textHintTags.contains);
-    final screenshotLike =
-        aspectRatio != null && (aspectRatio < 0.6 || aspectRatio > 1.8);
-    return hasHintTag || screenshotLike;
+    return tags.any(_textHintTags.contains);
   }
 
   Future<OcrResult> analyzeImageFile(File imageFile) async {
@@ -183,7 +177,11 @@ class OcrService {
     }
 
     if (ordered.isEmpty && normalizedText.isNotEmpty) {
-      addTag(normalizedText.length > 12 ? normalizedText.substring(0, 12) : normalizedText);
+      addTag(
+        normalizedText.length > 12
+            ? normalizedText.substring(0, 12)
+            : normalizedText,
+      );
     }
 
     return TagSanitizer.sanitizeOcrTags(ordered, maxTags: 5);
@@ -199,7 +197,9 @@ class OcrService {
         (line) => line.length >= 4,
         orElse: () => meaningfulLines.first,
       );
-      return bestLine.length > 40 ? '${bestLine.substring(0, 40)}...' : bestLine;
+      return bestLine.length > 40
+          ? '${bestLine.substring(0, 40)}...'
+          : bestLine;
     }
     return normalizedText.length > 40
         ? '${normalizedText.substring(0, 40)}...'

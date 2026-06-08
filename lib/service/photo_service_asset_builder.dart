@@ -13,7 +13,6 @@ class PhotoScanFilterProfile {
     this.minWidth,
     this.minHeight,
     this.minPixels,
-    this.excludeExtremeAspectRatios = false,
   });
 
   static const PhotoScanFilterProfile strict = PhotoScanFilterProfile(
@@ -28,7 +27,6 @@ class PhotoScanFilterProfile {
   final int? minWidth;
   final int? minHeight;
   final int? minPixels;
-  final bool excludeExtremeAspectRatios;
 }
 
 class _PhotoAssetBuilder {
@@ -141,11 +139,6 @@ class _PhotoAssetBuilder {
         width * height < filterProfile.minPixels!) {
       return const _SingleAssetBuildResult(skippedSmallResolution: 1);
     }
-    if (filterProfile.excludeExtremeAspectRatios &&
-        PhotoFilterHelper.isExtremeAspectRatio(width, height)) {
-      return const _SingleAssetBuildResult(skippedExtremeAspectRatio: 1);
-    }
-
     final latLong = asset.latLng;
     final mimeType = asset.mimeType;
     final isLivePhoto = asset.isLivePhoto;

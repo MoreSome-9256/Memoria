@@ -31,9 +31,7 @@ extension AIServiceLifecycle on AIService {
       );
       if (reasons.isEmpty && (photo.imageEmbedding?.isNotEmpty ?? false)) {
         final decision = await _junkPhotoFilterService.evaluatePhoto(
-          photo: photo,
           imageEmbedding: photo.imageEmbedding!,
-          ocrText: photo.ocrText ?? '',
         );
         reasons = decision.hits;
         final reasonTags = JunkPhotoFilterService.reasonTagsForHits(reasons);

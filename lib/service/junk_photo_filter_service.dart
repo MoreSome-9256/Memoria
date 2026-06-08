@@ -2,7 +2,6 @@
 
 import 'dart:math' as math;
 
-import '../models/entity/photo_entity.dart';
 import 'semantic_matching_service.dart';
 
 class JunkPhotoCategoryDefinition {
@@ -12,10 +11,6 @@ class JunkPhotoCategoryDefinition {
     required this.description,
     required this.prototypePrompts,
     required this.threshold,
-    this.screenshotBoost = 0.0,
-    this.ocrBoostThreshold = 0,
-    this.ocrBoost = 0.0,
-    this.extraKeywordHints = const <String>[],
   });
 
   final String id;
@@ -23,10 +18,6 @@ class JunkPhotoCategoryDefinition {
   final String description;
   final List<String> prototypePrompts;
   final double threshold;
-  final double screenshotBoost;
-  final int ocrBoostThreshold;
-  final double ocrBoost;
-  final List<String> extraKeywordHints;
 }
 
 class JunkPhotoHit {
@@ -152,9 +143,6 @@ class JunkPhotoFilterService {
             'a poster with a large QR code',
           ],
           threshold: 0.275,
-          ocrBoostThreshold: 12,
-          ocrBoost: 0.015,
-          extraKeywordHints: <String>['qr', 'barcode', 'code'],
         ),
         JunkPhotoCategoryDefinition(
           id: 'meme',
@@ -167,15 +155,6 @@ class JunkPhotoFilterService {
             'a captioned joke image template',
           ],
           threshold: 0.285,
-          ocrBoostThreshold: 8,
-          ocrBoost: 0.015,
-          extraKeywordHints: <String>[
-            'meme',
-            'sticker',
-            'reaction',
-            '梗图',
-            '表情包',
-          ],
         ),
         JunkPhotoCategoryDefinition(
           id: 'plain_selfie',
@@ -188,7 +167,6 @@ class JunkPhotoFilterService {
             'a close-up face selfie without environment or event context',
           ],
           threshold: 0.285,
-          extraKeywordHints: <String>['selfie', 'passport photo', 'id photo'],
         ),
         JunkPhotoCategoryDefinition(
           id: 'advertisement_poster',
@@ -201,9 +179,30 @@ class JunkPhotoFilterService {
             'a product advertisement image with graphic design',
           ],
           threshold: 0.285,
-          ocrBoostThreshold: 16,
-          ocrBoost: 0.02,
-          extraKeywordHints: <String>['广告', '海报', '推广', 'promo', 'sale'],
+        ),
+        JunkPhotoCategoryDefinition(
+          id: 'screenshot',
+          label: '应用/网页截图',
+          description: '手机应用、聊天、网页、桌面界面等直接截取的屏幕内容。',
+          prototypePrompts: <String>[
+            'a smartphone app screenshot with user interface',
+            'a chat conversation screenshot',
+            'a webpage screenshot with interface controls',
+            'a desktop software screenshot',
+          ],
+          threshold: 0.27,
+        ),
+        JunkPhotoCategoryDefinition(
+          id: 'document',
+          label: '文档/资料',
+          description: '文档、试卷、课件、书页、票据或以阅读文字为主要目的的资料图片。',
+          prototypePrompts: <String>[
+            'a photographed document page filled with text',
+            'a scanned paper document',
+            'a worksheet or presentation slide',
+            'a receipt invoice or printed form',
+          ],
+          threshold: 0.27,
         ),
         JunkPhotoCategoryDefinition(
           id: 'abstract_low_value',
@@ -229,7 +228,6 @@ class JunkPhotoFilterService {
             'a heavily shadowed image with no clear subject',
           ],
           threshold: 0.285,
-          screenshotBoost: 0.03,
         ),
         JunkPhotoCategoryDefinition(
           id: 'low_value_landmark',
@@ -242,8 +240,6 @@ class JunkPhotoFilterService {
             'a directional signpost',
           ],
           threshold: 0.27,
-          ocrBoostThreshold: 8,
-          ocrBoost: 0.025,
         ),
         JunkPhotoCategoryDefinition(
           id: 'blurred_or_broken',
@@ -359,9 +355,6 @@ class JunkPhotoFilterService {
             'label': d.label,
             'description': d.description,
             'threshold': d.threshold,
-            'screenshotBoost': d.screenshotBoost,
-            'ocrBoostThreshold': d.ocrBoostThreshold,
-            'ocrBoost': d.ocrBoost,
           },
         )
         .toList(growable: false);
@@ -379,16 +372,13 @@ class JunkPhotoFilterService {
   }
 
   Future<JunkPhotoDecision> evaluatePhoto({
-    required PhotoEntity photo,
     required List<double> imageEmbedding,
-    String ocrText = '',
   }) async {
     if (imageEmbedding.isEmpty) {
       return JunkPhotoDecision.keep();
     }
 
     await warmUp();
-    final trimmedOcr = ocrText.trim();
     final hits = <JunkPhotoHit>[];
 
     for (final definition in _definitions) {
@@ -401,16 +391,6 @@ class JunkPhotoFilterService {
         imageEmbedding,
         prototype,
       );
-      if (definition.screenshotBoost > 0 && photo.isProbablyScreenshot) {
-        score += definition.screenshotBoost;
-      }
-      if (definition.ocrBoost > 0 &&
-          trimmedOcr.length >= definition.ocrBoostThreshold) {
-        score += definition.ocrBoost;
-      }
-      if (_containsKeywordHint(trimmedOcr, definition.extraKeywordHints)) {
-        score += 0.015;
-      }
       score = score.clamp(-1.0, 1.0);
 
       if (score >= definition.threshold) {
@@ -441,14 +421,6 @@ class JunkPhotoFilterService {
       promptVectors.add(await _semanticService.embedText(prompt));
     }
     return _meanAndNormalize(promptVectors);
-  }
-
-  bool _containsKeywordHint(String text, List<String> hints) {
-    if (text.isEmpty || hints.isEmpty) {
-      return false;
-    }
-    final lower = text.toLowerCase();
-    return hints.any((hint) => lower.contains(hint));
   }
 
   List<double> _meanAndNormalize(List<List<double>> vectors) {

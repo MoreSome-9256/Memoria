@@ -414,11 +414,7 @@ class _PhotoScanCoordinator {
     for (final album in targetAlbums) {
       final count = await album.assetCountAsync;
       const pageSize = 1000;
-      for (
-        var pageIndex = 0;
-        pageIndex * pageSize < count;
-        pageIndex += 1
-      ) {
+      for (var pageIndex = 0; pageIndex * pageSize < count; pageIndex += 1) {
         final page = await album.getAssetListPaged(
           page: pageIndex,
           size: pageSize,
@@ -492,11 +488,7 @@ class _PhotoScanCoordinator {
 
     final assets = <AssetEntity>[];
     const batchPageSize = 1000;
-    for (
-      var pageIndex = 0;
-      pageIndex * batchPageSize < total;
-      pageIndex += 1
-    ) {
+    for (var pageIndex = 0; pageIndex * batchPageSize < total; pageIndex += 1) {
       final page = await allAlbum.getAssetListPaged(
         page: pageIndex,
         size: batchPageSize,
@@ -597,7 +589,6 @@ class _PhotoScanCoordinator {
       minWidth: prefs.minWidth,
       minHeight: prefs.minHeight,
       minPixels: prefs.minPixels,
-      excludeExtremeAspectRatios: prefs.excludeExtremeAspectRatios,
     );
   }
 

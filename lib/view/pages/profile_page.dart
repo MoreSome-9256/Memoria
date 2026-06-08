@@ -114,7 +114,6 @@ class _ProfilePageState extends State<ProfilePage> {
         ? '${prefs.minWidth}x${prefs.minHeight}'
         : 'none';
     int? selectedMinPixels = prefs.minPixels;
-    var excludeExtremeAspectRatios = prefs.excludeExtremeAspectRatios;
     const resolutionOptions = <String, List<int>?>{
       'none': null,
       '320x320': <int>[320, 320],
@@ -223,15 +222,6 @@ class _ProfilePageState extends State<ProfilePage> {
                         selectedMinPixels = pixels;
                       }),
                     ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('排除超宽/超长图片'),
-                      subtitle: const Text('过滤长截图、横幅、拼接图等极端宽高比项目'),
-                      value: excludeExtremeAspectRatios,
-                      onChanged: (value) => setSheetState(() {
-                        excludeExtremeAspectRatios = value;
-                      }),
-                    ),
                     const SizedBox(height: 20),
                     Row(
                       children: [
@@ -250,8 +240,6 @@ class _ProfilePageState extends State<ProfilePage> {
                                   minWidth: selectedPair?[0],
                                   minHeight: selectedPair?[1],
                                   minPixels: selectedMinPixels,
-                                  excludeExtremeAspectRatios:
-                                      excludeExtremeAspectRatios,
                                 );
                             PhotoService().invalidateScanSessionCache();
                             if (!context.mounted) return;

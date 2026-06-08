@@ -15,8 +15,6 @@ Map<String, Object?> _computeJunkFilter(Map<String, Object?> params) {
   final prototypes = (params['prototypes'] as Map<String, Object?>).map(
     (k, v) => MapEntry(k, (v as List<Object?>).cast<double>()),
   );
-  final isProbablyScreenshot = params['isProbablyScreenshot'] as bool? ?? false;
-  final ocrText = params['ocrText'] as String? ?? '';
   final definitions = (params['definitions'] as List<Object?>)
       .cast<Map<String, Object?>>();
 
@@ -27,11 +25,6 @@ Map<String, Object?> _computeJunkFilter(Map<String, Object?> params) {
     if (prototype == null || prototype.length != embedding.length) continue;
 
     var score = _cosineSimilarity(embedding, prototype);
-    final screenshotBoost = (def['screenshotBoost'] as num?)?.toDouble() ?? 0.0;
-    if (screenshotBoost > 0 && isProbablyScreenshot) score += screenshotBoost;
-    final ocrBoost = (def['ocrBoost'] as num?)?.toDouble() ?? 0.0;
-    final ocrThreshold = (def['ocrBoostThreshold'] as num?)?.toInt() ?? 9999;
-    if (ocrBoost > 0 && ocrText.length >= ocrThreshold) score += ocrBoost;
     score = score.clamp(-1.0, 1.0);
 
     final threshold = (def['threshold'] as num).toDouble();
@@ -309,8 +302,6 @@ class _AiPhotoProcessor {
         final junkResult = await compute(_computeJunkFilter, <String, Object?>{
           'embedding': embedding,
           'prototypes': request.junkPhotoFilterService.prototypeCache,
-          'isProbablyScreenshot': request.photo.isProbablyScreenshot,
-          'ocrText': '',
           'definitions': request.junkPhotoFilterService.definitionsJson,
         });
         junkWatch.stop();
@@ -427,11 +418,7 @@ class _AiPhotoProcessor {
       final inputImage = InputImage.fromFile(analysisFile);
 
       var ocrResult = OcrResult.empty();
-      if (request.ocrEnabled &&
-          OcrService.shouldRunOcr(
-            visualTags,
-            aspectRatio: request.photo.aspectRatio,
-          )) {
+      if (request.ocrEnabled && OcrService.shouldRunOcr(visualTags)) {
         final ocrWatch = Stopwatch()..start();
         ocrResult = await request.ocrService.analyzeImageFile(analysisFile);
         ocrWatch.stop();

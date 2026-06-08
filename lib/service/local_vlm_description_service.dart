@@ -41,7 +41,6 @@ class LocalVlmDescriptionService {
       return generateAssetDescription(
         assetId: normalizedAssetId,
         treatAsVideo: treatAsVideo,
-        fallbackFile: mediaFile.path.trim().isEmpty ? null : mediaFile,
         prompt: prompt,
       );
     }
@@ -60,7 +59,6 @@ class LocalVlmDescriptionService {
   Future<String> generateAssetDescription({
     required String assetId,
     required bool treatAsVideo,
-    File? fallbackFile,
     String prompt =
         'Describe the visible content in one concise, concrete paragraph.',
   }) async {
@@ -69,8 +67,6 @@ class LocalVlmDescriptionService {
           .readFrameFilesFromAsset(
             assetId.trim(),
             videoLike: treatAsVideo,
-            fallbackFile: fallbackFile,
-            allowFileFallback: false,
             maxFrames: treatAsVideo ? 8 : 1,
           ),
       treatAsVideo: treatAsVideo,

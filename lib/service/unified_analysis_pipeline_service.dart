@@ -22,7 +22,6 @@ import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_embedding_service.dart';
 import 'mobileclip_litert_service.dart';
 import 'mobileclip_tag_service.dart';
-import 'ocr_service.dart';
 import 'event_service.dart';
 import 'junk_photo_filter_service.dart';
 import 'media_analysis_image_reader.dart';
@@ -459,12 +458,7 @@ class UnifiedAnalysisPipelineService {
       }
 
       try {
-        await _processSinglePhoto(
-          item.photo,
-          settings: settings,
-          backend: backend,
-          liteRt: liteRt,
-        );
+        await _processSinglePhoto(item.photo, backend: backend, liteRt: liteRt);
         _aiCompleted++;
         _activeCandidatePhotoIds.remove(item.photoId);
 
@@ -523,7 +517,6 @@ class UnifiedAnalysisPipelineService {
 
   Future<void> _processSinglePhoto(
     PhotoEntity photo, {
-    required AppAiSettings settings,
     required MobileClipBackend backend,
     required MobileClipLiteRtService liteRt,
   }) async {
@@ -531,7 +524,6 @@ class UnifiedAnalysisPipelineService {
       photo.mediaKind,
       path: photo.path,
     );
-    File? sourceFileForOcr;
     final embeddingService = MobileClipEmbeddingService();
     late final List<double> embedding;
     late final String embeddingModelVersion;
@@ -539,7 +531,6 @@ class UnifiedAnalysisPipelineService {
     if (mediaKind == MemoriaMediaKind.image) {
       final originalInput = await _readAnalysisImageInputFromAsset(photo);
       final originalBytes = originalInput.analysisImageBytes;
-      sourceFileForOcr = originalInput.sourceFile;
       await embeddingService.resolvePhotoEmbedding(
         photo: photo,
         preferredImageBytes: originalBytes,
@@ -550,7 +541,6 @@ class UnifiedAnalysisPipelineService {
       tagEmbedding = embedding;
     } else {
       final mediaInput = await _readAnalysisImageInputFromAsset(photo);
-      sourceFileForOcr = mediaInput.sourceFile;
       final mediaEmbedding = await MediaEmbeddingService()
           .embedPreparedMediaBytes(
             kind: mediaKind,
@@ -572,36 +562,21 @@ class UnifiedAnalysisPipelineService {
         ? <String>['视频']
         : await tagService.retrieveTags(tagEmbedding);
 
-    String? ocrText;
-    List<String> ocrTags = const [];
-    if (mediaKind != MemoriaMediaKind.video &&
-        settings.ocrEnabled &&
-        sourceFileForOcr != null &&
-        OcrService.shouldRunOcr(tags, aspectRatio: photo.aspectRatio)) {
-      final ocrResult = await OcrService().analyzeImageFile(sourceFileForOcr);
-      ocrText = ocrResult.text;
-      ocrTags = ocrResult.tags;
-    }
-
     final junkDecision = await JunkPhotoFilterService().evaluatePhoto(
-      photo: photo,
       imageEmbedding: embedding,
-      ocrText: ocrText ?? '',
     );
+
     final finalTags = junkDecision.shouldFilter
         ? <String>[
             JunkPhotoFilterService.pendingJunkCandidateTag,
             ...JunkPhotoFilterService.reasonTagsForHits(junkDecision.hits),
           ]
         : tags;
-    final finalOcrTags = junkDecision.shouldFilter ? <String>[] : ocrTags;
 
     PhotoService().updatePhotoInTransaction(photo.id, (p) {
       if (p == null) return;
       p.imageEmbedding = embedding;
       p.aiTags = finalTags;
-      p.ocrText = ocrText;
-      p.ocrTags = finalOcrTags;
       p.isAiAnalyzed = true;
       p.isAiAnalysisCandidate = false;
     });
@@ -639,10 +614,7 @@ class UnifiedAnalysisPipelineService {
     if (asset == null) {
       throw StateError('asset unavailable for image photoId=${photo.id}');
     }
-    final input = await MediaAnalysisImageReader.instance.readAsset(
-      asset,
-      allowFileFallback: false,
-    );
+    final input = await MediaAnalysisImageReader.instance.readAsset(asset);
     if (input == null || input.analysisImageBytes.isEmpty) {
       throw StateError('image reader returned empty data photoId=${photo.id}');
     }
@@ -659,12 +631,16 @@ class UnifiedAnalysisPipelineService {
     }
 
     if (_analysisEnabled && _aiTotal > 0) {
+      await _publishPostFilterJunkReport();
       _updateProgress(
         stage: UnifiedAnalysisStage.flushing,
         message: '正在刷新事件聚类…',
       );
-      await EventService().runClustering();
-      await _publishPostFilterJunkReport();
+      try {
+        await EventService().runClustering();
+      } catch (error) {
+        debugPrint('[pipeline] 事件聚类失败，不影响低价值候选发布: $error');
+      }
     }
 
     _updateProgress(
@@ -898,7 +874,6 @@ class UnifiedAnalysisPipelineService {
       minWidth: prefs.minWidth,
       minHeight: prefs.minHeight,
       minPixels: prefs.minPixels,
-      excludeExtremeAspectRatios: prefs.excludeExtremeAspectRatios,
     );
   }
 }

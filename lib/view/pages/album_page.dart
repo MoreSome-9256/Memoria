@@ -84,6 +84,7 @@ class _AlbumPageState extends State<AlbumPage> {
   bool _autoResumePendingStarted = false;
   int _pendingAnalysisCandidateCount = 0;
   String? _lastPromptedJunkCleanupReportId;
+  String? _lastTerminalJunkRefreshKey;
   final TextEditingController _semanticSearchController =
       TextEditingController();
   final FocusNode _semanticSearchFocusNode = FocusNode();
@@ -662,6 +663,7 @@ class _AlbumPageState extends State<AlbumPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _onForegroundProgressForCardChanged();
+        unawaited(AIService().refreshJunkCleanupReportFromDatabase());
       }
     });
     final uiEventsSource = _debounceStream<List<EventEntity>>(
@@ -757,6 +759,17 @@ class _AlbumPageState extends State<AlbumPage> {
 
   void _onForegroundProgressForCardChanged() {
     final progress = UnifiedAnalysisProgressStore.instance.progress.value;
+    final isTerminal =
+        progress.stage == UnifiedAnalysisStage.completed ||
+        progress.stage == UnifiedAnalysisStage.stopped ||
+        progress.stage == UnifiedAnalysisStage.failed;
+    if (isTerminal) {
+      final terminalKey = '${progress.startedAtMs}:${progress.stage.name}';
+      if (_lastTerminalJunkRefreshKey != terminalKey) {
+        _lastTerminalJunkRefreshKey = terminalKey;
+        unawaited(AIService().refreshJunkCleanupReportFromDatabase());
+      }
+    }
     final syncedElapsed = Duration(milliseconds: progress.elapsedMs);
     if (!progress.isVisible) {
       _foregroundCardElapsedTimer?.cancel();

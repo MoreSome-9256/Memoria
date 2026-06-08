@@ -67,7 +67,6 @@ class _PhotoAssetBuilder {
         insertedNoGps: 0,
         skippedInvalidTime: 0,
         skippedNonCamera: 0,
-        skippedScreenshot: 0,
       );
     }
 
@@ -103,7 +102,6 @@ class _PhotoAssetBuilder {
       insertedNoGps: stats.insertedNoGps,
       skippedInvalidTime: stats.skippedInvalidTime,
       skippedNonCamera: stats.skippedNonCamera,
-      skippedScreenshot: stats.skippedScreenshot,
     );
   }
 
@@ -116,10 +114,7 @@ class _PhotoAssetBuilder {
     final width = asset.width;
     final height = asset.height;
     if (filterProfile.requireValidDimensions && (width <= 0 || height <= 0)) {
-      return const _SingleAssetBuildResult(
-        skippedNonCamera: 1,
-        skippedScreenshot: 0,
-      );
+      return const _SingleAssetBuildResult(skippedNonCamera: 1);
     }
     if (filterProfile.minPixels != null &&
         width > 0 &&

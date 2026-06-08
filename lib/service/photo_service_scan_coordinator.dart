@@ -185,13 +185,12 @@ class _PhotoScanCoordinator {
       insertedNoGps: stats.insertedNoGps,
       skippedInvalidTime: stats.skippedInvalidTime,
       skippedNonCamera: stats.skippedNonCamera,
-      skippedScreenshot: stats.skippedScreenshot,
     );
 
     debugPrint(
       '增量扫描: scan=$totalScanned new=${insertedPhotoIds.length} '
       'noGps=${stats.insertedNoGps} badTime=${stats.skippedInvalidTime} '
-      'nonCam=${stats.skippedNonCamera} ss=${stats.skippedScreenshot} '
+      'nonCam=${stats.skippedNonCamera} '
       'small=${stats.skippedSmallResolution} '
       'elapsed=${DateTime.now().difference(startedAt).inMilliseconds}ms',
     );
@@ -605,7 +604,6 @@ class _PhotoScanCoordinator {
         insertedNoGps: 0,
         skippedInvalidTime: 0,
         skippedNonCamera: 0,
-        skippedScreenshot: 0,
       ),
     );
   }
@@ -617,21 +615,18 @@ class _ScanStats {
     this.insertedNoGps = 0,
     this.skippedInvalidTime = 0,
     this.skippedNonCamera = 0,
-    this.skippedScreenshot = 0,
     this.skippedSmallResolution = 0,
   });
 
   final int insertedNoGps;
   final int skippedInvalidTime;
   final int skippedNonCamera;
-  final int skippedScreenshot;
   final int skippedSmallResolution;
 
   _ScanStats merge(_SingleAssetBuildResult r) => _ScanStats(
     insertedNoGps: insertedNoGps + r.insertedNoGps,
     skippedInvalidTime: skippedInvalidTime + r.skippedInvalidTime,
     skippedNonCamera: skippedNonCamera + r.skippedNonCamera,
-    skippedScreenshot: skippedScreenshot + r.skippedScreenshot,
     skippedSmallResolution: skippedSmallResolution + r.skippedSmallResolution,
   );
 }

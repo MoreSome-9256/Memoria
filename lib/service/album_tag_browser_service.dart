@@ -1,4 +1,4 @@
-/// 专辑标签浏览服务，负责按标签组织和筛选照片集合。
+// 专辑标签浏览服务，负责按标签组织和筛选照片集合。
 
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
@@ -218,11 +218,9 @@ class AlbumTagBrowserService {
   }
 
   bool _hasRenderableFile(PhotoEntity photo) {
-    final path = photo.path.trim();
-    if (path.isEmpty) {
-      return false;
-    }
-    return true;
+    return photo.assetId.trim().isNotEmpty ||
+        (photo.thumbnailBytes?.isNotEmpty ?? false) ||
+        photo.path.trim().isNotEmpty;
   }
 
   List<String> browsableTagsForPhoto(PhotoEntity photo) {

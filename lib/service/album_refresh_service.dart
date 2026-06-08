@@ -194,7 +194,6 @@ class AlbumRefreshService {
           skippedInvalidTime: 0,
           insertedNoGps: 0,
           skippedNonCamera: 0,
-          skippedScreenshot: 0,
         ),
         requeuedCount: 0,
         clearCacheFirst: clearCacheFirst,

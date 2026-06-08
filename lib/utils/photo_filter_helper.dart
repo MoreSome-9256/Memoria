@@ -1,9 +1,8 @@
-/// 照片过滤辅助工具，负责识别截图、校验时间戳和解析文件名日期。
+// 照片过滤辅助工具，负责校验时间戳和解析文件名日期。
 
 class PhotoFilterHelper {
   const PhotoFilterHelper._();
 
-  static final RegExp _seedFileNamePattern = RegExp(r'\d{8}_\d{6}');
   static final RegExp _dateTimeInFileNamePattern = RegExp(
     r'(?<!\d)(20\d{2})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})(?!\d)',
   );
@@ -31,28 +30,6 @@ class PhotoFilterHelper {
     final longSide = width > height ? width : height;
     final shortSide = width > height ? height : width;
     return longSide / shortSide >= maxRatio;
-  }
-
-  static bool isLikelyScreenshotAsset({
-    required String? title,
-    required String? mimeType,
-    required int width,
-    required int height,
-  }) {
-    final name = (title ?? '').toLowerCase();
-    if (name.contains('screenshot') ||
-        name.contains('screen_shot') ||
-        name.contains('screen-shot') ||
-        name.contains('截屏') ||
-        name.contains('截图') ||
-        name.contains('录屏')) {
-      return true;
-    }
-    final type = (mimeType ?? '').toLowerCase();
-    if (type.contains('gif')) {
-      return false;
-    }
-    return false;
   }
 
   static int? extractTimestampFromFileName(String filePath) {

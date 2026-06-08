@@ -1,7 +1,6 @@
 // 主题聚类服务，按语义特征把照片组织成可浏览的主题组。
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -13,6 +12,7 @@ import '../storage/objectbox/objectbox_service.dart';
 import '../utils/media_type_helper.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/theme_subclustering.dart';
+import 'junk_photo_filter_service.dart';
 import 'mobileclip_embedding_service.dart';
 import 'semantic_matching_service.dart';
 import 'theme_cluster_compute_helpers.dart';
@@ -501,8 +501,8 @@ class ThemeClusterService {
     var processed = 0;
     var newEmbeddings = 0;
     var cachedEmbeddings = 0;
-    var skippedScreenshots = 0;
-    var skippedMissingFiles = 0;
+    var skippedConfirmedJunk = 0;
+    var skippedNonImage = 0;
 
     _updateProgress(
       ThemeClusteringProgress(
@@ -522,14 +522,22 @@ class ThemeClusterService {
       for (final photo in photos) {
         processed++;
 
-        // Keep screenshot-like UI captures and video-model vectors out of
-        // image visual-theme retrieval.
         final mediaKind = MediaTypeHelper.fromStorageValue(
           photo.mediaKind,
           path: photo.path,
         );
-        if (photo.isProbablyScreenshot || mediaKind != MemoriaMediaKind.image) {
-          skippedScreenshots++;
+        if (_isConfirmedJunk(photo)) {
+          skippedConfirmedJunk++;
+          _emitEmbeddingProgress(
+            processed: processed,
+            total: total,
+            newEmbeddings: newEmbeddings,
+            cachedEmbeddings: cachedEmbeddings,
+          );
+          continue;
+        }
+        if (mediaKind != MemoriaMediaKind.image) {
+          skippedNonImage++;
           _emitEmbeddingProgress(
             processed: processed,
             total: total,
@@ -563,18 +571,6 @@ class ThemeClusterService {
             cachedEmbeddings: cachedEmbeddings,
             hitLimit: true,
             force: true,
-          );
-          continue;
-        }
-
-        final file = File(photo.path);
-        if (!await file.exists()) {
-          skippedMissingFiles++;
-          _emitEmbeddingProgress(
-            processed: processed,
-            total: total,
-            newEmbeddings: newEmbeddings,
-            cachedEmbeddings: cachedEmbeddings,
           );
           continue;
         }
@@ -645,7 +641,7 @@ class ThemeClusterService {
 
     debugPrint(
       '🧠 [主题聚类向量] 复用=$cachedEmbeddings 新算=$newEmbeddings '
-      '截图跳过=$skippedScreenshots 文件缺失=$skippedMissingFiles '
+      '已确认垃圾跳过=$skippedConfirmedJunk 非图片跳过=$skippedNonImage '
       '总可用=${cached.length}',
     );
 
@@ -688,7 +684,7 @@ class ThemeClusterService {
     ThemeDefinition definition, {
     required bool pureEmbeddingOnly,
   }) {
-    if (photo.isProbablyScreenshot) {
+    if (_isConfirmedJunk(photo)) {
       return true;
     }
 
@@ -699,6 +695,11 @@ class ThemeClusterService {
     }
 
     return false;
+  }
+
+  bool _isConfirmedJunk(PhotoEntity photo) {
+    return photo.aiTags?.contains(JunkPhotoFilterService.junkCandidateTag) ??
+        false;
   }
 
   Future<Map<String, List<double>>> _buildThemePrototypeVectors() async {

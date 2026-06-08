@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_album/models/entity/photo_entity.dart';
 import 'package:photo_album/models/theme_cluster_models.dart';
+import 'package:photo_album/service/junk_photo_filter_service.dart';
 import 'package:photo_album/service/theme_cluster_service.dart';
 import 'package:photo_album/utils/theme_subclustering.dart';
 
@@ -171,9 +172,15 @@ void main() {
       },
     );
 
-    test('screenshots are always filtered before scoring', () async {
+    test('confirmed junk photos are filtered before theme scoring', () async {
       final photos = <PhotoEntity>[
-        _photo(id: 1, ts: 1, width: 1000, height: 3000), // screenshot-like
+        _photo(
+          id: 1,
+          ts: 1,
+          width: 1000,
+          height: 3000,
+          aiTags: const <String>[JunkPhotoFilterService.junkCandidateTag],
+        ),
         _photo(id: 2, ts: 2, width: 1000, height: 1000),
       ];
 

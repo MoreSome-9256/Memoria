@@ -46,7 +46,6 @@ extension PhotoServiceScan on PhotoService {
       skippedInvalidTime: plan.built.skippedInvalidTime,
       insertedNoGps: plan.built.insertedNoGps,
       skippedNonCamera: plan.built.skippedNonCamera,
-      skippedScreenshot: plan.built.skippedScreenshot,
     );
   }
 
@@ -82,7 +81,6 @@ extension PhotoServiceScan on PhotoService {
       insertedNoGps: plan.built.insertedNoGps,
       skippedInvalidTime: plan.built.skippedInvalidTime,
       skippedNonCamera: plan.built.skippedNonCamera,
-      skippedScreenshot: plan.built.skippedScreenshot,
     );
   }
 }
@@ -125,7 +123,6 @@ class BatchScanResult {
     required this.insertedNoGps,
     required this.skippedInvalidTime,
     required this.skippedNonCamera,
-    required this.skippedScreenshot,
   });
 
   final List<PhotoEntity> newPhotos;
@@ -136,7 +133,6 @@ class BatchScanResult {
   final int insertedNoGps;
   final int skippedInvalidTime;
   final int skippedNonCamera;
-  final int skippedScreenshot;
 
   bool get hasNewPhotos => insertedCount > 0;
 }

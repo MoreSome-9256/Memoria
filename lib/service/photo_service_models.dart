@@ -23,7 +23,6 @@ class _ScanBuildResult {
     required this.insertedNoGps,
     required this.skippedInvalidTime,
     required this.skippedNonCamera,
-    required this.skippedScreenshot,
   });
 
   final List<PhotoEntity> photos;
@@ -31,7 +30,6 @@ class _ScanBuildResult {
   final int insertedNoGps;
   final int skippedInvalidTime;
   final int skippedNonCamera;
-  final int skippedScreenshot;
 }
 
 class _PhotoRebuildPlan {
@@ -68,7 +66,6 @@ class _SingleAssetBuildResult {
     this.insertedNoGps = 0,
     this.skippedInvalidTime = 0,
     this.skippedNonCamera = 0,
-    this.skippedScreenshot = 0,
     this.skippedSmallResolution = 0,
   });
 
@@ -76,7 +73,6 @@ class _SingleAssetBuildResult {
   final int insertedNoGps;
   final int skippedInvalidTime;
   final int skippedNonCamera;
-  final int skippedScreenshot;
   final int skippedSmallResolution;
 }
 
@@ -115,7 +111,6 @@ class PhotoScanSummary {
   final int skippedInvalidTime;
   final int insertedNoGps;
   final int skippedNonCamera;
-  final int skippedScreenshot;
 
   const PhotoScanSummary({
     required this.totalBefore,
@@ -128,6 +123,5 @@ class PhotoScanSummary {
     required this.skippedInvalidTime,
     required this.insertedNoGps,
     required this.skippedNonCamera,
-    required this.skippedScreenshot,
   });
 }

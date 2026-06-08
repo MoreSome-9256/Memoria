@@ -32,17 +32,17 @@ class UnifiedAnalysisProgressStore {
 
   void _onReceiveData(Object data) {
     if (data is! String) return;
-    
+
     final snapshot = _decode(data);
     if (snapshot == null) {
       debugPrint('[progress-receive] decode failed');
       return;
     }
-    
+
     debugPrint(
       '[progress-receive] stage=${snapshot.stage} scan=${snapshot.scanCompleted}/${snapshot.scanTotal} ai=${snapshot.aiCompleted}/${snapshot.aiTotal}',
     );
-    
+
     progress.value = snapshot;
   }
 
@@ -53,12 +53,12 @@ class UnifiedAnalysisProgressStore {
   Future<void> publish(UnifiedAnalysisProgress next) async {
     final previous = progress.value;
     final merged = _merge(previous, next);
-    
+
     if (_isForegroundIsolate) {
       final encoded = jsonEncode(_toJson(merged));
       FlutterForegroundTask.sendDataToMain(encoded);
     }
-    
+
     progress.value = merged;
   }
 
@@ -76,10 +76,7 @@ class UnifiedAnalysisProgressStore {
       return previous;
     }
 
-    final scanCompleted = math.max(
-      previous.scanCompleted,
-      next.scanCompleted,
-    );
+    final scanCompleted = math.max(previous.scanCompleted, next.scanCompleted);
     final scanTotal = math.max(previous.scanTotal, next.scanTotal);
     final aiCompleted = math.max(previous.aiCompleted, next.aiCompleted);
     final aiTotal = math.max(previous.aiTotal, next.aiTotal);
@@ -89,7 +86,9 @@ class UnifiedAnalysisProgressStore {
         : previous.startedAtMs;
 
     final mergedStage = _mergeStage(previous, next);
-    final mergedIsTerminal = mergedStage == UnifiedAnalysisStage.completed ||
+    final mergedIsTerminal =
+        mergedStage == UnifiedAnalysisStage.completed ||
+        mergedStage == UnifiedAnalysisStage.stopped ||
         mergedStage == UnifiedAnalysisStage.failed;
 
     return UnifiedAnalysisProgress(
@@ -117,6 +116,7 @@ class UnifiedAnalysisProgressStore {
     UnifiedAnalysisProgress next,
   ) {
     if (next.stage == UnifiedAnalysisStage.failed ||
+        next.stage == UnifiedAnalysisStage.stopped ||
         next.stage == UnifiedAnalysisStage.completed ||
         next.stage == UnifiedAnalysisStage.flushing) {
       return next.stage;
@@ -131,6 +131,7 @@ class UnifiedAnalysisProgressStore {
 
   bool _isTerminal(UnifiedAnalysisProgress progress) {
     return progress.stage == UnifiedAnalysisStage.completed ||
+        progress.stage == UnifiedAnalysisStage.stopped ||
         progress.stage == UnifiedAnalysisStage.failed;
   }
 
@@ -158,7 +159,7 @@ class UnifiedAnalysisProgressStore {
     try {
       final json = jsonDecode(raw);
       if (json is! Map<String, dynamic>) return null;
-      
+
       return UnifiedAnalysisProgress(
         stage: _stageFromName(json['stage'] as String?),
         isRunning: json['isRunning'] == true,

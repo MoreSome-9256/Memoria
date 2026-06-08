@@ -4,6 +4,7 @@ enum UnifiedAnalysisStage {
   scanning,
   processing,
   flushing,
+  stopped,
   completed,
   failed,
 }
@@ -130,6 +131,7 @@ class UnifiedAnalysisProgress {
     }
     return isRunning || stage == UnifiedAnalysisStage.failed || scanStopped;
   }
+
   bool get isScanning => stage == UnifiedAnalysisStage.scanning;
   bool get isProcessing => stage == UnifiedAnalysisStage.processing;
   bool get hasCacheWork =>
@@ -202,10 +204,7 @@ class UnifiedAnalysisProgress {
     return elapsedMs / 1000.0 / completed;
   }
 
-  Duration? _estimatedRemaining({
-    required int completed,
-    required int total,
-  }) {
+  Duration? _estimatedRemaining({required int completed, required int total}) {
     final avg = _averageSeconds(completed: completed);
     final remaining = total - completed;
     if (avg == null || remaining <= 0) return null;

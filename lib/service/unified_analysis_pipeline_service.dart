@@ -28,6 +28,7 @@ import 'junk_photo_filter_service.dart';
 import 'media_analysis_image_reader.dart';
 import 'media_embedding_service.dart';
 import 'photo_attribute_background_service.dart';
+import 'video_cache_service.dart';
 
 const String _foregroundStopRequestedKey =
     'foreground_unified_pipeline_stop_requested';
@@ -43,12 +44,7 @@ class UnifiedAnalysisPipelineService {
     UnifiedAnalysisProgress.idle(),
   );
   static const int _handoffBatchSize = 10;
-  static const Duration _consumerIdleGrace = Duration(seconds: 300);
-  static const Duration _consumerIdlePollInterval = Duration(milliseconds: 200);
-  AnalysisPipelineQueue _queue = AnalysisPipelineQueue(
-    capacity: 200,
-    highWaterMark: 160,
-  );
+  AnalysisPipelineQueue _queue = AnalysisPipelineQueue();
 
   bool _isRunning = false;
   bool _stopRequested = false;
@@ -82,7 +78,7 @@ class UnifiedAnalysisPipelineService {
     _stopRequested = false;
     _scanCompletedNormally = false;
     _analysisEnabled = analyzeWithAi;
-    _queue = AnalysisPipelineQueue(capacity: 200, highWaterMark: 160);
+    _queue = AnalysisPipelineQueue();
     _scanCompleted = 0;
     _scanTotal = 0;
     _aiCompleted = 0;
@@ -138,7 +134,7 @@ class UnifiedAnalysisPipelineService {
     _scanCompletedNormally = false;
     _analysisEnabled = analyzeWithAi;
     _suppressForegroundTaskChannelCalls = false;
-    _queue = AnalysisPipelineQueue(capacity: 24, highWaterMark: 16);
+    _queue = AnalysisPipelineQueue();
     _scanCompleted = 0;
     _scanTotal = 0;
     _aiCompleted = 0;
@@ -197,33 +193,38 @@ class UnifiedAnalysisPipelineService {
     _stopRequested = true;
     unawaited(_writeForegroundStopRequested(true));
     _queue.clear();
-    _clearStoppedCandidates();
 
     final currentStage = _progressNotifier.value.stage;
     final isTerminal =
         currentStage == UnifiedAnalysisStage.completed ||
-        currentStage == UnifiedAnalysisStage.failed;
+        currentStage == UnifiedAnalysisStage.failed ||
+        currentStage == UnifiedAnalysisStage.stopped;
 
     if (!isTerminal) {
       _updateProgress(
-        stage: UnifiedAnalysisStage.processing,
-        message: '正在停止：不再扫描新项目，当前图片处理完后结束。',
+        stage: UnifiedAnalysisStage.stopped,
+        message: '已停止：不再扫描新项目，未完成的 AI 候选会保留以便后续恢复。',
       );
     }
-    debugPrint('[pipeline] 已请求停止扫描和 AI 消费者');
+    debugPrint('[pipeline] 已请求停止生产者和消费者，保留未完成 AI 候选');
   }
 
   Future<int> deleteCurrentTaskAndClearAnalysisData() async {
     _stopRequested = true;
     await _writeForegroundStopRequested(true);
     _queue.clear();
-    _clearStoppedCandidates();
     _junkCandidates.clear();
 
     await AiBackgroundTaskService.instance.stop();
     await AiBackgroundTaskService.instance.clearPendingUnifiedPipelineRequest();
     await Future<void>.delayed(const Duration(milliseconds: 300));
     final clearedCount = await PhotoService().clearAllAiAnalysisData();
+    try {
+      await PhotoManager.clearFileCache();
+      await VideoCacheService.instance.clearAllCache();
+    } catch (error) {
+      debugPrint('[pipeline] 清理媒体读取缓存失败: $error');
+    }
 
     _scanCompleted = 0;
     _scanTotal = 0;
@@ -327,7 +328,7 @@ class UnifiedAnalysisPipelineService {
 
     _updateProgress(
       stage: UnifiedAnalysisStage.scanning,
-      message: '开始扫描 $_scanTotal 张照片',
+      message: '生产者开始扫描 $_scanTotal 个媒体',
     );
 
     var scanned = 0;
@@ -385,7 +386,7 @@ class UnifiedAnalysisPipelineService {
                 ),
               );
               if (handoffBatch.length >= _handoffBatchSize) {
-                await _handoffBatchToAi(
+                _handoffBatchToAi(
                   handoffBatch,
                   enqueueForConsumer: enqueueForConsumer,
                 );
@@ -394,18 +395,14 @@ class UnifiedAnalysisPipelineService {
 
             _updateProgress(
               stage: UnifiedAnalysisStage.scanning,
-              message: _analysisEnabled
-                  ? '正在更新相册缓存……($scanned/$_scanTotal)，已加入 $_aiTotal 张待处理'
-                  : '正在更新相册缓存……($scanned/$_scanTotal)',
+              message: '生产者正在更新相册缓存 $scanned/$_scanTotal',
             );
           }
           if (photo == null) {
             skipped++;
             _updateProgress(
               stage: UnifiedAnalysisStage.scanning,
-              message: _analysisEnabled
-                  ? '正在更新相册缓存……($scanned/$_scanTotal)，已加入 $_aiTotal 张待处理'
-                  : '正在更新相册缓存……($scanned/$_scanTotal)',
+              message: '生产者正在更新相册缓存 $scanned/$_scanTotal',
             );
           }
         }
@@ -416,10 +413,7 @@ class UnifiedAnalysisPipelineService {
     }
 
     if (handoffBatch.isNotEmpty) {
-      await _handoffBatchToAi(
-        handoffBatch,
-        enqueueForConsumer: enqueueForConsumer,
-      );
+      _handoffBatchToAi(handoffBatch, enqueueForConsumer: enqueueForConsumer);
     }
     _scanCompletedNormally = !_stopRequested;
     _queue.close();
@@ -450,35 +444,19 @@ class UnifiedAnalysisPipelineService {
 
     debugPrint('[pipeline] AI 引擎预热完成');
 
-    await _enqueueExistingAnalysisCandidates();
-
     _updateProgress(
       stage: UnifiedAnalysisStage.processing,
-      message: _aiTotal > 0 ? '开始处理 $_aiTotal 张照片' : 'AI 已预热，等待扫描移交任务…',
+      message: _aiTotal > 0 ? '消费者开始打标签 $_aiTotal 个媒体' : '消费者已预热，等待生产者投递',
     );
 
-    var idleStartedAt = DateTime.now();
     while (!_queue.isClosed || _queue.isNotEmpty) {
       if (_stopRequested || await _readForegroundStopRequested()) {
         break;
       }
-      if (_queue.isEmpty) {
-        final resumedCount = await _enqueueExistingAnalysisCandidates();
-        if (resumedCount > 0) {
-          idleStartedAt = DateTime.now();
-        }
-      }
-      final item = await _dequeueWithIdleGrace(idleStartedAt);
+      final item = await _queue.dequeue();
       if (item == null) {
-        if (_queue.isClosed) {
-          break;
-        }
-        debugPrint(
-          '[pipeline] AI 等待任务超过 ${_consumerIdleGrace.inSeconds}s，结束本轮',
-        );
         break;
       }
-      idleStartedAt = DateTime.now();
 
       try {
         await _processSinglePhoto(
@@ -492,30 +470,27 @@ class UnifiedAnalysisPipelineService {
 
         _updateProgress(
           stage: UnifiedAnalysisStage.processing,
-          message: '已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed',
+          message: '消费者已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed',
         );
       } catch (error) {
         debugPrint('[pipeline] 处理失败 photoId=${item.photoId}: $error');
         _aiFailed++;
+        _activeCandidatePhotoIds.remove(item.photoId);
         _updateProgress(
           stage: UnifiedAnalysisStage.processing,
           message:
-              '已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed，队列 ${_queue.size}',
+              '消费者已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed，队列 ${_queue.size}',
         );
       }
     }
 
     debugPrint('[pipeline] 消费者结束: completed=$_aiCompleted failed=$_aiFailed');
-
-    if (_stopRequested || await _readForegroundStopRequested()) {
-      _clearStoppedCandidates();
-    }
   }
 
-  Future<void> _handoffBatchToAi(
+  void _handoffBatchToAi(
     List<PipelineQueueItem> batch, {
     bool enqueueForConsumer = true,
-  }) async {
+  }) {
     if (batch.isEmpty || !_analysisEnabled) {
       batch.clear();
       return;
@@ -527,7 +502,7 @@ class UnifiedAnalysisPipelineService {
     _activeCandidatePhotoIds.addAll(photoIds);
     if (enqueueForConsumer) {
       for (final item in batch) {
-        await _queue.enqueue(item);
+        _queue.enqueue(item);
       }
     }
     debugPrint(
@@ -536,70 +511,6 @@ class UnifiedAnalysisPipelineService {
           : '[pipeline] 已按 $batchSize 张一组标记 AI 候选，total=$_aiTotal',
     );
     batch.clear();
-  }
-
-  Future<int> _enqueueExistingAnalysisCandidates() async {
-    final existing = PhotoService().loadPendingAnalysisCandidatePhotos(
-      limit: _queue.capacity,
-    );
-    if (existing.isEmpty) {
-      return 0;
-    }
-
-    final resumed = <PipelineQueueItem>[];
-    for (final photo in existing) {
-      if (_activeCandidatePhotoIds.contains(photo.id)) {
-        continue;
-      }
-      resumed.add(
-        PipelineQueueItem(
-          photoId: photo.id,
-          photo: photo,
-          enqueuedAt: DateTime.now(),
-        ),
-      );
-    }
-    if (resumed.isEmpty) {
-      return 0;
-    }
-
-    _aiTotal += resumed.length;
-    _activeCandidatePhotoIds.addAll(resumed.map((item) => item.photoId));
-    for (final item in resumed) {
-      if (_stopRequested || await _readForegroundStopRequested()) {
-        break;
-      }
-      await _queue.enqueue(item);
-    }
-    debugPrint(
-      '[pipeline] 已恢复 ${resumed.length} 张未完成 AI 候选，total=$_aiTotal queue=${_queue.size}',
-    );
-    return resumed.length;
-  }
-
-  Future<PipelineQueueItem?> _dequeueWithIdleGrace(
-    DateTime idleStartedAt,
-  ) async {
-    if (_queue.isNotEmpty || _queue.isClosed) {
-      return _queue.dequeue();
-    }
-    while (!_queue.isClosed && _queue.isEmpty) {
-      if (_stopRequested || await _readForegroundStopRequested()) {
-        return null;
-      }
-      final idleFor = DateTime.now().difference(idleStartedAt);
-      if (idleFor >= _consumerIdleGrace) {
-        return null;
-      }
-      final remaining = _consumerIdleGrace - idleFor;
-      _updateProgress(
-        stage: UnifiedAnalysisStage.processing,
-        message:
-            'AI 已预热，等待扫描移交任务…剩余等待 ${remaining.inSeconds.clamp(0, _consumerIdleGrace.inSeconds)} 秒',
-      );
-      await Future<void>.delayed(_consumerIdlePollInterval);
-    }
-    return _queue.dequeue();
   }
 
   Future<PhotoEntity?> _buildAndSavePhotoEntity(AssetEntity asset) async {
@@ -736,6 +647,14 @@ class UnifiedAnalysisPipelineService {
   }
 
   Future<void> _onPipelineCompleted() async {
+    if (_stopRequested || await _readForegroundStopRequested()) {
+      _updateProgress(
+        stage: UnifiedAnalysisStage.stopped,
+        message: '任务已停止，未完成的 AI 候选已保留。',
+      );
+      return;
+    }
+
     if (_analysisEnabled && _aiTotal > 0) {
       _updateProgress(
         stage: UnifiedAnalysisStage.flushing,
@@ -755,14 +674,6 @@ class UnifiedAnalysisPipelineService {
 
   Future<void> _publishPostFilterJunkReport() async {
     await AIService().refreshJunkCleanupReportFromDatabase();
-  }
-
-  void _clearStoppedCandidates() {
-    if (_activeCandidatePhotoIds.isEmpty) {
-      return;
-    }
-    PhotoService().clearAiAnalysisCandidatesByIds(_activeCandidatePhotoIds);
-    _activeCandidatePhotoIds.clear();
   }
 
   Future<void> _writeForegroundStopRequested(bool value) async {
@@ -786,7 +697,8 @@ class UnifiedAnalysisPipelineService {
 
     final isTerminal =
         stage == UnifiedAnalysisStage.completed ||
-        stage == UnifiedAnalysisStage.failed;
+        stage == UnifiedAnalysisStage.failed ||
+        stage == UnifiedAnalysisStage.stopped;
 
     final progress = UnifiedAnalysisProgress(
       stage: stage,
@@ -801,7 +713,9 @@ class UnifiedAnalysisPipelineService {
       elapsedMs: elapsedMs,
       startedAtMs: startedAtMs,
       scanDone: _scanCompletedNormally,
-      scanStopped: _queue.isClosed && !_scanCompletedNormally,
+      scanStopped:
+          stage == UnifiedAnalysisStage.stopped ||
+          (_queue.isClosed && !_scanCompletedNormally),
       analysisEnabled: _analysisEnabled,
     );
     _progressNotifier.value = progress;

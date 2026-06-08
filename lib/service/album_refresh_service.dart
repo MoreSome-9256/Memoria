@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'photo_service.dart';
+import 'ai_background_task_service.dart';
 import 'unified_analysis_pipeline_service.dart';
 import 'unified_analysis_progress.dart';
 import 'unified_analysis_progress_store.dart';
@@ -101,7 +102,9 @@ class AlbumRefreshService {
       '[scan] runId=$runId clearCacheFirst=$clearCacheFirst analyzeWithAi=$analyzeWithAi foregroundOnly=true',
     );
     if (!useUnifiedPipeline) {
-      debugPrint('[scan] useUnifiedPipeline=false 已忽略：相册流水线只允许 foreground task 路径');
+      debugPrint(
+        '[scan] useUnifiedPipeline=false 已忽略：相册流水线只允许 foreground task 路径',
+      );
     }
 
     try {
@@ -131,21 +134,20 @@ class AlbumRefreshService {
     }
   }
 
-  void stopScanningOnly() {
-    final foregroundProgress = UnifiedAnalysisProgressStore
-        .instance
-        .progress
-        .value;
+  Future<void> stopScanningOnly() async {
+    final foregroundProgress =
+        UnifiedAnalysisProgressStore.instance.progress.value;
     if (!_isRunning && !foregroundProgress.isRunning) {
       return;
     }
     UnifiedAnalysisPipelineService().stopPipeline();
+    await AiBackgroundTaskService.instance.stop();
     if (_isRunning) {
       _setProgress(
         AlbumRefreshStage.handoff,
         _progressNotifier.value.progress,
         '正在停止任务',
-        '已停止继续扫描，并等待当前图片处理完成。',
+        '已停止生产者和消费者，未打标候选会保留。',
       );
     }
   }
@@ -217,6 +219,8 @@ class AlbumRefreshService {
         return AlbumRefreshStage.queueing;
       case UnifiedAnalysisStage.flushing:
         return AlbumRefreshStage.clustering;
+      case UnifiedAnalysisStage.stopped:
+        return AlbumRefreshStage.handoff;
       case UnifiedAnalysisStage.completed:
         return AlbumRefreshStage.handoff;
       case UnifiedAnalysisStage.failed:
@@ -236,6 +240,8 @@ class AlbumRefreshService {
         return '正在处理照片';
       case UnifiedAnalysisStage.flushing:
         return '正在刷新索引';
+      case UnifiedAnalysisStage.stopped:
+        return '已停止';
       case UnifiedAnalysisStage.completed:
         return '已完成';
       case UnifiedAnalysisStage.failed:

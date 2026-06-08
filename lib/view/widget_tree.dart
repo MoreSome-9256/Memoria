@@ -40,7 +40,9 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    AIProgressNotificationService().bindNavigationHandler(_handleNavigationTarget);
+    AIProgressNotificationService().bindNavigationHandler(
+      _handleNavigationTarget,
+    );
     UnifiedAnalysisProgressStore.instance.startListening();
     UnifiedAnalysisProgressStore.instance.progress.addListener(
       _handleForegroundProgressChanged,
@@ -62,6 +64,7 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
     final progress = UnifiedAnalysisProgressStore.instance.progress.value;
     final isTerminal =
         progress.stage == UnifiedAnalysisStage.completed ||
+        progress.stage == UnifiedAnalysisStage.stopped ||
         progress.stage == UnifiedAnalysisStage.failed;
     if (!isTerminal) {
       _foregroundStopTimer?.cancel();
@@ -245,6 +248,8 @@ class _WidgetTreeState extends State<WidgetTree> with WidgetsBindingObserver {
         return '正在处理照片';
       case UnifiedAnalysisStage.flushing:
         return '正在刷新索引';
+      case UnifiedAnalysisStage.stopped:
+        return '已停止';
       case UnifiedAnalysisStage.completed:
         return '已完成';
       case UnifiedAnalysisStage.failed:
@@ -381,7 +386,9 @@ class _TopProgressBannerState extends State<_TopProgressBanner> {
           margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+            color: Theme.of(
+              context,
+            ).colorScheme.surface.withValues(alpha: 0.96),
             borderRadius: BorderRadius.circular(16),
             boxShadow: const [
               BoxShadow(

@@ -1163,6 +1163,8 @@ class _AlbumPageState extends State<AlbumPage> {
     final hasAiWork = progress.analysisEnabled && progress.aiTotal > 0;
     final aiTitle = !progress.analysisEnabled
         ? 'AI 打标签未启动'
+        : progress.scanStopped
+        ? 'AI 打标签已停止 ${progress.aiCompleted}/${progress.aiTotal}'
         : isWarmingUp
         ? 'AI 模型正在预热'
         : hasAiWork
@@ -1170,11 +1172,18 @@ class _AlbumPageState extends State<AlbumPage> {
         : '尚未发现待分析图片';
     final aiDetail = !progress.analysisEnabled
         ? '仅更新缓存，不预热模型，不移交任务'
+        : progress.scanStopped
+        ? '未完成候选保留在本地，后续可自动恢复'
         : isWarmingUp
         ? '首次处理需要加载模型，请稍候…'
         : hasAiWork
         ? '队列 ${progress.queueSize} · 失败 ${progress.aiFailed}'
         : '扫描完成后如果有新图片，会自动移交到这里处理';
+    final cacheDetail = progress.scanDone
+        ? '缓存索引构建完成'
+        : progress.scanStopped
+        ? '已停止继续扫描；不会再产生新的缓存'
+        : '生产者正在更新相册缓存 ${progress.scanCompleted}/${progress.scanTotal}';
     final canStop =
         progress.isRunning &&
         progress.stage != UnifiedAnalysisStage.completed &&
@@ -1222,11 +1231,7 @@ class _AlbumPageState extends State<AlbumPage> {
           _buildProgressRow(
             icon: Icons.inventory_2_outlined,
             title: cacheTitle,
-            detail: progress.scanDone
-                ? '缓存索引构建完成'
-                : progress.scanStopped
-                ? '已停止继续扫描；当前图片处理完后退出'
-                : progress.message,
+            detail: cacheDetail,
             value: progress.scanTotal > 0 ? cacheFraction : null,
             color: Colors.pinkAccent,
           ),
@@ -1247,7 +1252,7 @@ class _AlbumPageState extends State<AlbumPage> {
             alignment: Alignment.centerRight,
             child: TextButton.icon(
               onPressed: canStop
-                  ? AlbumRefreshService().stopScanningOnly
+                  ? () => unawaited(AlbumRefreshService().stopScanningOnly())
                   : null,
               icon: const Icon(Icons.stop_circle_outlined),
               label: const Text('停止任务'),

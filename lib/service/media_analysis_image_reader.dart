@@ -1,10 +1,7 @@
 import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:flutter/foundation.dart';
-import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 
@@ -19,7 +16,6 @@ class MediaAnalysisImageInput {
     required this.width,
     required this.height,
     required this.sourceLabel,
-    this.sourceFile,
   });
 
   final MemoriaMediaKind kind;
@@ -29,7 +25,6 @@ class MediaAnalysisImageInput {
   final int width;
   final int height;
   final String sourceLabel;
-  final File? sourceFile;
 }
 
 class MediaAnalysisFrameFiles {
@@ -59,32 +54,24 @@ class MediaAnalysisImageReader {
     int frameCount = defaultFrameCount,
   }) async {
     final kind = _kindForAsset(asset, null);
-    const File? sourceFile = null;
     final dims = _boundedSize(
       width: asset.width,
       height: asset.height,
       maxSide: analysisSize,
     );
 
-    final imageBytes =
-        await _readAssetThumbnail(
-          asset,
-          ThumbnailSize.square(imageSize),
-          quality: 92,
-        ) ??
-        (sourceFile == null
-            ? null
-            : await _decodeFileAsJpegBytes(sourceFile, maxSide: imageSize));
+    final imageBytes = await _readAssetThumbnail(
+      asset,
+      ThumbnailSize.square(imageSize),
+      quality: 92,
+    );
     final analysisBytes =
         await _readAssetThumbnail(
           asset,
           ThumbnailSize(dims.$1, dims.$2),
           quality: 92,
         ) ??
-        imageBytes ??
-        (sourceFile == null
-            ? null
-            : await _decodeFileAsJpegBytes(sourceFile, maxSide: analysisSize));
+        imageBytes;
     if (imageBytes == null ||
         imageBytes.isEmpty ||
         analysisBytes == null ||
@@ -96,7 +83,6 @@ class MediaAnalysisImageReader {
         kind == MemoriaMediaKind.video || kind == MemoriaMediaKind.dynamicImage
         ? await _readAssetFrameBytes(
             asset,
-            sourceFile: sourceFile,
             frameCount: frameCount,
             imageSize: imageSize,
           )
@@ -110,7 +96,6 @@ class MediaAnalysisImageReader {
       width: asset.width > 0 ? asset.width : dims.$1,
       height: asset.height > 0 ? asset.height : dims.$2,
       sourceLabel: imageBytes == analysisBytes ? 'thumbnail' : 'system_reader',
-      sourceFile: sourceFile,
     );
   }
 
@@ -142,7 +127,6 @@ class MediaAnalysisImageReader {
       if (asset.type == AssetType.video || asset.isLivePhoto || videoLike) {
         final frameBytes = await _readAssetFrameBytes(
           asset,
-          sourceFile: null,
           frameCount: maxFrames,
           imageSize: defaultAnalysisSize,
         );
@@ -166,47 +150,6 @@ class MediaAnalysisImageReader {
       frames: <File>[],
       cleanupPaths: <String>[],
       sourceLabel: 'asset_unreadable',
-    );
-  }
-
-  Future<MediaAnalysisFrameFiles> readFrameFilesFromFile(
-    File file, {
-    required bool videoLike,
-    int maxFrames = defaultFrameCount,
-  }) async {
-    if (!await file.exists()) {
-      return const MediaAnalysisFrameFiles(
-        frames: <File>[],
-        cleanupPaths: <String>[],
-        sourceLabel: 'missing_file',
-      );
-    }
-    final path = file.path.toLowerCase();
-    final isGif = path.endsWith('.gif');
-    final isVideo = videoLike || MediaTypeHelper.isVideoPath(file.path);
-    if (isVideo) {
-      final extracted = await _extractFrameFiles(file, maxFrames: maxFrames);
-      if (extracted.frames.isNotEmpty) {
-        return extracted;
-      }
-    }
-    if (isGif) {
-      final decoded = await _decodeGifFrameFiles(file, maxFrames: maxFrames);
-      if (decoded.frames.isNotEmpty) {
-        return decoded;
-      }
-    }
-    final bytes = await _decodeFileAsJpegBytes(
-      file,
-      maxSide: defaultAnalysisSize,
-    );
-    if (bytes != null && bytes.isNotEmpty) {
-      return _writeFrameBytes(bytes, prefix: 'memoria_file_vlm');
-    }
-    return MediaAnalysisFrameFiles(
-      frames: <File>[file],
-      cleanupPaths: const <String>[],
-      sourceLabel: 'original_file',
     );
   }
 
@@ -240,22 +183,9 @@ class MediaAnalysisImageReader {
 
   Future<List<Uint8List>> _readAssetFrameBytes(
     AssetEntity asset, {
-    required File? sourceFile,
     required int frameCount,
     required int imageSize,
   }) async {
-    if (sourceFile != null) {
-      final extracted = await _extractFrameFiles(
-        sourceFile,
-        maxFrames: frameCount,
-      );
-      if (extracted.frames.isNotEmpty) {
-        return Future.wait(
-          extracted.frames.map((file) => file.readAsBytes()),
-        ).whenComplete(() => _deletePaths(extracted.cleanupPaths));
-      }
-    }
-
     final durationSeconds = math.max(1, asset.duration);
     final frames = <Uint8List>[];
     for (var i = 0; i < frameCount; i++) {
@@ -272,109 +202,6 @@ class MediaAnalysisImageReader {
       }
     }
     return frames;
-  }
-
-  Future<Uint8List?> _decodeFileAsJpegBytes(
-    File file, {
-    required int maxSide,
-  }) async {
-    try {
-      final bytes = await file.readAsBytes();
-      final decoded = img.decodeImage(bytes);
-      if (decoded != null) {
-        return Uint8List.fromList(
-          img.encodeJpg(_resizeToMaxSide(decoded, maxSide), quality: 90),
-        );
-      }
-    } catch (_) {}
-
-    final extracted = await _extractFrameFiles(file, maxFrames: 1);
-    if (extracted.frames.isEmpty) {
-      return null;
-    }
-    try {
-      return await extracted.frames.first.readAsBytes();
-    } finally {
-      await _deletePaths(extracted.cleanupPaths);
-    }
-  }
-
-  Future<MediaAnalysisFrameFiles> _decodeGifFrameFiles(
-    File file, {
-    required int maxFrames,
-  }) async {
-    try {
-      final bytes = await file.readAsBytes();
-      final gif = img.decodeGif(bytes);
-      if (gif == null || gif.numFrames <= 0) {
-        return const MediaAnalysisFrameFiles(
-          frames: <File>[],
-          cleanupPaths: <String>[],
-          sourceLabel: 'gif_decode_empty',
-        );
-      }
-      final sampleCount = math.min(maxFrames, math.max(1, gif.numFrames));
-      final dir = await getTemporaryDirectory();
-      final runId = DateTime.now().microsecondsSinceEpoch;
-      final frames = <File>[];
-      final paths = <String>[];
-      final step = gif.numFrames / sampleCount;
-      for (var i = 0; i < sampleCount; i++) {
-        final frameIndex = (i * step).floor().clamp(0, gif.numFrames - 1);
-        final frame = gif.getFrame(frameIndex);
-        final path =
-            '${dir.path}/memoria_gif_vlm_${runId}_${i.toString().padLeft(2, '0')}.jpg';
-        final out = File(path);
-        await out.writeAsBytes(img.encodeJpg(frame, quality: 90), flush: true);
-        frames.add(out);
-        paths.add(path);
-      }
-      return MediaAnalysisFrameFiles(
-        frames: frames,
-        cleanupPaths: paths,
-        sourceLabel: 'gif_frames',
-      );
-    } catch (error) {
-      debugPrint('[media-reader] gif decode failed: $error');
-      return const MediaAnalysisFrameFiles(
-        frames: <File>[],
-        cleanupPaths: <String>[],
-        sourceLabel: 'gif_decode_failed',
-      );
-    }
-  }
-
-  Future<MediaAnalysisFrameFiles> _extractFrameFiles(
-    File file, {
-    required int maxFrames,
-  }) async {
-    final dir = await getTemporaryDirectory();
-    final runId = DateTime.now().microsecondsSinceEpoch;
-    final framePattern = '${dir.path}/memoria_media_${runId}_%02d.jpg';
-    final command =
-        '-y -i ${_quote(file.path)} -vf fps=1,scale=640:-2 -frames:v $maxFrames ${_quote(framePattern)}';
-    final session = await FFmpegKit.execute(command);
-    final returnCode = await session.getReturnCode();
-    if (!ReturnCode.isSuccess(returnCode)) {
-      final logs = await session.getAllLogsAsString();
-      debugPrint('[media-reader] ffmpeg frame extraction failed: $logs');
-    }
-    final frames = <File>[];
-    final paths = <String>[];
-    for (var i = 1; i <= maxFrames; i++) {
-      final path =
-          '${dir.path}/memoria_media_${runId}_${i.toString().padLeft(2, '0')}.jpg';
-      final out = File(path);
-      if (await out.exists()) {
-        frames.add(out);
-        paths.add(path);
-      }
-    }
-    return MediaAnalysisFrameFiles(
-      frames: frames,
-      cleanupPaths: paths,
-      sourceLabel: 'ffmpeg_frames',
-    );
   }
 
   Future<MediaAnalysisFrameFiles> _writeFrameBytes(
@@ -422,9 +249,7 @@ class MediaAnalysisImageReader {
     if (mime == 'image/gif') {
       return MemoriaMediaKind.dynamicImage;
     }
-    return path == null
-        ? MemoriaMediaKind.image
-        : MediaTypeHelper.fromPath(path);
+    return MemoriaMediaKind.image;
   }
 
   (int, int) _boundedSize({
@@ -441,28 +266,4 @@ class MediaAnalysisImageReader {
       math.max(1, (height * scale).round()),
     );
   }
-
-  img.Image _resizeToMaxSide(img.Image source, int maxSide) {
-    final longSide = math.max(source.width, source.height);
-    if (longSide <= maxSide) {
-      return source;
-    }
-    if (source.width >= source.height) {
-      return img.copyResize(source, width: maxSide);
-    }
-    return img.copyResize(source, height: maxSide);
-  }
-
-  Future<void> _deletePaths(Iterable<String> paths) async {
-    for (final path in paths) {
-      try {
-        final file = File(path);
-        if (await file.exists()) {
-          await file.delete();
-        }
-      } catch (_) {}
-    }
-  }
-
-  String _quote(String value) => '"${value.replaceAll('"', r'\"')}"';
 }

@@ -1,4 +1,4 @@
-/// 人脸裁剪辅助工具，提供裁剪框换算和图片裁切的通用逻辑。
+// 人脸裁剪辅助工具，提供裁剪框换算和图片裁切的通用逻辑。
 
 import 'dart:io';
 import 'dart:typed_data';
@@ -17,11 +17,6 @@ class FaceCropUtil {
     int quality = 92,
   }) {
     return Uint8List.fromList(img.encodeJpg(faceImage, quality: quality));
-  }
-
-  static Future<img.Image?> decodeSourceImage(File sourceFile) async {
-    final bytes = await sourceFile.readAsBytes();
-    return decodeSourceImageBytes(bytes);
   }
 
   static img.Image? decodeSourceImageBytes(Uint8List sourceBytes) {

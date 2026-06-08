@@ -615,9 +615,6 @@ class _AlbumPageState extends State<AlbumPage> {
         await JunkPhotoCleanupService().markCandidatesAsKept(
           remainingCandidates,
         );
-        AIService().markJunkCandidatesAsKept(
-          remainingCandidates.map((candidate) => candidate.photoId),
-        );
       }
       if (!mounted) {
         return;

@@ -16,46 +16,6 @@ class LocalVlmDescriptionService {
 
   Future<bool> get isEnabled async => true;
 
-  Future<String> generateImageDescription({
-    required File imageFile,
-    String? assetId,
-    String prompt = 'Describe this image in one concise, concrete sentence.',
-  }) async {
-    return generateMediaDescription(
-      mediaFile: imageFile,
-      treatAsVideo: false,
-      assetId: assetId,
-      prompt: prompt,
-    );
-  }
-
-  Future<String> generateMediaDescription({
-    required File mediaFile,
-    required bool treatAsVideo,
-    String? assetId,
-    String prompt =
-        'Describe the visible content in one concise, concrete paragraph.',
-  }) async {
-    final normalizedAssetId = assetId?.trim();
-    if (normalizedAssetId != null && normalizedAssetId.isNotEmpty) {
-      return generateAssetDescription(
-        assetId: normalizedAssetId,
-        treatAsVideo: treatAsVideo,
-        prompt: prompt,
-      );
-    }
-    return _generateDescriptionFromFrames(
-      frameResult: await MediaAnalysisImageReader.instance
-          .readFrameFilesFromFile(
-            mediaFile,
-            videoLike: treatAsVideo,
-            maxFrames: treatAsVideo ? 8 : 1,
-          ),
-      treatAsVideo: treatAsVideo,
-      prompt: prompt,
-    );
-  }
-
   Future<String> generateAssetDescription({
     required String assetId,
     required bool treatAsVideo,

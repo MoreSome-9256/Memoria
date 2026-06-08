@@ -12,7 +12,7 @@ class PhotoOriginalAccessException implements Exception {
 }
 
 extension PhotoServiceAccess on PhotoService {
-  Future<File> openOriginalMediaFile(
+  Future<AssetEntity> openOriginalMediaAsset(
     PhotoEntity photo, {
     String purpose = 'media access',
   }) async {
@@ -32,20 +32,19 @@ extension PhotoServiceAccess on PhotoService {
       );
     }
 
-    final file = await _resolveReadableFile(asset);
-    if (file == null || file.path.isEmpty || !await file.exists()) {
+    final thumbnail = await asset.thumbnailDataWithSize(
+      const ThumbnailSize.square(32),
+      quality: 30,
+    );
+    if (thumbnail == null || thumbnail.isEmpty) {
       await _removePhotoRecordsByIds(<int>[photo.id]);
       throw PhotoOriginalAccessException(
-        '无法通过系统相册读取原图，已移除本地记录 photoId=${photo.id} assetId=$assetId purpose=$purpose',
+        '无法通过系统相册 API 读取媒体，已移除本地记录 photoId=${photo.id} assetId=$assetId purpose=$purpose',
       );
     }
 
     var changed = false;
-    if (photo.path != file.path) {
-      photo.path = file.path;
-      changed = true;
-    }
-    final timestamp = _resolveBestTimestampMs(asset, file);
+    final timestamp = _bestAssetTimestampMs(asset);
     if (PhotoFilterHelper.hasValidTimestamp(timestamp) &&
         photo.timestamp != timestamp) {
       photo.timestamp = timestamp;
@@ -64,7 +63,7 @@ extension PhotoServiceAccess on PhotoService {
           ? MemoriaMediaKind.video
           : asset.isLivePhoto
           ? MemoriaMediaKind.dynamicImage
-          : MediaTypeHelper.fromPath(file.path),
+          : MemoriaMediaKind.image,
     );
     if (photo.mediaKind != mediaKind) {
       photo.mediaKind = mediaKind;
@@ -84,22 +83,28 @@ extension PhotoServiceAccess on PhotoService {
       _photoAccessCache.remove('id:${photo.id}');
       _photoAccessCache.remove('asset:${photo.assetId}');
     }
-    return file;
+    return asset;
   }
 
   Future<Uint8List> readOriginalMediaBytes(
     PhotoEntity photo, {
     String purpose = 'media bytes',
   }) async {
-    final file = await openOriginalMediaFile(photo, purpose: purpose);
-    try {
-      return await file.readAsBytes();
-    } catch (error) {
+    final asset = await openOriginalMediaAsset(photo, purpose: purpose);
+    final bytes = await asset.thumbnailDataWithOption(
+      const ThumbnailOption(
+        size: ThumbnailSize.square(1024),
+        format: ThumbnailFormat.jpeg,
+        quality: 92,
+      ),
+    );
+    if (bytes == null || bytes.isEmpty) {
       await _removePhotoRecordsByIds(<int>[photo.id]);
       throw PhotoOriginalAccessException(
-        '读取系统相册原图失败，已移除本地记录 photoId=${photo.id} assetId=${photo.assetId} purpose=$purpose error=$error',
+        '读取系统相册媒体失败，已移除本地记录 photoId=${photo.id} assetId=${photo.assetId} purpose=$purpose',
       );
     }
+    return bytes;
   }
 
   Future<int> removeUnavailablePhotosByAssetIds(
@@ -137,34 +142,13 @@ extension PhotoServiceAccess on PhotoService {
         continue;
       }
 
-      if (photo.path.startsWith('content://')) {
-        continue;
-      }
-
-      final currentFile = photo.path.trim().isEmpty ? null : File(photo.path);
-      if (currentFile != null && await currentFile.exists()) {
-        continue;
-      }
-
       final asset = await AssetEntity.fromId(photo.assetId);
       if (asset == null) {
         removedIds.add(photo.id);
         continue;
       }
-
-      final refreshedFile = await _resolveReadableFile(asset);
-      if (refreshedFile != null && await refreshedFile.exists()) {
-        photo.path = refreshedFile.path;
-        final refreshedTimestamp = _resolveBestTimestampMs(
-          asset,
-          refreshedFile,
-        );
-        if (PhotoFilterHelper.hasValidTimestamp(refreshedTimestamp)) {
-          photo.timestamp = refreshedTimestamp;
-        }
+      if (_refreshPhotoFromAssetMetadata(photo, asset)) {
         repairedPhotos.add(photo);
-      } else {
-        removedIds.add(photo.id);
       }
     }
 
@@ -189,33 +173,13 @@ extension PhotoServiceAccess on PhotoService {
     final removedIds = <int>[];
     final repairedPhotos = <PhotoEntity>[];
     for (final photo in localPhotos) {
-      if (photo.path.startsWith('content://')) {
-        continue;
-      }
       final asset = await AssetEntity.fromId(photo.assetId);
       if (asset == null) {
         removedIds.add(photo.id);
         continue;
       }
-
-      final currentFile = photo.path.trim().isEmpty ? null : File(photo.path);
-      if (currentFile != null && currentFile.existsSync()) {
-        continue;
-      }
-
-      final refreshedFile = await _resolveReadableFile(asset);
-      if (refreshedFile != null && refreshedFile.existsSync()) {
-        photo.path = refreshedFile.path;
-        final refreshedTimestamp = _resolveBestTimestampMs(
-          asset,
-          refreshedFile,
-        );
-        if (PhotoFilterHelper.hasValidTimestamp(refreshedTimestamp)) {
-          photo.timestamp = refreshedTimestamp;
-        }
+      if (_refreshPhotoFromAssetMetadata(photo, asset)) {
         repairedPhotos.add(photo);
-      } else {
-        removedIds.add(photo.id);
       }
     }
 
@@ -256,13 +220,6 @@ extension PhotoServiceAccess on PhotoService {
     var removedCount = 0;
     var repairedCount = 0;
     for (final photo in candidates) {
-      if (photo.path.startsWith('content://')) {
-        _photoAccessCache[_photoAccessCacheKey(photo)] = _PhotoAccessCacheEntry(
-          checkedAtMs: nowMs,
-          resolvedPath: photo.path,
-        );
-        continue;
-      }
       final cacheKey = _photoAccessCacheKey(photo);
       final cacheEntry = _photoAccessCache[cacheKey];
       if (cacheEntry != null &&
@@ -276,19 +233,6 @@ extension PhotoServiceAccess on PhotoService {
           removedCount++;
           continue;
         }
-        final resolvedPath = cacheEntry.resolvedPath;
-        if (resolvedPath != null && resolvedPath.isNotEmpty) {
-          photo.path = resolvedPath;
-          continue;
-        }
-      }
-
-      final currentFile = photo.path.trim().isEmpty ? null : File(photo.path);
-      if (currentFile != null && currentFile.existsSync()) {
-        _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
-          checkedAtMs: nowMs,
-          resolvedPath: photo.path,
-        );
         continue;
       }
 
@@ -305,26 +249,18 @@ extension PhotoServiceAccess on PhotoService {
         continue;
       }
 
-      final refreshedFile = await _resolveReadableFile(asset);
-      if (refreshedFile != null && refreshedFile.existsSync()) {
-        if (photo.path != refreshedFile.path) {
-          photo.path = refreshedFile.path;
-          if (photo.id > 0) {
-            repairedIds.add(photo.id);
-          }
-          repairedCount++;
+      if (_refreshPhotoFromAssetMetadata(photo, asset)) {
+        if (photo.id > 0) {
+          repairedIds.add(photo.id);
         }
+        repairedCount++;
         _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
           checkedAtMs: nowMs,
-          resolvedPath: refreshedFile.path,
         );
-      } else if (photo.id > 0) {
-        removedIds.add(photo.id);
+      } else {
         _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
           checkedAtMs: nowMs,
-          isRemoved: true,
         );
-        removedCount++;
       }
     }
 
@@ -441,6 +377,60 @@ extension PhotoServiceAccess on PhotoService {
       return 'id:${photo.id}';
     }
     return 'asset:${photo.assetId}';
+  }
+
+  int _bestAssetTimestampMs(AssetEntity asset) {
+    final candidates = <int>[];
+    final createMs = asset.createDateTime.millisecondsSinceEpoch;
+    if (PhotoFilterHelper.hasValidTimestamp(createMs)) candidates.add(createMs);
+    final modifiedMs = asset.modifiedDateTime.millisecondsSinceEpoch;
+    if (PhotoFilterHelper.hasValidTimestamp(modifiedMs)) {
+      candidates.add(modifiedMs);
+    }
+    return candidates.isEmpty ? 0 : candidates.reduce(math.min);
+  }
+
+  bool _refreshPhotoFromAssetMetadata(PhotoEntity photo, AssetEntity asset) {
+    var changed = false;
+    final timestamp = _bestAssetTimestampMs(asset);
+    if (PhotoFilterHelper.hasValidTimestamp(timestamp) &&
+        photo.timestamp != timestamp) {
+      photo.timestamp = timestamp;
+      changed = true;
+    }
+    if (asset.width > 0 && photo.width != asset.width) {
+      photo.width = asset.width;
+      changed = true;
+    }
+    if (asset.height > 0 && photo.height != asset.height) {
+      photo.height = asset.height;
+      changed = true;
+    }
+    final mediaKind = MediaTypeHelper.toStorageValue(
+      asset.type == AssetType.video
+          ? MemoriaMediaKind.video
+          : asset.isLivePhoto
+          ? MemoriaMediaKind.dynamicImage
+          : MemoriaMediaKind.image,
+    );
+    if (photo.mediaKind != mediaKind) {
+      photo.mediaKind = mediaKind;
+      changed = true;
+    }
+    final mimeType = asset.mimeType;
+    if (photo.mimeType != mimeType) {
+      photo.mimeType = mimeType;
+      changed = true;
+    }
+    if (photo.isLivePhoto != asset.isLivePhoto) {
+      photo.isLivePhoto = asset.isLivePhoto;
+      changed = true;
+    }
+    if (photo.path.isNotEmpty) {
+      photo.path = '';
+      changed = true;
+    }
+    return changed;
   }
 
   Future<Map<String, int>> getPhotoStats() async {

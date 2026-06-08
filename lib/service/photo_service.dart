@@ -86,10 +86,10 @@ class PhotoService {
     _photoEmbeddingIndexRepository.deleteAll();
     _faceEmbeddingIndexRepository.deleteAll();
     _mediaAssetRepository.clearAll();
-    
+
     await MobileClipTagService().dispose();
     await SemanticMatchingService().dispose();
-    
+
     try {
       final tempDir = await getTemporaryDirectory();
       final tagCacheFile = File('${tempDir.path}/tag_prototype_cache.json');
@@ -108,32 +108,26 @@ class PhotoService {
     List<AssetEntity> assets, {
     required bool skipExisting,
     PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
-    bool resolveFile = true,
   }) {
     return _PhotoAssetBuilder(this).buildPhotoEntities(
       assets,
       skipExisting: skipExisting,
       filterProfile: filterProfile,
-      resolveFile: resolveFile,
     );
   }
 
   Future<_SingleAssetBuildResult> _buildSingleAssetPhoto(
     AssetEntity asset, {
     PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
-    bool resolveFile = false,
   }) {
-    return _PhotoAssetBuilder(this).buildSingleAssetPhoto(
-      asset,
-      filterProfile: filterProfile,
-      resolveFile: resolveFile,
-    );
+    return _PhotoAssetBuilder(
+      this,
+    ).buildSingleAssetPhoto(asset, filterProfile: filterProfile);
   }
 
   Future<PhotoEntity?> buildAndSaveSinglePhoto(
     AssetEntity asset, {
     PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
-    bool resolveFile = false,
   }) async {
     final existingQuery = _photoBox
         .query(PhotoEntity_.assetId.equals(asset.id))
@@ -141,14 +135,12 @@ class PhotoService {
     try {
       final existing = existingQuery.findFirst();
       if (existing != null) {
-        if (resolveFile) {
-          final refreshed = await _PhotoAssetBuilder(
-            this,
-          )._refreshIfChanged(existing, asset);
-          if (refreshed != null) {
-            _photoBox.put(refreshed);
-            return refreshed;
-          }
+        final refreshed = await _PhotoAssetBuilder(
+          this,
+        )._refreshIfChanged(existing, asset);
+        if (refreshed != null) {
+          _photoBox.put(refreshed);
+          return refreshed;
         }
         if (existing.thumbnailBytes == null ||
             existing.thumbnailBytes!.isEmpty) {
@@ -168,21 +160,12 @@ class PhotoService {
     final result = await _buildSingleAssetPhoto(
       asset,
       filterProfile: filterProfile,
-      resolveFile: resolveFile,
     );
     if (result.photo == null) return null;
     final id = _photoBox.put(result.photo!);
     if (id <= 0) return null;
     result.photo!.id = id;
     return result.photo!;
-  }
-
-  Future<File?> _resolveReadableFile(AssetEntity asset) {
-    return _PhotoAssetBuilder(this).resolveReadableFile(asset);
-  }
-
-  int _resolveBestTimestampMs(AssetEntity asset, File file) {
-    return _PhotoAssetBuilder(this).resolveBestTimestampMs(asset, file);
   }
 
   void updatePhotoInTransaction(

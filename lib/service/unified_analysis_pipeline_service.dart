@@ -511,7 +511,6 @@ class UnifiedAnalysisPipelineService {
     return await PhotoService().buildAndSaveSinglePhoto(
       asset,
       filterProfile: await _resolveFilterProfile(),
-      resolveFile: false,
     );
   }
 

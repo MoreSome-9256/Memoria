@@ -1,4 +1,4 @@
-/// 人脸检测处理管线，串联检测、裁剪和质量评估流程。
+// 人脸检测处理管线，串联检测、裁剪和质量评估流程。
 
 import 'dart:io';
 import 'dart:math' as math;
@@ -129,7 +129,7 @@ class FacePipelineService {
     final sourceDecodeWatch = Stopwatch()..start();
     final decodedImage = imageBytes != null && imageBytes.isNotEmpty
         ? FaceCropUtil.decodeSourceImageBytes(imageBytes)
-        : await FaceCropUtil.decodeSourceImage(imageFile);
+        : null;
     sourceDecodeWatch.stop();
     sourceDecodeMs = sourceDecodeWatch.elapsedMicroseconds / 1000.0;
     if (decodedImage == null) {

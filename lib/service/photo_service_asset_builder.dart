@@ -1,8 +1,7 @@
 /// 照片资产构建服务 — 将系统相册的 AssetEntity 转换为 PhotoEntity。
 ///
 /// 优化点：
-/// - `resolveReadableFile` 与 `latlngAsync` 并行发起（减少串行等待）
-/// - `resolveBestTimestampMs` 简化为最小值聚合（O(n) 代替 O(n log n)）
+/// - 只使用 AssetEntity 元数据和缩略图 API，不读取源文件路径。
 
 part of 'photo_service.dart';
 
@@ -39,7 +38,6 @@ class _PhotoAssetBuilder {
     List<AssetEntity> assets, {
     required bool skipExisting,
     PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
-    bool resolveFile = true,
   }) async {
     final existingByAssetId = <String, PhotoEntity>{};
     final refreshedExisting = <PhotoEntity>[];
@@ -75,20 +73,11 @@ class _PhotoAssetBuilder {
 
     for (final asset in assets) {
       if (skipExisting && existingByAssetId.containsKey(asset.id)) {
-        if (resolveFile) {
-          final existing = existingByAssetId[asset.id]!;
-          final refreshed = await _refreshIfChanged(existing, asset);
-          if (refreshed != null) refreshedExisting.add(refreshed);
-        }
         continue;
       }
 
       buildResults.add(
-        await buildSingleAssetPhoto(
-          asset,
-          filterProfile: filterProfile,
-          resolveFile: resolveFile,
-        ),
+        await buildSingleAssetPhoto(asset, filterProfile: filterProfile),
       );
     }
 
@@ -123,7 +112,6 @@ class _PhotoAssetBuilder {
   Future<_SingleAssetBuildResult> buildSingleAssetPhoto(
     AssetEntity asset, {
     PhotoScanFilterProfile filterProfile = PhotoScanFilterProfile.strict,
-    bool resolveFile = false,
   }) async {
     final width = asset.width;
     final height = asset.height;
@@ -142,13 +130,10 @@ class _PhotoAssetBuilder {
     final latLong = asset.latLng;
     final mimeType = asset.mimeType;
     final isLivePhoto = asset.isLivePhoto;
-    final file = resolveFile ? await resolveReadableFile(asset) : null;
-    final timestamp = file == null
-        ? asset.createDateTime.millisecondsSinceEpoch
-        : resolveBestTimestampMs(asset, file);
+    final timestamp = _resolveBestAssetTimestampMs(asset);
     final mediaKind = _resolveMediaKind(
       asset: asset,
-      path: file?.path ?? '',
+      path: '',
       mimeType: mimeType,
       isLivePhoto: isLivePhoto,
     );
@@ -162,7 +147,7 @@ class _PhotoAssetBuilder {
     final photo = PhotoEntity()
       ..assetId = asset.id
       ..timestamp = timestamp
-      ..path = file?.path ?? ''
+      ..path = ''
       ..width = width
       ..height = height
       ..mediaKind = MediaTypeHelper.toStorageValue(mediaKind)
@@ -196,26 +181,8 @@ class _PhotoAssetBuilder {
     return _SingleAssetBuildResult(photo: photo, insertedNoGps: hasGps ? 0 : 1);
   }
 
-  // ── File 解析：Android 跳过 originFile（快 2×）──────────────────
-  Future<File?> resolveReadableFile(AssetEntity asset) async {
-    final directFile = await asset.file;
-    if (directFile != null && directFile.path.isNotEmpty) return directFile;
-
-    final originFile = await asset.originFile;
-    if (originFile != null && originFile.path.isNotEmpty) return originFile;
-
-    return null;
-  }
-
-  // ── 时间戳解析：最小值聚合 O(n) ──────────────────────────────────
-  int resolveBestTimestampMs(AssetEntity asset, File file) {
+  int _resolveBestAssetTimestampMs(AssetEntity asset) {
     final candidates = <int>[];
-    final fileNameMs = PhotoFilterHelper.extractTimestampFromFileName(
-      file.path,
-    );
-    if (fileNameMs != null && PhotoFilterHelper.hasValidTimestamp(fileNameMs)) {
-      candidates.add(fileNameMs);
-    }
     final createMs = asset.createDateTime.millisecondsSinceEpoch;
     if (PhotoFilterHelper.hasValidTimestamp(createMs)) candidates.add(createMs);
     final modifiedMs = asset.modifiedDateTime.millisecondsSinceEpoch;
@@ -230,17 +197,14 @@ class _PhotoAssetBuilder {
     PhotoEntity existing,
     AssetEntity asset,
   ) async {
-    final file = await resolveReadableFile(asset);
-    if (file == null) return null;
-
     var changed = false;
-    final ts = resolveBestTimestampMs(asset, file);
+    final ts = _resolveBestAssetTimestampMs(asset);
     if (PhotoFilterHelper.hasValidTimestamp(ts) && existing.timestamp != ts) {
       existing.timestamp = ts;
       changed = true;
     }
-    if (file.path.isNotEmpty && existing.path != file.path) {
-      existing.path = file.path;
+    if (existing.path.isNotEmpty) {
+      existing.path = '';
       changed = true;
     }
     if (asset.width > 0 && existing.width != asset.width) {
@@ -256,7 +220,7 @@ class _PhotoAssetBuilder {
     final mediaKind = MediaTypeHelper.toStorageValue(
       _resolveMediaKind(
         asset: asset,
-        path: file.path,
+        path: '',
         mimeType: mimeType,
         isLivePhoto: isLivePhoto,
       ),

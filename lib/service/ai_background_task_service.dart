@@ -1,12 +1,6 @@
-// AI 前台任务处理器 — Spool 模式。
-//
-// 主进程写 manifest 到 spool → 启动前台服务 → 本 isolate 只做纯计算
-// → result/embedding/progress 写入 spool → done.marker → 主进程消费写库。
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
@@ -14,19 +8,8 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'analysis_spool_service.dart';
-
 import '../storage/objectbox/objectbox_service.dart';
-import 'spool_analysis_worker.dart';
 import 'unified_analysis_pipeline_service.dart';
-
-/// 前台任务回调入口，在后台 isolate 中运行。
-@pragma('vm:entry-point')
-void foregroundTaskCallback() {
-  WidgetsFlutterBinding.ensureInitialized();
-  DartPluginRegistrant.ensureInitialized();
-  FlutterForegroundTask.setTaskHandler(_SpoolTaskHandler());
-}
 
 @pragma('vm:entry-point')
 void albumCacheForegroundTaskCallback() {
@@ -63,7 +46,7 @@ class _AlbumCacheTaskHandler extends TaskHandler {
   Future<void> _runPipeline() async {
     try {
       final request = await AiBackgroundTaskService.instance
-          .takePendingUnifiedPipelineRequest();
+          ._takePendingUnifiedPipelineRequest();
       if (request == null) {
         debugPrint('[foreground-pipeline] 没有待执行的缓存/AI 任务');
         return;
@@ -79,52 +62,13 @@ class _AlbumCacheTaskHandler extends TaskHandler {
       debugPrint('[foreground-pipeline] 执行失败: $error');
       debugPrint('[foreground-pipeline] 堆栈: $stackTrace');
     } finally {
-      await AiBackgroundTaskService.instance.clearPendingUnifiedPipelineRequest();
+      await AiBackgroundTaskService.instance
+          .clearPendingUnifiedPipelineRequest();
       // Do not stop the foreground service from inside its own task isolate.
       // flutter_foreground_task answers stopService over a MethodChannel; if
       // that call races with FlutterEngine teardown, Flutter can abort with
       // platform_message_response_dart_port.cc did_send.
     }
-  }
-}
-
-class _SpoolTaskHandler extends TaskHandler {
-  SpoolAnalysisWorker? _worker;
-  bool _started = false;
-
-  @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    if (_started) return;
-    _started = true;
-    unawaited(_runWorker());
-  }
-
-  @override
-  void onRepeatEvent(DateTime timestamp) {}
-
-  Future<void> _runWorker() async {
-    try {
-      // 从 spool 读取最新未完成的 manifest
-      final manifest = await AiBackgroundTaskService.instance
-          .takePendingManifest();
-      if (manifest == null) {
-        debugPrint('[spool-worker] 没有待处理的 manifest');
-        return;
-      }
-
-      _worker = SpoolAnalysisWorker();
-      await _worker!.run(manifest);
-    } catch (error) {
-      debugPrint('❌ Spool worker 执行失败: $error');
-    } finally {
-      // See _AlbumCacheTaskHandler._runPipeline: stopping from the foreground
-      // task isolate can race with the MethodChannel response port teardown.
-    }
-  }
-
-  @override
-  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
-    _worker?.requestStop();
   }
 }
 
@@ -134,7 +78,6 @@ class AiBackgroundTaskService {
   static final AiBackgroundTaskService instance = AiBackgroundTaskService._();
 
   static bool _initialized = false;
-  static const _pendingManifestJobIdKey = 'spool_pending_manifest_job_id';
   static const _pendingUnifiedPipelineKey =
       'foreground_pending_unified_pipeline';
   static const _pendingUnifiedClearCacheKey =
@@ -172,51 +115,6 @@ class AiBackgroundTaskService {
     );
   }
 
-  /// 写入 manifest → 启动前台服务。
-  Future<void> startAnalysisWorker({
-    AnalysisJobManifest? manifest,
-  }) async {
-    if (manifest != null) {
-      await AnalysisSpoolService.instance.writeManifest(manifest);
-      await AnalysisSpoolService.instance.writeControl(
-        AnalysisJobControl.running(manifest.jobId),
-      );
-      await _recordPendingJobId(manifest.jobId);
-    }
-    if (!Platform.isAndroid && !Platform.isIOS) {
-      debugPrint('[spool] 非 Android/iOS 平台暂不支持前台服务');
-      return;
-    }
-    await startService(title: 'Memoria 正在分析媒体', text: '只处理你加入分析队列的照片和视频');
-  }
-
-  /// 获取并认领下一个待处理的 manifest。
-  ///
-  /// 检查 SharedPreferences 中记录的 pending jobId，
-  /// 如果 spool 中存在且没有 done.marker，则认领并返回。
-  Future<AnalysisJobManifest?> takePendingManifest() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jobId = prefs.getString(_pendingManifestJobIdKey);
-    if (jobId == null || jobId.isEmpty) return null;
-
-    final spool = AnalysisSpoolService.instance;
-    if (await spool.hasDoneMarker(jobId)) {
-      debugPrint('[spool-worker] job $jobId 已有 done.marker，跳过');
-      return null;
-    }
-    final manifest = await spool.readManifest(jobId);
-    if (manifest == null) {
-      debugPrint('[spool-worker] manifest 不存在 jobId=$jobId');
-      return null;
-    }
-    return manifest;
-  }
-
-  Future<void> _recordPendingJobId(String jobId) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_pendingManifestJobIdKey, jobId);
-  }
-
   // ── 前台服务生命周期 ──
 
   Future<void> startService({
@@ -239,7 +137,7 @@ class AiBackgroundTaskService {
       notificationTitle: title,
       notificationText: text,
       notificationIcon: null,
-      callback: callback ?? foregroundTaskCallback,
+      callback: callback ?? albumCacheForegroundTaskCallback,
     );
     if (result is ServiceRequestFailure) {
       debugPrint('[foreground] startService failed: ${result.error}');
@@ -303,7 +201,7 @@ class AiBackgroundTaskService {
   }
 
   Future<_UnifiedPipelineForegroundRequest?>
-      takePendingUnifiedPipelineRequest() async {
+  _takePendingUnifiedPipelineRequest() async {
     final prefs = await SharedPreferences.getInstance();
     final pending = prefs.getBool(_pendingUnifiedPipelineKey) ?? false;
     if (!pending) return null;

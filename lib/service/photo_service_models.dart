@@ -70,7 +70,6 @@ class _SingleAssetBuildResult {
     this.skippedNonCamera = 0,
     this.skippedScreenshot = 0,
     this.skippedSmallResolution = 0,
-    this.skippedExtremeAspectRatio = 0,
   });
 
   final PhotoEntity? photo;
@@ -79,18 +78,15 @@ class _SingleAssetBuildResult {
   final int skippedNonCamera;
   final int skippedScreenshot;
   final int skippedSmallResolution;
-  final int skippedExtremeAspectRatio;
 }
 
 class _PhotoAccessCacheEntry {
   const _PhotoAccessCacheEntry({
     required this.checkedAtMs,
-    this.resolvedPath,
     this.isRemoved = false,
   });
 
   final int checkedAtMs;
-  final String? resolvedPath;
   final bool isRemoved;
 }
 

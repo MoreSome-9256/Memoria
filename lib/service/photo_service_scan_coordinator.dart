@@ -43,7 +43,6 @@ class _PhotoScanCoordinator {
       prepared.assets,
       skipExisting: false,
       filterProfile: filterProfile,
-      resolveFile: true,
     );
 
     if (built.photos.isEmpty) {
@@ -150,7 +149,6 @@ class _PhotoScanCoordinator {
         final r = await _service._buildSingleAssetPhoto(
           asset,
           filterProfile: filterProfile,
-          resolveFile: false,
         );
         if (r.photo != null) {
           batchPhotos.add(r.photo!);
@@ -195,7 +193,6 @@ class _PhotoScanCoordinator {
       'noGps=${stats.insertedNoGps} badTime=${stats.skippedInvalidTime} '
       'nonCam=${stats.skippedNonCamera} ss=${stats.skippedScreenshot} '
       'small=${stats.skippedSmallResolution} '
-      'wide=${stats.skippedExtremeAspectRatio} '
       'elapsed=${DateTime.now().difference(startedAt).inMilliseconds}ms',
     );
 
@@ -622,7 +619,6 @@ class _ScanStats {
     this.skippedNonCamera = 0,
     this.skippedScreenshot = 0,
     this.skippedSmallResolution = 0,
-    this.skippedExtremeAspectRatio = 0,
   });
 
   final int insertedNoGps;
@@ -630,7 +626,6 @@ class _ScanStats {
   final int skippedNonCamera;
   final int skippedScreenshot;
   final int skippedSmallResolution;
-  final int skippedExtremeAspectRatio;
 
   _ScanStats merge(_SingleAssetBuildResult r) => _ScanStats(
     insertedNoGps: insertedNoGps + r.insertedNoGps,
@@ -638,8 +633,6 @@ class _ScanStats {
     skippedNonCamera: skippedNonCamera + r.skippedNonCamera,
     skippedScreenshot: skippedScreenshot + r.skippedScreenshot,
     skippedSmallResolution: skippedSmallResolution + r.skippedSmallResolution,
-    skippedExtremeAspectRatio:
-        skippedExtremeAspectRatio + r.skippedExtremeAspectRatio,
   );
 }
 

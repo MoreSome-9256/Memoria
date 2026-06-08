@@ -90,6 +90,8 @@ Face 向量会被同步写入：
 
 做精确命中，避免不同人脸模型版本混用。
 
+人脸身份向量必须来自专用 face embedding 模型。当前默认实现是 `OnnxFaceEmbeddingService`，可通过 `FACE_EMBEDDING_ONNX_FILE` 或 `FACE_EMBEDDING_ONNX_ASSET` 提供模型。旧的 `mobileclip2_face_baseline_v1` 只保留为历史缓存识别标记，聚类会直接跳过这类向量。
+
 ### Repository 层
 
 当前向量访问已经通过 repository 收口：
@@ -102,9 +104,17 @@ Face 向量会被同步写入：
 - 业务 service 不直接操纵 ObjectBox schema。
 - 向量 repository 负责精确版本读取、删除、批量读取、近邻查询。
 - 业务实体是否把向量回填到内存对象，由 service 明确控制，不由 repository 偷偷写回。
+- repository 不再回退读取 `PhotoEntity.imageEmbedding` 或 `FaceEntity.embedding` 的旧向量；旧字段只作为业务兼容/写入中转，不再作为检索和聚类的读路径兜底。
 
 ## 最近重要更新
 
+- 2026-06-08 检索与聚类准确度收敛：
+  - 自然语言检索、聊天检索、创作页筛图和创作推荐统一走 `SemanticPhotoSearchService`。
+  - 语义结果只按 MobileCLIP2 S2 的正/负语义 embedding 相似度排序；时间、地点、标签不再伪装成语义相似度加分。
+  - 时间约束走确定性过滤：兼容旧秒级 timestamp，日期边界按毫秒比较，本地日内时间支持跨午夜窗口。
+  - 地点约束走层级相关度：`locationName / formattedAddress / district / city / province / adcode` 分层评分；城市、省份、区县是范围，POI 是更小范围。POI 查询不会因为上级景区、附近社区或过宽 alias 直接命中，例如“南京市”和“情侣园”会被当作不同粒度处理。
+  - 人脸聚类不再使用 MobileCLIP 图像语义向量作为身份 fallback；没有专用 ONNX face embedding 时不产身份向量。聚类改为保守的 cosine 阈值、同照片互斥、centroid / cover / 最小 cross-pair 多重守门，减少不同人被链式合并。
+  - photo / face 向量 repository 删除 legacy entity-vector fallback，读取必须命中当前 `modelVersion` 的 ObjectBox 索引。
 - 新增 ObjectBox 并行向量索引层，用于承载 photo/face embedding。
 - photo embedding 读路径已改为按当前 `modelVersion` 精确读取。
 - face embedding 读路径已改为按 `face.id + embeddingModelVersion` 精确读取。
@@ -387,3 +397,33 @@ flutter test test/service/theme_cluster_service_test.dart
 - `Isar` 保存业务真相
 - `ObjectBox` 保存向量索引
 - 先把索引语义做对，再逐步吃 ANN 的收益
+
+## 检索与聚类准确度报告
+
+本轮调整的核心原则是：语义用向量相似度，元数据用元数据算法，二者不要混在一个“相似度”里。
+
+### 检索逻辑
+
+- 语义：`positive_semantics` 和 `recall_semantics` 由 MobileCLIP2 S2 text encoder 编码，照片只读取当前 `modelVersion` 的 ObjectBox photo embedding。最终语义分数只由正向语义、召回语义和 negative 语义惩罚决定。
+- 时间：`time_ranges` 是硬过滤；`local_time_windows` 是本地日内时间窗口，支持 22:00-05:00 这类跨午夜表达。旧数据里的 10 位秒级 timestamp 会先归一到毫秒。
+- 地点：`locations` 是硬过滤，但不是简单字符串 contains。算法按字段层级给分：POI/name/address 最高，district/city/province 是更大的空间范围。POI 查询要求 POI 或地址中出现具体名称；像“玄武湖景区”“锁金村”这种上级/邻近上下文只给低分，不能替代“情侣园”的精确命中。
+- 标签：`tag_strictness == strict` 时可作为硬过滤；`prefer/optional` 只用于解释和候选分析，不再改变 embedding 排序。
+
+### 人脸聚类逻辑
+
+- 专用人脸模型优先：FaceNet 和 ArcFace 这类方法都把人脸识别建立在专用 face embedding 空间上，而不是通用图像语义向量；因此 MobileCLIP face baseline 不再用于身份聚类。
+- 聚类策略：使用归一化向量的 cosine 阈值，不引入 HDBSCAN。每次 seed、attach、merge 都同时检查 centroid、cover face 和最小 cross-pair 相似度。
+- 互斥约束：同一张照片里的两张脸默认不应进入同一个身份簇，避免多人合照中不同人被合并。
+- 质量约束：低质量、小面积、截图/宠物/表情包/文档等来源的人脸不会作为聚类候选。
+
+### 为什么不用 HDBSCAN
+
+当前 photo / face embedding 都是高维归一化向量，主要判别信号是角度/cosine，而不是低维空间中的密度团块。HDBSCAN 官方 FAQ 说明高维数据下效果会明显下降；DBSCAN 类算法也更适合密度相近的簇，并且实现可能有较高内存成本。因此这里采用阈值图式的保守聚类，而不是密度聚类。
+
+参考资料：
+
+- FaceNet: A Unified Embedding for Face Recognition and Clustering: https://arxiv.org/abs/1503.03832
+- ArcFace: Additive Angular Margin Loss for Deep Face Recognition: https://arxiv.org/abs/1801.07698
+- FAISS MetricType and cosine/inner-product notes: https://github.com/facebookresearch/faiss/wiki/MetricType-and-distances
+- HDBSCAN FAQ on high-dimensional data: https://hdbscan.readthedocs.io/en/latest/faq.html
+- scikit-learn DBSCAN notes: https://scikit-learn.org/1.5/modules/generated/sklearn.cluster.DBSCAN.html

@@ -125,9 +125,7 @@ class _AppStartupCoordinator {
       try {
         await ObjectBoxService().init();
       } catch (error) {
-        debugPrint(
-          'ObjectBox init skipped, falling back to legacy vectors: $error',
-        );
+        debugPrint('ObjectBox init skipped; vector index unavailable: $error');
       }
       await PhotoService().init();
       final aiSettings = await AppAiSettingsService.instance.load();

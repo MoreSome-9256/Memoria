@@ -132,6 +132,7 @@ class JunkPhotoFilterService {
 
   static const String junkCandidateTag = '__junk_candidate__';
   static const String pendingJunkCandidateTag = '__junk_pending__';
+  static const String junkReasonTagPrefix = '__junk_reason__:';
 
   static final JunkPhotoFilterService _instance =
       JunkPhotoFilterService._internal();
@@ -227,7 +228,22 @@ class JunkPhotoFilterService {
             'an accidental pocket shot',
             'a heavily shadowed image with no clear subject',
           ],
-          threshold: 0.295,
+          threshold: 0.285,
+          screenshotBoost: 0.03,
+        ),
+        JunkPhotoCategoryDefinition(
+          id: 'low_value_landmark',
+          label: '低价值地标/路牌',
+          description: '路牌、门牌号、停车位标识、交通指示牌等只有单一信息维度的内容。',
+          prototypePrompts: <String>[
+            'a street sign or road sign',
+            'a house number or address plate',
+            'a parking space sign',
+            'a directional signpost',
+          ],
+          threshold: 0.27,
+          ocrBoostThreshold: 8,
+          ocrBoost: 0.025,
         ),
         JunkPhotoCategoryDefinition(
           id: 'blurred_or_broken',
@@ -249,6 +265,86 @@ class JunkPhotoFilterService {
   bool _isWarmedUp = false;
 
   List<JunkPhotoCategoryDefinition> get definitions => _definitions;
+
+  static bool isInternalJunkTag(String value) {
+    final trimmed = value.trim();
+    return trimmed == junkCandidateTag ||
+        trimmed == pendingJunkCandidateTag ||
+        trimmed.startsWith(junkReasonTagPrefix);
+  }
+
+  static List<String> reasonTagsForHits(Iterable<JunkPhotoHit> hits) {
+    return hits
+        .map((hit) => hit.categoryId.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .map((id) => '$junkReasonTagPrefix$id')
+        .toList(growable: false);
+  }
+
+  static List<String> reasonTagsForCategoryIds(Iterable<String?> ids) {
+    return ids
+        .whereType<String>()
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .map((id) => '$junkReasonTagPrefix$id')
+        .toList(growable: false);
+  }
+
+  static List<JunkPhotoHit> hitsFromTags(Iterable<String> tags) {
+    final ids = tags
+        .map(_categoryIdFromReasonTag)
+        .whereType<String>()
+        .toSet()
+        .toList(growable: false);
+    final hits = <JunkPhotoHit>[];
+    for (final id in ids) {
+      final definition = definitionById(id);
+      if (definition == null) {
+        hits.add(
+          JunkPhotoHit(
+            categoryId: id,
+            label: '低价值照片',
+            description: '历史低价值候选，当前版本没有对应的分类定义。',
+            score: 0,
+            threshold: 0,
+          ),
+        );
+        continue;
+      }
+      hits.add(
+        JunkPhotoHit(
+          categoryId: definition.id,
+          label: definition.label,
+          description: definition.description,
+          score: definition.threshold,
+          threshold: definition.threshold,
+        ),
+      );
+    }
+    hits.sort((a, b) => a.label.compareTo(b.label));
+    return List<JunkPhotoHit>.unmodifiable(hits);
+  }
+
+  static JunkPhotoCategoryDefinition? definitionById(String id) {
+    final normalized = id.trim();
+    for (final definition in _definitions) {
+      if (definition.id == normalized) {
+        return definition;
+      }
+    }
+    return null;
+  }
+
+  static String? _categoryIdFromReasonTag(String value) {
+    final trimmed = value.trim();
+    if (!trimmed.startsWith(junkReasonTagPrefix)) {
+      return null;
+    }
+    final id = trimmed.substring(junkReasonTagPrefix.length).trim();
+    return id.isEmpty ? null : id;
+  }
 
   /// 可被 `compute()` 序列化的原型缓存
   Map<String, List<double>> get prototypeCache =>

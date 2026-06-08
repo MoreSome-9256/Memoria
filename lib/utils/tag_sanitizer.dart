@@ -44,7 +44,10 @@ class TagSanitizer {
     return normalized;
   }
 
-  static List<String> sanitizeVisualTags(Iterable<String> values, {int? maxTags}) {
+  static List<String> sanitizeVisualTags(
+    Iterable<String> values, {
+    int? maxTags,
+  }) {
     return _sanitize(values, sanitizer: sanitizeVisualTag, maxTags: maxTags);
   }
 
@@ -52,12 +55,17 @@ class TagSanitizer {
     return _sanitize(values, sanitizer: sanitizeOcrTag, maxTags: maxTags);
   }
 
-  static List<String> sanitizeDisplayTags(Iterable<String> values, {int? maxTags}) {
+  static List<String> sanitizeDisplayTags(
+    Iterable<String> values, {
+    int? maxTags,
+  }) {
     return _sanitize(values, sanitizer: sanitizeDisplayTag, maxTags: maxTags);
   }
 
   static bool isBlockedExactTag(String value) {
-    return _blockedExactTags.contains(value.trim());
+    final normalized = value.trim();
+    return _blockedExactTags.contains(normalized) ||
+        normalized.startsWith('__junk_reason__:');
   }
 
   static List<String> _sanitize(
@@ -84,6 +92,9 @@ class TagSanitizer {
     if (normalized == null || normalized.isEmpty || normalized.length == 1) {
       return null;
     }
+    if (normalized.startsWith('__junk_reason__:')) {
+      return null;
+    }
     return normalized;
   }
 
@@ -101,9 +112,7 @@ class TagSanitizer {
     }
 
     if (value.length <= 4) {
-      final chineseCount = RegExp(r'[\u4e00-\u9fff]')
-          .allMatches(value)
-          .length;
+      final chineseCount = RegExp(r'[\u4e00-\u9fff]').allMatches(value).length;
       final asciiCount = RegExp(r'[A-Za-z]').allMatches(value).length;
       final digitCount = RegExp(r'\d').allMatches(value).length;
 

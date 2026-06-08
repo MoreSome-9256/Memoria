@@ -9,6 +9,7 @@ import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import '../../utils/media_type_helper.dart';
+import '../../utils/tag_sanitizer.dart';
 import '../widgets/media_thumbnail.dart';
 import 'create_hub_page.dart';
 import 'event_detail_page.dart';
@@ -279,7 +280,9 @@ class _HomePageState extends State<HomePage> {
     List<PhotoEntity> pets = [], scenery = [], foods = [], happy = [];
 
     for (var p in recentPhotos) {
-      final tagsStr = p.aiTags?.join(' ').toLowerCase() ?? '';
+      final tagsStr = TagSanitizer.sanitizeVisualTags(
+        p.aiTags ?? const <String>[],
+      ).join(' ').toLowerCase();
       if (tagsStr.contains('猫') ||
           tagsStr.contains('狗') ||
           tagsStr.contains('宠物') ||

@@ -26,6 +26,7 @@ import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
 import 'analysis_spool_service.dart';
 import 'app_ai_settings_service.dart';
+import 'junk_photo_filter_service.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_litert_service.dart';
 import 'mobileclip_tag_service.dart';
@@ -795,102 +796,20 @@ class SpoolAnalysisWorker {
   }
 
   List<Map<String, Object?>> _buildJunkDefinitions() {
-    return <Map<String, Object?>>[
-      <String, Object?>{
-        'id': 'code',
-        'label': '二维码/海报码',
-        'description': '付款码、二维码海报、条形码、取件码等检索价值较低的图片。',
-        'prototypePrompts': <String>[
-          'a QR code poster',
-          'a payment QR code',
-          'a barcode or QR code on a screen',
-          'a poster with a large QR code',
-        ],
-        'threshold': 0.275,
-        'ocrBoostThreshold': 12,
-        'ocrBoost': 0.015,
-      },
-      <String, Object?>{
-        'id': 'meme',
-        'label': '表情包/梗图',
-        'description': '聊天表情包、网络梗图、二次创作配文图等重复消费型图片。',
-        'prototypePrompts': <String>[
-          'a meme image with text overlay',
-          'a funny reaction meme or sticker',
-          'a social media meme screenshot',
-          'a captioned joke image template',
-        ],
-        'threshold': 0.285,
-        'ocrBoostThreshold': 8,
-        'ocrBoost': 0.015,
-      },
-      <String, Object?>{
-        'id': 'plain_selfie',
-        'label': '低信息自拍/证件照',
-        'description': '纯大头自拍、证件照或没有背景、他人和事件线索的人像。多人场景、旅行和活动合照不应命中。',
-        'prototypePrompts': <String>[
-          'a plain close-up selfie headshot with no background context',
-          'an ID photo portrait against a plain background',
-          'a passport photo or document portrait',
-          'a close-up face selfie without environment or event context',
-        ],
-        'threshold': 0.285,
-      },
-      <String, Object?>{
-        'id': 'advertisement_poster',
-        'label': '广告/海报',
-        'description': '程序生成的分享海报、营销广告、纯宣传图。街景或活动照片中出现广告牌不应命中。',
-        'prototypePrompts': <String>[
-          'a generated advertising poster image',
-          'a promotional marketing poster with text',
-          'a social media share poster advertisement',
-          'a product advertisement image with graphic design',
-        ],
-        'threshold': 0.285,
-        'ocrBoostThreshold': 16,
-        'ocrBoost': 0.02,
-      },
-      <String, Object?>{
-        'id': 'abstract_low_value',
-        'label': '低事件价值图形',
-        'description': '抽象图案、纯装饰图、无具体事件意义或生活线索的图片。',
-        'prototypePrompts': <String>[
-          'an abstract graphic pattern with no real world event',
-          'a decorative wallpaper image',
-          'a simple abstract art image without people or place',
-          'a generated geometric pattern image',
-        ],
-        'threshold': 0.295,
-      },
-      <String, Object?>{
-        'id': 'dark_or_occluded',
-        'label': '严重遮挡/过暗',
-        'description': '黑屏、口袋误拍、镜头被遮挡、几乎不可辨认的照片。',
-        'prototypePrompts': <String>[
-          'a nearly black photo',
-          'a very dark blurry accidental photo',
-          'a photo blocked by a finger',
-          'an accidental pocket shot',
-          'a heavily shadowed image with no clear subject',
-        ],
-        'threshold': 0.285,
-        'screenshotBoost': 0.03,
-      },
-      <String, Object?>{
-        'id': 'low_value_landmark',
-        'label': '低价值地标/路牌',
-        'description': '路牌、门牌号、停车位标识、交通指示牌等只有单一信息维度的内容。',
-        'prototypePrompts': <String>[
-          'a street sign or road sign',
-          'a house number or address plate',
-          'a parking space sign',
-          'a directional signpost',
-        ],
-        'threshold': 0.27,
-        'ocrBoostThreshold': 8,
-        'ocrBoost': 0.025,
-      },
-    ];
+    return JunkPhotoFilterService().definitions
+        .map(
+          (definition) => <String, Object?>{
+            'id': definition.id,
+            'label': definition.label,
+            'description': definition.description,
+            'prototypePrompts': definition.prototypePrompts,
+            'threshold': definition.threshold,
+            'screenshotBoost': definition.screenshotBoost,
+            'ocrBoostThreshold': definition.ocrBoostThreshold,
+            'ocrBoost': definition.ocrBoost,
+          },
+        )
+        .toList(growable: false);
   }
 
   // ── 单张照片分析 ──

@@ -2,6 +2,7 @@
 
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
+import 'tag_sanitizer.dart';
 
 class StoryPromptHelper {
   const StoryPromptHelper._();
@@ -13,7 +14,10 @@ class StoryPromptHelper {
       final time = DateTime.fromMillisecondsSinceEpoch(photo.timestamp);
       final timeStr =
           '${time.month}月${time.day}日 ${time.hour}:${time.minute.toString().padLeft(2, '0')}';
-      final tags = photo.aiTags?.join(', ') ?? '无标签';
+      final cleanTags = TagSanitizer.sanitizeVisualTags(
+        photo.aiTags ?? const <String>[],
+      );
+      final tags = cleanTags.isEmpty ? '无标签' : cleanTags.join(', ');
       final areaParts =
           [photo.province?.trim(), photo.city?.trim(), photo.district?.trim()]
               .where((item) => item != null && item.isNotEmpty)
@@ -54,7 +58,11 @@ class StoryPromptHelper {
     required String locationMode,
   }) {
     final location =
-      event.locationName ?? event.district ?? event.city ?? event.province ?? '某地';
+        event.locationName ??
+        event.district ??
+        event.city ??
+        event.province ??
+        '某地';
     final dateStart = DateTime.fromMillisecondsSinceEpoch(event.startTime);
     final dateEnd = DateTime.fromMillisecondsSinceEpoch(event.endTime);
     final dateRange =

@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import '../models/entity/photo_entity.dart';
 import '../utils/ocr_policy.dart';
+import '../utils/tag_sanitizer.dart';
 
 class ThemeClusterComputeHelpers {
   const ThemeClusterComputeHelpers._();
@@ -78,10 +79,14 @@ class ThemeClusterComputeHelpers {
       }
     }
 
-    for (final tag in photo.aiTags ?? const <String>[]) {
+    for (final tag in TagSanitizer.sanitizeVisualTags(
+      photo.aiTags ?? const <String>[],
+    )) {
       addText(tag);
     }
-    for (final tag in OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[])) {
+    for (final tag in OcrPolicy.effectiveTags(
+      photo.ocrTags ?? const <String>[],
+    )) {
       addText(tag);
     }
     addText(OcrPolicy.effectiveText(photo.ocrText));

@@ -23,19 +23,44 @@ extension AIServiceLifecycle on AIService {
       clearPendingJunkCleanupReport();
       return null;
     }
-    final report = JunkPhotoCleanupReport.fromCandidates(
-      photos
-          .map(
-            (photo) => JunkPhotoCleanupCandidate(
-              photoId: photo.id,
-              assetId: photo.assetId,
-              path: photo.path,
-              timestamp: photo.timestamp,
-              reasons: const <JunkPhotoHit>[],
-            ),
-          )
-          .toList(growable: false),
-    );
+    final candidates = <JunkPhotoCleanupCandidate>[];
+    final recoveredReasonTagsByPhotoId = <int, List<String>>{};
+    for (final photo in photos) {
+      var reasons = JunkPhotoFilterService.hitsFromTags(
+        photo.aiTags ?? const <String>[],
+      );
+      if (reasons.isEmpty && (photo.imageEmbedding?.isNotEmpty ?? false)) {
+        final decision = await _junkPhotoFilterService.evaluatePhoto(
+          photo: photo,
+          imageEmbedding: photo.imageEmbedding!,
+          ocrText: photo.ocrText ?? '',
+        );
+        reasons = decision.hits;
+        final reasonTags = JunkPhotoFilterService.reasonTagsForHits(reasons);
+        if (reasonTags.isNotEmpty) {
+          recoveredReasonTagsByPhotoId[photo.id] = reasonTags;
+        }
+      }
+      candidates.add(
+        JunkPhotoCleanupCandidate(
+          photoId: photo.id,
+          assetId: photo.assetId,
+          path: photo.path,
+          timestamp: photo.timestamp,
+          reasons: reasons,
+        ),
+      );
+    }
+    if (recoveredReasonTagsByPhotoId.isNotEmpty) {
+      for (final entry in recoveredReasonTagsByPhotoId.entries) {
+        PhotoService().updatePhotoInTransaction(entry.key, (photo) {
+          if (photo == null) return;
+          final tags = <String>{...?photo.aiTags, ...entry.value};
+          photo.aiTags = tags.toList(growable: false);
+        });
+      }
+    }
+    final report = JunkPhotoCleanupReport.fromCandidates(candidates);
     replacePendingJunkCleanupReport(report);
     return report;
   }

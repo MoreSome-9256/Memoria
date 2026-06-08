@@ -40,10 +40,11 @@ class JunkPhotoCleanupService {
     }
 
     for (final photo in photos) {
-      final tags = <String>{
-        ...?photo.aiTags,
-        JunkPhotoFilterService.junkCandidateTag,
-      }..remove(JunkPhotoFilterService.pendingJunkCandidateTag);
+      final tags =
+          <String>{...?photo.aiTags, JunkPhotoFilterService.junkCandidateTag}
+            ..remove(JunkPhotoFilterService.pendingJunkCandidateTag)
+            ..removeWhere(JunkPhotoFilterService.isInternalJunkTag);
+      tags.add(JunkPhotoFilterService.junkCandidateTag);
       photo.aiTags = tags.toList(growable: false);
       photo.isAiAnalyzed = true;
       photo.isAiAnalysisCandidate = false;
@@ -89,7 +90,8 @@ class JunkPhotoCleanupService {
     for (final photo in photos) {
       final tags = <String>{...?photo.aiTags}
         ..remove(JunkPhotoFilterService.pendingJunkCandidateTag)
-        ..remove(JunkPhotoFilterService.junkCandidateTag);
+        ..remove(JunkPhotoFilterService.junkCandidateTag)
+        ..removeWhere(JunkPhotoFilterService.isInternalJunkTag);
       photo.aiTags = tags.toList(growable: false);
       photo.isAiAnalyzed = true;
       photo.isAiAnalysisCandidate = false;
@@ -156,10 +158,12 @@ class JunkPhotoCleanupService {
       final remainingIds = event.photoIds
           .where((photoId) => photoId != currentPhoto.id)
           .toList(growable: false);
-      final remainingPhotos = photoBox.getMany(remainingIds)
-          .whereType<PhotoEntity>()
-          .toList(growable: false)
-        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      final remainingPhotos =
+          photoBox
+              .getMany(remainingIds)
+              .whereType<PhotoEntity>()
+              .toList(growable: false)
+            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
       if (remainingPhotos.isEmpty) {
         eventBox.remove(currentEventId);

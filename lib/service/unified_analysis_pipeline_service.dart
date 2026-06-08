@@ -589,7 +589,10 @@ class UnifiedAnalysisPipelineService {
       ocrText: ocrText ?? '',
     );
     final finalTags = junkDecision.shouldFilter
-        ? <String>[JunkPhotoFilterService.pendingJunkCandidateTag]
+        ? <String>[
+            JunkPhotoFilterService.pendingJunkCandidateTag,
+            ...JunkPhotoFilterService.reasonTagsForHits(junkDecision.hits),
+          ]
         : tags;
     final finalOcrTags = junkDecision.shouldFilter ? <String>[] : ocrTags;
 

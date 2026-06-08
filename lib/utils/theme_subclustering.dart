@@ -6,6 +6,7 @@ import '../models/entity/photo_entity.dart';
 import '../models/theme_cluster_models.dart';
 import 'ocr_policy.dart';
 import 'dbscan_algorithm.dart';
+import 'tag_sanitizer.dart';
 
 abstract class ThemeSubclusterer {
   const ThemeSubclusterer();
@@ -127,13 +128,16 @@ class PeopleThemeSubclusterer extends ThemeSubclusterer {
     }
 
     if (subclusters.isEmpty) {
-      return const HeuristicThemeSubclusterer().buildSubclusters(
-        definition: definition,
-        scoredPhotos: scoredPhotos,
-        maxPreviewPerGroup: maxPreviewPerGroup,
-        minPhotosPerSubcluster: minPhotosPerSubcluster,
-        pureEmbeddingOnly: false,
-      ).map((item) => item.copyWith(algorithm: algorithm)).toList(growable: false);
+      return const HeuristicThemeSubclusterer()
+          .buildSubclusters(
+            definition: definition,
+            scoredPhotos: scoredPhotos,
+            maxPreviewPerGroup: maxPreviewPerGroup,
+            minPhotosPerSubcluster: minPhotosPerSubcluster,
+            pureEmbeddingOnly: false,
+          )
+          .map((item) => item.copyWith(algorithm: algorithm))
+          .toList(growable: false);
     }
 
     subclusters.sort((a, b) => b.totalPhotos.compareTo(a.totalPhotos));
@@ -194,7 +198,10 @@ class PeopleThemeSubclusterer extends ThemeSubclusterer {
       var bestDistance = double.infinity;
 
       for (var index = 0; index < identityClusters.length; index++) {
-        final distance = _distanceToClusterCentroid(item, identityClusters[index]);
+        final distance = _distanceToClusterCentroid(
+          item,
+          identityClusters[index],
+        );
         if (distance < bestDistance) {
           bestDistance = distance;
           bestIndex = index;
@@ -453,10 +460,16 @@ class GenericThemeSubclusterer extends ThemeSubclusterer {
     required int clusterIndex,
     required List<ScoredThemePhoto> clusterPhotos,
   }) {
-    final photos = clusterPhotos.map((item) => item.photo).toList(growable: false);
+    final photos = clusterPhotos
+        .map((item) => item.photo)
+        .toList(growable: false);
     if (definition.id == 'books') {
-      final slides = photos.where(HeuristicThemeSubclusterer.looksLikeSlidePhoto).length;
-      final docs = photos.where(HeuristicThemeSubclusterer.looksLikeDocumentPhoto).length;
+      final slides = photos
+          .where(HeuristicThemeSubclusterer.looksLikeSlidePhoto)
+          .length;
+      final docs = photos
+          .where(HeuristicThemeSubclusterer.looksLikeDocumentPhoto)
+          .length;
       if (slides >= docs && slides >= 2) {
         return const _ClusterDescriptor(
           title: '投影课件簇',
@@ -472,8 +485,12 @@ class GenericThemeSubclusterer extends ThemeSubclusterer {
     }
 
     if (definition.id == 'food') {
-      final drinks = photos.where(HeuristicThemeSubclusterer.looksLikeDrinkPhoto).length;
-      final meals = photos.where(HeuristicThemeSubclusterer.looksLikeMealPhoto).length;
+      final drinks = photos
+          .where(HeuristicThemeSubclusterer.looksLikeDrinkPhoto)
+          .length;
+      final meals = photos
+          .where(HeuristicThemeSubclusterer.looksLikeMealPhoto)
+          .length;
       if (drinks >= meals && drinks >= 2) {
         return const _ClusterDescriptor(
           title: '饮料甜点簇',
@@ -517,10 +534,14 @@ class GenericThemeSubclusterer extends ThemeSubclusterer {
     }
 
     for (final photo in photos) {
-      for (final tag in photo.aiTags ?? const <String>[]) {
+      for (final tag in TagSanitizer.sanitizeVisualTags(
+        photo.aiTags ?? const <String>[],
+      )) {
         addToken(tag);
       }
-      for (final tag in OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[])) {
+      for (final tag in OcrPolicy.effectiveTags(
+        photo.ocrTags ?? const <String>[],
+      )) {
         addToken(tag);
       }
     }
@@ -577,10 +598,7 @@ class GenericThemeSubclusterer extends ThemeSubclusterer {
 }
 
 class _ClusterDescriptor {
-  const _ClusterDescriptor({
-    required this.title,
-    required this.subtitle,
-  });
+  const _ClusterDescriptor({required this.title, required this.subtitle});
 
   final String title;
   final String subtitle;
@@ -615,13 +633,17 @@ class HeuristicThemeSubclusterer extends ThemeSubclusterer {
     final subclusters = <ThemeSubcluster>[];
 
     for (final rule in rules) {
-      final matched = remaining.where((item) => rule.matcher(item.photo)).toList(growable: false);
+      final matched = remaining
+          .where((item) => rule.matcher(item.photo))
+          .toList(growable: false);
       if (matched.length < minPhotosPerSubcluster) {
         continue;
       }
 
-      remaining.removeWhere((candidate) =>
-          matched.any((item) => identical(item.photo, candidate.photo)));
+      remaining.removeWhere(
+        (candidate) =>
+            matched.any((item) => identical(item.photo, candidate.photo)),
+      );
       subclusters.add(
         _buildSingleSubcluster(
           id: '${definition.id}_${rule.id}',
@@ -713,49 +735,49 @@ class HeuristicThemeSubclusterer extends ThemeSubclusterer {
 
   static final Map<String, List<_SubclusterRule>> _rulesByTheme =
       <String, List<_SubclusterRule>>{
-    'people': <_SubclusterRule>[
-      _SubclusterRule(
-        id: 'group',
-        title: '合影',
-        subtitle: '更接近未来的人物关系簇入口',
-        matcher: _isGroupPeoplePhoto,
-      ),
-      _SubclusterRule(
-        id: 'solo',
-        title: '单人',
-        subtitle: '未来可继续细分到具体人物身份',
-        matcher: _isSoloPeoplePhoto,
-      ),
-    ],
-    'books': <_SubclusterRule>[
-      _SubclusterRule(
-        id: 'slides',
-        title: '投影课件',
-        subtitle: 'PPT、投影和课堂讲解画面',
-        matcher: looksLikeSlidePhoto,
-      ),
-      _SubclusterRule(
-        id: 'notes',
-        title: '笔记文档',
-        subtitle: '文字密集、试卷和文档资料',
-        matcher: looksLikeDocumentPhoto,
-      ),
-    ],
-    'food': <_SubclusterRule>[
-      _SubclusterRule(
-        id: 'drinks',
-        title: '饮料甜点',
-        subtitle: '咖啡、饮品和甜口瞬间',
-        matcher: looksLikeDrinkPhoto,
-      ),
-      _SubclusterRule(
-        id: 'meals',
-        title: '正餐热食',
-        subtitle: '火锅、烧烤、面饭与聚餐',
-        matcher: looksLikeMealPhoto,
-      ),
-    ],
-  };
+        'people': <_SubclusterRule>[
+          _SubclusterRule(
+            id: 'group',
+            title: '合影',
+            subtitle: '更接近未来的人物关系簇入口',
+            matcher: _isGroupPeoplePhoto,
+          ),
+          _SubclusterRule(
+            id: 'solo',
+            title: '单人',
+            subtitle: '未来可继续细分到具体人物身份',
+            matcher: _isSoloPeoplePhoto,
+          ),
+        ],
+        'books': <_SubclusterRule>[
+          _SubclusterRule(
+            id: 'slides',
+            title: '投影课件',
+            subtitle: 'PPT、投影和课堂讲解画面',
+            matcher: looksLikeSlidePhoto,
+          ),
+          _SubclusterRule(
+            id: 'notes',
+            title: '笔记文档',
+            subtitle: '文字密集、试卷和文档资料',
+            matcher: looksLikeDocumentPhoto,
+          ),
+        ],
+        'food': <_SubclusterRule>[
+          _SubclusterRule(
+            id: 'drinks',
+            title: '饮料甜点',
+            subtitle: '咖啡、饮品和甜口瞬间',
+            matcher: looksLikeDrinkPhoto,
+          ),
+          _SubclusterRule(
+            id: 'meals',
+            title: '正餐热食',
+            subtitle: '火锅、烧烤、面饭与聚餐',
+            matcher: looksLikeMealPhoto,
+          ),
+        ],
+      };
 
   static bool _isSoloPeoplePhoto(PhotoEntity photo) => photo.faceCount == 1;
 
@@ -783,7 +805,9 @@ class HeuristicThemeSubclusterer extends ThemeSubclusterer {
 
   static bool looksLikeMealPhoto(PhotoEntity photo) {
     final bag = _tokenBag(photo);
-    return bag.any(<String>{'火锅', '烧烤', '美食', '饭', '面', '菜', '食物', '餐'}.contains);
+    return bag.any(
+      <String>{'火锅', '烧烤', '美食', '饭', '面', '菜', '食物', '餐'}.contains,
+    );
   }
 
   static Set<String> _tokenBag(PhotoEntity photo) {
@@ -795,7 +819,9 @@ class HeuristicThemeSubclusterer extends ThemeSubclusterer {
         return;
       }
       tokens.add(normalized);
-      for (final piece in normalized.split(RegExp(r'[\s,，。；：、|/\\()\[\]{}_-]+'))) {
+      for (final piece in normalized.split(
+        RegExp(r'[\s,，。；：、|/\\()\[\]{}_-]+'),
+      )) {
         final value = piece.trim();
         if (value.isNotEmpty) {
           tokens.add(value);
@@ -803,10 +829,14 @@ class HeuristicThemeSubclusterer extends ThemeSubclusterer {
       }
     }
 
-    for (final tag in photo.aiTags ?? const <String>[]) {
+    for (final tag in TagSanitizer.sanitizeVisualTags(
+      photo.aiTags ?? const <String>[],
+    )) {
       addText(tag);
     }
-    for (final tag in OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[])) {
+    for (final tag in OcrPolicy.effectiveTags(
+      photo.ocrTags ?? const <String>[],
+    )) {
       addText(tag);
     }
     addText(OcrPolicy.effectiveText(photo.ocrText));
@@ -839,22 +869,27 @@ List<ThemeTimelineGroup> buildTimelineGroups(
     buckets.putIfAbsent(key, () => <PhotoEntity>[]).add(photo);
   }
 
-  final groups = buckets.entries.map((entry) {
-    final parts = entry.key.split('-');
-    final year = int.parse(parts[0]);
-    final month = int.parse(parts[1]);
-    final groupPhotos = entry.value
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+  final groups =
+      buckets.entries
+          .map((entry) {
+            final parts = entry.key.split('-');
+            final year = int.parse(parts[0]);
+            final month = int.parse(parts[1]);
+            final groupPhotos = entry.value
+              ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-    return ThemeTimelineGroup(
-      key: entry.key,
-      title: '$year年$month月',
-      monthStart: DateTime(year, month),
-      photos: groupPhotos.take(maxPreviewPerGroup).toList(growable: false),
-      totalPhotos: groupPhotos.length,
-    );
-  }).toList(growable: false)
-    ..sort((a, b) => b.monthStart.compareTo(a.monthStart));
+            return ThemeTimelineGroup(
+              key: entry.key,
+              title: '$year年$month月',
+              monthStart: DateTime(year, month),
+              photos: groupPhotos
+                  .take(maxPreviewPerGroup)
+                  .toList(growable: false),
+              totalPhotos: groupPhotos.length,
+            );
+          })
+          .toList(growable: false)
+        ..sort((a, b) => b.monthStart.compareTo(a.monthStart));
 
   return groups;
 }

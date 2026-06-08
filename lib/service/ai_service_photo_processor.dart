@@ -9,7 +9,7 @@ part of 'ai_service.dart';
 // 这些函数必须是顶层函数（或静态函数），才能被 `compute()` / `Isolate.run()` 调用。
 // 输入输出均为可序列化的简单类型，通过 Map/List 跨 isolate 传递。
 
-/// 后台 isolate：垃圾照片过滤（余弦相似度 × 7 个分类原型）
+/// 后台 isolate：垃圾照片过滤（余弦相似度 × 低价值分类原型）
 Map<String, Object?> _computeJunkFilter(Map<String, Object?> params) {
   final embedding = (params['embedding'] as List<Object?>).cast<double>();
   final prototypes = (params['prototypes'] as Map<String, Object?>).map(

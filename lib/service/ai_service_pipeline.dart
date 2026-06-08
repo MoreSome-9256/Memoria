@@ -465,7 +465,12 @@ extension AIServicePipeline on AIService {
       if (p == null) return;
 
       p.aiTags = result.isJunk
-          ? <String>[JunkPhotoFilterService.pendingJunkCandidateTag]
+          ? <String>[
+              JunkPhotoFilterService.pendingJunkCandidateTag,
+              ...JunkPhotoFilterService.reasonTagsForCategoryIds(<String?>[
+                result.junkCategoryId,
+              ]),
+            ]
           : result.tags;
       p.isAiAnalyzed = false;
       p.isAiAnalysisCandidate = true;

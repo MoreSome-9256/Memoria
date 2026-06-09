@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-
 import '../../service/media_thumbnail_cache_service.dart';
 import '../../utils/media_type_helper.dart';
 
@@ -14,6 +13,7 @@ class MediaThumbnail extends StatefulWidget {
     this.thumbnailBytes,
     this.fit = BoxFit.cover,
     this.onFirstFrame,
+    this.onLoadFailed,
     this.showBadge = true,
   });
 
@@ -23,6 +23,7 @@ class MediaThumbnail extends StatefulWidget {
   final Uint8List? thumbnailBytes;
   final BoxFit fit;
   final VoidCallback? onFirstFrame;
+  final VoidCallback? onLoadFailed;
   final bool showBadge;
 
   @override
@@ -37,6 +38,7 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
 
   late Future<_MediaThumbnailData> _future;
   bool _frameReported = false;
+  bool _failureReported = false;
 
   @override
   void initState() {
@@ -52,6 +54,7 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
         oldWidget.kind != widget.kind ||
         oldWidget.thumbnailBytes != widget.thumbnailBytes) {
       _frameReported = false;
+      _failureReported = false;
       _future = _load();
     }
   }
@@ -61,6 +64,12 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
     return FutureBuilder<_MediaThumbnailData>(
       future: _future,
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          debugPrint(
+            'MediaThumbnail load failed: assetId=${widget.assetId} '
+            'kind=${widget.kind} error=${snapshot.error}',
+          );
+        }
         final data = snapshot.data;
         final kind =
             data?.kind ?? widget.kind ?? MediaTypeHelper.fromPath(widget.path);
@@ -171,7 +180,12 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
       return;
     }
     _frameReported = true;
-    widget.onFirstFrame?.call();
+    final callback = widget.onFirstFrame;
+    if (callback != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) callback();
+      });
+    }
   }
 
   Widget _fallbackForKind(MemoriaMediaKind kind) {
@@ -214,7 +228,39 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
       );
     }
 
-    return _remember(cacheKey, _MediaThumbnailData(kind: kind));
+    final assetId = widget.assetId?.trim();
+    if (assetId != null && assetId.isNotEmpty) {
+      try {
+        final result = await MediaThumbnailCacheService.instance
+            .loadAssetThumbnailById(assetId);
+        final assetThumb = result?.bytes;
+        if (assetThumb != null && assetThumb.isNotEmpty) {
+          return _remember(
+            cacheKey,
+            _MediaThumbnailData(kind: result!.kind, thumbnailBytes: assetThumb),
+          );
+        }
+      } catch (error, stackTrace) {
+        debugPrint(
+          'MediaThumbnail asset fallback failed: assetId=$assetId '
+          'kind=$kind error=$error\n$stackTrace',
+        );
+      }
+    }
+
+    _reportLoadFailed();
+    return _MediaThumbnailData(kind: kind);
+  }
+
+  void _reportLoadFailed() {
+    if (_failureReported) return;
+    _failureReported = true;
+    final callback = widget.onLoadFailed;
+    if (callback != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) callback();
+      });
+    }
   }
 
   _MediaThumbnailData _remember(String key, _MediaThumbnailData data) {

@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../utils/media_type_helper.dart';
+import 'media_thumbnail_cache_service.dart';
 
 class MediaAnalysisImageInput {
   const MediaAnalysisImageInput({
@@ -143,7 +144,9 @@ class MediaAnalysisImageReader {
         quality: 92,
       );
       if (bytes != null && bytes.isNotEmpty) {
-        return _writeFrameBytes(bytes, prefix: 'memoria_asset_vlm');
+        return _writeFrameByteList(<Uint8List>[
+          bytes,
+        ], prefix: 'memoria_asset_vlm');
       }
     }
     return const MediaAnalysisFrameFiles(
@@ -174,7 +177,10 @@ class MediaAnalysisImageReader {
               frame: frame,
             );
       final bytes = await asset.thumbnailDataWithOption(option);
-      return bytes == null || bytes.isEmpty ? null : bytes;
+      return bytes == null ||
+              !MediaThumbnailCacheService.isSupportedImageBytes(bytes)
+          ? null
+          : bytes;
     } catch (error) {
       debugPrint('[media-reader] thumbnail failed asset=${asset.id}: $error');
       return null;
@@ -204,13 +210,6 @@ class MediaAnalysisImageReader {
     return frames;
   }
 
-  Future<MediaAnalysisFrameFiles> _writeFrameBytes(
-    Uint8List bytes, {
-    required String prefix,
-  }) async {
-    return _writeFrameByteList(<Uint8List>[bytes], prefix: prefix);
-  }
-
   Future<MediaAnalysisFrameFiles> _writeFrameByteList(
     List<Uint8List> byteList, {
     required String prefix,
@@ -221,7 +220,7 @@ class MediaAnalysisImageReader {
     final paths = <String>[];
     for (var i = 0; i < byteList.length; i++) {
       final bytes = byteList[i];
-      if (bytes.isEmpty) {
+      if (!MediaThumbnailCacheService.isSupportedImageBytes(bytes)) {
         continue;
       }
       final path =

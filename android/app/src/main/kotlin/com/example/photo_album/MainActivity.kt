@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.provider.MediaStore
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.pravera.flutter_foreground_task.FlutterForegroundTaskLifecycleListener
@@ -16,6 +17,8 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import kotlin.concurrent.thread
+import java.io.File
+import java.io.RandomAccessFile
 
 class MainActivity : FlutterActivity() {
 	private var pendingDirectoryGrantResult: MethodChannel.Result? = null
@@ -78,6 +81,13 @@ class MainActivity : FlutterActivity() {
 						result.error("invalid_uri", "Missing content uri.", null)
 					} else {
 						result.success(readContentUriBytes(uriString))
+					}
+				}
+				"extractAndroidMotionPhoto" -> {
+					val assetId = call.arguments as? String
+					thread(name = "memoria-motion-photo") {
+						val path = assetId?.let(::extractAndroidMotionPhoto)
+						runOnUiThread { result.success(path) }
 					}
 				}
 				else -> result.notImplemented()
@@ -214,6 +224,64 @@ class MainActivity : FlutterActivity() {
 		} catch (_: Exception) {
 			null
 		}
+	}
+
+	private fun extractAndroidMotionPhoto(assetId: String): String? {
+		val numericId = assetId.toLongOrNull() ?: return null
+		val uri = Uri.withAppendedPath(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, numericId.toString())
+		val source = cacheDir.resolve("motion_photo_source_$numericId")
+		val output = cacheDir.resolve("motion_photo_$numericId.mp4")
+		return try {
+			contentResolver.openInputStream(uri)?.use { input ->
+				source.outputStream().use { input.copyTo(it) }
+			} ?: return null
+			val videoOffset = findEmbeddedMp4Offset(source) ?: return null
+			RandomAccessFile(source, "r").use { input ->
+				input.seek(videoOffset)
+				output.outputStream().use { out ->
+					val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+					while (true) {
+						val read = input.read(buffer)
+						if (read <= 0) break
+						out.write(buffer, 0, read)
+					}
+				}
+			}
+			output.takeIf { it.length() > 16 }?.absolutePath
+		} catch (error: Exception) {
+			Log.w(TAG, "Motion Photo extraction failed assetId=$assetId", error)
+			null
+		} finally {
+			source.delete()
+		}
+	}
+
+	private fun findEmbeddedMp4Offset(file: File): Long? {
+		RandomAccessFile(file, "r").use { input ->
+			val length = input.length()
+			if (length < 16) return null
+			val scanSize = minOf(length, 32L * 1024L * 1024L).toInt()
+			val start = length - scanSize
+			val bytes = ByteArray(scanSize)
+			input.seek(start)
+			input.readFully(bytes)
+			for (index in 4 until bytes.size - 8) {
+				if (bytes[index] != 'f'.code.toByte() ||
+					bytes[index + 1] != 't'.code.toByte() ||
+					bytes[index + 2] != 'y'.code.toByte() ||
+					bytes[index + 3] != 'p'.code.toByte()
+				) continue
+				val boxSize =
+					((bytes[index - 4].toInt() and 0xff) shl 24) or
+					((bytes[index - 3].toInt() and 0xff) shl 16) or
+					((bytes[index - 2].toInt() and 0xff) shl 8) or
+					(bytes[index - 1].toInt() and 0xff)
+				if (boxSize < 8) continue
+				val offset = start + index - 4
+				if (offset > 0 && length - offset > 16) return offset
+			}
+		}
+		return null
 	}
 
 	private fun openBatteryOptimizationSettings() {

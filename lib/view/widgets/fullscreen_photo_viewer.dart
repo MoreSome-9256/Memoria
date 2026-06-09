@@ -1,12 +1,14 @@
 /// 全屏照片查看器组件，提供放大浏览和过渡动画。
 
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../service/photo_service.dart';
+import '../../service/android_motion_photo_service.dart';
 import '../../utils/media_type_helper.dart';
 import 'path_image.dart';
 
@@ -72,6 +74,14 @@ class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
         }
         final resolvedPath = media?.path ?? widget.path;
         final kind = media?.kind ?? MediaTypeHelper.fromPath(widget.path);
+        if (media?.isLivePhoto == true) {
+          return _FullscreenMediaScaffold(
+            child: _FullscreenLivePhotoPlayer(
+              assetId: widget.assetId!,
+              stillPath: resolvedPath,
+            ),
+          );
+        }
         if (kind == MemoriaMediaKind.video) {
           return _FullscreenMediaScaffold(
             child: _FullscreenVideoPlayer(
@@ -81,11 +91,19 @@ class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
           );
         }
 
-        final image = PathImage(
-          path: resolvedPath,
-          fit: BoxFit.contain,
-          enableSmartCache: false,
-        );
+        final image =
+            widget.assetId != null &&
+                widget.assetId!.isNotEmpty &&
+                kind == MemoriaMediaKind.image
+            ? _FullscreenAndroidMotionPhoto(
+                assetId: widget.assetId!,
+                fallbackPath: resolvedPath,
+              )
+            : PathImage(
+                path: resolvedPath,
+                fit: BoxFit.contain,
+                enableSmartCache: false,
+              );
         return _FullscreenMediaScaffold(
           child: Center(
             child: InteractiveViewer(
@@ -121,6 +139,22 @@ class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
           kind: kind,
           path: file.path,
           available: true,
+          isLivePhoto: asset.isLivePhoto,
+        );
+      }
+      final thumbnail = await asset.thumbnailDataWithOption(
+        const ThumbnailOption(
+          size: ThumbnailSize.square(2048),
+          format: ThumbnailFormat.jpeg,
+          quality: 92,
+        ),
+      );
+      if (thumbnail != null && thumbnail.isNotEmpty) {
+        return _ResolvedFullscreenMedia(
+          kind: kind,
+          path: widget.path,
+          available: true,
+          isLivePhoto: asset.isLivePhoto,
         );
       }
     }
@@ -171,11 +205,13 @@ class _ResolvedFullscreenMedia {
     required this.kind,
     required this.path,
     required this.available,
+    this.isLivePhoto = false,
   });
 
   final MemoriaMediaKind kind;
   final String path;
   final bool available;
+  final bool isLivePhoto;
 }
 
 class _UnavailableMediaMessage extends StatelessWidget {
@@ -303,6 +339,212 @@ class _FullscreenVideoPlayerState extends State<_FullscreenVideoPlayer> {
         aspectRatio: controller.value.aspectRatio,
         child: VideoPlayer(controller),
       ),
+    );
+  }
+}
+
+class _FullscreenLivePhotoPlayer extends StatefulWidget {
+  const _FullscreenLivePhotoPlayer({
+    required this.assetId,
+    required this.stillPath,
+  });
+
+  final String assetId;
+  final String stillPath;
+
+  @override
+  State<_FullscreenLivePhotoPlayer> createState() =>
+      _FullscreenLivePhotoPlayerState();
+}
+
+class _FullscreenAndroidMotionPhoto extends StatefulWidget {
+  const _FullscreenAndroidMotionPhoto({
+    required this.assetId,
+    required this.fallbackPath,
+  });
+
+  final String assetId;
+  final String fallbackPath;
+
+  @override
+  State<_FullscreenAndroidMotionPhoto> createState() =>
+      _FullscreenAndroidMotionPhotoState();
+}
+
+class _FullscreenAndroidMotionPhotoState
+    extends State<_FullscreenAndroidMotionPhoto> {
+  VideoPlayerController? _controller;
+  Uint8List? _stillBytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      final asset = await AssetEntity.fromId(widget.assetId);
+      _stillBytes = await asset?.thumbnailDataWithOption(
+        const ThumbnailOption(
+          size: ThumbnailSize.square(2048),
+          format: ThumbnailFormat.jpeg,
+          quality: 95,
+        ),
+      );
+      final motionFile = await AndroidMotionPhotoService.extractByAssetId(
+        widget.assetId,
+      );
+      if (motionFile != null) {
+        final controller = VideoPlayerController.file(motionFile);
+        await controller.initialize();
+        await controller.setVolume(0);
+        await controller.setLooping(true);
+        await controller.play();
+        if (!mounted) {
+          await controller.dispose();
+          return;
+        }
+        setState(() => _controller = controller);
+        return;
+      }
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Android Motion Photo playback failed: assetId=${widget.assetId} '
+        'error=$error\n$stackTrace',
+      );
+    }
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    if (controller != null && controller.value.isInitialized) {
+      return AspectRatio(
+        aspectRatio: controller.value.aspectRatio,
+        child: VideoPlayer(controller),
+      );
+    }
+    final bytes = _stillBytes;
+    return bytes != null && bytes.isNotEmpty
+        ? Image.memory(bytes, fit: BoxFit.contain)
+        : PathImage(
+            path: widget.fallbackPath,
+            fit: BoxFit.contain,
+            enableSmartCache: false,
+          );
+  }
+}
+
+class _FullscreenLivePhotoPlayerState
+    extends State<_FullscreenLivePhotoPlayer> {
+  VideoPlayerController? _controller;
+  Uint8List? _stillBytes;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    VideoPlayerController? controller;
+    try {
+      final asset = await AssetEntity.fromId(widget.assetId);
+      if (asset == null) {
+        throw StateError('Live Photo asset is unavailable');
+      }
+      _stillBytes = await asset.thumbnailDataWithOption(
+        const ThumbnailOption(
+          size: ThumbnailSize.square(2048),
+          format: ThumbnailFormat.jpeg,
+          quality: 92,
+        ),
+      );
+
+      final mediaUrl = await asset.getMediaUrl();
+      if (mediaUrl != null && mediaUrl.isNotEmpty) {
+        controller = VideoPlayerController.networkUrl(
+          Uri.parse(mediaUrl),
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
+      } else {
+        final motionFile = await asset.fileWithSubtype;
+        if (motionFile == null || !await motionFile.exists()) {
+          throw StateError('Live Photo motion resource is unavailable');
+        }
+        controller = VideoPlayerController.file(motionFile);
+      }
+      await controller.initialize();
+      await controller.setVolume(0);
+      await controller.setLooping(true);
+      await controller.play();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() => _controller = controller);
+    } catch (error, stackTrace) {
+      await controller?.dispose();
+      debugPrint(
+        'Live Photo playback failed: assetId=${widget.assetId} '
+        'error=$error\n$stackTrace',
+      );
+      if (mounted) {
+        setState(() => _error = error);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+    if (controller != null && controller.value.isInitialized) {
+      return Center(
+        child: AspectRatio(
+          aspectRatio: controller.value.aspectRatio,
+          child: VideoPlayer(controller),
+        ),
+      );
+    }
+    final stillBytes = _stillBytes;
+    final still = stillBytes != null && stillBytes.isNotEmpty
+        ? Image.memory(stillBytes, fit: BoxFit.contain)
+        : PathImage(
+            path: widget.stillPath,
+            fit: BoxFit.contain,
+            enableSmartCache: false,
+          );
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Center(child: still),
+        if (_error == null)
+          const Center(child: CircularProgressIndicator())
+        else
+          Positioned(
+            right: 16,
+            bottom: 16,
+            child: Icon(
+              Icons.motion_photos_off_outlined,
+              color: Colors.white70,
+            ),
+          ),
+      ],
     );
   }
 }

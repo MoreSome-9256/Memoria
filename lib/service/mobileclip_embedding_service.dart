@@ -10,6 +10,7 @@ import '../storage/vector_index/vector_index_constants.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_litert_service.dart';
 import 'app_ai_settings_service.dart';
+import 'media_thumbnail_cache_service.dart';
 import 'photo_service.dart';
 
 class MobileClipEmbeddingService {
@@ -78,12 +79,18 @@ class MobileClipEmbeddingService {
     }
 
     final imageBytes =
-        preferredImageBytes != null && preferredImageBytes.isNotEmpty
+        preferredImageBytes != null &&
+            MediaThumbnailCacheService.isSupportedImageBytes(
+              preferredImageBytes,
+            )
         ? preferredImageBytes
         : await PhotoService().readOriginalMediaBytes(
             photo,
             purpose: 'mobileclip_embedding',
           );
+    if (!MediaThumbnailCacheService.isSupportedImageBytes(imageBytes)) {
+      throw StateError('MobileCLIP input is not a supported encoded image');
+    }
     final profile = await _profileEmbedding(imageBytes: imageBytes);
     final embedding = profile.embedding;
 

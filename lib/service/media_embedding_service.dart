@@ -7,6 +7,7 @@ import 'clip_tokenizer_service.dart';
 import 'mobileclip_backend_preference_service.dart';
 import 'mobileclip_litert_service.dart';
 import 'mobileclip2_semantic_index_service.dart';
+import 'media_thumbnail_cache_service.dart';
 import 'semantic_matching_service.dart';
 
 class MediaEmbeddingService {
@@ -25,6 +26,9 @@ class MediaEmbeddingService {
     MobileClipBackend? backend,
     MobileClipLiteRtService? liteRt,
   }) async {
+    if (!MediaThumbnailCacheService.isSupportedImageBytes(bytes)) {
+      throw ArgumentError('bytes is not a supported encoded image');
+    }
     final effectiveBackend =
         backend ??
         await MobileClipBackendPreferenceService().getSelectedBackend();
@@ -69,7 +73,7 @@ class MediaEmbeddingService {
     var preprocessMs = 0.0;
     var inferenceMs = 0.0;
     for (final bytes in frameBytes) {
-      if (bytes.isEmpty) {
+      if (!MediaThumbnailCacheService.isSupportedImageBytes(bytes)) {
         continue;
       }
       final profile = await effectiveLiteRt.profileImageBytes(bytes);

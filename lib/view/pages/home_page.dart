@@ -1,7 +1,9 @@
 /// 首页，展示精选事件、最近照片和推荐入口。
 
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:photo_manager/photo_manager.dart';
 import 'dart:ui';
 import '../../service/photo_service.dart';
 import '../../models/entity/photo_entity.dart';
@@ -25,8 +27,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  // 📸 用于轮播的照片列表
-  List<PhotoEntity> _displayPhotos = [];
+  List<AssetEntity> _heroAssets = [];
   int _currentPhotoIndex = 0;
   Timer? _timer;
 
@@ -36,8 +37,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    // 启动时加载照片数据
-    _loadRecentPhotos();
+    _loadHeroAssets();
     // 🌟 启动本地推荐引擎
     _generateDiscoverCards();
   }
@@ -49,42 +49,22 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
-  // ==========================================
-  // 📸 Hero Card 轮播逻辑 (保持不变)
-  // ==========================================
-  Future<void> _loadRecentPhotos() async {
-    final _pb = ObjectBoxService().store.box<PhotoEntity>();
-    final _q = _pb
-        .query()
-        .order(PhotoEntity_.timestamp, flags: Order.descending)
-        .build();
-    _q.limit = 100;
-    var recentCandidates = _q.find();
-    _q.close();
-
-    var filtered = recentCandidates.where((p) {
-      final ratio = p.width / p.height;
-      if (ratio < 0.6 || ratio > 1.8) return false;
-      final forbiddenTags = {'Screen', 'Text', 'Document', '屏幕', '文字', '截图'};
-      if (p.aiTags != null &&
-          p.aiTags!.any((tag) => forbiddenTags.contains(tag))) {
-        return false;
-      }
-      if (p.isAiAnalyzed && (p.joyScore ?? 0) < 0.1) return false;
-      return true;
-    }).toList();
-
-    final selection = filtered.take(15).toList()..shuffle();
-    final reconciledSelection = await PhotoService().reconcileAccessiblePhotos(
-      selection,
+  Future<void> _loadHeroAssets() async {
+    final paths = await PhotoManager.getAssetPathList(
+      type: RequestType.common,
+      filterOption: FilterOptionGroup(
+        imageOption: const FilterOption(),
+        videoOption: const FilterOption(),
+      ),
     );
-    // ==========================================
-    // 🌟 新增：修复缓存路径失效问题
-    // 遍历选中的照片，用永远不变的 assetId 换取最新有效路径
-    // ==========================================
-    if (reconciledSelection.isNotEmpty && mounted) {
+    if (paths.isEmpty) return;
+    final total = await paths.first.assetCountAsync;
+    final assets = await paths.first.getAssetListRange(start: 0, end: total);
+    assets.shuffle();
+    if (assets.isNotEmpty && mounted) {
       setState(() {
-        _displayPhotos = reconciledSelection;
+        _currentPhotoIndex = 0;
+        _heroAssets = assets;
       });
       _startBackgroundTimer();
     }
@@ -92,12 +72,19 @@ class _HomePageState extends State<HomePage> {
 
   void _startBackgroundTimer() {
     _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      if (_displayPhotos.isNotEmpty && mounted) {
+    _timer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (_heroAssets.isNotEmpty && mounted) {
         setState(() {
-          _currentPhotoIndex = (_currentPhotoIndex + 1) % _displayPhotos.length;
+          _currentPhotoIndex = (_currentPhotoIndex + 1) % _heroAssets.length;
         });
       }
+    });
+  }
+
+  void _skipCurrentBackground() {
+    if (!mounted || _heroAssets.length < 2) return;
+    setState(() {
+      _currentPhotoIndex = (_currentPhotoIndex + 1) % _heroAssets.length;
     });
   }
 
@@ -573,8 +560,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildHeroCard(BuildContext context) {
-    final hasPhotos = _displayPhotos.isNotEmpty;
-    final currentPhoto = hasPhotos ? _displayPhotos[_currentPhotoIndex] : null;
+    final hasPhotos = _heroAssets.isNotEmpty;
+    final currentAsset = hasPhotos ? _heroAssets[_currentPhotoIndex] : null;
 
     return Container(
       width: double.infinity,
@@ -596,20 +583,14 @@ class _HomePageState extends State<HomePage> {
           Positioned.fill(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 1200),
-              child: hasPhotos && currentPhoto != null
+              child: hasPhotos && currentAsset != null
                   ? Stack(
-                      key: ValueKey(currentPhoto.id),
+                      key: ValueKey(currentAsset.id),
                       fit: StackFit.expand,
                       children: [
-                        MediaThumbnail(
-                          path: currentPhoto.path,
-                          assetId: currentPhoto.assetId,
-                          kind: MediaTypeHelper.fromStorageValue(
-                            currentPhoto.mediaKind,
-                            path: currentPhoto.path,
-                          ),
-                          thumbnailBytes: currentPhoto.thumbnailBytes,
-                          fit: BoxFit.cover,
+                        _HeroAssetImage(
+                          asset: currentAsset,
+                          onLoadFailed: _skipCurrentBackground,
                         ),
                         Container(color: Colors.black.withValues(alpha: 0.35)),
                       ],
@@ -883,40 +864,68 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+}
 
-  Widget _buildWorksGrid() {
-    return Row(
-      children: [
-        Expanded(
-          child: Container(
-            height: 120,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade800,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Center(
-              child: Icon(
-                Icons.play_circle_fill,
-                color: Colors.white,
-                size: 40,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Container(
-            height: 120,
-            decoration: BoxDecoration(
-              color: Colors.pink.shade50,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Center(
-              child: Icon(Icons.image, color: Colors.pink, size: 40),
-            ),
-          ),
-        ),
-      ],
+class _HeroAssetImage extends StatefulWidget {
+  const _HeroAssetImage({required this.asset, required this.onLoadFailed});
+
+  final AssetEntity asset;
+  final VoidCallback onLoadFailed;
+
+  @override
+  State<_HeroAssetImage> createState() => _HeroAssetImageState();
+}
+
+class _HeroAssetImageState extends State<_HeroAssetImage> {
+  late Future<Uint8List?> _future;
+  bool _failureReported = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  Future<Uint8List?> _load() {
+    return widget.asset.thumbnailDataWithOption(
+      const ThumbnailOption(
+        size: ThumbnailSize(1280, 720),
+        format: ThumbnailFormat.jpeg,
+        quality: 90,
+      ),
+    );
+  }
+
+  void _reportFailure() {
+    if (_failureReported) return;
+    _failureReported = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onLoadFailed();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Uint8List?>(
+      future: _future,
+      builder: (context, snapshot) {
+        final bytes = snapshot.data;
+        if (bytes != null && bytes.isNotEmpty) {
+          return Image.memory(
+            bytes,
+            fit: BoxFit.cover,
+            gaplessPlayback: false,
+            errorBuilder: (_, _, _) {
+              _reportFailure();
+              return const SizedBox.shrink();
+            },
+          );
+        }
+        if (snapshot.connectionState == ConnectionState.done) {
+          _reportFailure();
+        }
+        return const SizedBox.shrink();
+      },
     );
   }
 }

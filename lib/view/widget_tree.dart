@@ -3,7 +3,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/painting.dart';
 import '../service/ai_background_task_service.dart';
 import '../service/ai_progress_notification_service.dart';
 import '../service/ai_service.dart';

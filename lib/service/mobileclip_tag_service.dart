@@ -13,11 +13,8 @@ import '../utils/tag_sanitizer.dart';
 import 'mobileclip_litert_service.dart';
 import 'semantic_matching_service.dart';
 
-typedef MobileClipTagWarmUpProgress = FutureOr<void> Function(
-  int completed,
-  int total,
-  String message,
-);
+typedef MobileClipTagWarmUpProgress =
+    FutureOr<void> Function(int completed, int total, String message);
 
 class MobileClipTagService {
   MobileClipTagService._internal();
@@ -41,10 +38,7 @@ class MobileClipTagService {
         MemoriaTagDimension.media: 0.205,
       };
 
-  static const Set<String> _blockedTags = <String>{
-
-    
-  };
+  static const Set<String> _blockedTags = <String>{};
 
   final SemanticMatchingService _semanticService = SemanticMatchingService();
   final Map<String, List<double>> _prototypeByLabel = <String, List<double>>{};
@@ -618,38 +612,6 @@ class MobileClipTagService {
     ];
   }
 
-  int _resolveDynamicCoarseTopK(
-    List<MobileClipCoarseDiagnostic> ranked, {
-    required int maxTopK,
-  }) {
-    final limit = math.min(maxTopK, ranked.length);
-    if (limit <= 3) {
-      return limit;
-    }
-
-    var count = 3;
-    final first = ranked[0].probability;
-    if (limit >= 4) {
-      final fourth = ranked[3].probability;
-      final third = ranked[2].probability;
-      final keepFourth =
-          fourth >= 0.11 || fourth >= third * 0.74 || (first - fourth) <= 0.22;
-      if (keepFourth) {
-        count = 4;
-      }
-    }
-    if (limit >= 5) {
-      final fifth = ranked[4].probability;
-      final anchor = ranked[count - 1].probability;
-      final keepFifth =
-          fifth >= 0.085 || fifth >= anchor * 0.8 || (first - fifth) <= 0.28;
-      if (keepFifth) {
-        count = 5;
-      }
-    }
-    return count;
-  }
-
   int _resolveDynamicFineTopK(
     List<double> rankedScores, {
     required int maxTopK,
@@ -713,37 +675,6 @@ class MobileClipTagService {
     }
     return exps.map((value) => value / sum).toList(growable: false);
   }
-
-  List<double> _meanAndNormalize(List<List<double>> vectors) {
-    if (vectors.isEmpty) {
-      return const <double>[];
-    }
-
-    final dim = vectors.first.length;
-    if (dim == 0 || vectors.any((vector) => vector.length != dim)) {
-      return const <double>[];
-    }
-
-    final merged = List<double>.filled(dim, 0.0);
-    for (final vector in vectors) {
-      for (var i = 0; i < dim; i++) {
-        merged[i] += vector[i];
-      }
-    }
-    for (var i = 0; i < dim; i++) {
-      merged[i] /= vectors.length;
-    }
-
-    var squaredSum = 0.0;
-    for (final value in merged) {
-      squaredSum += value * value;
-    }
-    if (squaredSum <= 0) {
-      return merged;
-    }
-    final norm = squaredSum.sqrt();
-    return merged.map((value) => value / norm).toList(growable: false);
-  }
 }
 
 class MobileClipTagDiagnostic {
@@ -786,19 +717,4 @@ class _TagScoreCandidate {
   final MemoriaTagDefinition definition;
   final double score;
   final double weightedScore;
-}
-
-extension on double {
-  double sqrt() {
-    if (this <= 0) {
-      return 0;
-    }
-    var x = this;
-    var prev = 0.0;
-    while ((x - prev).abs() > 1e-9) {
-      prev = x;
-      x = 0.5 * (x + this / x);
-    }
-    return x;
-  }
 }

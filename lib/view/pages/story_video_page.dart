@@ -15,7 +15,6 @@ import '../../effects/glitch_effect.dart';
 import '../../effects/static_filters.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
-import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'export_manager.dart';
 import 'publish_page.dart';
@@ -122,7 +121,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   // 🌟 1. 声明一个本地的可变切片列表
   late List<StorySection> _localSections;
 
-  int _currentLyricIndex = 0;
   String _currentLyricText = "";
   // 🎛️ VFX 控制台参数（从 widget 参数初始化，允许后续覆盖）
   double _shakeIntensity = 0.0;
@@ -134,7 +132,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   bool _useCameraFrame = false;
   bool _useGlowRing = false;
   bool _useCloudBorder = false;
-  bool _showPreviewTransition = false;
   bool _enableFlash = true;
   double _textBlurIntensity = 4.0;
   final GlobalKey _renderKey = GlobalKey();
@@ -498,7 +495,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   // ==========================================
   void _autoConfigVFXAndSubtitles() {
     // 若已有用户/已保存参数（非全部默认值），跳过自动配置
-    final hasCustomParams = widget.shakeIntensity != 0.0 ||
+    final hasCustomParams =
+        widget.shakeIntensity != 0.0 ||
         widget.shakeFrequency != 1.0 ||
         widget.glitchIntensity != 0.0 ||
         widget.textBlurIntensity != 4.0 ||
@@ -1136,7 +1134,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
             title: widget.title,
             subtitle: widget.subtitle,
             captions: widget.sections.map((s) => s.text).toList(),
-            targetPlatform: widget.targetPlatform ?? '小红书',
+            targetPlatform: widget.targetPlatform,
             exportedVideoPath: path,
           ),
         ),

@@ -10,7 +10,6 @@ import 'package:flutter/rendering.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:video_player/video_player.dart';
 
 import '../../objectbox.g.dart';
 import '../../models/entity/photo_entity.dart';
@@ -1144,10 +1143,6 @@ class _StorySharePoster extends StatelessWidget {
     final badgeText = isDark
         ? const Color(0xFFFFFFFF)
         : const Color(0xFFF8F3E7);
-    final heroCardBg = isDark
-        ? const Color(0xFF1E2A3A)
-        : const Color(0xFFFFFCF4);
-
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,

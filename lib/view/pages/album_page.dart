@@ -471,15 +471,6 @@ class _AlbumPageState extends State<AlbumPage> {
                     onTap: () =>
                         Navigator.pop(context, _ImportAction.addMorePhotos),
                   ),
-                if (isLimited)
-                  ListTile(
-                    leading: const Icon(Icons.photo_library_outlined),
-                    title: const Text('重新申请全部照片访问'),
-                    subtitle: const Text('让系统再次尝试授权完整照片与视频范围'),
-                    onTap: () =>
-                        Navigator.pop(context, _ImportAction.requestFullAccess),
-                  ),
-                if (isLimited) const Divider(),
                 ListTile(
                   leading: const Icon(Icons.restart_alt_outlined),
                   title: const Text('重新分析全部'),

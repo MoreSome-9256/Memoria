@@ -18,7 +18,6 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:convert';
 import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 
@@ -132,7 +131,7 @@ class _ConfigPageState extends State<ConfigPage> {
         ..title = widget.event.title
         ..startTime = widget.event.startDate.millisecondsSinceEpoch
         ..endTime = widget.event.endDate.millisecondsSinceEpoch
-        ..locationName = widget.event.location ?? '';
+        ..locationName = widget.event.location;
 
       List<String> generatedTitles = await LLMService().generateCreativeTitles(
         eventEntity,
@@ -385,20 +384,6 @@ class _ConfigPageState extends State<ConfigPage> {
         throw Exception('No photos found');
       }
       // ==========================================
-      // 🛡️ 核心修复：路径恢复逻辑
-      // 防止数据库里的 PhotoEntity.path 为空，强行用选择器里的最新路径覆盖它
-      // ==========================================
-      final Map<String, String> idToPathMap = {
-        for (var p in widget.selectedPhotos) p.id: p.path ?? "",
-      };
-
-      for (var entity in photoEntities) {
-        final freshPath = idToPathMap[entity.assetId];
-        if (freshPath != null && freshPath.isNotEmpty) {
-          entity.path = freshPath; // 🌟 强行缝合路径，保证图片能显示
-        }
-      }
-      // ==========================================
       // 🌟 新增核心节点 1：AI 生成专属配乐
       // ==========================================
       if (_selectedMusicSource == MusicSource.aiGenerated) {
@@ -446,10 +431,8 @@ class _ConfigPageState extends State<ConfigPage> {
           aiMusicPath = await _servePremadeMusic(musicPrompt);
         }
 
-        if (aiMusicPath != null) {
-          _customMusicPath = aiMusicPath;
-          _customMusicName = 'AI 专属原声带.mp3';
-        }
+        _customMusicPath = aiMusicPath;
+        _customMusicName = 'AI 专属原声带.mp3';
       }
       // ==========================================
       // 🌟 核心：端侧音乐分析接入点
@@ -534,7 +517,7 @@ Sandal Leap
         });
 
         // 提取 VLM 的剧本正文（这里用 story.content 替代，实际接入时用 VLM JSON里的 narrative）
-        String scriptNarrative = story.content ?? _themeController.text.trim();
+        String scriptNarrative = story.content;
         List<String> styleTags = [_selectedSubtitle ?? '治愈风', '小红书感'];
 
         // ==========================================
@@ -594,31 +577,23 @@ Sandal Leap
         _loadingText = '生成视频';
       });
 
-      if (story != null) {
-        // 4. 导航到 StoryResultPage.fromStoryEntity
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => StoryResultPage.fromStoryEntity(
-              storyEntity: story,
-              photos: photoEntities,
-              storyTemplateId: _selectedStoryTemplateId,
-              customMusicPath: _customMusicPath,
-              // 🌟 新增：把刚才拿到的本地节拍数据一起传过去！
-              dynamicBeatData: dynamicBeatData,
-              videoCaptions: finalCaptions,
-              photoOverrides: widget.selectedPhotos,
-              isHorizontal: _selectedAspectRatio == VideoAspectRatio.horizontal,
-              targetPlatform: platformName,
-            ),
+      // 4. 导航到 StoryResultPage.fromStoryEntity
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => StoryResultPage.fromStoryEntity(
+            storyEntity: story,
+            photos: photoEntities,
+            storyTemplateId: _selectedStoryTemplateId,
+            customMusicPath: _customMusicPath,
+            dynamicBeatData: dynamicBeatData,
+            videoCaptions: finalCaptions,
+            photoOverrides: widget.selectedPhotos,
+            isHorizontal: _selectedAspectRatio == VideoAspectRatio.horizontal,
+            targetPlatform: platformName,
           ),
-        );
-      } else {
-        // 🌟 修复点 2：补回被不小心删掉的失败提示兜底
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('故事生成失败，请重试')));
-      }
+        ),
+      );
     } catch (e) {
       setState(() {
         _isGenerating = false;
@@ -936,40 +911,6 @@ Sandal Leap
             textAlign: TextAlign.center,
           ),
 
-          // Generate video button
-          if (false)
-            FilledButton(
-              onPressed: _isGenerating ? null : _generateStory,
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-              ),
-              // 🌟 修复 UI 溢出：给 Text 加上 Flexible 和溢出处理
-              child: _isGenerating
-                  ? Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      mainAxisSize: MainAxisSize.min, // 核心：让 Row 紧凑一点
-                      children: [
-                        const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        // 🌟 核心修复：用 Flexible 包裹长文字，太长就显示省略号
-                        Flexible(
-                          child: Text(
-                            _loadingText,
-                            style: const TextStyle(fontSize: 16),
-                            overflow: TextOverflow.ellipsis, // 超出显示 ...
-                          ),
-                        ),
-                      ],
-                    )
-                  : Text(_loadingText, style: const TextStyle(fontSize: 16)),
-            ),
           const SizedBox(height: 16),
         ],
       ),

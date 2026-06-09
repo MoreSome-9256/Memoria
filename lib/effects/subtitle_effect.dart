@@ -77,6 +77,7 @@ class _SubtitleEffectLayerState extends State<SubtitleEffectLayer> {
       });
     }
   }
+
   // 把添加逻辑抽出来，方便 initState 和 didUpdateWidget 共用
   void _internalAddLayer(String newText) {
     final newData = _TextLayerData(
@@ -92,25 +93,6 @@ class _SubtitleEffectLayerState extends State<SubtitleEffectLayer> {
     if (_layers.length > _maxLayers) {
       _layers.removeAt(0);
     }
-  }
-
-  void _addLayer(String newText) {
-    setState(() {
-      final newData = _TextLayerData(
-        text: newText,
-        scale: _scaleOptions[_layerIdx % _scaleOptions.length],
-        offset: _offsetOptions[_layerIdx % _offsetOptions.length],
-        entryTime: DateTime.now(),
-      );
-
-      _layers.add(newData);
-      _layerIdx++;
-
-      // 保持队列长度
-      if (_layers.length > _maxLayers) {
-        _layers.removeAt(0);
-      }
-    });
   }
 
   @override

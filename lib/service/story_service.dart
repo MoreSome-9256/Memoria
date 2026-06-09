@@ -1,6 +1,5 @@
 /// 故事服务，负责故事内容的保存、读取和更新。
 
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -49,9 +48,7 @@ class StoryService {
     '专题',
   };
 
-  static const Set<String> _nonPromptTags = <String>{
-    memoriaOtherLabel,
-  };
+  static const Set<String> _nonPromptTags = <String>{memoriaOtherLabel};
 
   /// 📝 核心方法：生成故事
   ///
@@ -70,7 +67,7 @@ class StoryService {
     required String subtitle,
     // required StoryLength length,
     required String aspectRatio,
-    required String platform
+    required String platform,
   }) async {
     try {
       if (event.photoCount < EventService.minPhotosForDisplay) {
@@ -276,8 +273,8 @@ class StoryService {
     List<String>? ocrTags,
   }) {
     final effectiveAiTags = aiTags ?? photo.aiTags ?? const <String>[];
-    final effectiveOcrTags = ocrTags ??
-        OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]);
+    final effectiveOcrTags =
+        ocrTags ?? OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[]);
     final ocrText = OcrPolicy.effectiveText(photo.ocrText);
     final textLikeAiCount = effectiveAiTags
         .where(_textSceneTags.contains)
@@ -423,7 +420,8 @@ class StoryService {
   Future<List<StoryEntity>> getStoriesByEventId(int eventId) async {
     final storyBox = ObjectBoxService().store.box<StoryEntity>();
     final q = storyBox.query(StoryEntity_.eventId.equals(eventId)).build();
-    final stories = q.find()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final stories = q.find()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     q.close();
     return stories;
   }
@@ -431,7 +429,10 @@ class StoryService {
   Future<bool> updateStory(StoryEntity story) async {
     story.updatedAt = DateTime.now().millisecondsSinceEpoch;
     final store = ObjectBoxService().store;
-    store.runInTransaction(TxMode.write, () => store.box<StoryEntity>().put(story));
+    store.runInTransaction(
+      TxMode.write,
+      () => store.box<StoryEntity>().put(story),
+    );
     print("💾 故事已更新：ID=${story.id}");
     return true;
   }
@@ -449,14 +450,18 @@ class StoryService {
     final albumBox = store.box<DigitalAlbumBookEntity>();
     final storyBox = store.box<StoryEntity>();
 
-    final linkedQ = albumBox.query(DigitalAlbumBookEntity_.storyId.oneOf(ids)).build();
+    final linkedQ = albumBox
+        .query(DigitalAlbumBookEntity_.storyId.oneOf(ids))
+        .build();
     final linkedAlbums = linkedQ.find();
     linkedQ.close();
 
     var deletedCount = 0;
     store.runInTransaction(TxMode.write, () {
       if (linkedAlbums.isNotEmpty) {
-        albumBox.removeMany(linkedAlbums.map((a) => a.id).toList(growable: false));
+        albumBox.removeMany(
+          linkedAlbums.map((a) => a.id).toList(growable: false),
+        );
       }
       storyBox.removeMany(ids);
       deletedCount = ids.length;
@@ -470,7 +475,11 @@ class StoryService {
     final photos = photoBox.getMany(photoIds).whereType<PhotoEntity>().toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-    for (var start = 0; start < photos.length; start += _photoPathRefreshBatchSize) {
+    for (
+      var start = 0;
+      start < photos.length;
+      start += _photoPathRefreshBatchSize
+    ) {
       final batchEnd = start + _photoPathRefreshBatchSize;
       final end = batchEnd > photos.length ? photos.length : batchEnd;
       final batch = photos.sublist(start, end);
@@ -478,7 +487,10 @@ class StoryService {
     }
 
     final store = ObjectBoxService().store;
-    store.runInTransaction(TxMode.write, () => store.box<PhotoEntity>().putMany(photos));
+    store.runInTransaction(
+      TxMode.write,
+      () => store.box<PhotoEntity>().putMany(photos),
+    );
     return photos;
   }
 
@@ -486,7 +498,9 @@ class StoryService {
     final asset = await AssetEntity.fromId(photo.assetId);
     final file = await asset?.file;
     final latestPath = file?.path;
-    if (latestPath != null && latestPath.isNotEmpty && latestPath != photo.path) {
+    if (latestPath != null &&
+        latestPath.isNotEmpty &&
+        latestPath != photo.path) {
       photo.path = latestPath;
     }
   }
@@ -514,8 +528,7 @@ class StoryService {
     final compressed = story.customMusicBytes;
     if (compressed != null && compressed.isNotEmpty) {
       final raw = await zstdDecompress(compressed);
-      final hash = story.originalMusicHash ??
-          sha256.convert(raw).toString();
+      final hash = story.originalMusicHash ?? sha256.convert(raw).toString();
       final tempDir = await getTemporaryDirectory();
       final cacheDir = Directory('${tempDir.path}/MusicCache');
       final cachedFile = File('${cacheDir.path}/$hash.mp3');

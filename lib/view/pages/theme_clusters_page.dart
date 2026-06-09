@@ -1,7 +1,6 @@
 /// 主题聚类页面，展示按语义主题组织的照片分组。
 
 import 'dart:async';
-import 'dart:collection';
 
 import 'package:flutter/material.dart';
 
@@ -131,121 +130,115 @@ class _ThemeClustersPageState extends State<ThemeClustersPage> {
         ],
       ),
       body: FutureBuilder<List<ThemeCluster>>(
-              future: _clustersFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return ValueListenableBuilder<ThemeClusteringProgress>(
-                    valueListenable: ThemeClusterService().progressListenable,
-                    builder: (context, progress, _) {
-                      final isDeterminate = progress.total > 0;
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              CircularProgressIndicator(
-                                value: isDeterminate ? progress.ratio : null,
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                progress.message ?? '正在计算主题聚类...',
-                                textAlign: TextAlign.center,
-                              ),
-                              if (progress.stage ==
-                                  ThemeClusteringStage.preparingEmbeddings)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: Text(
-                                    '复用向量 ${progress.cachedEmbeddings} · 新算 ${progress.newEmbeddings}',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodySmall,
-                                  ),
-                                ),
-                            ],
-                          ),
+        future: _clustersFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return ValueListenableBuilder<ThemeClusteringProgress>(
+              valueListenable: ThemeClusterService().progressListenable,
+              builder: (context, progress, _) {
+                final isDeterminate = progress.total > 0;
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(
+                          value: isDeterminate ? progress.ratio : null,
                         ),
-                      );
-                    },
-                  );
-                }
-
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(
-                            Icons.error_outline,
-                            size: 56,
-                            color: Colors.redAccent,
-                          ),
-                          const SizedBox(height: 12),
-                          Text('主题聚类加载失败: ${snapshot.error}'),
-                          const SizedBox(height: 12),
-                          FilledButton(
-                            onPressed: _reload,
-                            child: const Text('重试'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }
-
-                final clusters = snapshot.data ?? const <ThemeCluster>[];
-                if (!_deferredUiReady) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (clusters.isEmpty) {
-                  return const _EmptyThemeView();
-                }
-
-                return RefreshIndicator(
-                  onRefresh: _reload,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                    itemCount: clusters.length + 1,
-                    separatorBuilder: (context, index) =>
-                        const SizedBox(height: 14),
-                    itemBuilder: (context, index) {
-                      if (index == 0) {
-                        return const _IntroCard();
-                      }
-
-                      final cluster = clusters[index - 1];
-                      final color =
-                          _themeColors[cluster.definition.id] ??
-                          Theme.of(context).colorScheme.primary;
-                      final icon =
-                          _themeIcons[cluster.definition.id] ??
-                          Icons.category_outlined;
-
-                      return _ThemeClusterCard(
-                        cluster: cluster,
-                        color: color,
-                        icon: icon,
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => ThemeClusterDetailPage(
-                                cluster: cluster,
-                                color: color,
-                                icon: icon,
-                              ),
+                        const SizedBox(height: 16),
+                        Text(
+                          progress.message ?? '正在计算主题聚类...',
+                          textAlign: TextAlign.center,
+                        ),
+                        if (progress.stage ==
+                            ThemeClusteringStage.preparingEmbeddings)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              '复用向量 ${progress.cachedEmbeddings} · 新算 ${progress.newEmbeddings}',
+                              style: Theme.of(context).textTheme.bodySmall,
                             ),
-                          );
-                        },
-                      );
-                    },
+                          ),
+                      ],
+                    ),
                   ),
                 );
               },
+            );
+          }
+
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      size: 56,
+                      color: Colors.redAccent,
+                    ),
+                    const SizedBox(height: 12),
+                    Text('主题聚类加载失败: ${snapshot.error}'),
+                    const SizedBox(height: 12),
+                    FilledButton(onPressed: _reload, child: const Text('重试')),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          final clusters = snapshot.data ?? const <ThemeCluster>[];
+          if (!_deferredUiReady) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (clusters.isEmpty) {
+            return const _EmptyThemeView();
+          }
+
+          return RefreshIndicator(
+            onRefresh: _reload,
+            child: ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              itemCount: clusters.length + 1,
+              separatorBuilder: (context, index) => const SizedBox(height: 14),
+              itemBuilder: (context, index) {
+                if (index == 0) {
+                  return const _IntroCard();
+                }
+
+                final cluster = clusters[index - 1];
+                final color =
+                    _themeColors[cluster.definition.id] ??
+                    Theme.of(context).colorScheme.primary;
+                final icon =
+                    _themeIcons[cluster.definition.id] ??
+                    Icons.category_outlined;
+
+                return _ThemeClusterCard(
+                  cluster: cluster,
+                  color: color,
+                  icon: icon,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ThemeClusterDetailPage(
+                          cluster: cluster,
+                          color: color,
+                          icon: icon,
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
             ),
+          );
+        },
+      ),
     );
   }
 }
@@ -510,19 +503,19 @@ class _SubclusterSummaryCard extends StatelessWidget {
                       return Expanded(
                         child: Padding(
                           padding: const EdgeInsets.only(right: 8),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(14),
-                              child: DeferredPathImage(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(14),
+                            child: DeferredPathImage(
+                              path: photo.path,
+                              assetId: photo.assetId,
+                              kind: MediaTypeHelper.fromStorageValue(
+                                photo.mediaKind,
                                 path: photo.path,
-                                assetId: photo.assetId,
-                                kind: MediaTypeHelper.fromStorageValue(
-                                  photo.mediaKind,
-                                  path: photo.path,
-                                ),
-                                thumbnailBytes: photo.thumbnailBytes,
-                                fit: BoxFit.cover,
                               ),
+                              thumbnailBytes: photo.thumbnailBytes,
+                              fit: BoxFit.cover,
                             ),
+                          ),
                         ),
                       );
                     })
@@ -599,19 +592,19 @@ class _SubclusterSelectorCard extends StatelessWidget {
                       return Expanded(
                         child: Padding(
                           padding: const EdgeInsets.only(right: 6),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: DeferredPathImage(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: DeferredPathImage(
+                              path: photo.path,
+                              assetId: photo.assetId,
+                              kind: MediaTypeHelper.fromStorageValue(
+                                photo.mediaKind,
                                 path: photo.path,
-                                assetId: photo.assetId,
-                                kind: MediaTypeHelper.fromStorageValue(
-                                  photo.mediaKind,
-                                  path: photo.path,
-                                ),
-                                thumbnailBytes: photo.thumbnailBytes,
-                                fit: BoxFit.cover,
                               ),
+                              thumbnailBytes: photo.thumbnailBytes,
+                              fit: BoxFit.cover,
                             ),
+                          ),
                         ),
                       );
                     })
@@ -747,19 +740,19 @@ class _ThemeClusterCard extends StatelessWidget {
                         return Expanded(
                           child: Padding(
                             padding: const EdgeInsets.only(right: 8),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(16),
-                                child: DeferredPathImage(
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: DeferredPathImage(
+                                path: photo.path,
+                                assetId: photo.assetId,
+                                kind: MediaTypeHelper.fromStorageValue(
+                                  photo.mediaKind,
                                   path: photo.path,
-                                  assetId: photo.assetId,
-                                  kind: MediaTypeHelper.fromStorageValue(
-                                    photo.mediaKind,
-                                    path: photo.path,
-                                  ),
-                                  thumbnailBytes: photo.thumbnailBytes,
-                                  fit: BoxFit.cover,
                                 ),
+                                thumbnailBytes: photo.thumbnailBytes,
+                                fit: BoxFit.cover,
                               ),
+                            ),
                           ),
                         );
                       })

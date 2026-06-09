@@ -4,9 +4,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/services.dart';
-import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:math' as math;
 import '../../models/vo/story_section.dart';
@@ -15,11 +13,9 @@ import '../../effects/glitch_effect.dart';
 import '../../effects/static_filters.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
-import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
-import 'package:gal/gal.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
 import '../../service/story_service.dart';
@@ -93,7 +89,6 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     with TickerProviderStateMixin {
   int _currentIndex = 0;
 
-  int _currentLyricIndex = 0;
   String _currentLyricText = "";
   // 🎛️ VFX 控制台参数
   double _shakeIntensity = 0.0; // 震动幅度 (Amplitude)
@@ -114,10 +109,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       'hero'; // 'standard' (普通底栏), 'hero' (居中大字), 'cards' (字卡散落)
   double _textYPosition = 0.8; // 0.0 为顶部，0.5 为屏幕正中，1.0 为贴底
   double _textSize = 24.0;
-  final String _fontFamily = 'sans-serif'; // 以后可以接入 Google Fonts
-
   bool _isExporting = false; // 🌟 控制是否处于导出模式
-  double _exportProgress = 0.0; // 🌟 导出百分比 (0.0 到 1.0)
 
   List<dynamic> _beatData = []; // 存完整的 JSON 数据（包含 ms 和 energy）
 
@@ -172,7 +164,6 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     setState(() {
       _beatData = data;
       _beatIntervalMs = (60000 / bpmRaw.toDouble()).round();
-      _currentBeatIndexForPreview = -1;
     });
 
     debugPrint(
@@ -226,8 +217,6 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       debugPrint("❌ fallback 本地节拍分析异常: $e");
     }
   }
-
-  int _currentBeatIndexForPreview = -1; // 记录当前演到第几拍了
 
   @override
   void dispose() {
@@ -421,72 +410,6 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   }*/
 
   // 🎬 核心特效：根据长宽比自适应的视觉层（已支持字幕嵌入）
-  Widget _buildAdaptiveImageLayer(String imagePath, Widget subtitle) {
-    final file = File(imagePath);
-
-    // 1. 基础的 Ken Burns 放大动画
-    Widget kenBurnsAnimation = TweenAnimationBuilder(
-      tween: Tween<double>(begin: 1.0, end: 1.15),
-      duration: const Duration(seconds: 5),
-      builder: (context, scale, child) {
-        return Transform.scale(
-          scale: scale,
-          child: file.existsSync()
-              ? Image.file(
-                  file,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  height: double.infinity,
-                )
-              : Container(color: Colors.grey[900]),
-        );
-      },
-    );
-
-    // 🌟 将图片和字幕打包成一个“容器内容”
-    Widget containerContent = Stack(
-      fit: StackFit.expand,
-      children: [
-        kenBurnsAnimation,
-        // 🔒 字幕现在被“锁”在了这个 Stack 里，它的 Alignment 将相对于这个容器
-        subtitle,
-      ],
-    );
-
-    // 🌟 竖屏模式：依然铺满全屏
-    if (!widget.isHorizontal) {
-      return SizedBox.expand(
-        key: ValueKey<String>(imagePath),
-        child: containerContent,
-      );
-    }
-    // 🌟 横屏模式：16:9 居中，字幕会被 ClipRect 限制在框内
-    else {
-      return Stack(
-        key: ValueKey<String>(imagePath),
-        fit: StackFit.expand,
-        children: [
-          // 底层模糊背景
-          if (file.existsSync()) Image.file(file, fit: BoxFit.cover),
-          BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-            child: Container(color: Colors.black.withValues(alpha: 0.6)),
-          ),
-          // 2. 核心 16:9 画幅层
-          Center(
-            child: AspectRatio(
-              aspectRatio: 16 / 9,
-              child: ClipRect(
-                // 🚀 这里是关键！内容（含字幕）现在只会在 16:9 的框内显示
-                child: containerContent,
-              ),
-            ),
-          ),
-        ],
-      );
-    }
-  }
-
   void _updateStateForFrame(int frameIndex) {
     if (_beatData.isEmpty) return;
 
@@ -792,14 +715,13 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         final storyBox = store.box<StoryEntity>();
         final story = storyBox.get(widget.storyEntityId!);
         if (story != null) {
-                      resolvedMusicPath = await StoryService.resolveMusicFile(story);
+          resolvedMusicPath = await StoryService.resolveMusicFile(story);
         }
       } catch (_) {}
     }
     resolvedMusicPath ??= widget.customMusicPath;
 
-    if (resolvedMusicPath != null &&
-        await File(resolvedMusicPath).exists()) {
+    if (resolvedMusicPath != null && await File(resolvedMusicPath).exists()) {
       safeAudioFile = File(
         '${tempDir.path}/safe_custom_audio_${DateTime.now().millisecondsSinceEpoch}.mp3',
       );

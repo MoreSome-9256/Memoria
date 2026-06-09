@@ -231,35 +231,6 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                             ),
                             label: const Text('选择更多照片'),
                           ),
-                          FilledButton.tonalIcon(
-                            onPressed: () async {
-                              final state = await MediaAccessGrantService
-                                  .instance
-                                  .requestFullLibraryAccess();
-                              if (!mounted) return;
-                              setState(() => _loadingAlbums = true);
-                              await _loadPermissionAndAlbums();
-                              if (!context.mounted) return;
-                              if (state.isLimited) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    behavior: SnackBarBehavior.floating,
-                                    content: const Text(
-                                      '系统仍处于部分授权；可以继续选择更多照片，或在系统设置改为全部照片。',
-                                    ),
-                                    action: SnackBarAction(
-                                      label: '系统设置',
-                                      onPressed: () {
-                                        unawaited(PhotoManager.openSetting());
-                                      },
-                                    ),
-                                  ),
-                                );
-                              }
-                            },
-                            icon: const Icon(Icons.photo_library, size: 18),
-                            label: const Text('申请全部访问'),
-                          ),
                         ],
                       ),
                     ],

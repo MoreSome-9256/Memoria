@@ -95,6 +95,7 @@ class PhotoEmbeddingIndexRepository {
     required String modelVersion,
     bool isStale = false,
     int? updatedAtMillis,
+    String? embeddingMetaJson,
   }) {
     final box = _boxOrNull;
     final normalized = _normalizedVector(vector);
@@ -111,6 +112,7 @@ class PhotoEmbeddingIndexRepository {
       modelVersion: modelVersion,
       updatedAtMillis: updatedAtMillis ?? DateTime.now().millisecondsSinceEpoch,
       isStale: isStale,
+      embeddingMetaJson: embeddingMetaJson,
       vector: normalized,
     );
     box.put(entity);

@@ -11,6 +11,7 @@ class PhotoEmbeddingIndexEntity {
     required this.modelVersion,
     required this.updatedAtMillis,
     this.isStale = false,
+    this.embeddingMetaJson,
     this.vector,
   });
 
@@ -28,6 +29,7 @@ class PhotoEmbeddingIndexEntity {
 
   int updatedAtMillis;
   bool isStale;
+  String? embeddingMetaJson;
 
   @HnswIndex(
     dimensions: kPhotoEmbeddingVectorDimensions,

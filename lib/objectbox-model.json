@@ -69,7 +69,7 @@
     },
     {
       "id": "2:8545569770623572711",
-      "lastPropertyId": "7:1369084111896358290",
+      "lastPropertyId": "8:7826926670025112865",
       "name": "PhotoEmbeddingIndexEntity",
       "properties": [
         {
@@ -115,6 +115,11 @@
           "indexId": "9:513319743638822687",
           "type": 28,
           "flags": 8
+        },
+        {
+          "id": "8:7826926670025112865",
+          "name": "embeddingMetaJson",
+          "type": 9
         }
       ],
       "relations": []

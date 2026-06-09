@@ -28,11 +28,12 @@ class SemanticPhotoSearchService {
   final SemanticSearchMetadataMatcher _metadataMatcher =
       const SemanticSearchMetadataMatcher();
 
-  static const double _positiveSemanticParticipationThreshold = 0.16;
-  static const double _exactPositiveThreshold = 0.22;
-  static const double _relatedSemanticThreshold = 0.11;
-  static const double _negativePenaltyAlpha = 0.6;
-  static const double _minimumFinalScore = 0.03;
+  static const double _positiveSemanticParticipationThreshold = 0.17;
+  static const double _exactPositiveThreshold = 0.23;
+  static const double _relatedSemanticThreshold = 0.17;
+  static const double _negativePenaltyAlpha = 0.72;
+  static const double _coarseTagBonus = 0.055;
+  static const double _minimumFinalScore = 0.15;
   static const int _maxResultsPerBucket = 240;
 
   static const String _messageNoExactRelated = '未找到您所需的图片，只找到一些相关图片。';
@@ -40,23 +41,9 @@ class SemanticPhotoSearchService {
   Future<SemanticSearchResult> search(String rawQuery) async {
     final allPhotos = await _loadAllPhotos();
     final query = await _queryParser.parseQuery(rawQuery);
-    final result = await _searchParsedQuery(
-      rawQuery: rawQuery,
-      query: query,
-      allPhotos: allPhotos,
-    );
-    if (!_shouldRetryEmptySearch(result)) {
-      return result;
-    }
-    final repairedQuery = await _queryParser.retryQueryAfterEmptySearch(
-      rawQuery: rawQuery,
-      previousQuery: query,
-      metadataCandidateCount: result.metadataCandidateCount,
-      tagCandidateCount: result.tagCandidateCount,
-    );
     return _searchParsedQuery(
       rawQuery: rawQuery,
-      query: repairedQuery,
+      query: query,
       allPhotos: allPhotos,
     );
   }
@@ -118,13 +105,18 @@ class SemanticPhotoSearchService {
       primaryMetadataCandidates,
       query,
     );
-    final primaryTagCandidateCount = primaryTagCandidates.length;
+    final taggedCandidates = _filterByCoarseTags(
+      primaryMetadataCandidates,
+      query.coarseTags,
+    );
+    final primaryTagCandidateCount = taggedCandidates.length;
 
     final primaryScores = _scoreCandidates(
       primaryTagCandidates,
       activeModelVersion: activeModelVersion,
       vectors: vectors,
       coarseTags: query.coarseTags,
+      tagStrictness: query.tagStrictness,
       locations: query.locations,
     );
 
@@ -208,12 +200,6 @@ class SemanticPhotoSearchService {
     );
   }
 
-  bool _shouldRetryEmptySearch(SemanticSearchResult result) {
-    return !result.query.isMetadataOnly &&
-        !result.hasExactMatches &&
-        !result.hasRelatedMatches;
-  }
-
   List<PhotoEntity> _filterByMetadata(
     List<PhotoEntity> photos,
     SemanticSearchQuery query,
@@ -225,6 +211,10 @@ class SemanticPhotoSearchService {
           }
           if (query.hasLocationConstraints &&
               !_matchesAnyLocation(photo, query.locations)) {
+            return false;
+          }
+          if (query.hasAttributeConstraints &&
+              !_matchesAttributes(photo, query.attributes)) {
             return false;
           }
           return true;
@@ -241,6 +231,25 @@ class SemanticPhotoSearchService {
     List<SemanticSearchLocation> locations,
   ) {
     return _metadataMatcher.matchesLocation(photo, locations);
+  }
+
+  bool _matchesAttributes(
+    PhotoEntity photo,
+    SemanticSearchAttributes attributes,
+  ) {
+    final minFaces = attributes.minFaceCount;
+    final maxFaces = attributes.maxFaceCount;
+    final minSmile = attributes.minSmileProbability;
+    final minJoy = attributes.minJoyScore;
+    if (minFaces != null && photo.faceCount < minFaces) return false;
+    if (maxFaces != null && photo.faceCount > maxFaces) return false;
+    if (minSmile != null && photo.smileProb < minSmile) return false;
+    if (minJoy != null && (photo.joyScore ?? 0) < minJoy) return false;
+    if (attributes.mediaKinds.isNotEmpty &&
+        !attributes.mediaKinds.contains(photo.mediaKind)) {
+      return false;
+    }
+    return true;
   }
 
   List<PhotoEntity> _applyTagStrategy(
@@ -332,6 +341,7 @@ class SemanticPhotoSearchService {
     required String activeModelVersion,
     required _SemanticVectorBundle vectors,
     required List<SemanticSearchCoarseTag> coarseTags,
+    required SemanticSearchTagStrictness tagStrictness,
     required List<SemanticSearchLocation> locations,
     double semanticThreshold = _relatedSemanticThreshold,
   }) {
@@ -342,6 +352,7 @@ class SemanticPhotoSearchService {
         activeModelVersion: activeModelVersion,
         vectors: vectors,
         coarseTags: coarseTags,
+        tagStrictness: tagStrictness,
         locations: locations,
         semanticThreshold: semanticThreshold,
       );
@@ -358,6 +369,7 @@ class SemanticPhotoSearchService {
     required String activeModelVersion,
     required _SemanticVectorBundle vectors,
     required List<SemanticSearchCoarseTag> coarseTags,
+    required SemanticSearchTagStrictness tagStrictness,
     required List<SemanticSearchLocation> locations,
     required double semanticThreshold,
   }) {
@@ -369,20 +381,21 @@ class SemanticPhotoSearchService {
       return null;
     }
 
-    final positiveVectors = _combinePositiveAndRecallVectors(
-      vectors.positiveVectors,
-      vectors.recallVectors,
-    );
     final negativeVectors = vectors.negativeVectors;
-    if (positiveVectors.isEmpty) {
+    if (vectors.positiveVectors.isEmpty) {
       return null;
     }
 
-    final positive = _scorePositiveSemantics(
+    final primary = _scorePositiveSemantics(
       embeddingChoice.embedding,
-      positiveVectors,
+      vectors.positiveVectors,
     );
-    if (positive.semanticScore < semanticThreshold) {
+    final recall = _scorePositiveSemantics(
+      embeddingChoice.embedding,
+      vectors.recallVectors,
+    );
+    if (primary.semanticScore < semanticThreshold &&
+        recall.semanticScore < semanticThreshold) {
       return null;
     }
 
@@ -392,15 +405,34 @@ class SemanticPhotoSearchService {
     );
     final coarseTagMatch = _metadataMatcher.matchCoarseTags(photo, coarseTags);
     final locationMatch = _metadataMatcher.matchLocation(photo, locations);
+    final tagBonus = coarseTagMatch.matchedLabels.isEmpty
+        ? 0.0
+        : _coarseTagBonus;
+    final recallScore = recall.qualifiedPositiveScore * 0.9;
+    final rankingSemanticScore = primary.qualifiedPositiveScore > recallScore
+        ? primary.qualifiedPositiveScore
+        : recallScore;
     final finalScore =
-        positive.qualifiedPositiveScore -
+        rankingSemanticScore +
+        tagBonus -
         (_negativePenaltyAlpha * negative.negativeScore);
+    final coarseTagRequiredForExact =
+        coarseTags.isNotEmpty &&
+        tagStrictness != SemanticSearchTagStrictness.optional &&
+        coarseTagMatch.matchedLabels.isEmpty;
+    final coarseTagRequiredForRelated =
+        coarseTags.isNotEmpty &&
+        tagStrictness != SemanticSearchTagStrictness.optional &&
+        coarseTagMatch.matchedLabels.isEmpty;
 
     final isExact =
-        positive.qualifiedPositiveScore >= _exactPositiveThreshold &&
+        primary.qualifiedPositiveScore >= _exactPositiveThreshold &&
+        !coarseTagRequiredForExact &&
         finalScore >= _minimumFinalScore;
     final isRelated =
-        positive.semanticScore >= semanticThreshold &&
+        !isExact &&
+        recall.qualifiedPositiveScore >= _relatedSemanticThreshold &&
+        !coarseTagRequiredForRelated &&
         finalScore >= _minimumFinalScore;
     if (!isExact && !isRelated) {
       return null;
@@ -410,8 +442,11 @@ class SemanticPhotoSearchService {
     final matchedLocations = locationMatch.matchedLocations;
 
     final explanation = <String>[];
-    if (positive.bestPositiveSemantic != null) {
-      explanation.add('semantic: ${positive.bestPositiveSemantic}');
+    if (primary.bestPositiveSemantic != null) {
+      explanation.add('primary semantic: ${primary.bestPositiveSemantic}');
+    }
+    if (!isExact && recall.bestPositiveSemantic != null) {
+      explanation.add('recall semantic: ${recall.bestPositiveSemantic}');
     }
     if (matchedCoarseTags.isNotEmpty) {
       explanation.add('coarse tags: ${matchedCoarseTags.join(' / ')}');
@@ -426,13 +461,15 @@ class SemanticPhotoSearchService {
     return SemanticSearchHit(
       photoId: photo.id,
       score: finalScore,
-      semanticScore: positive.semanticScore,
-      qualifiedPositiveScore: positive.qualifiedPositiveScore,
+      semanticScore: primary.semanticScore > recall.semanticScore
+          ? primary.semanticScore
+          : recall.semanticScore,
+      qualifiedPositiveScore: rankingSemanticScore,
       negativeScore: negative.negativeScore,
-      coarseTagBonus: 0.0,
+      coarseTagBonus: tagBonus,
       matchedCoarseTags: matchedCoarseTags,
       matchedLocations: matchedLocations,
-      bestPositiveSemantic: positive.bestPositiveSemantic,
+      bestPositiveSemantic: primary.bestPositiveSemantic,
       bestNegativeSemantic: negative.bestNegativeSemantic,
       explanation: explanation,
       isExactMatch: isExact,
@@ -470,26 +507,6 @@ class SemanticPhotoSearchService {
       }
     }
     return best;
-  }
-
-  List<_SemanticVector> _combinePositiveAndRecallVectors(
-    List<_SemanticVector> positiveVectors,
-    List<_SemanticVector> recallVectors,
-  ) {
-    if (recallVectors.isEmpty) {
-      return positiveVectors;
-    }
-    final combined = <_SemanticVector>[
-      ...positiveVectors,
-      for (final item in recallVectors) item.withWeight(item.weight * 0.55),
-    ];
-    final total = combined.fold<double>(0.0, (sum, item) => sum + item.weight);
-    if (total <= 0) {
-      return combined;
-    }
-    return combined
-        .map((item) => item.withWeight(item.weight / total))
-        .toList(growable: false);
   }
 
   _SearchEmbeddingChoice? _readSearchEmbedding(
@@ -621,10 +638,6 @@ class _SemanticVector {
   final String text;
   final double weight;
   final List<double> vector;
-
-  _SemanticVector withWeight(double value) {
-    return _SemanticVector(text: text, weight: value, vector: vector);
-  }
 }
 
 class _PositiveSemanticAggregate {

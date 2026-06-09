@@ -52,37 +52,6 @@ extension _SemanticQueryParserLlm on SemanticQueryParserService {
     );
   }
 
-  Future<SemanticSearchQuery> _repairSearchPlanAfterEmptyResult({
-    required String rawQuery,
-    required SemanticSearchQuery previousQuery,
-    required int metadataCandidateCount,
-    required int tagCandidateCount,
-  }) async {
-    final response = await _llmService.completeText(
-      prompt: _buildEmptyResultRepairPrompt(
-        rawQuery: rawQuery,
-        previousQuery: previousQuery,
-        metadataCandidateCount: metadataCandidateCount,
-        tagCandidateCount: tagCandidateCount,
-      ),
-      systemPrompt: _parserSystemPrompt,
-      jsonMode: true,
-      temperature: 0.0,
-      topP: 0.2,
-      requestTimeout: const Duration(seconds: 30),
-    );
-
-    final jsonObject = _decodeJsonObject(response);
-    return _buildStructuredQueryFromJsonObject(
-      rawQuery: rawQuery,
-      jsonObject: jsonObject,
-      usedLlm: true,
-      llmConfigured: true,
-      parserSource: 'llm_empty_result_retry',
-      baseNotes: 'LLM retried after empty local index result',
-    );
-  }
-
   String _buildParserPrompt(String rawQuery) {
     final now = DateTime.now();
     final nowOffset = _formatUtcOffset(now.timeZoneOffset);
@@ -113,24 +82,37 @@ Required top-level schema:
   "positive_semantics": [],
   "recall_semantics": [],
   "negative_semantics": [],
+  "attributes": {"min_face_count": null, "max_face_count": null, "min_smile_probability": null, "min_joy_score": null, "media_kinds": []},
   "estimated_result_count": {"min": 0, "max": 0, "confidence": 0.0},
   "notes": ""
 }
 
 Rules:
+0. Build a complete one-pass retrieval plan. The app will not ask you to reinterpret the query after retrieval. Separate non-negotiable metadata constraints from visual recall signals and describe every important part of the user's intent.
 1. All values intended for visual or semantic matching must be English. MobileCLIP text alignment is English-first.
-2. time_ranges are calendar/date constraints only. Use ISO 8601 strings with UTC offsets.
+2. time_ranges are calendar/date constraints only. Use ISO 8601 strings with UTC offsets. For an unqualified recurring season such as "夏天", do not bind it to the current year; use {"recurring_start_month": 6, "recurring_end_month": 10}. Only use an absolute year when the user explicitly says this year, last year, or names a year.
 3. local_time_windows are local time-of-day constraints such as night, morning, dusk, sunrise, or sunset. They are not date ranges. Include utc_offset when the place is known; otherwise still return the local window and leave utc_offset null.
 4. For location queries, output a concise English canonical place name. Put the exact user-supplied surface form, native-language local names, common abbreviations, and romanizations in aliases. For scenic areas and POIs, aliases are critical. Do not enumerate nearby districts or tourist areas unless the user explicitly named them.
 5. Do not put scene words such as beach, park, night view, grassland, or starry sky into locations unless they are part of an official place name.
-6. Preserve specificity. "Qingdao West Coast" is more specific than "Qingdao"; "Nanjing Confucius Temple" is more specific than "Nanjing".
-7. Choose coarse_tags only from the catalog below. Do not invent IDs.
-8. positive_semantics and recall_semantics must be English CLIP-friendly photo phrases, not single words and not Chinese.
-9. recall_semantics should broaden visual recall without changing explicit date or location constraints.
-10. Add negative_semantics for screenshots, documents, code, and software UI unless the user is explicitly searching for screen/document content.
-11. Use tag_strictness "strict" only when the user says the visual category is mandatory. Prefer "prefer" for normal natural-language searches.
-12. If the query is ambiguous, still produce a reasonable plan. Non-metadata queries must have positive_semantics and recall_semantics.
-13. Before returning, self-check that JSON is valid, enum values are allowed, dates include offsets, and non-metadata searches have semantic phrases.
+6. A phrase such as "威海海边" contains a hard city constraint (Weihai) plus seaside visual semantics. Never replace it with another coastal city, and distinguish sea/coast from lakes and rivers with negative_semantics when needed.
+7. Preserve specificity. "Qingdao West Coast" is more specific than "Qingdao"; "Nanjing Confucius Temple" is more specific than "Nanjing".
+8. Choose coarse_tags only from the catalog below. Do not invent IDs. Use them as a high-precision index: include every clearly relevant category, but do not add a broad category merely because it could sometimes co-occur.
+9. positive_semantics are the precision layer. Return 2 to 5 independent, concrete, visually observable English photo descriptions that jointly cover the required subject, scene, action, atmosphere, and distinguishing details. Avoid vague phrases such as "good memories" when concrete evidence exists.
+10. recall_semantics are the controlled recall layer. Return 2 to 4 alternative visible formulations, synonyms, or compositions for the same intent. They may broaden appearance, but must never change explicit place, time, subject, medium, or scene type.
+11. negative_semantics are contrastive exclusions. Add likely confusions and near-misses, not only screenshots. Examples: sea versus lake, food versus tableware, wedding versus ordinary group photo, snow versus bright clouds.
+12. Set tag_strictness "strict" when a category is indispensable, "prefer" when it is strong evidence, and "optional" only when tags are genuinely not useful.
+13. Use query_type "attribute" for measurable properties such as smiling people or group portraits; "metadata" only when no visual matching is needed.
+   Put measurable requirements in attributes. Allowed media_kinds are image, dynamicImage, and video. Use conservative numeric thresholds: smiling usually means min_face_count 1 and min_smile_probability around 0.45; group photos usually mean min_face_count 2.
+14. Do not use named places as a substitute for visible semantics. Put named places in locations, and separately describe what the desired scene should visibly contain.
+15. If the query is ambiguous, choose the most literal interpretation and encode alternatives only in recall_semantics. Never invent a different city, event, or season.
+16. Before returning, verify that every noun and modifier in the user query is represented by metadata, coarse_tags, positive_semantics, recall_semantics, or negative_semantics.
+
+Available local indexes:
+- timestamp and recurring month filters
+- province, city, district, POI, and formatted address metadata
+- coarse visual tags from the catalog
+- MobileCLIP image/video embeddings
+- limited face count, smile, and joy attributes
 
 Few-shot examples:
 
@@ -246,19 +228,25 @@ $rawQuery
       jsonObject['time_ranges'],
       localTimeWindows: jsonObject['local_time_windows'],
     );
+    final normalizedTimeRanges = _normalizeRecurringSeason(
+      rawQuery,
+      timeRanges,
+    );
     final locations = _readLocations(jsonObject['locations']);
     final coarseTags = _readCoarseTags(jsonObject['coarse_tags']);
     final positiveSemantics = _readSemanticItems(
       jsonObject['positive_semantics'],
     );
     final recallSemantics = _readSemanticItems(jsonObject['recall_semantics']);
-    final negativeSemantics = _readSemanticItems(
-      jsonObject['negative_semantics'],
+    final negativeSemantics = _normalizeNegativeSemantics(
+      rawQuery,
+      _readSemanticItems(jsonObject['negative_semantics']),
     );
     final tagStrictness = _readTagStrictness(jsonObject['tag_strictness']);
     final estimatedResultCount = _readEstimatedResultCount(
       jsonObject['estimated_result_count'],
     );
+    final attributes = _readAttributes(jsonObject['attributes']);
 
     _validateSearchPlan(
       queryType: queryType,
@@ -272,7 +260,7 @@ $rawQuery
       rawQuery: rawQuery,
       routeType: SemanticSearchRouteType.llmStructured,
       queryType: queryType,
-      timeRanges: timeRanges,
+      timeRanges: normalizedTimeRanges,
       locations: locations,
       coarseTags: coarseTags,
       tagStrictness: tagStrictness,
@@ -286,6 +274,7 @@ $rawQuery
           ? const <SemanticSearchSemanticItem>[]
           : negativeSemantics,
       estimatedResultCount: estimatedResultCount,
+      attributes: attributes,
       usedLlm: usedLlm,
       llmConfigured: llmConfigured,
       parserSource: parserSource,
@@ -346,12 +335,16 @@ $rawQuery
   }
 
   SemanticSearchTimeRange? _readDateRange(Map item) {
+    final recurringStartMonth = _readMonth(item['recurring_start_month']);
+    final recurringEndMonth = _readMonth(item['recurring_end_month']);
     final startRaw =
         item['start'] ?? item['start_iso'] ?? item['start_time_ms'];
     final endRaw = item['end'] ?? item['end_iso'] ?? item['end_time_ms'];
     final startTimeMs = _toTimestampMs(startRaw);
     final endTimeMs = _toTimestampMs(endRaw);
-    if (startTimeMs == null && endTimeMs == null) {
+    if (startTimeMs == null &&
+        endTimeMs == null &&
+        (recurringStartMonth == null || recurringEndMonth == null)) {
       return null;
     }
     return SemanticSearchTimeRange(
@@ -361,7 +354,40 @@ $rawQuery
       startIso: startRaw is String ? startRaw.trim() : null,
       endIso: endRaw is String ? endRaw.trim() : null,
       timezone: _readOptionalString(item['timezone']),
+      recurringStartMonth: recurringStartMonth,
+      recurringEndMonth: recurringEndMonth,
     );
+  }
+
+  List<SemanticSearchTimeRange> _normalizeRecurringSeason(
+    String rawQuery,
+    List<SemanticSearchTimeRange> ranges,
+  ) {
+    if (RegExp(r'(今年|当年|去年|前年|明年|\d{4}\s*年)').hasMatch(rawQuery)) {
+      return ranges;
+    }
+    List<int>? season;
+    if (rawQuery.contains('春天') || rawQuery.contains('春季')) {
+      season = const <int>[3, 5];
+    } else if (rawQuery.contains('夏天') || rawQuery.contains('夏季')) {
+      season = const <int>[6, 10];
+    } else if (rawQuery.contains('秋天') || rawQuery.contains('秋季')) {
+      season = const <int>[9, 11];
+    } else if (rawQuery.contains('冬天') || rawQuery.contains('冬季')) {
+      season = const <int>[12, 2];
+    }
+    if (season == null) {
+      return ranges;
+    }
+    return <SemanticSearchTimeRange>[
+      SemanticSearchTimeRange(
+        startTimeMs: null,
+        endTimeMs: null,
+        reason: 'recurring season in any year',
+        recurringStartMonth: season[0],
+        recurringEndMonth: season[1],
+      ),
+    ];
   }
 
   SemanticSearchTimeRange? _readLocalTimeWindow(Map item) {
@@ -402,6 +428,22 @@ $rawQuery
       locations[location.text] = location;
     }
     return locations.values.toList(growable: false);
+  }
+
+  List<SemanticSearchSemanticItem> _normalizeNegativeSemantics(
+    String rawQuery,
+    List<SemanticSearchSemanticItem> items,
+  ) {
+    if (!rawQuery.contains('海边') || rawQuery.contains('湖')) {
+      return items;
+    }
+    return _normalizeSemanticWeights(<SemanticSearchSemanticItem>[
+      ...items,
+      const SemanticSearchSemanticItem(
+        text: 'a lake, lakeside, river, or riverside scene without the sea',
+        weight: 1.0,
+      ),
+    ]);
   }
 
   List<SemanticSearchCoarseTag> _readCoarseTags(dynamic value) {
@@ -494,6 +536,33 @@ $rawQuery
       max: max < min ? min : max,
       confidence: confidence,
     );
+  }
+
+  SemanticSearchAttributes _readAttributes(dynamic value) {
+    if (value is! Map) {
+      return const SemanticSearchAttributes();
+    }
+    const allowedMediaKinds = <String>{'image', 'dynamicImage', 'video'};
+    final mediaKinds = _readStringList(
+      value['media_kinds'],
+    ).where(allowedMediaKinds.contains).toList(growable: false);
+    return SemanticSearchAttributes(
+      minFaceCount: _nonNegativeInt(value['min_face_count']),
+      maxFaceCount: _nonNegativeInt(value['max_face_count']),
+      minSmileProbability: _probability(value['min_smile_probability']),
+      minJoyScore: _probability(value['min_joy_score']),
+      mediaKinds: mediaKinds,
+    );
+  }
+
+  int? _nonNegativeInt(dynamic value) {
+    final result = _toInt(value);
+    return result != null && result >= 0 ? result : null;
+  }
+
+  double? _probability(dynamic value) {
+    final result = _toDouble(value);
+    return result?.clamp(0.0, 1.0).toDouble();
   }
 
   Map<String, dynamic> _decodeJsonObject(String? response) {
@@ -624,6 +693,11 @@ $rawQuery
     return int.tryParse(value?.toString() ?? '');
   }
 
+  int? _readMonth(dynamic value) {
+    final month = _toInt(value);
+    return month != null && month >= 1 && month <= 12 ? month : null;
+  }
+
   double? _toDouble(dynamic value) {
     if (value is double) {
       return value;
@@ -685,36 +759,5 @@ ${invalidResponse ?? ''}
 
 Repair task:
 Return exactly one corrected JSON object following the same schema. Keep all semantic phrases in English. Do not include Markdown or explanation.
-''';
-}
-
-String _buildEmptyResultRepairPrompt({
-  required String rawQuery,
-  required SemanticSearchQuery previousQuery,
-  required int metadataCandidateCount,
-  required int tagCandidateCount,
-}) {
-  return '''
-The previous search plan returned no photos from the local vector index.
-This may happen because visual tags or vector embeddings are sparse, noisy, or wrong.
-
-User query:
-$rawQuery
-
-Previous JSON plan:
-${previousQuery.debugJson}
-
-Local search diagnostics:
-- metadata_candidate_count: $metadataCandidateCount
-- tag_candidate_count: $tagCandidateCount
-
-Repair policy:
-1. Preserve explicit date constraints from the user.
-2. Do not invent a different place or time.
-3. If metadata_candidate_count is zero and the previous plan had a location, remove locations as hard metadata filters and move the place into English semantic phrases instead. This handles missing or unreliable GPS/reverse-geocode metadata.
-4. If tag_candidate_count is zero, make tag_strictness "optional" and keep coarse_tags broad.
-5. Broaden positive_semantics and recall_semantics with more visual, English CLIP-friendly descriptions.
-6. Avoid rare named entities in semantic phrases unless visually important; prefer visible scene descriptions.
-7. Return exactly one corrected JSON object. Do not include Markdown or explanation.
 ''';
 }

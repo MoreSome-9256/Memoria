@@ -107,6 +107,72 @@ void main() {
         isTrue,
       );
     });
+
+    test('matches recurring summer months across different years', () {
+      const range = SemanticSearchTimeRange(
+        startTimeMs: null,
+        endTimeMs: null,
+        reason: 'summer in any year',
+        recurringStartMonth: 6,
+        recurringEndMonth: 10,
+      );
+      final summer2022 = _photo(
+        id: 10,
+        timestamp: DateTime(2022, 7, 1).millisecondsSinceEpoch,
+      );
+      final summer2025 = _photo(
+        id: 11,
+        timestamp: DateTime(2025, 10, 1).millisecondsSinceEpoch,
+      );
+      final winter = _photo(
+        id: 12,
+        timestamp: DateTime(2025, 12, 1).millisecondsSinceEpoch,
+      );
+
+      expect(
+        matcher.matchesTime(summer2022, _query(ranges: const [range])),
+        isTrue,
+      );
+      expect(
+        matcher.matchesTime(summer2025, _query(ranges: const [range])),
+        isTrue,
+      );
+      expect(
+        matcher.matchesTime(winter, _query(ranges: const [range])),
+        isFalse,
+      );
+    });
+
+    test('matches recurring winter range across year boundary', () {
+      const range = SemanticSearchTimeRange(
+        startTimeMs: null,
+        endTimeMs: null,
+        reason: 'winter in any year',
+        recurringStartMonth: 12,
+        recurringEndMonth: 2,
+      );
+
+      expect(
+        matcher.matchesTime(
+          _photo(
+            id: 13,
+            timestamp: DateTime(2024, 12, 1).millisecondsSinceEpoch,
+          ),
+          _query(ranges: const [range]),
+        ),
+        isTrue,
+      );
+      expect(
+        matcher.matchesTime(
+          _photo(
+            id: 14,
+            timestamp: DateTime(2025, 2, 1).millisecondsSinceEpoch,
+          ),
+          _query(ranges: const [range]),
+        ),
+        isTrue,
+      );
+    });
   });
 
   group('SemanticSearchMetadataMatcher location', () {

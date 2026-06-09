@@ -1,6 +1,7 @@
-/// 垃圾照片清理服务，负责筛选、确认、标记和必要的本地清除。
+/// 垃圾照片清理服务，负责把确认删除的系统相册资源同步移出本地索引。
 
 import 'dart:async';
+import 'package:photo_manager/photo_manager.dart';
 
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
@@ -17,53 +18,34 @@ class JunkPhotoCleanupService {
 
   factory JunkPhotoCleanupService() => _instance;
 
-  Future<int> markCandidatesAsLowValue(
+  Future<int> moveCandidatesToSystemTrash(
     Iterable<JunkPhotoCleanupCandidate> candidates,
   ) async {
-    final candidateIds = candidates
-        .map((candidate) => candidate.photoId)
-        .where((id) => id > 0)
+    final ids = candidates
+        .map((candidate) => candidate.assetId.trim())
+        .where((id) => id.isNotEmpty)
         .toSet()
         .toList(growable: false);
-    if (candidateIds.isEmpty) {
-      return 0;
-    }
+    if (ids.isEmpty) return 0;
+    final deletedIds = await PhotoManager.editor.deleteWithIds(ids);
+    if (deletedIds.isEmpty) return 0;
+    final deletedSet = deletedIds.toSet();
+    return _removeCandidatesFromLocalIndex(
+      candidates.where((candidate) => deletedSet.contains(candidate.assetId)),
+    );
+  }
 
-    final affectedEventIds = <int>{};
-    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final photos = photoBox
-        .getMany(candidateIds)
-        .whereType<PhotoEntity>()
+  Future<int> movePhotosToSystemTrash(Iterable<PhotoEntity> photos) async {
+    final photoList = photos
+        .where((photo) => photo.assetId.trim().isNotEmpty)
         .toList(growable: false);
-    if (photos.isEmpty) {
-      return 0;
-    }
-
-    for (final photo in photos) {
-      final tags =
-          <String>{...?photo.aiTags, JunkPhotoFilterService.junkCandidateTag}
-            ..remove(JunkPhotoFilterService.pendingJunkCandidateTag)
-            ..removeWhere(JunkPhotoFilterService.isInternalJunkTag);
-      tags.add(JunkPhotoFilterService.junkCandidateTag);
-      photo.aiTags = tags.toList(growable: false);
-      photo.isAiAnalyzed = true;
-      photo.isAiAnalysisCandidate = false;
-      final eventId = photo.eventId;
-      if (eventId != null) {
-        affectedEventIds.add(eventId);
-      }
-    }
-    photoBox.putMany(photos);
-
-    if (affectedEventIds.isNotEmpty) {
-      unawaited(
-        EventService()
-            .refreshEventSmartInfo(affectedEventIds.toList(), allowLlm: false)
-            .catchError((error) {}),
-      );
-    }
-
-    return photos.length;
+    final ids = photoList.map((photo) => photo.assetId).toSet().toList();
+    if (ids.isEmpty) return 0;
+    final deletedIds = await PhotoManager.editor.deleteWithIds(ids);
+    final deletedSet = deletedIds.toSet();
+    return _removePhotosFromLocalIndex(
+      photoList.where((photo) => deletedSet.contains(photo.assetId)),
+    );
   }
 
   Future<int> markCandidatesAsKept(
@@ -100,17 +82,21 @@ class JunkPhotoCleanupService {
     return photos.length;
   }
 
-  Future<int> removeCandidatesFromLocalIndex(
+  Future<int> _removeCandidatesFromLocalIndex(
     Iterable<JunkPhotoCleanupCandidate> candidates,
   ) async {
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final photos = candidates
+        .map((candidate) => photoBox.get(candidate.photoId))
+        .whereType<PhotoEntity>();
+    return _removePhotosFromLocalIndex(photos);
+  }
+
+  Future<int> _removePhotosFromLocalIndex(Iterable<PhotoEntity> photos) async {
     final affectedEventIds = <int>{};
     var removedCount = 0;
-
-    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    for (final candidate in candidates) {
-      final photo = photoBox.get(candidate.photoId);
-      if (photo == null) continue;
-      final affectedEventId = await removeFromLocalIndex(photo);
+    for (final photo in photos) {
+      final affectedEventId = await _removeFromLocalIndex(photo);
       if (affectedEventId != null) {
         affectedEventIds.add(affectedEventId);
       }
@@ -128,7 +114,7 @@ class JunkPhotoCleanupService {
     return removedCount;
   }
 
-  Future<int?> removeFromLocalIndex(PhotoEntity photo) async {
+  Future<int?> _removeFromLocalIndex(PhotoEntity photo) async {
     final store = ObjectBoxService().store;
     final photoBox = store.box<PhotoEntity>();
     final eventBox = store.box<EventEntity>();

@@ -382,9 +382,9 @@ class _EventDetailPageState extends State<EventDetailPage> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('删除本地记录'),
+          title: const Text('移入系统回收站'),
           content: Text(
-            '将从 App 本地数据库中删除 ${_selectedPhotoIds.length} 张照片记录，不会删除手机系统相册中的原图。是否继续？',
+            '将 ${_selectedPhotoIds.length} 张照片移入系统相册回收站，系统会再次请求确认。是否继续？',
           ),
           actions: [
             TextButton(
@@ -393,7 +393,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('删除'),
+              child: const Text('移入回收站'),
             ),
           ],
         );
@@ -412,11 +412,10 @@ class _EventDetailPageState extends State<EventDetailPage> {
     final entities = _q2.find();
     _q2.close();
 
-    var removedCount = 0;
+    final removedCount = await JunkPhotoCleanupService()
+        .movePhotosToSystemTrash(entities);
     for (final entity in entities) {
-      await JunkPhotoCleanupService().removeFromLocalIndex(entity);
       StoryQueueService().removePhoto(entity.assetId);
-      removedCount += 1;
     }
 
     if (!mounted) {
@@ -437,7 +436,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
       SnackBar(
         behavior: SnackBarBehavior.floating,
         content: Text(
-          removedCount > 0 ? '已删除 $removedCount 条本地记录' : '没有删除任何本地记录',
+          removedCount > 0 ? '已将 $removedCount 张照片移入系统回收站' : '没有删除任何照片',
         ),
       ),
     );
@@ -522,9 +521,9 @@ class _EventDetailPageState extends State<EventDetailPage> {
                     ),
                     label: Text(
                       _selectedPhotoIds.isEmpty
-                          ? (_isDeleteMode ? '删除本地记录' : '加入故事队列')
+                          ? (_isDeleteMode ? '移入系统回收站' : '加入故事队列')
                           : (_isDeleteMode
-                                ? '删除本地记录 ${_selectedPhotoIds.length}'
+                                ? '移入系统回收站 ${_selectedPhotoIds.length}'
                                 : '加入故事队列 ${_selectedPhotoIds.length}'),
                     ),
                   ),

@@ -6,6 +6,7 @@ import '../models/vo/semantic_search_models.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
 import 'photo_service.dart';
+import 'junk_photo_filter_service.dart';
 import 'recommendation_query_template_service.dart';
 import 'semantic_photo_search_service.dart';
 import 'semantic_query_parser_service.dart';
@@ -762,12 +763,29 @@ class CreateRecommendationService {
   List<PhotoEntity> _mergeRecommendationPhotos(SemanticSearchResult result) {
     final merged = <PhotoEntity>[];
     final seen = <int>{};
-    for (final photo in [...result.exactPhotos, ...result.relatedPhotos]) {
-      if (seen.add(photo.id)) {
+    for (final photo in result.exactPhotos) {
+      if (!seen.add(photo.id) || _isConfirmedJunk(photo)) continue;
+      if (result.query.isMetadataOnly) {
         merged.add(photo);
+        continue;
       }
+      final hit = result.hits[photo.id];
+      if (hit == null ||
+          hit.qualifiedPositiveScore < 0.22 ||
+          hit.semanticScore < 0.16) {
+        continue;
+      }
+      if (result.query.hasCoarseTags && hit.matchedCoarseTags.isEmpty) {
+        continue;
+      }
+      merged.add(photo);
     }
     return merged;
+  }
+
+  bool _isConfirmedJunk(PhotoEntity photo) {
+    return photo.aiTags?.contains(JunkPhotoFilterService.junkCandidateTag) ??
+        false;
   }
 
   String _buildFingerprint(List<PhotoEntity> photos) {

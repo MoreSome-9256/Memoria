@@ -47,6 +47,7 @@ enum _ImportAction {
   addMorePhotos,
   requestFullAccess,
   managePermissions,
+  cleanLowValue,
 }
 
 // Keep the tag overview and detail sheet on the same snapshot window so a
@@ -478,6 +479,13 @@ class _AlbumPageState extends State<AlbumPage> {
                   onTap: () => Navigator.pop(context, _ImportAction.rebuildAll),
                 ),
                 ListTile(
+                  leading: const Icon(Icons.delete_sweep_outlined),
+                  title: const Text('一键清理低价值图片'),
+                  subtitle: const Text('将已确认的低价值图片移入系统相册回收站'),
+                  onTap: () =>
+                      Navigator.pop(context, _ImportAction.cleanLowValue),
+                ),
+                ListTile(
                   leading: const Icon(Icons.tune),
                   title: const Text('管理照片访问权限'),
                   subtitle: const Text('修改授权范围、选择分析相册'),
@@ -532,7 +540,48 @@ class _AlbumPageState extends State<AlbumPage> {
         await Navigator.of(context).push<void>(
           MaterialPageRoute<void>(builder: (_) => const MediaAccessRangePage()),
         );
+      case _ImportAction.cleanLowValue:
+        await _cleanAllLowValuePhotos();
     }
+  }
+
+  Future<void> _cleanAllLowValuePhotos() async {
+    final photos = await PhotoService().loadJunkCandidatePhotos();
+    if (!mounted) return;
+    if (photos.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前没有已确认的低价值照片。')));
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('一键清理低价值图片'),
+        content: Text('将 ${photos.length} 张已确认的低价值图片移入系统相册回收站。系统会再次请求确认。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('移入系统回收站'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final removed = await JunkPhotoCleanupService().movePhotosToSystemTrash(
+      photos,
+    );
+    await AIService().refreshJunkCleanupReportFromDatabase(
+      replaceExisting: true,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已将 $removed 张低价值图片移入系统相册回收站。')));
   }
 
   Future<void> _confirmAndRebuildAnalysis() async {
@@ -598,7 +647,7 @@ class _AlbumPageState extends State<AlbumPage> {
           .where((candidate) => selectedPhotoIds.contains(candidate.photoId))
           .toList(growable: false);
       final markedCount = await JunkPhotoCleanupService()
-          .markCandidatesAsLowValue(selectedCandidates);
+          .moveCandidatesToSystemTrash(selectedCandidates);
       final remainingCandidates = report.candidates
           .where((candidate) => !selectedPhotoIds.contains(candidate.photoId))
           .toList(growable: false);
@@ -617,8 +666,8 @@ class _AlbumPageState extends State<AlbumPage> {
                 ? '未标记新的低价值照片，已保留 $keptCount 张候选，不会自动重新打标。'
                 : '没有标记新的低价值照片。'
           : keptCount > 0
-          ? '已标记 $markedCount 张低价值照片，并保留其余 $keptCount 张候选，不会自动重新打标。'
-          : '已标记 $markedCount 张低价值照片，可在低价值照片回收站查看。';
+          ? '已将 $markedCount 张低价值照片移入系统回收站，并保留其余 $keptCount 张候选。'
+          : '已将 $markedCount 张低价值照片移入系统相册回收站。';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(behavior: SnackBarBehavior.floating, content: Text(message)),
       );

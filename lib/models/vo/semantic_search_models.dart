@@ -25,6 +25,8 @@ class SemanticSearchTimeRange {
     this.utcOffsetMinutes,
     this.localStartMinute,
     this.localEndMinute,
+    this.recurringStartMonth,
+    this.recurringEndMonth,
   });
 
   final int? startTimeMs;
@@ -36,11 +38,16 @@ class SemanticSearchTimeRange {
   final int? utcOffsetMinutes;
   final int? localStartMinute;
   final int? localEndMinute;
+  final int? recurringStartMonth;
+  final int? recurringEndMonth;
 
   bool get hasDateBoundary => startTimeMs != null || endTimeMs != null;
   bool get hasLocalTimeWindow =>
       localStartMinute != null && localEndMinute != null;
-  bool get hasConstraint => hasDateBoundary || hasLocalTimeWindow;
+  bool get hasRecurringMonthRange =>
+      recurringStartMonth != null && recurringEndMonth != null;
+  bool get hasConstraint =>
+      hasDateBoundary || hasLocalTimeWindow || hasRecurringMonthRange;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -52,6 +59,8 @@ class SemanticSearchTimeRange {
       'utc_offset_minutes': utcOffsetMinutes,
       'local_start_minute': localStartMinute,
       'local_end_minute': localEndMinute,
+      'recurring_start_month': recurringStartMonth,
+      'recurring_end_month': recurringEndMonth,
       'reason': reason,
     };
   }
@@ -135,6 +144,37 @@ class SemanticSearchEstimatedResultCount {
   }
 }
 
+class SemanticSearchAttributes {
+  const SemanticSearchAttributes({
+    this.minFaceCount,
+    this.maxFaceCount,
+    this.minSmileProbability,
+    this.minJoyScore,
+    this.mediaKinds = const <String>[],
+  });
+
+  final int? minFaceCount;
+  final int? maxFaceCount;
+  final double? minSmileProbability;
+  final double? minJoyScore;
+  final List<String> mediaKinds;
+
+  bool get hasConstraints =>
+      minFaceCount != null ||
+      maxFaceCount != null ||
+      minSmileProbability != null ||
+      minJoyScore != null ||
+      mediaKinds.isNotEmpty;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'min_face_count': minFaceCount,
+    'max_face_count': maxFaceCount,
+    'min_smile_probability': minSmileProbability,
+    'min_joy_score': minJoyScore,
+    'media_kinds': mediaKinds,
+  };
+}
+
 class SemanticSearchQuery {
   const SemanticSearchQuery({
     required this.rawQuery,
@@ -148,6 +188,7 @@ class SemanticSearchQuery {
     required this.recallSemantics,
     required this.negativeSemantics,
     required this.estimatedResultCount,
+    required this.attributes,
     required this.usedLlm,
     required this.llmConfigured,
     required this.parserSource,
@@ -172,6 +213,7 @@ class SemanticSearchQuery {
         max: 0,
         confidence: 0.0,
       ),
+      attributes: const SemanticSearchAttributes(),
       usedLlm: false,
       llmConfigured: false,
       parserSource: 'empty',
@@ -191,6 +233,7 @@ class SemanticSearchQuery {
   final List<SemanticSearchSemanticItem> recallSemantics;
   final List<SemanticSearchSemanticItem> negativeSemantics;
   final SemanticSearchEstimatedResultCount estimatedResultCount;
+  final SemanticSearchAttributes attributes;
   final bool usedLlm;
   final bool llmConfigured;
   final String parserSource;
@@ -203,6 +246,7 @@ class SemanticSearchQuery {
   bool get hasPositiveSemantics => positiveSemantics.isNotEmpty;
   bool get hasRecallSemantics => recallSemantics.isNotEmpty;
   bool get hasNegativeSemantics => negativeSemantics.isNotEmpty;
+  bool get hasAttributeConstraints => attributes.hasConstraints;
   bool get isMetadataOnly => queryType == SemanticSearchQueryType.metadata;
 
   List<String> get locationTexts =>
@@ -235,6 +279,7 @@ class SemanticSearchQuery {
     List<SemanticSearchSemanticItem>? recallSemantics,
     List<SemanticSearchSemanticItem>? negativeSemantics,
     SemanticSearchEstimatedResultCount? estimatedResultCount,
+    SemanticSearchAttributes? attributes,
     bool? usedLlm,
     bool? llmConfigured,
     String? parserSource,
@@ -253,6 +298,7 @@ class SemanticSearchQuery {
       recallSemantics: recallSemantics ?? this.recallSemantics,
       negativeSemantics: negativeSemantics ?? this.negativeSemantics,
       estimatedResultCount: estimatedResultCount ?? this.estimatedResultCount,
+      attributes: attributes ?? this.attributes,
       usedLlm: usedLlm ?? this.usedLlm,
       llmConfigured: llmConfigured ?? this.llmConfigured,
       parserSource: parserSource ?? this.parserSource,

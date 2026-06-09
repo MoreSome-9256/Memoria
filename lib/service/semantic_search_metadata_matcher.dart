@@ -16,6 +16,9 @@ class SemanticSearchMetadataMatcher {
     final localTimeWindows = query.timeRanges
         .where((range) => range.hasLocalTimeWindow)
         .toList(growable: false);
+    final recurringMonthRanges = query.timeRanges
+        .where((range) => range.hasRecurringMonthRange)
+        .toList(growable: false);
 
     if (dateRanges.isNotEmpty &&
         !dateRanges.any((range) => matchesDateRange(photo, range))) {
@@ -31,7 +34,27 @@ class SemanticSearchMetadataMatcher {
         )) {
       return false;
     }
+    if (recurringMonthRanges.isNotEmpty &&
+        !recurringMonthRanges.any(
+          (range) => matchesRecurringMonth(photo, range),
+        )) {
+      return false;
+    }
     return true;
+  }
+
+  bool matchesRecurringMonth(PhotoEntity photo, SemanticSearchTimeRange range) {
+    final start = range.recurringStartMonth;
+    final end = range.recurringEndMonth;
+    if (start == null || end == null) {
+      return true;
+    }
+    final month = DateTime.fromMillisecondsSinceEpoch(
+      normalizeTimestampMs(photo.timestamp),
+    ).month;
+    return start <= end
+        ? month >= start && month <= end
+        : month >= start || month <= end;
   }
 
   bool matchesDateRange(PhotoEntity photo, SemanticSearchTimeRange range) {

@@ -35,9 +35,7 @@ class SemanticQueryParserService {
     return primary;
   }
 
-  Future<SemanticSearchQuery> parseQuery(
-    String rawQuery,
-  ) async {
+  Future<SemanticSearchQuery> parseQuery(String rawQuery) async {
     final normalized = rawQuery.trim();
     if (normalized.isEmpty) {
       return SemanticSearchQuery.empty(rawQuery);
@@ -53,28 +51,6 @@ class SemanticQueryParserService {
     } catch (error) {
       debugPrint('SemanticQueryParserService parse with llm failed: $error');
       throw StateError('LLM 查询解析失败，无法执行自然语言检索: $error');
-    }
-  }
-
-  Future<SemanticSearchQuery> retryQueryAfterEmptySearch({
-    required String rawQuery,
-    required SemanticSearchQuery previousQuery,
-    required int metadataCandidateCount,
-    required int tagCandidateCount,
-  }) async {
-    if (!_llmService.isApiKeyConfigured) {
-      throw StateError('LLM 未配置，无法重试自然语言检索。请先配置 LLM_API_KEY。');
-    }
-    try {
-      return await _repairSearchPlanAfterEmptyResult(
-        rawQuery: rawQuery.trim(),
-        previousQuery: previousQuery,
-        metadataCandidateCount: metadataCandidateCount,
-        tagCandidateCount: tagCandidateCount,
-      );
-    } catch (error) {
-      debugPrint('SemanticQueryParserService retry after empty search failed: $error');
-      throw StateError('LLM 查询重试失败，无法执行自然语言检索: $error');
     }
   }
 }

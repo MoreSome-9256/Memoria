@@ -273,11 +273,35 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     )) {
       chips.add(_planChip(Icons.nights_stay_rounded, _formatLocalTime(range)));
     }
+    for (final range in query.timeRanges.where(
+      (item) => item.hasRecurringMonthRange,
+    )) {
+      chips.add(
+        _planChip(
+          Icons.calendar_month_rounded,
+          '每年 ${range.recurringStartMonth}-${range.recurringEndMonth} 月',
+        ),
+      );
+    }
     for (final location in query.locations.take(4)) {
       chips.add(_planChip(Icons.place_rounded, location.text));
     }
     for (final semantic in query.positiveSemantics.take(3)) {
       chips.add(_planChip(Icons.auto_awesome_rounded, semantic.text));
+    }
+    final attributes = query.attributes;
+    if (attributes.minFaceCount != null) {
+      chips.add(
+        _planChip(Icons.people_rounded, '至少 ${attributes.minFaceCount} 人'),
+      );
+    }
+    if (attributes.minSmileProbability != null) {
+      chips.add(_planChip(Icons.sentiment_very_satisfied, '笑脸'));
+    }
+    if (attributes.mediaKinds.isNotEmpty) {
+      chips.add(
+        _planChip(Icons.perm_media_rounded, attributes.mediaKinds.join(' / ')),
+      );
     }
     return chips;
   }

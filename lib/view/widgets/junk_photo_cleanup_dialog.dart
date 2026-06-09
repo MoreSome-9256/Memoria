@@ -100,7 +100,7 @@ class _JunkPhotoCleanupDialogState extends State<JunkPhotoCleanupDialog> {
                   const SizedBox(height: 8),
                   Text(
                     '系统识别出 ${report.totalCount} 张低质量候选图片。'
-                    '你可以勾选需要从本地数据库删除的记录，系统相册原图不会被删除。',
+                    '你可以勾选需要移入系统相册回收站的照片。系统会显示删除确认，取消时不会清理本地记录。',
                   ),
                   const SizedBox(height: 12),
                   Wrap(

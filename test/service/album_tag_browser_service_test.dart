@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_album/data/tag_taxonomy_v2.dart';
 import 'package:photo_album/models/entity/photo_entity.dart';
 import 'package:photo_album/service/album_tag_browser_service.dart';
+import 'package:photo_album/service/junk_photo_filter_service.dart';
 
 PhotoEntity _photo({
   required int id,
@@ -36,4 +37,16 @@ void main() {
       expect(clusters.single.photoCount, 1);
     },
   );
+
+  test('tag browser excludes confirmed junk photos', () {
+    final photo = _photo(id: 2, tag: memoriaMasterTagDefinitions.first.label)
+      ..aiTags = <String>[
+        memoriaMasterTagDefinitions.first.label,
+        JunkPhotoFilterService.junkCandidateTag,
+      ];
+    final service = AlbumTagBrowserService();
+
+    expect(service.hasBrowsableCategory(photo), isFalse);
+    expect(service.buildCoarseClusters(<PhotoEntity>[photo]), isEmpty);
+  });
 }

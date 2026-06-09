@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'junk_photo_filter_service.dart';
 import 'photo_service.dart';
 import 'unified_analysis_progress_store.dart';
+import '../storage/vector_index/photo_embedding_index_repository.dart';
+import '../storage/vector_index/vector_index_constants.dart';
 
 class AIService {
   AIService._internal();
@@ -14,6 +16,8 @@ class AIService {
       ValueNotifier<JunkPhotoCleanupReport?>(null);
   final JunkPhotoFilterService _junkPhotoFilterService =
       JunkPhotoFilterService();
+  final PhotoEmbeddingIndexRepository _embeddingIndex =
+      PhotoEmbeddingIndexRepository();
 
   ValueListenable<JunkPhotoCleanupReport?> get junkCleanupReportListenable =>
       _junkCleanupReportNotifier;
@@ -66,21 +70,18 @@ class AIService {
     }
 
     final candidates = <JunkPhotoCleanupCandidate>[];
-    final recoveredReasonTagsByPhotoId = <int, List<String>>{};
     for (final photo in photos) {
-      var reasons = JunkPhotoFilterService.hitsFromTags(
-        photo.aiTags ?? const <String>[],
-      );
-      if (reasons.isEmpty && (photo.imageEmbedding?.isNotEmpty ?? false)) {
-        final decision = await _junkPhotoFilterService.evaluatePhoto(
-          imageEmbedding: photo.imageEmbedding!,
-        );
-        reasons = decision.hits;
-        final reasonTags = JunkPhotoFilterService.reasonTagsForHits(reasons);
-        if (reasonTags.isNotEmpty) {
-          recoveredReasonTagsByPhotoId[photo.id] = reasonTags;
-        }
-      }
+      final embedding =
+          photo.imageEmbedding ??
+          _embeddingIndex.readEmbeddingForPhoto(
+            photo,
+            modelVersion: buildPhotoEmbeddingModelVersion(),
+          );
+      final reasons = embedding == null || embedding.isEmpty
+          ? const <JunkPhotoHit>[]
+          : (await _junkPhotoFilterService.evaluatePhoto(
+              imageEmbedding: embedding,
+            )).hits;
       candidates.add(
         JunkPhotoCleanupCandidate(
           photoId: photo.id,
@@ -90,16 +91,6 @@ class AIService {
           reasons: reasons,
         ),
       );
-    }
-
-    if (recoveredReasonTagsByPhotoId.isNotEmpty) {
-      for (final entry in recoveredReasonTagsByPhotoId.entries) {
-        PhotoService().updatePhotoInTransaction(entry.key, (photo) {
-          if (photo == null) return;
-          final tags = <String>{...?photo.aiTags, ...entry.value};
-          photo.aiTags = tags.toList(growable: false);
-        });
-      }
     }
 
     final report = JunkPhotoCleanupReport.fromCandidates(candidates);

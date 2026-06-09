@@ -1,7 +1,5 @@
 // 垃圾照片过滤服务，用于识别严重模糊、遮挡和低事件价值内容。
 
-import 'dart:math' as math;
-
 import 'semantic_matching_service.dart';
 
 class JunkPhotoCategoryDefinition {
@@ -123,7 +121,7 @@ class JunkPhotoFilterService {
 
   static const String junkCandidateTag = '__junk_candidate__';
   static const String pendingJunkCandidateTag = '__junk_pending__';
-  static const String junkReasonTagPrefix = '__junk_reason__:';
+  static const String keptJunkCandidateTag = '__junk_kept__';
 
   static final JunkPhotoFilterService _instance =
       JunkPhotoFilterService._internal();
@@ -142,7 +140,7 @@ class JunkPhotoFilterService {
             'a barcode or QR code on a screen',
             'a poster with a large QR code',
           ],
-          threshold: 0.275,
+          threshold: 0.2,
         ),
         JunkPhotoCategoryDefinition(
           id: 'meme',
@@ -154,7 +152,7 @@ class JunkPhotoFilterService {
             'a social media meme screenshot',
             'a captioned joke image template',
           ],
-          threshold: 0.285,
+          threshold: 0.2,
         ),
         JunkPhotoCategoryDefinition(
           id: 'plain_selfie',
@@ -166,7 +164,7 @@ class JunkPhotoFilterService {
             'a passport photo or document portrait',
             'a close-up face selfie without environment or event context',
           ],
-          threshold: 0.285,
+          threshold: 0.2,
         ),
         JunkPhotoCategoryDefinition(
           id: 'advertisement_poster',
@@ -178,7 +176,7 @@ class JunkPhotoFilterService {
             'a social media share poster advertisement',
             'a product advertisement image with graphic design',
           ],
-          threshold: 0.285,
+          threshold: 0.2,
         ),
         JunkPhotoCategoryDefinition(
           id: 'screenshot',
@@ -190,7 +188,7 @@ class JunkPhotoFilterService {
             'a webpage screenshot with interface controls',
             'a desktop software screenshot',
           ],
-          threshold: 0.27,
+          threshold: 0.2,
         ),
         JunkPhotoCategoryDefinition(
           id: 'document',
@@ -202,7 +200,7 @@ class JunkPhotoFilterService {
             'a worksheet or presentation slide',
             'a receipt invoice or printed form',
           ],
-          threshold: 0.27,
+          threshold: 0.2,
         ),
         JunkPhotoCategoryDefinition(
           id: 'abstract_low_value',
@@ -214,7 +212,7 @@ class JunkPhotoFilterService {
             'a simple abstract art image without people or place',
             'a generated geometric pattern image',
           ],
-          threshold: 0.295,
+          threshold: 0.2,
         ),
         JunkPhotoCategoryDefinition(
           id: 'dark_or_occluded',
@@ -227,7 +225,7 @@ class JunkPhotoFilterService {
             'an accidental pocket shot',
             'a heavily shadowed image with no clear subject',
           ],
-          threshold: 0.285,
+          threshold: 0.2,
         ),
         JunkPhotoCategoryDefinition(
           id: 'low_value_landmark',
@@ -239,7 +237,7 @@ class JunkPhotoFilterService {
             'a parking space sign',
             'a directional signpost',
           ],
-          threshold: 0.27,
+          threshold: 0.2,
         ),
         JunkPhotoCategoryDefinition(
           id: 'blurred_or_broken',
@@ -251,12 +249,13 @@ class JunkPhotoFilterService {
             'a cropped incomplete accidental photo',
             'a partial broken image with no clear subject',
           ],
-          threshold: 0.3,
+          threshold: 0.15,
         ),
       ];
 
   final SemanticMatchingService _semanticService = SemanticMatchingService();
-  final Map<String, List<double>> _prototypeCache = <String, List<double>>{};
+  final Map<String, List<List<double>>> _promptVectorCache =
+      <String, List<List<double>>>{};
 
   bool _isWarmedUp = false;
 
@@ -266,85 +265,20 @@ class JunkPhotoFilterService {
     final trimmed = value.trim();
     return trimmed == junkCandidateTag ||
         trimmed == pendingJunkCandidateTag ||
-        trimmed.startsWith(junkReasonTagPrefix);
+        trimmed == keptJunkCandidateTag;
   }
 
-  static List<String> reasonTagsForHits(Iterable<JunkPhotoHit> hits) {
-    return hits
-        .map((hit) => hit.categoryId.trim())
-        .where((id) => id.isNotEmpty)
-        .toSet()
-        .map((id) => '$junkReasonTagPrefix$id')
-        .toList(growable: false);
+  static bool isQuarantined(Iterable<String>? tags) {
+    if (tags == null) return false;
+    return tags.contains(junkCandidateTag) ||
+        tags.contains(pendingJunkCandidateTag);
   }
 
-  static List<String> reasonTagsForCategoryIds(Iterable<String?> ids) {
-    return ids
-        .whereType<String>()
-        .map((id) => id.trim())
-        .where((id) => id.isNotEmpty)
-        .toSet()
-        .map((id) => '$junkReasonTagPrefix$id')
-        .toList(growable: false);
+  static bool hasFinalDecision(Iterable<String>? tags) {
+    if (tags == null) return false;
+    return tags.contains(junkCandidateTag) ||
+        tags.contains(keptJunkCandidateTag);
   }
-
-  static List<JunkPhotoHit> hitsFromTags(Iterable<String> tags) {
-    final ids = tags
-        .map(_categoryIdFromReasonTag)
-        .whereType<String>()
-        .toSet()
-        .toList(growable: false);
-    final hits = <JunkPhotoHit>[];
-    for (final id in ids) {
-      final definition = definitionById(id);
-      if (definition == null) {
-        hits.add(
-          JunkPhotoHit(
-            categoryId: id,
-            label: '低价值照片',
-            description: '历史低价值候选，当前版本没有对应的分类定义。',
-            score: 0,
-            threshold: 0,
-          ),
-        );
-        continue;
-      }
-      hits.add(
-        JunkPhotoHit(
-          categoryId: definition.id,
-          label: definition.label,
-          description: definition.description,
-          score: definition.threshold,
-          threshold: definition.threshold,
-        ),
-      );
-    }
-    hits.sort((a, b) => a.label.compareTo(b.label));
-    return List<JunkPhotoHit>.unmodifiable(hits);
-  }
-
-  static JunkPhotoCategoryDefinition? definitionById(String id) {
-    final normalized = id.trim();
-    for (final definition in _definitions) {
-      if (definition.id == normalized) {
-        return definition;
-      }
-    }
-    return null;
-  }
-
-  static String? _categoryIdFromReasonTag(String value) {
-    final trimmed = value.trim();
-    if (!trimmed.startsWith(junkReasonTagPrefix)) {
-      return null;
-    }
-    final id = trimmed.substring(junkReasonTagPrefix.length).trim();
-    return id.isEmpty ? null : id;
-  }
-
-  /// 可被 `compute()` 序列化的原型缓存
-  Map<String, List<double>> get prototypeCache =>
-      Map<String, List<double>>.unmodifiable(_prototypeCache);
 
   /// 可被 `compute()` 序列化的分类定义列表
   List<Map<String, Object?>> get definitionsJson {
@@ -366,7 +300,7 @@ class JunkPhotoFilterService {
     }
     await _semanticService.warmUp();
     for (final definition in _definitions) {
-      _prototypeCache[definition.id] = await _buildPrototype(definition);
+      _promptVectorCache[definition.id] = await _buildPromptVectors(definition);
     }
     _isWarmedUp = true;
   }
@@ -382,16 +316,19 @@ class JunkPhotoFilterService {
     final hits = <JunkPhotoHit>[];
 
     for (final definition in _definitions) {
-      final prototype = _prototypeCache[definition.id];
-      if (prototype == null || prototype.length != imageEmbedding.length) {
+      final promptVectors = _promptVectorCache[definition.id];
+      if (promptVectors == null || promptVectors.isEmpty) {
         continue;
       }
 
-      var score = _semanticService.calculateSimilarity(
-        imageEmbedding,
-        prototype,
-      );
-      score = score.clamp(-1.0, 1.0);
+      var score = -1.0;
+      for (final promptVector in promptVectors) {
+        if (promptVector.length != imageEmbedding.length) continue;
+        final similarity = _semanticService
+            .calculateSimilarity(imageEmbedding, promptVector)
+            .clamp(-1.0, 1.0);
+        if (similarity > score) score = similarity;
+      }
 
       if (score >= definition.threshold) {
         hits.add(
@@ -413,42 +350,15 @@ class JunkPhotoFilterService {
     );
   }
 
-  Future<List<double>> _buildPrototype(
+  Future<List<List<double>>> _buildPromptVectors(
     JunkPhotoCategoryDefinition definition,
   ) async {
     final promptVectors = <List<double>>[];
     for (final prompt in definition.prototypePrompts) {
       promptVectors.add(await _semanticService.embedText(prompt));
     }
-    return _meanAndNormalize(promptVectors);
-  }
-
-  List<double> _meanAndNormalize(List<List<double>> vectors) {
-    if (vectors.isEmpty) {
-      return const <double>[];
-    }
-
-    final dim = vectors.first.length;
-    if (dim == 0 || vectors.any((vector) => vector.length != dim)) {
-      return const <double>[];
-    }
-
-    final mean = List<double>.filled(dim, 0.0);
-    for (final vector in vectors) {
-      for (var i = 0; i < dim; i++) {
-        mean[i] += vector[i];
-      }
-    }
-    for (var i = 0; i < dim; i++) {
-      mean[i] /= vectors.length;
-    }
-
-    final norm = math.sqrt(
-      mean.fold<double>(0.0, (sum, value) => sum + value * value),
-    );
-    if (norm <= 0) {
-      return mean;
-    }
-    return mean.map((value) => value / norm).toList(growable: false);
+    return promptVectors
+        .where((vector) => vector.isNotEmpty)
+        .toList(growable: false);
   }
 }

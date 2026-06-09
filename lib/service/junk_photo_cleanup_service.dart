@@ -1,4 +1,4 @@
-/// 垃圾照片清理服务，负责把确认删除的系统相册资源同步移出本地索引。
+/// 垃圾照片清理服务，负责确认、恢复低价值照片和显式删除系统相册资源。
 
 import 'dart:async';
 import 'package:photo_manager/photo_manager.dart';
@@ -7,6 +7,8 @@ import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
+import '../storage/vector_index/photo_embedding_index_repository.dart';
+import '../storage/vector_index/vector_index_constants.dart';
 import 'event_service.dart';
 import 'junk_photo_filter_service.dart';
 
@@ -18,21 +20,78 @@ class JunkPhotoCleanupService {
 
   factory JunkPhotoCleanupService() => _instance;
 
-  Future<int> moveCandidatesToSystemTrash(
+  final PhotoEmbeddingIndexRepository _embeddingIndex =
+      PhotoEmbeddingIndexRepository();
+
+  Future<int> evaluateAnalyzedPhotosForPending() async {
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final query = photoBox
+        .query(PhotoEntity_.isAiAnalyzed.equals(true))
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    final photos = query.find();
+    query.close();
+
+    final updates = <PhotoEntity>[];
+    for (final photo in photos) {
+      if (JunkPhotoFilterService.hasFinalDecision(photo.aiTags) ||
+          JunkPhotoFilterService.isQuarantined(photo.aiTags)) {
+        continue;
+      }
+      final embedding =
+          photo.imageEmbedding ??
+          _embeddingIndex.readEmbeddingForPhoto(
+            photo,
+            modelVersion: buildPhotoEmbeddingModelVersion(),
+          );
+      if (embedding == null || embedding.isEmpty) continue;
+      final decision = await JunkPhotoFilterService().evaluatePhoto(
+        imageEmbedding: embedding,
+      );
+      if (!decision.shouldFilter) continue;
+      photo.aiTags = <String>{
+        ...?photo.aiTags,
+        JunkPhotoFilterService.pendingJunkCandidateTag,
+      }.toList(growable: false);
+      updates.add(photo);
+    }
+    if (updates.isNotEmpty) {
+      photoBox.putMany(updates);
+    }
+    return updates.length;
+  }
+
+  Future<int> markCandidatesAsLowValue(
     Iterable<JunkPhotoCleanupCandidate> candidates,
   ) async {
-    final ids = candidates
-        .map((candidate) => candidate.assetId.trim())
-        .where((id) => id.isNotEmpty)
+    final candidateIds = candidates
+        .map((candidate) => candidate.photoId)
+        .where((id) => id > 0)
         .toSet()
         .toList(growable: false);
-    if (ids.isEmpty) return 0;
-    final deletedIds = await PhotoManager.editor.deleteWithIds(ids);
-    if (deletedIds.isEmpty) return 0;
-    final deletedSet = deletedIds.toSet();
-    return _removeCandidatesFromLocalIndex(
-      candidates.where((candidate) => deletedSet.contains(candidate.assetId)),
-    );
+    if (candidateIds.isEmpty) return 0;
+
+    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+    final photos = photoBox
+        .getMany(candidateIds)
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
+    for (final photo in photos) {
+      final tags = <String>{...?photo.aiTags}
+        ..remove(JunkPhotoFilterService.pendingJunkCandidateTag)
+        ..remove(JunkPhotoFilterService.keptJunkCandidateTag)
+        ..removeWhere(
+          (tag) =>
+              JunkPhotoFilterService.isInternalJunkTag(tag) &&
+              tag != JunkPhotoFilterService.junkCandidateTag,
+        )
+        ..add(JunkPhotoFilterService.junkCandidateTag);
+      photo.aiTags = tags.toList(growable: false);
+      photo.isAiAnalyzed = true;
+      photo.isAiAnalysisCandidate = false;
+    }
+    photoBox.putMany(photos);
+    return photos.length;
   }
 
   Future<int> movePhotosToSystemTrash(Iterable<PhotoEntity> photos) async {
@@ -74,22 +133,13 @@ class JunkPhotoCleanupService {
         ..remove(JunkPhotoFilterService.pendingJunkCandidateTag)
         ..remove(JunkPhotoFilterService.junkCandidateTag)
         ..removeWhere(JunkPhotoFilterService.isInternalJunkTag);
+      tags.add(JunkPhotoFilterService.keptJunkCandidateTag);
       photo.aiTags = tags.toList(growable: false);
       photo.isAiAnalyzed = true;
       photo.isAiAnalysisCandidate = false;
     }
     photoBox.putMany(photos);
     return photos.length;
-  }
-
-  Future<int> _removeCandidatesFromLocalIndex(
-    Iterable<JunkPhotoCleanupCandidate> candidates,
-  ) async {
-    final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final photos = candidates
-        .map((candidate) => photoBox.get(candidate.photoId))
-        .whereType<PhotoEntity>();
-    return _removePhotosFromLocalIndex(photos);
   }
 
   Future<int> _removePhotosFromLocalIndex(Iterable<PhotoEntity> photos) async {

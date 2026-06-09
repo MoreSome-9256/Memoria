@@ -25,19 +25,29 @@ void main() {
     },
   );
 
-  test('junk reason tags round-trip to cleanup report reasons', () {
-    final tags = <String>[
-      JunkPhotoFilterService.pendingJunkCandidateTag,
-      ...JunkPhotoFilterService.reasonTagsForCategoryIds(<String>[
-        'low_value_landmark',
+  test('junk state tags contain no semantic category guesses', () {
+    expect(
+      JunkPhotoFilterService.isInternalJunkTag(
+        JunkPhotoFilterService.pendingJunkCandidateTag,
+      ),
+      isTrue,
+    );
+    expect(
+      JunkPhotoFilterService.isInternalJunkTag('__junk_reason__:meme'),
+      isFalse,
+    );
+    expect(
+      JunkPhotoFilterService.hasFinalDecision(<String>[
+        JunkPhotoFilterService.keptJunkCandidateTag,
       ]),
-    ];
-
-    final hits = JunkPhotoFilterService.hitsFromTags(tags);
-
-    expect(hits, hasLength(1));
-    expect(hits.single.categoryId, 'low_value_landmark');
-    expect(hits.single.label, '低价值地标/路牌');
+      isTrue,
+    );
+    expect(
+      JunkPhotoFilterService.isQuarantined(<String>[
+        JunkPhotoFilterService.keptJunkCandidateTag,
+      ]),
+      isFalse,
+    );
   });
 
   test('OCR selection uses semantic tags instead of image aspect ratio', () {
@@ -66,7 +76,7 @@ void main() {
     final tags = TagSanitizer.sanitizeDisplayTags(<String>[
       '旅行',
       JunkPhotoFilterService.pendingJunkCandidateTag,
-      '${JunkPhotoFilterService.junkReasonTagPrefix}meme',
+      JunkPhotoFilterService.keptJunkCandidateTag,
     ]);
 
     expect(tags, <String>['旅行']);

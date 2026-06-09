@@ -21,9 +21,12 @@ extension PhotoServiceAiReset on PhotoService {
     }
 
     for (final photo in photos) {
-      photo.isAiAnalyzed = false;
+      final isConfirmedJunk = _isConfirmedJunkPhoto(photo);
+      photo.isAiAnalyzed = isConfirmedJunk;
       photo.isAiAnalysisCandidate = false;
-      photo.aiTags = <String>[];
+      photo.aiTags = isConfirmedJunk
+          ? <String>[JunkPhotoFilterService.junkCandidateTag]
+          : <String>[];
       photo.aiCaption = null;
       photo.imageEmbedding = null;
       photo.ocrText = null;
@@ -65,10 +68,7 @@ extension PhotoServiceAiReset on PhotoService {
     final photos = query.find();
     query.close();
     final junkPhotos = photos
-        .where(
-          (photo) =>
-              photo.aiTags?.contains(tag) ?? false,
-        )
+        .where((photo) => photo.aiTags?.contains(tag) ?? false)
         .toList(growable: false);
     return reconcileAccessiblePhotos(junkPhotos);
   }
@@ -92,6 +92,7 @@ extension PhotoServiceAiReset on PhotoService {
       memoriaOtherLabel,
       JunkPhotoFilterService.junkCandidateTag,
       JunkPhotoFilterService.pendingJunkCandidateTag,
+      JunkPhotoFilterService.keptJunkCandidateTag,
     };
 
     var updatedCount = 0;
@@ -99,10 +100,10 @@ extension PhotoServiceAiReset on PhotoService {
     final updatedPhotoIds = <int>[];
     for (final photo in photos) {
       final aiTags = photo.aiTags ?? const <String>[];
-      final isJunkCandidate = aiTags.contains(
-            JunkPhotoFilterService.junkCandidateTag,
-          ) ||
-          aiTags.contains(JunkPhotoFilterService.pendingJunkCandidateTag);
+      final isJunkCandidate =
+          aiTags.contains(JunkPhotoFilterService.junkCandidateTag) ||
+          aiTags.contains(JunkPhotoFilterService.pendingJunkCandidateTag) ||
+          aiTags.contains(JunkPhotoFilterService.keptJunkCandidateTag);
       final needsReset =
           photo.isAiAnalyzed &&
           !isJunkCandidate &&
@@ -212,7 +213,11 @@ extension PhotoServiceAiReset on PhotoService {
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
     try {
-      final ids = q.find().map((p) => p.id).where((id) => id > 0);
+      final ids = q
+          .find()
+          .where((photo) => !_isJunkQuarantinedPhoto(photo))
+          .map((photo) => photo.id)
+          .where((id) => id > 0);
       return limit == null
           ? ids.toList(growable: false)
           : ids.take(limit).toList(growable: false);
@@ -230,7 +235,7 @@ extension PhotoServiceAiReset on PhotoService {
         )
         .build();
     try {
-      return q.count();
+      return q.find().where((photo) => !_isJunkQuarantinedPhoto(photo)).length;
     } finally {
       q.close();
     }
@@ -246,7 +251,11 @@ extension PhotoServiceAiReset on PhotoService {
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
     try {
-      final ids = q.find().map((p) => p.id).where((id) => id > 0);
+      final ids = q
+          .find()
+          .where((photo) => !_isJunkQuarantinedPhoto(photo))
+          .map((photo) => photo.id)
+          .where((id) => id > 0);
       return limit == null
           ? ids.toList(growable: false)
           : ids.take(limit).toList(growable: false);
@@ -264,6 +273,15 @@ extension PhotoServiceAiReset on PhotoService {
         .getMany(ids)
         .whereType<PhotoEntity>()
         .toList(growable: false);
+  }
+
+  bool _isConfirmedJunkPhoto(PhotoEntity photo) {
+    return photo.aiTags?.contains(JunkPhotoFilterService.junkCandidateTag) ??
+        false;
+  }
+
+  bool _isJunkQuarantinedPhoto(PhotoEntity photo) {
+    return JunkPhotoFilterService.isQuarantined(photo.aiTags);
   }
 
   void markAiAnalysisCandidatesByIds(Iterable<int> photoIds) {

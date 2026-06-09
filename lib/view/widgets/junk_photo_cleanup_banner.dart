@@ -9,18 +9,16 @@ class JunkPhotoCleanupBanner extends StatelessWidget {
     super.key,
     required this.report,
     required this.onReview,
-    required this.onDismiss,
   });
 
   final JunkPhotoCleanupReport report;
   final VoidCallback onReview;
-  final VoidCallback onDismiss;
 
   @override
   Widget build(BuildContext context) {
-    final summaries = report.orderedReasonSummaries.take(4).toList(
-      growable: false,
-    );
+    final summaries = report.orderedReasonSummaries
+        .take(4)
+        .toList(growable: false);
 
     return Container(
       width: double.infinity,
@@ -53,7 +51,7 @@ class JunkPhotoCleanupBanner extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            '这些照片只会从 Memoria 本地数据库中移除，不会删除系统相册原图。',
+            '请完成确认：标记为低价值后会保留记录，但后续扫描、打标签和检索都会跳过。',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: Colors.grey[700], fontSize: 12),
@@ -86,10 +84,6 @@ class JunkPhotoCleanupBanner extends StatelessWidget {
                 onPressed: onReview,
                 icon: const Icon(Icons.visibility_outlined),
                 label: const Text('查看并处理'),
-              ),
-              TextButton(
-                onPressed: onDismiss,
-                child: const Text('忽略'),
               ),
             ],
           ),

@@ -76,256 +76,265 @@ class _JunkPhotoCleanupDialogState extends State<JunkPhotoCleanupDialog> {
     final selectionSummary =
         '已选 ${_selectedPhotoIds.length} / ${report.totalCount}，当前显示 ${filteredCandidates.length} 张';
 
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: maxDialogWidth > 720 ? 720 : maxDialogWidth,
-          maxHeight: maxDialogHeight,
-        ),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final isCompactLayout = constraints.maxWidth < 420;
-            final gridColumnCount = constraints.maxWidth < 360 ? 2 : 3;
+    return PopScope(
+      canPop: false,
+      child: Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: maxDialogWidth > 720 ? 720 : maxDialogWidth,
+            maxHeight: maxDialogHeight,
+          ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isCompactLayout = constraints.maxWidth < 420;
+              final gridColumnCount = constraints.maxWidth < 360 ? 2 : 3;
 
-            return Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '检测到可清理照片',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '系统识别出 ${report.totalCount} 张低质量候选图片。'
-                    '你可以勾选需要移入系统相册回收站的照片。系统会显示删除确认，取消时不会清理本地记录。',
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ChoiceChip(
-                        label: Text('全部 ${report.totalCount}'),
-                        selected: _activeReasonLabel == null,
-                        onSelected: (_) {
-                          setState(() {
-                            _activeReasonLabel = null;
-                          });
-                        },
-                      ),
-                      ...(() {
-                        final entries = report.reasonCounts.entries.toList()
-                          ..sort((a, b) => b.value.compareTo(a.value));
-                        return entries.map(
-                          (entry) => ChoiceChip(
-                            label: Text('${entry.key} ${entry.value}'),
-                            selected: _activeReasonLabel == entry.key,
-                            onSelected: (_) {
-                              setState(() {
-                                _activeReasonLabel =
-                                    _activeReasonLabel == entry.key
-                                    ? null
-                                    : entry.key;
-                              });
-                            },
-                          ),
-                        );
-                      })(),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  if (isCompactLayout) ...[
-                    Wrap(
-                      spacing: 4,
-                      runSpacing: 4,
-                      children: [
-                        TextButton(
-                          onPressed: _selectAll,
-                          child: const Text('全选'),
-                        ),
-                        TextButton(
-                          onPressed: _clearAll,
-                          child: const Text('清空'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
+              return Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      selectionSummary,
-                      style: Theme.of(context).textTheme.bodySmall,
+                      '检测到可清理照片',
+                      style: Theme.of(context).textTheme.titleLarge,
                     ),
-                  ] else
-                    Row(
+                    const SizedBox(height: 8),
+                    Text(
+                      '系统识别出 ${report.totalCount} 张低质量候选图片。'
+                      '你可以勾选需要标记为低价值的照片。确认后会保留记录，但后续扫描、打标签和检索都会跳过；可在低价值照片回收站恢复。',
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
-                        TextButton(
-                          onPressed: _selectAll,
-                          child: const Text('全选'),
+                        ChoiceChip(
+                          label: Text('全部 ${report.totalCount}'),
+                          selected: _activeReasonLabel == null,
+                          onSelected: (_) {
+                            setState(() {
+                              _activeReasonLabel = null;
+                            });
+                          },
                         ),
-                        TextButton(
-                          onPressed: _clearAll,
-                          child: const Text('清空'),
-                        ),
-                        const Spacer(),
-                        Flexible(
-                          child: Text(
-                            selectionSummary,
-                            textAlign: TextAlign.end,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ),
+                        ...(() {
+                          final entries = report.reasonCounts.entries.toList()
+                            ..sort((a, b) => b.value.compareTo(a.value));
+                          return entries.map(
+                            (entry) => ChoiceChip(
+                              label: Text('${entry.key} ${entry.value}'),
+                              selected: _activeReasonLabel == entry.key,
+                              onSelected: (_) {
+                                setState(() {
+                                  _activeReasonLabel =
+                                      _activeReasonLabel == entry.key
+                                      ? null
+                                      : entry.key;
+                                });
+                              },
+                            ),
+                          );
+                        })(),
                       ],
                     ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: filteredCandidates.isEmpty
-                        ? Center(
+                    const SizedBox(height: 12),
+                    if (isCompactLayout) ...[
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        children: [
+                          TextButton(
+                            onPressed: _selectAll,
+                            child: const Text('全选'),
+                          ),
+                          TextButton(
+                            onPressed: _clearAll,
+                            child: const Text('清空'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        selectionSummary,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ] else
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: _selectAll,
+                            child: const Text('全选'),
+                          ),
+                          TextButton(
+                            onPressed: _clearAll,
+                            child: const Text('清空'),
+                          ),
+                          const Spacer(),
+                          Flexible(
                             child: Text(
-                              '当前筛选下暂无候选图片',
-                              style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(color: Colors.grey[600]),
+                              selectionSummary,
+                              textAlign: TextAlign.end,
+                              style: Theme.of(context).textTheme.bodySmall,
                             ),
-                          )
-                        : GridView.builder(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            itemCount: filteredCandidates.length,
-                            gridDelegate:
-                                SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: gridColumnCount,
-                                  mainAxisSpacing: 10,
-                                  crossAxisSpacing: 10,
-                                  childAspectRatio: 0.72,
-                                ),
-                            itemBuilder: (context, index) {
-                              final candidate = filteredCandidates[index];
-                              final selected = _selectedPhotoIds.contains(
-                                candidate.photoId,
-                              );
-                              final heroTag =
-                                  'junk-cleanup-${candidate.photoId}';
-
-                              return Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(
-                                    color: selected
-                                        ? Theme.of(context).colorScheme.primary
-                                        : Theme.of(context).dividerColor,
-                                    width: selected ? 2 : 1,
+                          ),
+                        ],
+                      ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: filteredCandidates.isEmpty
+                          ? Center(
+                              child: Text(
+                                '当前筛选下暂无候选图片',
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(color: Colors.grey[600]),
+                              ),
+                            )
+                          : GridView.builder(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              itemCount: filteredCandidates.length,
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: gridColumnCount,
+                                    mainAxisSpacing: 10,
+                                    crossAxisSpacing: 10,
+                                    childAspectRatio: 0.72,
                                   ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    Expanded(
-                                      child: Stack(
-                                        children: [
-                                          Positioned.fill(
-                                            child: InkWell(
-                                              borderRadius:
-                                                  const BorderRadius.vertical(
-                                                    top: Radius.circular(13),
-                                                  ),
-                                              onTap: () =>
-                                                  showFullscreenPhotoViewer(
-                                                    context,
-                                                    path: candidate.path,
-                                                    heroTag: heroTag,
-                                                  ),
-                                              child: ClipRRect(
+                              itemBuilder: (context, index) {
+                                final candidate = filteredCandidates[index];
+                                final selected = _selectedPhotoIds.contains(
+                                  candidate.photoId,
+                                );
+                                final heroTag =
+                                    'junk-cleanup-${candidate.photoId}';
+
+                                return Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color: selected
+                                          ? Theme.of(
+                                              context,
+                                            ).colorScheme.primary
+                                          : Theme.of(context).dividerColor,
+                                      width: selected ? 2 : 1,
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Expanded(
+                                        child: Stack(
+                                          children: [
+                                            Positioned.fill(
+                                              child: InkWell(
                                                 borderRadius:
                                                     const BorderRadius.vertical(
                                                       top: Radius.circular(13),
                                                     ),
-                                                child: Hero(
-                                                  tag: heroTag,
-                                                  child: PathImage(
-                                                    path: candidate.path,
-                                                    fit: BoxFit.cover,
+                                                onTap: () =>
+                                                    showFullscreenPhotoViewer(
+                                                      context,
+                                                      path: candidate.path,
+                                                      heroTag: heroTag,
+                                                    ),
+                                                child: ClipRRect(
+                                                  borderRadius:
+                                                      const BorderRadius.vertical(
+                                                        top: Radius.circular(
+                                                          13,
+                                                        ),
+                                                      ),
+                                                  child: Hero(
+                                                    tag: heroTag,
+                                                    child: PathImage(
+                                                      path: candidate.path,
+                                                      fit: BoxFit.cover,
+                                                    ),
                                                   ),
                                                 ),
                                               ),
                                             ),
-                                          ),
-                                          Positioned(
-                                            top: 6,
-                                            right: 6,
-                                            child: Material(
-                                              color: Colors.black.withValues(
-                                                alpha: 0.42,
-                                              ),
-                                              shape: const CircleBorder(),
-                                              child: Checkbox(
-                                                value: selected,
-                                                onChanged: (checked) => _toggle(
-                                                  candidate.photoId,
-                                                  checked,
+                                            Positioned(
+                                              top: 6,
+                                              right: 6,
+                                              child: Material(
+                                                color: Colors.black.withValues(
+                                                  alpha: 0.42,
                                                 ),
-                                                visualDensity:
-                                                    VisualDensity.compact,
+                                                shape: const CircleBorder(),
+                                                child: Checkbox(
+                                                  value: selected,
+                                                  onChanged: (checked) =>
+                                                      _toggle(
+                                                        candidate.photoId,
+                                                        checked,
+                                                      ),
+                                                  visualDensity:
+                                                      VisualDensity.compact,
+                                                ),
                                               ),
                                             ),
+                                          ],
+                                        ),
+                                      ),
+                                      InkWell(
+                                        borderRadius:
+                                            const BorderRadius.vertical(
+                                              bottom: Radius.circular(13),
+                                            ),
+                                        onTap: () => _toggle(
+                                          candidate.photoId,
+                                          !selected,
+                                        ),
+                                        child: Padding(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            8,
+                                            8,
+                                            8,
+                                            10,
                                           ),
-                                        ],
-                                      ),
-                                    ),
-                                    InkWell(
-                                      borderRadius: const BorderRadius.vertical(
-                                        bottom: Radius.circular(13),
-                                      ),
-                                      onTap: () =>
-                                          _toggle(candidate.photoId, !selected),
-                                      child: Padding(
-                                        padding: const EdgeInsets.fromLTRB(
-                                          8,
-                                          8,
-                                          8,
-                                          10,
-                                        ),
-                                        child: Text(
-                                          _formatTimestamp(candidate.timestamp),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.bodySmall,
+                                          child: Text(
+                                            _formatTimestamp(
+                                              candidate.timestamp,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.bodySmall,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                    const SizedBox(height: 12),
+                    OverflowBar(
+                      alignment: MainAxisAlignment.end,
+                      spacing: 12,
+                      overflowSpacing: 8,
+                      children: [
+                        FilledButton.icon(
+                          onPressed: () => Navigator.of(
+                            context,
+                          ).pop(_selectedPhotoIds.toList(growable: false)),
+                          icon: const Icon(Icons.recycling),
+                          label: Text(
+                            _selectedPhotoIds.isEmpty ? '全部标记为正常' : '完成处理',
                           ),
-                  ),
-                  const SizedBox(height: 12),
-                  OverflowBar(
-                    alignment: MainAxisAlignment.end,
-                    spacing: 12,
-                    overflowSpacing: 8,
-                    children: [
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: const Text('暂不处理'),
-                      ),
-                      FilledButton.icon(
-                        onPressed: _selectedPhotoIds.isEmpty
-                            ? null
-                            : () => Navigator.of(
-                                context,
-                              ).pop(_selectedPhotoIds.toList(growable: false)),
-                        icon: const Icon(Icons.recycling),
-                        label: const Text('标记为低价值'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            );
-          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         ),
       ),
     );

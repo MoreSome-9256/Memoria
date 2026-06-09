@@ -24,6 +24,7 @@ import 'mobileclip_litert_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'event_service.dart';
 import 'junk_photo_filter_service.dart';
+import 'junk_photo_cleanup_service.dart';
 import 'media_analysis_image_reader.dart';
 import 'media_embedding_service.dart';
 import 'photo_attribute_background_service.dart';
@@ -57,8 +58,6 @@ class UnifiedAnalysisPipelineService {
   int _aiFailed = 0;
   DateTime? _startedAt;
   final Set<int> _activeCandidatePhotoIds = <int>{};
-  final List<JunkPhotoCleanupCandidate> _junkCandidates =
-      <JunkPhotoCleanupCandidate>[];
 
   ValueListenable<UnifiedAnalysisProgress> get progressListenable =>
       _progressNotifier;
@@ -84,7 +83,6 @@ class UnifiedAnalysisPipelineService {
     _aiTotal = 0;
     _aiFailed = 0;
     _activeCandidatePhotoIds.clear();
-    _junkCandidates.clear();
     _startedAt = DateTime.now();
 
     debugPrint('[pipeline] ======== 统一流水线启动 ========');
@@ -140,7 +138,6 @@ class UnifiedAnalysisPipelineService {
     _aiTotal = 0;
     _aiFailed = 0;
     _activeCandidatePhotoIds.clear();
-    _junkCandidates.clear();
     _startedAt = DateTime.now();
 
     try {
@@ -212,7 +209,6 @@ class UnifiedAnalysisPipelineService {
     _stopRequested = true;
     await _writeForegroundStopRequested(true);
     _queue.clear();
-    _junkCandidates.clear();
 
     await AiBackgroundTaskService.instance.stop();
     await AiBackgroundTaskService.instance.clearPendingUnifiedPipelineRequest();
@@ -376,6 +372,7 @@ class UnifiedAnalysisPipelineService {
             accepted++;
             if (_analysisEnabled &&
                 !photo.isAiAnalyzed &&
+                !_isJunkQuarantined(photo) &&
                 !_activeCandidatePhotoIds.contains(photo.id)) {
               handoffBatch.add(
                 PipelineQueueItem(
@@ -419,6 +416,10 @@ class UnifiedAnalysisPipelineService {
     debugPrint(
       '[pipeline] 生产者结束: scanned=$scanned accepted=$accepted skipped=$skipped pendingAi=$_aiTotal stopped=$_stopRequested',
     );
+  }
+
+  bool _isJunkQuarantined(PhotoEntity photo) {
+    return JunkPhotoFilterService.isQuarantined(photo.aiTags);
   }
 
   Future<void> _runConsumer() async {
@@ -566,10 +567,7 @@ class UnifiedAnalysisPipelineService {
     );
 
     final finalTags = junkDecision.shouldFilter
-        ? <String>[
-            JunkPhotoFilterService.pendingJunkCandidateTag,
-            ...JunkPhotoFilterService.reasonTagsForHits(junkDecision.hits),
-          ]
+        ? <String>[JunkPhotoFilterService.pendingJunkCandidateTag, ...tags]
         : tags;
 
     PhotoService().updatePhotoInTransaction(photo.id, (p) {
@@ -579,18 +577,6 @@ class UnifiedAnalysisPipelineService {
       p.isAiAnalyzed = true;
       p.isAiAnalysisCandidate = false;
     });
-
-    if (junkDecision.shouldFilter) {
-      _junkCandidates.add(
-        JunkPhotoCleanupCandidate(
-          photoId: photo.id,
-          assetId: photo.assetId,
-          path: photo.path,
-          timestamp: photo.timestamp,
-          reasons: junkDecision.hits,
-        ),
-      );
-    }
 
     PhotoEmbeddingIndexRepository().upsertEmbedding(
       photoId: photo.id,
@@ -629,8 +615,11 @@ class UnifiedAnalysisPipelineService {
       return;
     }
 
-    if (_analysisEnabled && _aiTotal > 0) {
+    if (_analysisEnabled) {
       await _publishPostFilterJunkReport();
+    }
+
+    if (_analysisEnabled && _aiTotal > 0) {
       _updateProgress(
         stage: UnifiedAnalysisStage.flushing,
         message: '正在刷新事件聚类…',
@@ -651,6 +640,7 @@ class UnifiedAnalysisPipelineService {
   }
 
   Future<void> _publishPostFilterJunkReport() async {
+    await JunkPhotoCleanupService().evaluateAnalyzedPhotosForPending();
     await AIService().refreshJunkCleanupReportFromDatabase();
   }
 

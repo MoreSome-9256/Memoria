@@ -11,6 +11,7 @@ import '../utils/event_cluster_helper.dart';
 import '../utils/smart_title_generator.dart';
 import '../service/llm_service.dart';
 import '../service/amap_geo_service.dart';
+import 'junk_photo_filter_service.dart';
 
 class EventService {
   static final EventService _instance = EventService._internal();
@@ -75,19 +76,21 @@ class EventService {
   }
 
   // 🧮 核心方法：运行时空聚类算法
-  Future<void> runClustering({
-    int? maxPhotos,
-  }) async {
+  Future<void> runClustering({int? maxPhotos}) async {
     final store = ObjectBoxService().store;
     final photoBox = store.box<PhotoEntity>();
     final eventBox = store.box<EventEntity>();
 
     // 1. 读取照片
-    final query = photoBox.query()
+    final query = photoBox
+        .query()
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
     if (maxPhotos != null) query.limit = maxPhotos;
-    final recentPhotos = query.find();
+    final recentPhotos = query
+        .find()
+        .where((photo) => !JunkPhotoFilterService.isQuarantined(photo.aiTags))
+        .toList(growable: false);
     query.close();
 
     if (recentPhotos.isEmpty) {
@@ -156,11 +159,14 @@ class EventService {
     final store = ObjectBoxService().store;
     final eventBox = store.box<EventEntity>();
 
-    final q = eventBox.query(
-      EventEntity_.avgLatitude.notNull()
-          .and(EventEntity_.photoCount.greaterThan(minPhotosForDisplay - 1))
-          .and(EventEntity_.locationName.isNull()),
-    ).build();
+    final q = eventBox
+        .query(
+          EventEntity_.avgLatitude
+              .notNull()
+              .and(EventEntity_.photoCount.greaterThan(minPhotosForDisplay - 1))
+              .and(EventEntity_.locationName.isNull()),
+        )
+        .build();
     q.limit = 10;
     final events = q.find();
     q.close();
@@ -194,7 +200,8 @@ class EventService {
           e.district = addr.district;
           e.locationName = addr.locationName;
           e.formattedAddress = addr.formattedAddress;
-          final displayLocation = e.locationName ?? e.district ?? e.city ?? e.province;
+          final displayLocation =
+              e.locationName ?? e.district ?? e.city ?? e.province;
           if ((displayLocation?.trim().isNotEmpty ?? false)) {
             e.title = "${displayLocation!.trim()} · ${e.dateRangeText}";
           }
@@ -220,9 +227,9 @@ class EventService {
     final eventBox = store.box<EventEntity>();
     final photoBox = store.box<PhotoEntity>();
 
-    final evQ = eventBox.query(
-      EventEntity_.photoCount.greaterThan(minPhotosForDisplay - 1),
-    ).build();
+    final evQ = eventBox
+        .query(EventEntity_.photoCount.greaterThan(minPhotosForDisplay - 1))
+        .build();
     final visibleEvents = evQ.find();
     evQ.close();
     if (visibleEvents.isEmpty) return;
@@ -232,12 +239,15 @@ class EventService {
       for (final event in visibleEvents) event.id: event.photoCount,
     };
 
-    final photoQ = photoBox.query(
-      PhotoEntity_.eventId.oneOf(eventIds)
-          .and(PhotoEntity_.isLocationProcessed.equals(false))
-          .and(PhotoEntity_.latitude.notNull())
-          .and(PhotoEntity_.longitude.notNull()),
-    ).build();
+    final photoQ = photoBox
+        .query(
+          PhotoEntity_.eventId
+              .oneOf(eventIds)
+              .and(PhotoEntity_.isLocationProcessed.equals(false))
+              .and(PhotoEntity_.latitude.notNull())
+              .and(PhotoEntity_.longitude.notNull()),
+        )
+        .build();
     photoQ.limit = 20;
     final photos = photoQ.find();
     photoQ.close();
@@ -314,9 +324,7 @@ class EventService {
     final eventBox = ObjectBoxService().store.box<EventEntity>();
     return eventBox
         .query(
-          EventEntity_.photoCount.greaterThan(
-            minPhotosForTimelineDisplay - 1,
-          ),
+          EventEntity_.photoCount.greaterThan(minPhotosForTimelineDisplay - 1),
         )
         .order(EventEntity_.startTime, flags: Order.descending)
         .watch(triggerImmediately: true)
@@ -342,8 +350,8 @@ class EventService {
     final orderedKeys = buckets.keys.toList()..sort();
     final dayGroups = orderedKeys
         .map((key) {
-          final group =
-              buckets[key]!..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+          final group = buckets[key]!
+            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
           return _DayPhotoGroup(dateKey: key, photos: group);
         })
         .toList(growable: false);
@@ -355,10 +363,8 @@ class EventService {
       if (current.photos.length <= 5 && index + 1 < dayGroups.length) {
         final next = dayGroups[index + 1];
         if (_isAdjacentDay(current.dateKey, next.dateKey)) {
-          final merged = <PhotoEntity>[
-            ...current.photos,
-            ...next.photos,
-          ]..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+          final merged = <PhotoEntity>[...current.photos, ...next.photos]
+            ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
           mergedGroups.add(merged);
           index += 2;
           continue;
@@ -407,10 +413,13 @@ class EventService {
           continue;
         }
 
-        final analyzedQ = photoBox.query(
-          PhotoEntity_.eventId.equals(eventId)
-              .and(PhotoEntity_.isAiAnalyzed.equals(true)),
-        ).build();
+        final analyzedQ = photoBox
+            .query(
+              PhotoEntity_.eventId
+                  .equals(eventId)
+                  .and(PhotoEntity_.isAiAnalyzed.equals(true)),
+            )
+            .build();
         final analyzedPhotos = analyzedQ.find();
         analyzedQ.close();
 
@@ -442,10 +451,16 @@ class EventService {
           try {
             final llmService = LLMService();
             if (llmService.isApiKeyConfigured) {
-              generatedTitles = await llmService.generateCreativeTitles(event, topTags);
+              generatedTitles = await llmService.generateCreativeTitles(
+                event,
+                topTags,
+              );
             } else {
               print("  ⚠️ LLM API Key 未配置，使用模拟模式");
-              generatedTitles = await llmService.generateCreativeTitlesMock(event, topTags);
+              generatedTitles = await llmService.generateCreativeTitlesMock(
+                event,
+                topTags,
+              );
             }
             isLlmGenerated = true;
             print("  🎨 [LLM] 生成 ${generatedTitles.length} 个创意标题");
@@ -581,16 +596,13 @@ class EventService {
   }
 
   List<String> _effectiveTagsForEventStats(PhotoEntity photo) {
-    final aiTags = TagSanitizer.sanitizeVisualTags(
-      photo.aiTags ?? const <String>[],
-    ).where((tag) => !_blockedSmartTitleTags.contains(tag)).toList(
-      growable: false,
-    );
-    final ocrTags = OcrPolicy.effectiveTags(
-      photo.ocrTags ?? const <String>[],
-    ).where((tag) => !_blockedSmartTitleTags.contains(tag)).toList(
-      growable: false,
-    );
+    final aiTags =
+        TagSanitizer.sanitizeVisualTags(photo.aiTags ?? const <String>[])
+            .where((tag) => !_blockedSmartTitleTags.contains(tag))
+            .toList(growable: false);
+    final ocrTags = OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[])
+        .where((tag) => !_blockedSmartTitleTags.contains(tag))
+        .toList(growable: false);
 
     if (_isTextHeavyPhoto(photo, aiTags: aiTags, ocrTags: ocrTags)) {
       final textTags = <String>[];
@@ -660,10 +672,7 @@ class EventService {
 }
 
 class _DayPhotoGroup {
-  const _DayPhotoGroup({
-    required this.dateKey,
-    required this.photos,
-  });
+  const _DayPhotoGroup({required this.dateKey, required this.photos});
 
   final String dateKey;
   final List<PhotoEntity> photos;

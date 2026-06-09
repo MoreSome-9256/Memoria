@@ -75,7 +75,7 @@ class AlbumPage extends StatefulWidget {
 
 enum _AlbumViewMode { tags, moments }
 
-class _AlbumPageState extends State<AlbumPage> {
+class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   static const double _contentBottomInset = 118;
   static const int _tagBrowserYieldChunk = 120;
   bool _isStartingImport = false;
@@ -84,7 +84,7 @@ class _AlbumPageState extends State<AlbumPage> {
   bool _hiddenPendingAnalysisPromptForSession = false;
   bool _autoResumePendingStarted = false;
   int _pendingAnalysisCandidateCount = 0;
-  String? _lastPromptedJunkCleanupReportId;
+  bool _isShowingJunkCleanupDialog = false;
   String? _lastTerminalJunkRefreshKey;
   final TextEditingController _semanticSearchController =
       TextEditingController();
@@ -480,8 +480,8 @@ class _AlbumPageState extends State<AlbumPage> {
                 ),
                 ListTile(
                   leading: const Icon(Icons.delete_sweep_outlined),
-                  title: const Text('一键清理低价值图片'),
-                  subtitle: const Text('将已确认的低价值图片移入系统相册回收站'),
+                  title: const Text('一键标记低价值图片'),
+                  subtitle: const Text('确认全部待处理候选，后续扫描和检索将跳过'),
                   onTap: () =>
                       Navigator.pop(context, _ImportAction.cleanLowValue),
                 ),
@@ -546,19 +546,23 @@ class _AlbumPageState extends State<AlbumPage> {
   }
 
   Future<void> _cleanAllLowValuePhotos() async {
-    final photos = await PhotoService().loadJunkCandidatePhotos();
+    final report = await AIService().refreshJunkCleanupReportFromDatabase(
+      replaceExisting: false,
+    );
     if (!mounted) return;
-    if (photos.isEmpty) {
+    if (report == null || !report.hasCandidates) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('当前没有已确认的低价值照片。')));
+      ).showSnackBar(const SnackBar(content: Text('当前没有待确认的低价值候选。')));
       return;
     }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('一键清理低价值图片'),
-        content: Text('将 ${photos.length} 张已确认的低价值图片移入系统相册回收站。系统会再次请求确认。'),
+        title: const Text('一键标记低价值图片'),
+        content: Text(
+          '将 ${report.totalCount} 张待处理候选标记为低价值。记录和系统相册原图都会保留，后续扫描、打标签和检索将跳过。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -566,22 +570,20 @@ class _AlbumPageState extends State<AlbumPage> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('移入系统回收站'),
+            child: const Text('确认标记'),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
-    final removed = await JunkPhotoCleanupService().movePhotosToSystemTrash(
-      photos,
+    final marked = await JunkPhotoCleanupService().markCandidatesAsLowValue(
+      report.candidates,
     );
-    await AIService().refreshJunkCleanupReportFromDatabase(
-      replaceExisting: true,
-    );
+    AIService().clearPendingJunkCleanupReport();
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('已将 $removed 张低价值图片移入系统相册回收站。')));
+    ).showSnackBar(SnackBar(content: Text('已标记 $marked 张低价值图片，后续扫描和检索将跳过。')));
   }
 
   Future<void> _confirmAndRebuildAnalysis() async {
@@ -619,23 +621,27 @@ class _AlbumPageState extends State<AlbumPage> {
       return;
     }
 
-    if (_lastPromptedJunkCleanupReportId == report.reportId) {
+    if (_isShowingJunkCleanupDialog) {
       return;
     }
-    _lastPromptedJunkCleanupReportId = report.reportId;
-
-    await _showJunkCleanupDialog(report);
+    _isShowingJunkCleanupDialog = true;
+    try {
+      await _showJunkCleanupDialog(report);
+    } finally {
+      _isShowingJunkCleanupDialog = false;
+    }
   }
 
   Future<void> _showJunkCleanupDialog(JunkPhotoCleanupReport report) async {
     final selectedPhotoIds = await showDialog<List<int>>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => JunkPhotoCleanupDialog(report: report),
     );
-    if (!mounted) {
+    if (!mounted || selectedPhotoIds == null) {
       return;
     }
-    await _markSelectedJunkRecords(report, selectedPhotoIds ?? const <int>[]);
+    await _markSelectedJunkRecords(report, selectedPhotoIds);
   }
 
   Future<void> _markSelectedJunkRecords(
@@ -647,7 +653,7 @@ class _AlbumPageState extends State<AlbumPage> {
           .where((candidate) => selectedPhotoIds.contains(candidate.photoId))
           .toList(growable: false);
       final markedCount = await JunkPhotoCleanupService()
-          .moveCandidatesToSystemTrash(selectedCandidates);
+          .markCandidatesAsLowValue(selectedCandidates);
       final remainingCandidates = report.candidates
           .where((candidate) => !selectedPhotoIds.contains(candidate.photoId))
           .toList(growable: false);
@@ -666,8 +672,8 @@ class _AlbumPageState extends State<AlbumPage> {
                 ? '未标记新的低价值照片，已保留 $keptCount 张候选，不会自动重新打标。'
                 : '没有标记新的低价值照片。'
           : keptCount > 0
-          ? '已将 $markedCount 张低价值照片移入系统回收站，并保留其余 $keptCount 张候选。'
-          : '已将 $markedCount 张低价值照片移入系统相册回收站。';
+          ? '已标记 $markedCount 张低价值照片，后续扫描和检索将跳过；其余 $keptCount 张已保留。'
+          : '已标记 $markedCount 张低价值照片，后续扫描和检索将跳过。';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(behavior: SnackBarBehavior.floating, content: Text(message)),
       );
@@ -684,13 +690,10 @@ class _AlbumPageState extends State<AlbumPage> {
     }
   }
 
-  void _dismissJunkCleanupBanner() {
-    AIService().clearPendingJunkCleanupReport();
-  }
-
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     AIService().junkCleanupReportListenable.addListener(
       _onJunkCleanupReportChanged,
     );
@@ -779,6 +782,7 @@ class _AlbumPageState extends State<AlbumPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     AIService().junkCleanupReportListenable.removeListener(
       _onJunkCleanupReportChanged,
     );
@@ -792,6 +796,13 @@ class _AlbumPageState extends State<AlbumPage> {
     _semanticSearchController.dispose();
     _semanticSearchFocusNode.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(AIService().refreshJunkCleanupReportFromDatabase());
+    }
   }
 
   void _onForegroundProgressForCardChanged() {
@@ -1070,8 +1081,9 @@ class _AlbumPageState extends State<AlbumPage> {
                             : JunkPhotoCleanupBanner(
                                 key: ValueKey<String>(report.reportId),
                                 report: report,
-                                onReview: () => _showJunkCleanupDialog(report),
-                                onDismiss: _dismissJunkCleanupBanner,
+                                onReview: () => unawaited(
+                                  _handleJunkCleanupReportChanged(),
+                                ),
                               ),
                       );
                     },

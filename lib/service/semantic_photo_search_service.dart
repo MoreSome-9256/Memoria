@@ -10,6 +10,7 @@ import 'mobileclip_embedding_service.dart';
 import 'semantic_matching_service.dart';
 import 'semantic_search_metadata_matcher.dart';
 import 'semantic_query_parser_service.dart';
+import 'junk_photo_filter_service.dart';
 
 class SemanticPhotoSearchService {
   SemanticPhotoSearchService._internal();
@@ -65,7 +66,7 @@ class SemanticPhotoSearchService {
     required List<PhotoEntity> allPhotos,
   }) async {
     final photos = allPhotos
-        .where((photo) => photo.isAiAnalyzed)
+        .where((photo) => photo.isAiAnalyzed && !_isJunkQuarantined(photo))
         .toList(growable: false);
     final activeModelVersion = await _mobileClipEmbeddingService
         .getSelectedModelVersion();
@@ -181,6 +182,10 @@ class SemanticPhotoSearchService {
     final photos = q.find();
     q.close();
     return photos;
+  }
+
+  bool _isJunkQuarantined(PhotoEntity photo) {
+    return JunkPhotoFilterService.isQuarantined(photo.aiTags);
   }
 
   SemanticSearchResult _emptyResult(

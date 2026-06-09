@@ -526,7 +526,7 @@ class ThemeClusterService {
           photo.mediaKind,
           path: photo.path,
         );
-        if (_isConfirmedJunk(photo)) {
+        if (_isJunkQuarantined(photo)) {
           skippedConfirmedJunk++;
           _emitEmbeddingProgress(
             processed: processed,
@@ -684,7 +684,7 @@ class ThemeClusterService {
     ThemeDefinition definition, {
     required bool pureEmbeddingOnly,
   }) {
-    if (_isConfirmedJunk(photo)) {
+    if (_isJunkQuarantined(photo)) {
       return true;
     }
 
@@ -697,9 +697,8 @@ class ThemeClusterService {
     return false;
   }
 
-  bool _isConfirmedJunk(PhotoEntity photo) {
-    return photo.aiTags?.contains(JunkPhotoFilterService.junkCandidateTag) ??
-        false;
+  bool _isJunkQuarantined(PhotoEntity photo) {
+    return JunkPhotoFilterService.isQuarantined(photo.aiTags);
   }
 
   Future<Map<String, List<double>>> _buildThemePrototypeVectors() async {

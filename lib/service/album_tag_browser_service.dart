@@ -3,6 +3,7 @@
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
 import '../utils/tag_sanitizer.dart';
+import 'junk_photo_filter_service.dart';
 
 class AlbumFineTagSummary {
   const AlbumFineTagSummary({required this.label, required this.count});
@@ -45,7 +46,7 @@ class AlbumTagBrowserService {
     final fineScoresByCoarse = <String, Map<String, double>>{};
 
     for (final photo in photos) {
-      if (!_hasRenderableFile(photo)) {
+      if (_isJunkQuarantined(photo) || !_hasRenderableFile(photo)) {
         continue;
       }
       final tags = browsableTagsForPhoto(photo);
@@ -126,7 +127,8 @@ class AlbumTagBrowserService {
   }
 
   bool hasBrowsableCategory(PhotoEntity photo) {
-    return _hasRenderableFile(photo) &&
+    return !_isJunkQuarantined(photo) &&
+        _hasRenderableFile(photo) &&
         browsableCoarseIdsForPhoto(photo).isNotEmpty;
   }
 
@@ -137,6 +139,9 @@ class AlbumTagBrowserService {
     final filtered = photos
         .where((photo) {
           if (!_hasRenderableFile(photo)) {
+            return false;
+          }
+          if (_isJunkQuarantined(photo)) {
             return false;
           }
           return browsableCoarseIdsForPhoto(photo).contains(coarseId);
@@ -221,6 +226,10 @@ class AlbumTagBrowserService {
     return photo.assetId.trim().isNotEmpty ||
         (photo.thumbnailBytes?.isNotEmpty ?? false) ||
         photo.path.trim().isNotEmpty;
+  }
+
+  bool _isJunkQuarantined(PhotoEntity photo) {
+    return JunkPhotoFilterService.isQuarantined(photo.aiTags);
   }
 
   List<String> browsableTagsForPhoto(PhotoEntity photo) {

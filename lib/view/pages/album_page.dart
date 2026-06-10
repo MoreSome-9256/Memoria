@@ -1424,7 +1424,7 @@ class _AlbumPageState extends State<AlbumPage> {
         }
 
         return CustomScrollView(
-          scrollCacheExtent: const ScrollCacheExtent.pixels(700),
+          cacheExtent: 700,
           slivers: [
             SliverPadding(
               padding: EdgeInsets.fromLTRB(

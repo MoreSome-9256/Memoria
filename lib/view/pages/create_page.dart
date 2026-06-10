@@ -563,7 +563,7 @@ class _CreatePageState extends State<CreatePage> {
   // 🖼️ 构建无黑罩的照片网格
   Widget _buildPhotoGrid() {
     return GridView.builder(
-      scrollCacheExtent: const ScrollCacheExtent.pixels(700),
+      cacheExtent: 700,
       padding: const EdgeInsets.only(
         left: 20,
         right: 20,

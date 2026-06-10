@@ -60,6 +60,18 @@ extension PhotoServiceAiReset on PhotoService {
     return _loadPhotosWithAiTag(JunkPhotoFilterService.pendingJunkCandidateTag);
   }
 
+  Future<List<PhotoEntity>> loadAnalyzedPhotosForJunkScoring() async {
+    final query = _photoBox
+        .query(PhotoEntity_.isAiAnalyzed.equals(true))
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    try {
+      return query.find();
+    } finally {
+      query.close();
+    }
+  }
+
   Future<List<PhotoEntity>> _loadPhotosWithAiTag(String tag) async {
     final query = _photoBox
         .query(PhotoEntity_.isAiAnalyzed.equals(true))

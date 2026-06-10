@@ -72,6 +72,42 @@ void main() {
     }
   });
 
+  test('distribution filter selects only significant upper outliers', () {
+    final scores = <int, double>{
+      for (var i = 0; i < 30; i++) i: 0.14 + (i % 4) * 0.002,
+      100: 0.27,
+      101: 0.29,
+    };
+
+    expect(
+      JunkPhotoFilterService.significantOutlierIds(scores, absoluteFloor: 0.2),
+      <int>{100, 101},
+    );
+  });
+
+  test('distribution filter does not invent candidates for a tight album', () {
+    final scores = <int, double>{
+      for (var i = 0; i < 40; i++) i: 0.23 + (i % 5) * 0.001,
+    };
+
+    expect(
+      JunkPhotoFilterService.significantOutlierIds(scores, absoluteFloor: 0.2),
+      isEmpty,
+    );
+  });
+
+  test('distribution filter does not guess from a small album', () {
+    final scores = <int, double>{
+      for (var i = 0; i < 10; i++) i: 0.12,
+      100: 0.9,
+    };
+
+    expect(
+      JunkPhotoFilterService.significantOutlierIds(scores, absoluteFloor: 0.2),
+      isEmpty,
+    );
+  });
+
   test('internal junk tags are hidden from normal display tags', () {
     final tags = TagSanitizer.sanitizeDisplayTags(<String>[
       '旅行',

@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../service/junk_photo_filter_service.dart';
 import 'fullscreen_photo_viewer.dart';
-import 'path_image.dart';
+import 'media_thumbnail.dart';
 
 class JunkPhotoCleanupDialog extends StatefulWidget {
   const JunkPhotoCleanupDialog({super.key, required this.report});
@@ -237,6 +237,8 @@ class _JunkPhotoCleanupDialogState extends State<JunkPhotoCleanupDialog> {
                                                     showFullscreenPhotoViewer(
                                                       context,
                                                       path: candidate.path,
+                                                      assetId:
+                                                          candidate.assetId,
                                                       heroTag: heroTag,
                                                     ),
                                                 child: ClipRRect(
@@ -248,8 +250,10 @@ class _JunkPhotoCleanupDialogState extends State<JunkPhotoCleanupDialog> {
                                                       ),
                                                   child: Hero(
                                                     tag: heroTag,
-                                                    child: PathImage(
+                                                    child: MediaThumbnail(
                                                       path: candidate.path,
+                                                      assetId:
+                                                          candidate.assetId,
                                                       fit: BoxFit.cover,
                                                     ),
                                                   ),

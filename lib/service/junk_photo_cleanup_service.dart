@@ -31,28 +31,33 @@ class JunkPhotoCleanupService {
         .build();
     final photos = query.find();
     query.close();
+    final indexedEmbeddings = _embeddingIndex.readEmbeddingsForPhotos(
+      photos,
+      modelVersion: buildPhotoEmbeddingModelVersion(),
+    );
 
-    final updates = <PhotoEntity>[];
+    final eligiblePhotos = <PhotoEntity>[];
+    final embeddings = <int, List<double>>{};
     for (final photo in photos) {
-      if (JunkPhotoFilterService.hasFinalDecision(photo.aiTags) ||
-          JunkPhotoFilterService.isQuarantined(photo.aiTags)) {
-        continue;
-      }
-      final embedding =
-          photo.imageEmbedding ??
-          _embeddingIndex.readEmbeddingForPhoto(
-            photo,
-            modelVersion: buildPhotoEmbeddingModelVersion(),
-          );
+      final embedding = photo.imageEmbedding ?? indexedEmbeddings[photo.id];
       if (embedding == null || embedding.isEmpty) continue;
-      final decision = await JunkPhotoFilterService().evaluatePhoto(
-        imageEmbedding: embedding,
-      );
-      if (!decision.shouldFilter) continue;
-      photo.aiTags = <String>{
-        ...?photo.aiTags,
-        JunkPhotoFilterService.pendingJunkCandidateTag,
-      }.toList(growable: false);
+      embeddings[photo.id] = embedding;
+      if (!JunkPhotoFilterService.hasFinalDecision(photo.aiTags)) {
+        eligiblePhotos.add(photo);
+      }
+    }
+
+    final batch = await JunkPhotoFilterService().evaluateBatch(embeddings);
+    final updates = <PhotoEntity>[];
+    for (final photo in eligiblePhotos) {
+      final decision = batch.decisionFor(photo.id);
+      final tags = <String>{...?photo.aiTags};
+      if (decision.shouldFilter) {
+        tags.add(JunkPhotoFilterService.pendingJunkCandidateTag);
+      } else {
+        tags.remove(JunkPhotoFilterService.pendingJunkCandidateTag);
+      }
+      photo.aiTags = tags.toList(growable: false);
       updates.add(photo);
     }
     if (updates.isNotEmpty) {

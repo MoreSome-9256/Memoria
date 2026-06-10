@@ -69,19 +69,27 @@ class AIService {
       return null;
     }
 
+    final allAnalyzed = await PhotoService().loadAnalyzedPhotosForJunkScoring();
+    final indexedEmbeddings = _embeddingIndex.readEmbeddingsForPhotos(
+      allAnalyzed,
+      modelVersion: buildPhotoEmbeddingModelVersion(),
+    );
+    final embeddings = <int, List<double>>{};
+    for (final photo in allAnalyzed) {
+      final embedding = photo.imageEmbedding ?? indexedEmbeddings[photo.id];
+      if (embedding != null && embedding.isNotEmpty) {
+        embeddings[photo.id] = embedding;
+      }
+    }
+    final batch = await _junkPhotoFilterService.evaluateBatch(embeddings);
     final candidates = <JunkPhotoCleanupCandidate>[];
+    final stalePendingPhotoIds = <int>[];
     for (final photo in photos) {
-      final embedding =
-          photo.imageEmbedding ??
-          _embeddingIndex.readEmbeddingForPhoto(
-            photo,
-            modelVersion: buildPhotoEmbeddingModelVersion(),
-          );
-      final reasons = embedding == null || embedding.isEmpty
-          ? const <JunkPhotoHit>[]
-          : (await _junkPhotoFilterService.evaluatePhoto(
-              imageEmbedding: embedding,
-            )).hits;
+      final reasons = batch.decisionFor(photo.id).hits;
+      if (reasons.isEmpty) {
+        stalePendingPhotoIds.add(photo.id);
+        continue;
+      }
       candidates.add(
         JunkPhotoCleanupCandidate(
           photoId: photo.id,
@@ -92,8 +100,20 @@ class AIService {
         ),
       );
     }
+    for (final photoId in stalePendingPhotoIds) {
+      PhotoService().updatePhotoInTransaction(photoId, (photo) {
+        if (photo == null) return;
+        final tags = <String>{...?photo.aiTags}
+          ..remove(JunkPhotoFilterService.pendingJunkCandidateTag);
+        photo.aiTags = tags.toList(growable: false);
+      });
+    }
 
     final report = JunkPhotoCleanupReport.fromCandidates(candidates);
+    if (!report.hasCandidates) {
+      clearPendingJunkCleanupReport();
+      return null;
+    }
     replacePendingJunkCleanupReport(report);
     return report;
   }

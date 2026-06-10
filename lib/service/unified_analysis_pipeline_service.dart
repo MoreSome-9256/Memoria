@@ -440,7 +440,6 @@ class UnifiedAnalysisPipelineService {
 
     await liteRt.warmUp();
     await MobileClipTagService().warmUp();
-    await JunkPhotoFilterService().warmUp();
 
     debugPrint('[pipeline] AI 引擎预热完成');
 
@@ -562,18 +561,10 @@ class UnifiedAnalysisPipelineService {
         ? <String>['视频']
         : await tagService.retrieveTags(tagEmbedding);
 
-    final junkDecision = await JunkPhotoFilterService().evaluatePhoto(
-      imageEmbedding: embedding,
-    );
-
-    final finalTags = junkDecision.shouldFilter
-        ? <String>[JunkPhotoFilterService.pendingJunkCandidateTag, ...tags]
-        : tags;
-
     PhotoService().updatePhotoInTransaction(photo.id, (p) {
       if (p == null) return;
       p.imageEmbedding = embedding;
-      p.aiTags = finalTags;
+      p.aiTags = tags;
       p.isAiAnalyzed = true;
       p.isAiAnalysisCandidate = false;
     });
@@ -616,6 +607,10 @@ class UnifiedAnalysisPipelineService {
     }
 
     if (_analysisEnabled) {
+      _updateProgress(
+        stage: UnifiedAnalysisStage.flushing,
+        message: '标签已完成，正在批量检测低价值离群图片…',
+      );
       await _publishPostFilterJunkReport();
     }
 

@@ -1,5 +1,7 @@
 // 垃圾照片过滤服务，用于识别严重模糊、遮挡和低事件价值内容。
 
+import 'dart:math' as math;
+
 import 'semantic_matching_service.dart';
 
 class JunkPhotoCategoryDefinition {
@@ -45,6 +47,15 @@ class JunkPhotoDecision {
   final List<JunkPhotoHit> hits;
 
   JunkPhotoHit? get primaryHit => hits.isEmpty ? null : hits.first;
+}
+
+class JunkPhotoBatchResult {
+  const JunkPhotoBatchResult({required this.decisions});
+
+  final Map<int, JunkPhotoDecision> decisions;
+
+  JunkPhotoDecision decisionFor(int photoId) =>
+      decisions[photoId] ?? JunkPhotoDecision.keep();
 }
 
 class JunkPhotoCleanupCandidate {
@@ -305,49 +316,129 @@ class JunkPhotoFilterService {
     _isWarmedUp = true;
   }
 
-  Future<JunkPhotoDecision> evaluatePhoto({
-    required List<double> imageEmbedding,
-  }) async {
-    if (imageEmbedding.isEmpty) {
-      return JunkPhotoDecision.keep();
+  Future<JunkPhotoBatchResult> evaluateBatch(
+    Map<int, List<double>> imageEmbeddings,
+  ) async {
+    final validEmbeddings = Map<int, List<double>>.fromEntries(
+      imageEmbeddings.entries.where((entry) => entry.value.isNotEmpty),
+    );
+    if (validEmbeddings.isEmpty) {
+      return const JunkPhotoBatchResult(decisions: <int, JunkPhotoDecision>{});
     }
-
     await warmUp();
-    final hits = <JunkPhotoHit>[];
+    final hitsByPhotoId = <int, List<JunkPhotoHit>>{};
 
     for (final definition in _definitions) {
       final promptVectors = _promptVectorCache[definition.id];
       if (promptVectors == null || promptVectors.isEmpty) {
         continue;
       }
-
-      var score = -1.0;
-      for (final promptVector in promptVectors) {
-        if (promptVector.length != imageEmbedding.length) continue;
-        final similarity = _semanticService
-            .calculateSimilarity(imageEmbedding, promptVector)
-            .clamp(-1.0, 1.0);
-        if (similarity > score) score = similarity;
+      final scores = <int, double>{};
+      for (final entry in validEmbeddings.entries) {
+        scores[entry.key] = _bestPromptScore(entry.value, promptVectors);
       }
-
-      if (score >= definition.threshold) {
-        hits.add(
-          JunkPhotoHit(
-            categoryId: definition.id,
-            label: definition.label,
-            description: definition.description,
-            score: score,
-            threshold: definition.threshold,
-          ),
-        );
+      final outlierIds = significantOutlierIds(
+        scores,
+        absoluteFloor: definition.threshold,
+      );
+      for (final photoId in outlierIds) {
+        hitsByPhotoId
+            .putIfAbsent(photoId, () => <JunkPhotoHit>[])
+            .add(
+              JunkPhotoHit(
+                categoryId: definition.id,
+                label: definition.label,
+                description: definition.description,
+                score: scores[photoId]!,
+                threshold: definition.threshold,
+              ),
+            );
       }
     }
 
-    hits.sort((a, b) => b.score.compareTo(a.score));
-    return JunkPhotoDecision(
-      shouldFilter: hits.isNotEmpty,
-      hits: List<JunkPhotoHit>.unmodifiable(hits),
+    final decisions = <int, JunkPhotoDecision>{};
+    for (final photoId in validEmbeddings.keys) {
+      final hits = hitsByPhotoId[photoId] ?? <JunkPhotoHit>[];
+      hits.sort((a, b) => b.score.compareTo(a.score));
+      decisions[photoId] = JunkPhotoDecision(
+        shouldFilter: hits.isNotEmpty,
+        hits: List<JunkPhotoHit>.unmodifiable(hits),
+      );
+    }
+    final rankedCandidates =
+        decisions.entries
+            .where((entry) => entry.value.shouldFilter)
+            .toList(growable: false)
+          ..sort(
+            (a, b) => _decisionStrength(
+              b.value,
+            ).compareTo(_decisionStrength(a.value)),
+          );
+    final maxCandidates = math.max(1, (validEmbeddings.length * 0.05).floor());
+    final allowedIds = rankedCandidates
+        .take(maxCandidates)
+        .map((entry) => entry.key)
+        .toSet();
+    return JunkPhotoBatchResult(
+      decisions: Map.unmodifiable(<int, JunkPhotoDecision>{
+        for (final entry in decisions.entries)
+          entry.key: allowedIds.contains(entry.key)
+              ? entry.value
+              : JunkPhotoDecision.keep(),
+      }),
     );
+  }
+
+  static Set<int> significantOutlierIds(
+    Map<int, double> scores, {
+    required double absoluteFloor,
+  }) {
+    if (scores.length < 20) return const <int>{};
+    final sorted = scores.values.toList(growable: false)..sort();
+    final median = _median(sorted);
+    final deviations =
+        sorted.map((score) => (score - median).abs()).toList(growable: false)
+          ..sort();
+    final mad = _median(deviations);
+    final robustSpread = math.max(mad * 1.4826, 0.008);
+    final minimumLift = scores.length < 20 ? 0.055 : 0.04;
+    final cutoff = math.max(
+      absoluteFloor,
+      math.max(median + minimumLift, median + robustSpread * 3.5),
+    );
+    return scores.entries
+        .where((entry) => entry.value >= cutoff)
+        .map((entry) => entry.key)
+        .toSet();
+  }
+
+  static double _decisionStrength(JunkPhotoDecision decision) {
+    if (decision.hits.isEmpty) return 0;
+    return decision.hits
+        .map((hit) => hit.score - hit.threshold)
+        .reduce(math.max);
+  }
+
+  double _bestPromptScore(
+    List<double> imageEmbedding,
+    List<List<double>> promptVectors,
+  ) {
+    var score = -1.0;
+    for (final promptVector in promptVectors) {
+      if (promptVector.length != imageEmbedding.length) continue;
+      final similarity = _semanticService
+          .calculateSimilarity(imageEmbedding, promptVector)
+          .clamp(-1.0, 1.0);
+      if (similarity > score) score = similarity;
+    }
+    return score;
+  }
+
+  static double _median(List<double> sortedValues) {
+    if (sortedValues.isEmpty) return 0;
+    final middle = sortedValues.length ~/ 2;
+    if (sortedValues.length.isOdd) return sortedValues[middle];
+    return (sortedValues[middle - 1] + sortedValues[middle]) / 2;
   }
 
   Future<List<List<double>>> _buildPromptVectors(

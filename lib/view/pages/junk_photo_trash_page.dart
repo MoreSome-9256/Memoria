@@ -1,11 +1,13 @@
 /// 低价值照片回收站，展示被 AI 标记为低价值候选的本地照片记录。
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../../models/entity/photo_entity.dart';
 import '../../service/ai_service.dart';
 import '../../service/photo_service.dart';
-import '../widgets/path_image.dart';
+import '../widgets/fullscreen_photo_viewer.dart';
+import '../widgets/media_thumbnail.dart';
 
 class JunkPhotoTrashPage extends StatefulWidget {
   const JunkPhotoTrashPage({super.key});
@@ -135,7 +137,7 @@ class _JunkPhotoTrashPageState extends State<JunkPhotoTrashPage> {
               ),
               Expanded(
                 child: GridView.builder(
-                  cacheExtent: 700,
+                  scrollCacheExtent: const ScrollCacheExtent.pixels(700),
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 3,
@@ -187,10 +189,23 @@ class _TrashPhotoTile extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
+        onLongPress: () => showFullscreenPhotoViewer(
+          context,
+          path: photo.path,
+          assetId: photo.assetId,
+          heroTag: 'junk-trash-${photo.id}',
+        ),
         child: Stack(
           fit: StackFit.expand,
           children: [
-            PathImage(path: photo.path, fit: BoxFit.cover),
+            Hero(
+              tag: 'junk-trash-${photo.id}',
+              child: MediaThumbnail(
+                path: photo.path,
+                assetId: photo.assetId,
+                fit: BoxFit.cover,
+              ),
+            ),
             Positioned(
               left: 6,
               top: 6,

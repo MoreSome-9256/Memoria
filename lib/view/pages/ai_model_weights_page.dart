@@ -160,8 +160,17 @@ class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
   ) {
     final parts = <String>[
       status.id.description,
-      '当前检查：${status.checkPassed ? '可推理' : '缺少权重'}',
+      '当前检查：${_availabilityLabel(status)}',
     ];
+    if (status.hasCompleteBundledAssets) {
+      parts.add(
+        '已内置 ${status.bundledFiles.length}/${status.id.bundledAssetPaths.length} 个文件',
+      );
+    } else if (status.hasBundledFiles) {
+      parts.add(
+        '已内置 ${status.bundledFiles.length}/${status.id.bundledAssetPaths.length} 个文件',
+      );
+    }
     if (status.hasDownloadedFiles) {
       parts.add(
         '已下载 ${status.presentFiles.length}/${status.id.relativePaths.length} 个文件',
@@ -179,6 +188,16 @@ class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
       parts.add(download!.error ?? download.message);
     }
     return parts.join('\n');
+  }
+
+  String _availabilityLabel(AiModelWeightStatus status) {
+    if (status.hasCompleteBundledAssets) {
+      return '已内置';
+    }
+    if (status.hasCompleteDownloadedFiles) {
+      return '已下载';
+    }
+    return '缺少权重';
   }
 
   Widget _buildTrailing(
@@ -226,6 +245,10 @@ class _AiModelWeightsPageState extends State<AiModelWeightsPage> {
             ),
         ],
       );
+    }
+
+    if (status.hasCompleteBundledAssets) {
+      return const Text('已内置');
     }
 
     if (status.hasDownloadedFiles) {

@@ -5,9 +5,10 @@ import 'dart:io';
 
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/app_ai_settings_service.dart';
-import 'package:photo_album/service/media_access_grant_service.dart';
+import 'package:photo_album/service/android_system_settings.dart';
 import 'package:photo_album/service/mobileclip_backend_preference_service.dart';
 import 'package:photo_album/service/litert_inference_service.dart';
 import 'package:photo_album/service/photo_service.dart';
@@ -260,7 +261,6 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _refreshAlbumSelectionSummary() async {
-    await MediaAccessGrantService.instance.loadSnapshot();
     if (!mounted) {
       return;
     }
@@ -280,8 +280,7 @@ class _ProfilePageState extends State<ProfilePage> {
     await _backendPreferenceService.initialize();
     var aiSettings = await AppAiSettingsService.instance.load();
     var batteryOptimizationAllowed = Platform.isAndroid
-        ? await MediaAccessGrantService.instance
-              .isIgnoringBatteryOptimizations()
+        ? await Permission.ignoreBatteryOptimizations.isGranted
         : false;
     if (!mounted) {
       return;
@@ -538,14 +537,13 @@ class _ProfilePageState extends State<ProfilePage> {
                           trailing: FilledButton(
                             onPressed: () async {
                               if (batteryOptimizationAllowed) {
-                                await MediaAccessGrantService.instance
-                                    .openBatteryOptimizationSettings();
+                                await openAndroidBatteryOptimizationSettings();
                                 return;
                               }
                               await _requestBatteryOptimizationAccess();
-                              final latest = await MediaAccessGrantService
-                                  .instance
-                                  .isIgnoringBatteryOptimizations();
+                              final latest = await Permission
+                                  .ignoreBatteryOptimizations
+                                  .isGranted;
                               setSheetState(() {
                                 batteryOptimizationAllowed = latest;
                               });
@@ -632,8 +630,9 @@ class _ProfilePageState extends State<ProfilePage> {
 
     var granted = false;
     try {
-      granted = await MediaAccessGrantService.instance
-          .requestIgnoreBatteryOptimizations();
+      granted =
+          await Permission.ignoreBatteryOptimizations.request() ==
+          PermissionStatus.granted;
     } catch (_) {
       granted = false;
     }
@@ -670,7 +669,7 @@ class _ProfilePageState extends State<ProfilePage> {
       },
     );
     if (openSettings == true) {
-      await MediaAccessGrantService.instance.openBatteryOptimizationSettings();
+      await openAndroidBatteryOptimizationSettings();
     }
   }
 

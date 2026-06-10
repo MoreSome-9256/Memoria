@@ -1,12 +1,9 @@
-/// 本地路径图片组件，负责从文件路径渲染图像。
+// 本地路径图片组件，负责从文件路径渲染图像。
 
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-
-import '../../service/media_access_grant_service.dart';
 
 class PathImage extends StatefulWidget {
   final String path;
@@ -83,34 +80,6 @@ class _PathImageState extends State<PathImage> {
             filterQuality: FilterQuality.low,
             frameBuilder: frameBuilder,
             errorBuilder: (_, _, _) => _fallback(),
-          );
-        }
-
-        if (scheme == 'content') {
-          return FutureBuilder<Uint8List?>(
-            future: MediaAccessGrantService.instance.readContentUriBytes(
-              widget.path,
-            ),
-            builder: (context, snapshot) {
-              final bytes = snapshot.data;
-              if (bytes == null || bytes.isEmpty) {
-                return snapshot.connectionState == ConnectionState.done
-                    ? _fallback()
-                    : const Center(child: CircularProgressIndicator());
-              }
-              return Image.memory(
-                bytes,
-                fit: widget.fit,
-                alignment: widget.alignment,
-                width: widget.width,
-                height: widget.height,
-                cacheWidth: cache.$1,
-                cacheHeight: cache.$2,
-                filterQuality: FilterQuality.low,
-                frameBuilder: frameBuilder,
-                errorBuilder: (_, _, _) => _fallback(),
-              );
-            },
           );
         }
 

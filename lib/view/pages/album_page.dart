@@ -1,10 +1,12 @@
 // 相册页面，负责照片浏览、事件查看和标签筛选。
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'dart:collection';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/event_entity.dart';
@@ -18,7 +20,6 @@ import '../../service/event_service.dart';
 import '../../service/junk_photo_cleanup_service.dart';
 import '../../service/junk_photo_filter_service.dart';
 import '../../service/app_ai_settings_service.dart';
-import '../../service/media_access_grant_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_queue_service.dart';
 import '../../service/unified_analysis_pipeline_service.dart';
@@ -404,37 +405,13 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   }
 
   Future<void> _showRefreshOptions() async {
-    // ── 确保有相册权限 ──
-    // 先申请图片权限
-    final imageState = await _requestPhotoPermission(
-      title: '需要图片访问权限',
-      message: 'Memoria 需要读取您的照片，才能进行分析和管理。',
-      type: RequestType.image,
+    final permState = await _requestPhotoPermission(
+      title: '需要相册访问权限',
+      message: 'Memoria 需要读取您的照片和视频，才能进行分析和管理。',
+      type: RequestType.all,
     );
-    if (!imageState.hasAccess || !mounted) return;
-
-    // 如果用户开启了「包含视频」，额外申请视频权限
-    final settings = await AppAiSettingsService.instance.load();
-    if (settings.includeVideos) {
-      final videoState = await _requestPhotoPermission(
-        title: '需要视频访问权限',
-        message: 'Memoria 需要读取您的视频，才能进行分析和管理。',
-        type: RequestType.video,
-      );
-      if (!videoState.hasAccess || !mounted) return;
-    }
-
-    final permState = await PhotoManager.requestPermissionExtend(
-      requestOption: const PermissionRequestOption(
-        androidPermission: AndroidPermission(
-          type: RequestType.common,
-          mediaLocation: false,
-        ),
-      ),
-    );
+    if (!permState.hasAccess || !mounted) return;
     final isLimited = permState.isLimited;
-
-    if (!mounted) return;
 
     final selected = await showModalBottomSheet<_ImportAction>(
       context: context,
@@ -512,10 +489,22 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
       case _ImportAction.rebuildAll:
         await _confirmAndRebuildAnalysis();
       case _ImportAction.addMorePhotos:
-        await MediaAccessGrantService.instance.presentLimitedLibraryPicker();
+        if (Platform.isAndroid) {
+          await <Permission>[Permission.photos, Permission.videos].request();
+        } else {
+          await PhotoManager.presentLimited(type: RequestType.all);
+        }
+        PhotoService().invalidateScanSessionCache();
       case _ImportAction.requestFullAccess:
-        final state = await MediaAccessGrantService.instance
-            .requestFullLibraryAccess();
+        final state = await PhotoManager.requestPermissionExtend(
+          requestOption: const PermissionRequestOption(
+            androidPermission: AndroidPermission(
+              type: RequestType.all,
+              mediaLocation: false,
+            ),
+          ),
+        );
+        PhotoService().invalidateScanSessionCache();
         if (!mounted) return;
         final text = state.isAuth
             ? '已获得完整照片访问权限。'

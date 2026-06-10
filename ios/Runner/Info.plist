@@ -38,6 +38,8 @@
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>需要访问您的相册以创建智能故事相册</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>需要保存您创建的影像到系统相册</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

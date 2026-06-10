@@ -56,8 +56,6 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
-    implementation("androidx.core:core-ktx:1.17.0")
-    implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.google.mlkit:text-recognition-chinese:16.0.0")
     implementation(files("libs/llama-cpp-dart.aar"))
 }

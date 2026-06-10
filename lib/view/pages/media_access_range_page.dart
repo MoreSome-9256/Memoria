@@ -3,10 +3,10 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../../service/album_selection_preference_service.dart';
-import '../../service/media_access_grant_service.dart';
 import '../../service/photo_service.dart';
 
 class MediaAccessRangePage extends StatefulWidget {
@@ -33,8 +33,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
 
   Future<void> _loadBatteryState() async {
     if (!Platform.isAndroid) return;
-    final optimized = await MediaAccessGrantService.instance
-        .isIgnoringBatteryOptimizations();
+    final optimized = await Permission.ignoreBatteryOptimizations.isGranted;
     if (!mounted) return;
     setState(() {
       _batteryOptimized = optimized;
@@ -46,7 +45,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
     final state = await PhotoManager.requestPermissionExtend(
       requestOption: const PermissionRequestOption(
         androidPermission: AndroidPermission(
-          type: RequestType.common,
+          type: RequestType.all,
           mediaLocation: false,
         ),
       ),
@@ -113,8 +112,9 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
   }
 
   Future<void> _requestBatteryOptimization() async {
-    final result = await MediaAccessGrantService.instance
-        .requestIgnoreBatteryOptimizations();
+    final result =
+        await Permission.ignoreBatteryOptimizations.request() ==
+        PermissionStatus.granted;
     if (!mounted) return;
     setState(() => _batteryOptimized = result);
     if (!result) {
@@ -128,7 +128,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
     final state = await PhotoManager.requestPermissionExtend(
       requestOption: const PermissionRequestOption(
         androidPermission: AndroidPermission(
-          type: RequestType.common,
+          type: RequestType.all,
           mediaLocation: false,
         ),
       ),
@@ -219,8 +219,17 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                         children: [
                           TextButton.icon(
                             onPressed: () async {
-                              await MediaAccessGrantService.instance
-                                  .presentLimitedLibraryPicker();
+                              if (Platform.isAndroid) {
+                                await <Permission>[
+                                  Permission.photos,
+                                  Permission.videos,
+                                ].request();
+                              } else {
+                                await PhotoManager.presentLimited(
+                                  type: RequestType.all,
+                                );
+                              }
+                              PhotoService().invalidateScanSessionCache();
                               if (!mounted) return;
                               setState(() => _loadingAlbums = true);
                               await _loadPermissionAndAlbums();

@@ -1,9 +1,8 @@
-/// 端侧 InternVL 服务，提供本地视觉语言模型的推理能力。
+// 端侧 InternVL 服务，提供本地视觉语言模型的推理能力。
 
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 
 int _mapValueToInt(Object? value) {
   if (value is int) {
@@ -343,10 +342,8 @@ class OnDeviceInternvlCliResult {
 
 /// Dart 侧的本地多模态设备诊断服务。
 ///
-/// 当前版本的职责非常明确：
-/// 1. 通过平台通道读取 Android 真机硬件画像。
-/// 2. 明确返回“仓库当前还没接入本地推理后端”的事实。
-/// 3. 在应用启动时输出一份工程上可读的日志，帮助你判断是否值得继续做手机端集成。
+/// 当前仓库没有可用的原生 InternVL 后端。该服务保留现有回退接口，直接返回
+/// 不可用，避免调用一个 Android 与 iOS 均未实现的平台通道。
 ///
 /// 注意：
 /// 这个服务不是 GGUF 推理器本身，它只是“集成前的探测层”。
@@ -357,10 +354,6 @@ class OnDeviceInternvlService {
       OnDeviceInternvlService._internal();
 
   factory OnDeviceInternvlService() => _instance;
-
-  static const MethodChannel _channel = MethodChannel(
-    'memoria/on_device_internvl',
-  );
 
   Future<OnDeviceInternvlProfile?> probeDeviceProfile() async {
     if (!Platform.isAndroid) {
@@ -499,20 +492,8 @@ class OnDeviceInternvlService {
     return OnDeviceInternvlCliResult.fromMap(raw);
   }
 
-  Future<Map<Object?, Object?>?> _invokeMap(
-    String method, [
-    Object? arguments,
-  ]) async {
-    try {
-      return await _channel.invokeMethod<Map<Object?, Object?>>(
-        method,
-        arguments,
-      );
-    } on MissingPluginException {
-      debugPrint('⚠️ [Qwen VLM] MethodChannel 未注册，跳过 $method');
-      return null;
-    }
-  }
+  Future<Map<Object?, Object?>?> _invokeMap(String _, [Object? _]) =>
+      Future<Map<Object?, Object?>?>.value();
 
   /// 在调试启动时输出一份摘要，方便你直接在 `flutter run` 日志里判断：
   /// - 手机 RAM 是否吃紧
@@ -572,8 +553,6 @@ class OnDeviceInternvlService {
           debugPrint('📱 [Qwen VLM Server 状态] error=${serverStatus.error}');
         }
       }
-    } on MissingPluginException {
-      debugPrint('⚠️ [Qwen VLM 设备画像] 当前平台未注册 Android 探测通道');
     } catch (error) {
       debugPrint('⚠️ [Qwen VLM 设备画像] 探测失败: $error');
     }

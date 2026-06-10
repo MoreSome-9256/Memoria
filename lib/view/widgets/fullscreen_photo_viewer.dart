@@ -1,4 +1,4 @@
-/// 全屏照片查看器组件，提供放大浏览和过渡动画。
+// 全屏照片查看器组件，提供放大浏览和过渡动画。
 
 import 'dart:io';
 import 'dart:typed_data';
@@ -8,7 +8,7 @@ import 'package:photo_manager/photo_manager.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../service/photo_service.dart';
-import '../../service/android_motion_photo_service.dart';
+import '../../service/motion_photo_service.dart';
 import '../../utils/media_type_helper.dart';
 import 'path_image.dart';
 
@@ -157,13 +157,6 @@ class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
           isLivePhoto: asset.isLivePhoto,
         );
       }
-    }
-    if (widget.path.startsWith('content://')) {
-      return _ResolvedFullscreenMedia(
-        kind: kind,
-        path: widget.path,
-        available: true,
-      );
     }
     final file = File(widget.path);
     return _ResolvedFullscreenMedia(
@@ -392,7 +385,7 @@ class _FullscreenAndroidMotionPhotoState
           quality: 95,
         ),
       );
-      final motionFile = await AndroidMotionPhotoService.extractByAssetId(
+      final motionFile = await MotionPhotoService.extractByAssetId(
         widget.assetId,
       );
       if (motionFile != null) {

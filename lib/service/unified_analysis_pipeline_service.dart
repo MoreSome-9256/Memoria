@@ -523,9 +523,13 @@ class UnifiedAnalysisPipelineService {
       photo.mediaKind,
       path: photo.path,
     );
+    final isVideoLike =
+        mediaKind == MemoriaMediaKind.video ||
+        mediaKind == MemoriaMediaKind.dynamicImage;
     final embeddingService = MobileClipEmbeddingService();
     late final List<double> embedding;
     late final String embeddingModelVersion;
+    late final MediaEmbeddingRecord embeddingRecord;
     late final List<double> tagEmbedding;
     if (mediaKind == MemoriaMediaKind.image) {
       final originalInput = await _readAnalysisImageInputFromAsset(photo);
@@ -537,6 +541,17 @@ class UnifiedAnalysisPipelineService {
       );
       embedding = photo.imageEmbedding ?? const <double>[];
       embeddingModelVersion = buildPhotoEmbeddingModelVersion(backend);
+      embeddingRecord = MediaEmbeddingRecord(
+        vector: embedding,
+        modelVersion: embeddingModelVersion,
+        modelFamily: kPhotoEmbeddingModelFamily,
+        mediaKind: mediaKind,
+        textSpace: MediaEmbeddingTextSpace.mobileClip2Text,
+        frameSource: 'none',
+        frameCount: 0,
+        frameTimestampsUs: const <int>[],
+        isRepeatedFrame: false,
+      );
       tagEmbedding = embedding;
     } else {
       final mediaInput = await _readAnalysisImageInputFromAsset(photo);
@@ -547,19 +562,23 @@ class UnifiedAnalysisPipelineService {
             backend: backend,
             liteRt: liteRt,
             frameBytes: mediaInput.videoFrameBytes,
+            frameDiagnostics: mediaInput.frameDiagnostics,
           );
       embedding = mediaEmbedding.embedding;
       embeddingModelVersion = mediaEmbedding.modelVersion;
-      tagEmbedding = embedding;
+      embeddingRecord = mediaEmbedding.toRecord();
+      tagEmbedding = const <double>[];
+      _logMediaEmbeddingDiagnostics(photo, embeddingRecord);
     }
     if (embedding.isEmpty) {
       throw StateError('embedding is empty');
     }
 
     final tagService = MobileClipTagService();
-    final tags = tagEmbedding.isEmpty
+    final rawTags = tagEmbedding.isEmpty
         ? <String>['视频']
         : await tagService.retrieveTags(tagEmbedding);
+    final tags = isVideoLike ? const <String>['视频'] : rawTags;
 
     PhotoService().updatePhotoInTransaction(photo.id, (p) {
       if (p == null) return;
@@ -573,6 +592,7 @@ class UnifiedAnalysisPipelineService {
       photoId: photo.id,
       vector: embedding,
       modelVersion: embeddingModelVersion,
+      embeddingMetaJson: embeddingRecord.toMetaJson(),
     );
 
     unawaited(
@@ -580,6 +600,18 @@ class UnifiedAnalysisPipelineService {
         photoId: photo.id,
         types: {PhotoAttributeType.location},
       ),
+    );
+  }
+
+  void _logMediaEmbeddingDiagnostics(
+    PhotoEntity photo,
+    MediaEmbeddingRecord record,
+  ) {
+    debugPrint(
+      '[pipeline] media embedding photoId=${photo.id} '
+      'kind=${record.mediaKind.name} model=${record.modelVersion} '
+      'frameSource=${record.frameSource} frameCount=${record.frameCount} '
+      'isRepeatedFrame=${record.isRepeatedFrame}',
     );
   }
 

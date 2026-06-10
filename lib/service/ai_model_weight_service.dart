@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:background_downloader/background_downloader.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -36,6 +37,12 @@ extension AiModelWeightIdX on AiModelWeightId {
     ],
   };
 
+  List<String> get bundledAssetPaths => switch (this) {
+    AiModelWeightId.mobileclip2LiteRt =>
+      relativePaths.map((path) => 'assets/$path').toList(growable: false),
+    AiModelWeightId.smolVlm2 => const <String>[],
+  };
+
   List<String> get downloadUrls => switch (this) {
     AiModelWeightId.mobileclip2LiteRt => const <String>[
       'https://memoria-static-ai-models.earthnpc.online/MobileCLIP2/mobileclip2_s2_image.tflite',
@@ -53,15 +60,23 @@ class AiModelWeightStatus {
     required this.id,
     required this.presentFiles,
     required this.missingFiles,
+    required this.bundledFiles,
+    required this.missingBundledFiles,
     required this.checkPassed,
   });
 
   final AiModelWeightId id;
   final List<String> presentFiles;
   final List<String> missingFiles;
+  final List<String> bundledFiles;
+  final List<String> missingBundledFiles;
   final bool checkPassed;
 
   bool get hasDownloadedFiles => presentFiles.isNotEmpty;
+  bool get hasBundledFiles => bundledFiles.isNotEmpty;
+  bool get hasCompleteBundledAssets =>
+      id.bundledAssetPaths.isNotEmpty && missingBundledFiles.isEmpty;
+  bool get hasCompleteDownloadedFiles => missingFiles.isEmpty;
 }
 
 class AiModelWeightDownloadSnapshot {
@@ -110,6 +125,7 @@ class AiModelWeightService {
   final Map<AiModelWeightId, _WeightDownloadSession> _sessions =
       <AiModelWeightId, _WeightDownloadSession>{};
   final Map<String, AiModelWeightId> _taskOwners = <String, AiModelWeightId>{};
+  Future<Set<String>>? _bundledAssetPaths;
 
   StreamSubscription<TaskUpdate>? _updatesSubscription;
   bool _started = false;
@@ -118,10 +134,30 @@ class AiModelWeightService {
   get downloadsListenable => _downloads;
 
   Future<bool> ensureWeightsAvailableForInference(AiModelWeightId id) async {
+    if (await _hasCompleteBundledWeights(id)) {
+      return true;
+    }
+    return _hasCompleteDownloadedWeights(id);
+  }
+
+  Future<bool> _hasCompleteDownloadedWeights(AiModelWeightId id) async {
     final root = await modelRootDirectory();
     for (final relativePath in id.relativePaths) {
       final file = File(_join(root.path, relativePath));
       if (!await file.exists() || await file.length() <= 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Future<bool> _hasCompleteBundledWeights(AiModelWeightId id) async {
+    final assetPaths = id.bundledAssetPaths;
+    if (assetPaths.isEmpty) {
+      return false;
+    }
+    for (final assetPath in assetPaths) {
+      if (!await _assetExists(assetPath)) {
         return false;
       }
     }
@@ -141,6 +177,8 @@ class AiModelWeightService {
     for (final id in AiModelWeightId.values) {
       final present = <String>[];
       final missing = <String>[];
+      final bundled = <String>[];
+      final missingBundled = <String>[];
       for (final relativePath in id.relativePaths) {
         final file = File(_join(root.path, relativePath));
         if (await file.exists() && await file.length() > 0) {
@@ -149,12 +187,23 @@ class AiModelWeightService {
           missing.add(relativePath);
         }
       }
+      for (final assetPath in id.bundledAssetPaths) {
+        if (await _assetExists(assetPath)) {
+          bundled.add(assetPath);
+        } else {
+          missingBundled.add(assetPath);
+        }
+      }
+      final hasCompleteBundledAssets =
+          id.bundledAssetPaths.isNotEmpty && missingBundled.isEmpty;
       statuses.add(
         AiModelWeightStatus(
           id: id,
           presentFiles: present,
           missingFiles: missing,
-          checkPassed: missing.isEmpty,
+          bundledFiles: bundled,
+          missingBundledFiles: missingBundled,
+          checkPassed: missing.isEmpty || hasCompleteBundledAssets,
         ),
       );
     }
@@ -187,6 +236,10 @@ class AiModelWeightService {
     final paths = id.relativePaths;
     if (urls.length != paths.length) {
       throw StateError('URL count does not match path count for ${id.label}');
+    }
+    if (await _hasCompleteBundledWeights(id)) {
+      debugPrint('[weights] ${id.label} uses bundled assets; skip download');
+      return;
     }
 
     final root = await modelRootDirectory();
@@ -221,6 +274,7 @@ class AiModelWeightService {
         }
 
         await file.parent.create(recursive: true);
+        await _validateRemoteFile(url: urls[i], relativePath: relativePath);
         final task = _buildTask(
           id: id,
           url: urls[i],
@@ -523,6 +577,55 @@ class AiModelWeightService {
       }
     }
     return present;
+  }
+
+  Future<void> _validateRemoteFile({
+    required String url,
+    required String relativePath,
+  }) async {
+    final uri = Uri.parse(url);
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 12);
+    try {
+      final request = await client.headUrl(uri);
+      request.followRedirects = true;
+      final response = await request.close();
+      final statusCode = response.statusCode;
+      await response.drain<void>();
+      debugPrint(
+        '[weights] preflight path=$relativePath status=$statusCode url=$url',
+      );
+      if (statusCode == HttpStatus.methodNotAllowed) {
+        return;
+      }
+      if (statusCode < HttpStatus.ok ||
+          statusCode >= HttpStatus.multipleChoices) {
+        throw StateError(
+          'Model weight download preflight failed: HTTP $statusCode '
+          'path=$relativePath url=$url',
+        );
+      }
+    } on FormatException catch (error) {
+      throw StateError('Invalid model weight URL: $url ($error)');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<bool> _assetExists(String assetPath) async {
+    try {
+      final assets = await (_bundledAssetPaths ??= _loadBundledAssetPaths());
+      return assets.contains(assetPath);
+    } on FlutterError {
+      return false;
+    } on Exception {
+      return false;
+    }
+  }
+
+  Future<Set<String>> _loadBundledAssetPaths() async {
+    final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+    return manifest.listAssets().toSet();
   }
 
   void _publish(

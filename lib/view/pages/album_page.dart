@@ -81,6 +81,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   static const int _tagBrowserYieldChunk = 120;
   bool _isStartingImport = false;
   bool _isDeletingCurrentTask = false;
+  bool _isClearingLocalCache = false;
   bool _tagBrowserAiRecoveryTriggered = false;
   bool _hiddenPendingAnalysisPromptForSession = false;
   bool _autoResumePendingStarted = false;
@@ -600,6 +601,52 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _clearLocalCacheOnly() async {
+    if (_isClearingLocalCache) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('清空本地缓存'),
+          content: const Text('这会删除本地相册缓存和 AI 分析结果，但不会删除原始图片和视频，也不会自动重新扫描。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('清空缓存'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    setState(() => _isClearingLocalCache = true);
+    try {
+      await PhotoService().clearAllCachedData();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('本地缓存已清空。'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isClearingLocalCache = false);
+      }
+    }
+  }
+
   Future<void> _handleJunkCleanupReportChanged() async {
     if (!mounted) {
       return;
@@ -943,7 +990,9 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
             valueListenable: UnifiedAnalysisProgressStore.instance.progress,
             builder: (context, foregroundProgress, _) {
               final isBusy =
-                  _isStartingImport || AlbumRefreshService().isRunning;
+                  _isStartingImport ||
+                  _isClearingLocalCache ||
+                  AlbumRefreshService().isRunning;
               final isLaunching =
                   _isStartingImport || AlbumRefreshService().isRunning;
               return Row(
@@ -960,6 +1009,16 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
                         ? null
                         : () => unawaited(_deleteCurrentAnalysisTask()),
                     tooltip: '删除当前任务并清空 AI 分析字段',
+                  ),
+                  IconButton(
+                    icon: _isClearingLocalCache
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.cleaning_services),
+                    onPressed: isBusy ? null : _clearLocalCacheOnly,
+                    tooltip: '清空本地缓存',
                   ),
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
@@ -1415,7 +1474,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
         }
 
         return CustomScrollView(
-          scrollCacheExtent: const ScrollCacheExtent.pixels(700),
+          cacheExtent: 700,
           slivers: [
             SliverPadding(
               padding: EdgeInsets.fromLTRB(

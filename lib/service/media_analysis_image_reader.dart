@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -14,6 +15,7 @@ class MediaAnalysisImageInput {
     required this.imageBytes,
     required this.analysisImageBytes,
     required this.videoFrameBytes,
+    required this.frameDiagnostics,
     required this.width,
     required this.height,
     required this.sourceLabel,
@@ -23,9 +25,38 @@ class MediaAnalysisImageInput {
   final Uint8List imageBytes;
   final Uint8List analysisImageBytes;
   final List<Uint8List> videoFrameBytes;
+  final MediaFrameExtractionDiagnostics frameDiagnostics;
   final int width;
   final int height;
   final String sourceLabel;
+}
+
+class MediaFrameExtractionDiagnostics {
+  const MediaFrameExtractionDiagnostics({
+    required this.frameCount,
+    required this.frameSource,
+    required this.frameTimestampsUs,
+    required this.isRepeatedFrame,
+  });
+
+  static const none = MediaFrameExtractionDiagnostics(
+    frameCount: 0,
+    frameSource: 'none',
+    frameTimestampsUs: <int>[],
+    isRepeatedFrame: false,
+  );
+
+  final int frameCount;
+  final String frameSource;
+  final List<int> frameTimestampsUs;
+  final bool isRepeatedFrame;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'frameCount': frameCount,
+    'frameSource': frameSource,
+    'frameTimestampsUs': frameTimestampsUs,
+    'isRepeatedFrame': isRepeatedFrame,
+  };
 }
 
 class MediaAnalysisFrameFiles {
@@ -33,11 +64,15 @@ class MediaAnalysisFrameFiles {
     required this.frames,
     required this.cleanupPaths,
     required this.sourceLabel,
+    this.frameTimestampsUs = const <int>[],
+    this.isRepeatedFrame = false,
   });
 
   final List<File> frames;
   final List<String> cleanupPaths;
   final String sourceLabel;
+  final List<int> frameTimestampsUs;
+  final bool isRepeatedFrame;
 }
 
 class MediaAnalysisImageReader {
@@ -80,20 +115,21 @@ class MediaAnalysisImageReader {
       return null;
     }
 
-    final frames =
+    final frameResult =
         kind == MemoriaMediaKind.video || kind == MemoriaMediaKind.dynamicImage
         ? await _readAssetFrameBytes(
             asset,
             frameCount: frameCount,
             imageSize: imageSize,
           )
-        : const <Uint8List>[];
+        : const _AssetFrameBytesResult.empty();
 
     return MediaAnalysisImageInput(
       kind: kind,
       imageBytes: imageBytes,
       analysisImageBytes: analysisBytes,
-      videoFrameBytes: frames.isEmpty ? const <Uint8List>[] : frames,
+      videoFrameBytes: frameResult.frames,
+      frameDiagnostics: frameResult.diagnostics,
       width: asset.width > 0 ? asset.width : dims.$1,
       height: asset.height > 0 ? asset.height : dims.$2,
       sourceLabel: imageBytes == analysisBytes ? 'thumbnail' : 'system_reader',
@@ -131,10 +167,13 @@ class MediaAnalysisImageReader {
           frameCount: maxFrames,
           imageSize: defaultAnalysisSize,
         );
-        if (frameBytes.isNotEmpty) {
+        if (frameBytes.frames.isNotEmpty) {
           return _writeFrameByteList(
-            frameBytes,
+            frameBytes.frames,
             prefix: 'memoria_asset_vlm_frame',
+            sourceLabel: frameBytes.diagnostics.frameSource,
+            frameTimestampsUs: frameBytes.diagnostics.frameTimestampsUs,
+            isRepeatedFrame: frameBytes.diagnostics.isRepeatedFrame,
           );
         }
       }
@@ -187,13 +226,14 @@ class MediaAnalysisImageReader {
     }
   }
 
-  Future<List<Uint8List>> _readAssetFrameBytes(
+  Future<_AssetFrameBytesResult> _readAssetFrameBytes(
     AssetEntity asset, {
     required int frameCount,
     required int imageSize,
   }) async {
     final durationSeconds = math.max(1, asset.duration);
     final frames = <Uint8List>[];
+    final frameTimestampsUs = <int>[];
     for (var i = 0; i < frameCount; i++) {
       final frameMicros = (((i + 0.5) / frameCount) * durationSeconds * 1000000)
           .round();
@@ -205,14 +245,32 @@ class MediaAnalysisImageReader {
       );
       if (bytes != null && bytes.isNotEmpty) {
         frames.add(bytes);
+        frameTimestampsUs.add(frameMicros);
       }
     }
-    return frames;
+    if (frames.isEmpty) {
+      return const _AssetFrameBytesResult.empty();
+    }
+    final source = Platform.isIOS || Platform.isMacOS
+        ? 'ios_thumbnail'
+        : 'android_thumbnail';
+    return _AssetFrameBytesResult(
+      frames: List<Uint8List>.unmodifiable(frames),
+      diagnostics: MediaFrameExtractionDiagnostics(
+        frameCount: frames.length,
+        frameSource: source,
+        frameTimestampsUs: List<int>.unmodifiable(frameTimestampsUs),
+        isRepeatedFrame: _areRepeatedFrames(frames),
+      ),
+    );
   }
 
   Future<MediaAnalysisFrameFiles> _writeFrameByteList(
     List<Uint8List> byteList, {
     required String prefix,
+    String sourceLabel = 'jpeg_frame',
+    List<int> frameTimestampsUs = const <int>[],
+    bool isRepeatedFrame = false,
   }) async {
     final dir = await getTemporaryDirectory();
     final runId = DateTime.now().microsecondsSinceEpoch;
@@ -233,8 +291,31 @@ class MediaAnalysisImageReader {
     return MediaAnalysisFrameFiles(
       frames: frames,
       cleanupPaths: paths,
-      sourceLabel: 'jpeg_frame',
+      sourceLabel: sourceLabel,
+      frameTimestampsUs: frameTimestampsUs
+          .take(frames.length)
+          .toList(growable: false),
+      isRepeatedFrame: isRepeatedFrame,
     );
+  }
+
+  bool _areRepeatedFrames(List<Uint8List> frames) {
+    if (frames.length <= 1) {
+      return frames.length == 1;
+    }
+    final first = frames.first;
+    for (var i = 1; i < frames.length; i++) {
+      final current = frames[i];
+      if (current.lengthInBytes != first.lengthInBytes) {
+        return false;
+      }
+      for (var j = 0; j < first.lengthInBytes; j++) {
+        if (current[j] != first[j]) {
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   MemoriaMediaKind _kindForAsset(AssetEntity asset, String? path) {
@@ -265,4 +346,18 @@ class MediaAnalysisImageReader {
       math.max(1, (height * scale).round()),
     );
   }
+}
+
+class _AssetFrameBytesResult {
+  const _AssetFrameBytesResult({
+    required this.frames,
+    required this.diagnostics,
+  });
+
+  const _AssetFrameBytesResult.empty()
+    : frames = const <Uint8List>[],
+      diagnostics = MediaFrameExtractionDiagnostics.none;
+
+  final List<Uint8List> frames;
+  final MediaFrameExtractionDiagnostics diagnostics;
 }

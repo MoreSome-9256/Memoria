@@ -104,6 +104,7 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+  # disable-swift-package-manager: true
   config:
     enable-swift-package-manager: false
 

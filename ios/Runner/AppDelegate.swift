@@ -1,7 +1,6 @@
 import Flutter
 import UIKit
 import UserNotifications
-import flutter_foreground_task
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {

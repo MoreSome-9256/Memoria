@@ -253,6 +253,7 @@ $rawQuery
       locations: locations,
       positiveSemantics: positiveSemantics,
       recallSemantics: recallSemantics,
+      negativeSemantics: negativeSemantics,
       estimatedResultCount: estimatedResultCount,
     );
 
@@ -290,6 +291,7 @@ $rawQuery
     required List<SemanticSearchLocation> locations,
     required List<SemanticSearchSemanticItem> positiveSemantics,
     required List<SemanticSearchSemanticItem> recallSemantics,
+    required List<SemanticSearchSemanticItem> negativeSemantics,
     required SemanticSearchEstimatedResultCount estimatedResultCount,
   }) {
     if (queryType != SemanticSearchQueryType.metadata &&
@@ -300,12 +302,30 @@ $rawQuery
         recallSemantics.isEmpty) {
       throw FormatException('search plan has no recall_semantics');
     }
+    if (queryType != SemanticSearchQueryType.metadata) {
+      _validateEnglishVisualSemantics('positive_semantics', positiveSemantics);
+      _validateEnglishVisualSemantics('recall_semantics', recallSemantics);
+      _validateEnglishVisualSemantics('negative_semantics', negativeSemantics);
+    }
     if (!estimatedResultCount.isMeaningful) {
       throw FormatException('search plan has invalid result estimate');
     }
     for (final location in locations) {
       if (location.text.length < 2) {
         throw FormatException('search plan has invalid location');
+      }
+    }
+  }
+
+  void _validateEnglishVisualSemantics(
+    String fieldName,
+    List<SemanticSearchSemanticItem> items,
+  ) {
+    for (final item in items) {
+      if (item.containsCjk) {
+        throw FormatException(
+          '$fieldName must contain English MobileCLIP prompts: ${item.text}',
+        );
       }
     }
   }

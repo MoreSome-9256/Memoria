@@ -118,8 +118,14 @@ class SemanticSearchCoarseTag {
 class SemanticSearchSemanticItem {
   const SemanticSearchSemanticItem({required this.text, required this.weight});
 
+  static final RegExp _cjkPattern = RegExp(
+    r'[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]',
+  );
+
   final String text;
   final double weight;
+
+  bool get containsCjk => _cjkPattern.hasMatch(text);
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{'text': text, 'weight': weight};

@@ -13,14 +13,12 @@ import '../../models/vo/story_section.dart';
 import '../../effects/subtitle_effect.dart';
 import '../../effects/glitch_effect.dart';
 import '../../effects/static_filters.dart';
-import 'dart:ui' as ui;
-import 'package:flutter/rendering.dart';
 import 'package:path_provider/path_provider.dart';
 import 'export_manager.dart';
 import 'publish_page.dart';
 import '../../service/music_service.dart';
 import '../../service/video_cache_service.dart';
-import '../widgets/path_image.dart';
+import '../widgets/photo_image.dart';
 import '../../models/entity/face_entity.dart';
 import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
@@ -876,7 +874,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         screenBody = Stack(
           fit: StackFit.expand,
           children: [
-            PathImage(path: currentSection.photo.path, fit: BoxFit.cover),
+            PhotoImage(photo: currentSection.photo, fit: BoxFit.cover),
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
               child: Container(color: Colors.black.withValues(alpha: 0.6)),
@@ -909,98 +907,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         ],
       ),
     );
-  }
-  // 🎥 核心特效：Ken Burns 运镜效应 (缓慢放大)
-  /*Widget _buildKenBurnsImage(String imagePath) {
-    final file = File(imagePath);
-    return TweenAnimationBuilder(
-      key: ValueKey<String>(imagePath), // Key 变了，动画就会重置并重新执行
-      tween: Tween<double>(begin: 1.0, end: 1.15), // 从原尺寸缓慢放大到 1.15 倍
-      duration: const Duration(seconds: 5), // 设定略大于图片停留时间的动画
-      builder: (context, scale, child) {
-        return Transform.scale(
-          scale: scale,
-          child: file.existsSync()
-              ? PathImage(
-                  path: file.path,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  height: double.infinity,
-                )
-              : Container(color: Colors.grey[900]), // 找不到图的防崩兜底
-        );
-      },
-    );
-  }*/
-
-  // 🎬 核心特效：根据长宽比自适应的视觉层（已支持字幕嵌入）
-  Widget _buildAdaptiveImageLayer(var photo, Widget subtitle) {
-    final file = File(photo.path);
-    // 🎯 呼叫智能裁切雷达
-    final Alignment smartAlignment = _calculateFaceAlignment(photo);
-
-    // 1. 基础的 Ken Burns 放大动画
-    Widget kenBurnsAnimation = TweenAnimationBuilder(
-      tween: Tween<double>(begin: 1.0, end: 1.15),
-      duration: const Duration(seconds: 5),
-      builder: (context, scale, child) {
-        return Transform.scale(
-          scale: scale,
-          child: file.existsSync()
-              ? PathImage(
-                  path: file.path,
-                  fit: BoxFit.cover,
-                  alignment: smartAlignment,
-                  width: double.infinity,
-                  height: double.infinity,
-                )
-              : Container(color: Colors.grey[900]),
-        );
-      },
-    );
-
-    // 🌟 将图片和字幕打包成一个“容器内容”
-    Widget containerContent = Stack(
-      fit: StackFit.expand,
-      children: [
-        kenBurnsAnimation,
-        // 🔒 字幕现在被“锁”在了这个 Stack 里，它的 Alignment 将相对于这个容器
-        subtitle,
-      ],
-    );
-
-    // 🌟 竖屏模式：依然铺满全屏
-    if (!widget.isHorizontal) {
-      return SizedBox.expand(
-        key: ValueKey<String>(photo.path),
-        child: containerContent,
-      );
-    }
-    // 🌟 横屏模式：16:9 居中，字幕会被 ClipRect 限制在框内
-    else {
-      return Stack(
-        key: ValueKey<String>(photo.path),
-        fit: StackFit.expand,
-        children: [
-          // 底层模糊背景
-          if (file.existsSync()) PathImage(path: file.path, fit: BoxFit.cover),
-          BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-            child: Container(color: Colors.black.withValues(alpha: 0.6)),
-          ),
-          // 2. 核心 16:9 画幅层
-          Center(
-            child: AspectRatio(
-              aspectRatio: 16 / 9,
-              child: ClipRect(
-                // 🚀 这里是关键！内容（含字幕）现在只会在 16:9 的框内显示
-                child: containerContent,
-              ),
-            ),
-          ),
-        ],
-      );
-    }
   }
 
   // 控件 UI 层
@@ -1737,105 +1643,10 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     return Alignment(alignX.clamp(-1.0, 1.0), alignY.clamp(-1.0, 1.0));
   }
 
-  void _updateStateForFrame(int frameIndex) {
-    if (_beatData.isEmpty) return;
-
-    double currentTimeMs = (frameIndex / 24.0) * 1000.0;
-
-    int targetBeatIndex = 0;
-    for (int j = 0; j < _beatData.length; j++) {
-      if (currentTimeMs >= _beatData[j]['ms']) {
-        targetBeatIndex = j;
-      } else {
-        break;
-      }
-    }
-
-    double currentEnergy =
-        (_beatData[targetBeatIndex]['energy'] as num?)?.toDouble() ?? 0.0;
-    double timeSinceBeat = currentTimeMs - _beatData[targetBeatIndex]['ms'];
-
-    // 计算当前节拍度过了多少百分比 (0.0 到 1.0)
-    double beatProgress = (timeSinceBeat / _beatIntervalMs).clamp(0.0, 1.0);
-
-    // 🌟 手动拨动动画控制器的指针，让离线导出的每一帧和实时预览一模一样！
-    _vfxController.value = beatProgress;
-
-    if (currentEnergy > 0.15) {
-      _shakeIntensity = currentEnergy * 15.0 * (_shakeFrequency / 15.0);
-      // _enableFlash = true;
-    } else {
-      _shakeIntensity = 0.0;
-      // _enableFlash = false;
-    }
-
-    int targetImageIndex = targetBeatIndex ~/ 8;
-    if (targetImageIndex >= widget.sections.length) {
-      targetImageIndex = widget.sections.length - 1;
-    }
-    // 🌟 核心补偿：在离线导出时，手动驱动 Glitch 的时间轴！
-    // 假设它是 2000 毫秒一循环，我们算出当前进度
-    if (_isExporting) {
-      _continuousTimeController.value = (currentTimeMs % 2000.0) / 2000.0;
-    }
-
-    setState(() {
-      _currentIndex = targetImageIndex;
-      // 🌟 替换掉之前的 _lyricQueue 逻辑
-      _currentLyricText = widget.sections[_currentIndex].text;
-    });
-  }
-
-  // 📸 全新：直接抓取 RGBA 原始像素，并强制裁剪为偶数分辨率
-  Future<(Uint8List?, int, int)> _captureFrameRgba() async {
-    try {
-      RenderRepaintBoundary boundary =
-          _renderKey.currentContext!.findRenderObject()
-              as RenderRepaintBoundary;
-
-      // 这里直接用设备真实像素比，保证导出帧不被人为降采样。
-      final pixelRatio = MediaQuery.of(context).devicePixelRatio;
-      ui.Image rawImage = await boundary.toImage(pixelRatio: pixelRatio);
-
-      int width = rawImage.width;
-      int height = rawImage.height;
-
-      // 🌟 核心保命机制：硬件编码器强制要求长宽为偶数！
-      if (width % 2 != 0) width -= 1;
-      if (height % 2 != 0) height -= 1;
-
-      ui.Image finalImage = rawImage;
-
-      // 如果原图有奇数边，我们在内存里用画布把它强行切成偶数
-      if (width != rawImage.width || height != rawImage.height) {
-        final recorder = ui.PictureRecorder();
-        final canvas = ui.Canvas(recorder);
-        canvas.drawImageRect(
-          rawImage,
-          Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
-          Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
-          Paint(),
-        );
-        finalImage = await recorder.endRecording().toImage(width, height);
-      }
-
-      // 洗出相片：直接输出原始内存像素 RGBA！彻底告别 PNG 压缩和硬盘 I/O！
-      ByteData? byteData = await finalImage.toByteData(
-        format: ui.ImageByteFormat.rawRgba,
-      );
-      return (byteData?.buffer.asUint8List(), width, height);
-    } catch (e) {
-      debugPrint("❌ 抓拍当前帧失败: $e");
-      return (null, 0, 0);
-    }
-  }
-
   // 🎬 专门给取景器提供纯净画面的层（无黑边）
   // 🌟 修改点 1：把参数里的 String imagePath 改成 var photo (或者 PhotoEntity photo)
   Widget _buildPureImageLayer(var photo, Widget subtitle) {
     // 🌟 修改点 2：从传进来的 photo 对象里提取真正的路径
-    final file = File(photo.path);
-
     // 🎯 呼叫智能裁切雷达
     final Alignment smartAlignment = _calculateFaceAlignment(photo);
 
@@ -1849,15 +1660,14 @@ class _StoryVideoPageState extends State<StoryVideoPage>
           builder: (context, scale, child) {
             return Transform.scale(
               scale: scale,
-              child: file.existsSync()
-                  ? PathImage(
-                      path: file.path,
-                      fit: BoxFit.cover,
-                      alignment: smartAlignment, // 🎯 装备雷达
-                      width: double.infinity,
-                      height: double.infinity,
-                    )
-                  : Container(color: Colors.grey[900]),
+              child: PhotoImage(
+                photo: photo,
+                fit: BoxFit.cover,
+                alignment: smartAlignment,
+                width: double.infinity,
+                height: double.infinity,
+                enableSmartCache: false,
+              ),
             );
           },
         ),

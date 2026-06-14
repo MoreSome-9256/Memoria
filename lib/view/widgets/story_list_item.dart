@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/story.dart';
 import '../pages/story_result_page.dart';
-import 'path_image.dart';
+import 'photo_image.dart';
 
 class StoryListItem extends StatelessWidget {
   final Story story;
@@ -29,8 +29,8 @@ class StoryListItem extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Hero image
-            PathImage(
-              path: story.heroImage.path,
+            PhotoImage(
+              photo: story.heroImage,
               height: 200,
               width: double.infinity,
               fit: BoxFit.cover,

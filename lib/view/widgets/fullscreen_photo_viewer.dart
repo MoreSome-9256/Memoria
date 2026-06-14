@@ -10,7 +10,7 @@ import 'package:video_player/video_player.dart';
 import '../../service/photo_service.dart';
 import '../../service/motion_photo_service.dart';
 import '../../utils/media_type_helper.dart';
-import 'path_image.dart';
+import 'asset_backed_image.dart';
 
 Future<void> showFullscreenPhotoViewer(
   BuildContext context, {
@@ -99,8 +99,9 @@ class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
                 assetId: widget.assetId!,
                 fallbackPath: resolvedPath,
               )
-            : PathImage(
+            : AssetBackedImage(
                 path: resolvedPath,
+                assetId: widget.assetId,
                 fit: BoxFit.contain,
                 enableSmartCache: false,
               );
@@ -428,8 +429,9 @@ class _FullscreenAndroidMotionPhotoState
     final bytes = _stillBytes;
     return bytes != null && bytes.isNotEmpty
         ? Image.memory(bytes, fit: BoxFit.contain)
-        : PathImage(
+        : AssetBackedImage(
             path: widget.fallbackPath,
+            assetId: widget.assetId,
             fit: BoxFit.contain,
             enableSmartCache: false,
           );
@@ -517,8 +519,9 @@ class _FullscreenLivePhotoPlayerState
     final stillBytes = _stillBytes;
     final still = stillBytes != null && stillBytes.isNotEmpty
         ? Image.memory(stillBytes, fit: BoxFit.contain)
-        : PathImage(
+        : AssetBackedImage(
             path: widget.stillPath,
+            assetId: widget.assetId,
             fit: BoxFit.contain,
             enableSmartCache: false,
           );

@@ -626,12 +626,8 @@ class EventService {
         }
       }
 
-      if (photo.isProbablyScreenshot) {
-        addTag('截图');
-      }
-
       if (textTags.isEmpty) {
-        addTag(photo.isProbablyScreenshot ? '屏幕' : '文字');
+        addTag('文字');
       }
 
       return textTags.take(5).toList(growable: false);
@@ -648,10 +644,7 @@ class EventService {
     final ocrText = OcrPolicy.effectiveText(photo.ocrText);
     final textLikeAiCount = aiTags.where(_textSceneTags.contains).length;
 
-    return photo.isProbablyScreenshot ||
-        ocrTags.length >= 2 ||
-        ocrText.length >= 12 ||
-        textLikeAiCount >= 2;
+    return ocrTags.length >= 2 || ocrText.length >= 12 || textLikeAiCount >= 2;
   }
 
   bool _looksUsefulOcrTag(String tag) {

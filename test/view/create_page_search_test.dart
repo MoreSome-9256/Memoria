@@ -20,7 +20,6 @@ void main() {
       maxResults: 10,
     );
 
-    expect(screenshot.isProbablyScreenshot, isTrue);
     expect(merged.map((photo) => photo.id), <int>[1, 2, 3]);
   });
 

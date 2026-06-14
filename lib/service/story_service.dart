@@ -253,12 +253,8 @@ class StoryService {
         addTag(tag);
       }
 
-      if (photo.isProbablyScreenshot) {
-        addTag('截图');
-      }
-
       if (result.isEmpty) {
-        addTag(photo.isProbablyScreenshot ? '屏幕' : '文字');
+        addTag('文字');
       }
 
       return result.take(5).toList(growable: false);
@@ -280,8 +276,7 @@ class StoryService {
         .where(_textSceneTags.contains)
         .length;
 
-    return photo.isProbablyScreenshot ||
-        effectiveOcrTags.length >= 2 ||
+    return effectiveOcrTags.length >= 2 ||
         ocrText.length >= 12 ||
         textLikeAiCount >= 2;
   }

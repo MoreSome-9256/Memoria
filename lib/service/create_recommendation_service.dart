@@ -815,9 +815,6 @@ class CreateRecommendationService {
 
   double _coverScore(PhotoEntity photo) {
     var score = 0.0;
-    if (!photo.isProbablyScreenshot) {
-      score += 2.0;
-    }
     if ((photo.aiCaption ?? '').trim().isNotEmpty) {
       score += 0.2;
     }

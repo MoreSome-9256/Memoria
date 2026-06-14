@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/mobileclip_benchmark.dart';
 import '../../service/mobileclip_benchmark_service.dart';
-import '../widgets/path_image.dart';
+import '../widgets/asset_backed_image.dart';
 import 'vlm_photo_picker_page.dart';
 
 class MobileClipBenchmarkPage extends StatefulWidget {
@@ -205,7 +205,11 @@ class _SelectedSamplesStrip extends StatelessWidget {
             child: SizedBox(
               width: 72,
               height: 72,
-              child: PathImage(path: sample.path, fit: BoxFit.cover),
+              child: AssetBackedImage(
+                path: sample.path,
+                assetId: sample.assetId,
+                fit: BoxFit.cover,
+              ),
             ),
           );
         },
@@ -380,8 +384,9 @@ class _WorstCaseRow extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
               child: AspectRatio(
                 aspectRatio: 4 / 3,
-                child: PathImage(
+                child: AssetBackedImage(
                   path: worstCase.sample.path,
+                  assetId: worstCase.sample.assetId,
                   fit: BoxFit.cover,
                 ),
               ),

@@ -19,7 +19,8 @@ import '../../models/vo/photo.dart';
 import '../../models/vo/story_section.dart';
 import '../../service/story_service.dart';
 import '../../utils/ocr_policy.dart';
-import '../widgets/path_image.dart';
+import '../widgets/photo_image.dart';
+import '../widgets/asset_backed_image.dart';
 import 'digital_album_book_page.dart';
 import 'story_video_page.dart';
 import '../../storage/objectbox/objectbox_service.dart';
@@ -498,7 +499,10 @@ class _StoryResultPageState extends State<StoryResultPage> {
   }
 
   Future<File> _generateSharePosterFile({int styleIndex = 0}) async {
-    await _precachePosterImages();
+    await warmAssetBackedImages(<Photo>[
+      widget.heroImage,
+      ..._sections.map((section) => section.photo),
+    ]);
     if (!mounted || !context.mounted) {
       throw StateError('Share poster generation was cancelled');
     }
@@ -553,7 +557,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
 
     try {
       await WidgetsBinding.instance.endOfFrame;
-      await Future<void>.delayed(const Duration(milliseconds: 80));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
 
       final renderObject = boundaryKey.currentContext?.findRenderObject();
       if (renderObject is! RenderRepaintBoundary) {
@@ -571,37 +575,6 @@ class _StoryResultPageState extends State<StoryResultPage> {
     } finally {
       overlayEntry.remove();
     }
-  }
-
-  Future<void> _precachePosterImages() async {
-    final paths = <String>{
-      widget.heroImage.path,
-      for (final section in _sections) section.photo.path,
-    }.where((item) => item.trim().isNotEmpty).take(16).toList(growable: false);
-
-    for (final imagePath in paths) {
-      final uri = Uri.tryParse(imagePath);
-      final scheme = uri?.scheme.toLowerCase();
-      final provider = scheme == 'http' || scheme == 'https'
-          ? NetworkImage(imagePath) as ImageProvider
-          : FileImage(_localImageFile(imagePath, uri));
-      try {
-        await precacheImage(
-          provider,
-          context,
-        ).timeout(const Duration(milliseconds: 900));
-      } catch (_) {
-        // Missing or slow images should not block sharing; poster widgets show
-        // their own placeholder if an image cannot be decoded in time.
-      }
-    }
-  }
-
-  File _localImageFile(String imagePath, Uri? uri) {
-    if (uri != null && uri.scheme.toLowerCase() == 'file') {
-      return File(uri.toFilePath());
-    }
-    return File(imagePath);
   }
 
   Future<void> _openDigitalAlbum() async {
@@ -756,7 +729,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
               background: Stack(
                 fit: StackFit.expand,
                 children: [
-                  PathImage(path: widget.heroImage.path, fit: BoxFit.cover),
+                  PhotoImage(photo: widget.heroImage, fit: BoxFit.cover),
                   Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -826,8 +799,8 @@ class _StoryResultPageState extends State<StoryResultPage> {
                       borderRadius: BorderRadius.circular(8),
                       child: AspectRatio(
                         aspectRatio: 4 / 3,
-                        child: PathImage(
-                          path: section.photo.path,
+                        child: PhotoImage(
+                          photo: section.photo,
                           width: double.infinity,
                           height: double.infinity,
                           fit: BoxFit.cover,
@@ -1273,8 +1246,8 @@ class _PosterHeroCard extends StatelessWidget {
             clipper: _PosterShapeClipper(style: 2),
             child: AspectRatio(
               aspectRatio: 1.28,
-              child: _PosterPathImage(
-                path: photo.path,
+              child: _PosterPhotoImage(
+                photo: photo,
                 alignment: Alignment.center,
               ),
             ),
@@ -1377,10 +1350,7 @@ class _PosterFramedImage extends StatelessWidget {
         clipper: _PosterShapeClipper(style: index % 4),
         child: AspectRatio(
           aspectRatio: compact ? 0.9 : 1.16,
-          child: _PosterPathImage(
-            path: photo.path,
-            alignment: Alignment.center,
-          ),
+          child: _PosterPhotoImage(photo: photo, alignment: Alignment.center),
         ),
       ),
     );
@@ -1443,21 +1413,21 @@ class _PosterTextBlock extends StatelessWidget {
   }
 }
 
-class _PosterPathImage extends StatelessWidget {
-  const _PosterPathImage({
-    required this.path,
+class _PosterPhotoImage extends StatelessWidget {
+  const _PosterPhotoImage({
+    required this.photo,
     this.alignment = Alignment.center,
   });
 
-  final String path;
+  final Photo photo;
   final AlignmentGeometry alignment;
 
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: const BoxDecoration(color: Color(0xFFE4DDD0)),
-      child: PathImage(
-        path: path,
+      child: PhotoImage(
+        photo: photo,
         fit: BoxFit.cover,
         width: double.infinity,
         height: double.infinity,

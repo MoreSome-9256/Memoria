@@ -238,12 +238,13 @@ class AlbumTagBrowserService {
   }
 
   List<String> browsableTagsForPhoto(PhotoEntity photo) {
-    final raw = TagSanitizer.sanitizeVisualTags(
+    if (!photo.isAiAnalyzed) {
+      return const <String>[];
+    }
+    final rawTags = TagSanitizer.sanitizeVisualTags(
       photo.aiTags ?? const <String>[],
     );
-    final localFallback = _localSignalFallbackTags(photo, raw);
-    final effectiveTags = localFallback.isNotEmpty ? localFallback : raw;
-    final mapped = effectiveTags
+    final mapped = rawTags
         .where((tag) => memoriaAlbumTagLabelToCoarseId.containsKey(tag))
         .toSet()
         .toList(growable: false);
@@ -290,91 +291,9 @@ class AlbumTagBrowserService {
     }
   }
 
-  List<String> _localSignalFallbackTags(
-    PhotoEntity photo,
-    List<String> rawTags,
-  ) {
-    if (!_hasLowInformationTags(rawTags) && !photo.isProbablyScreenshot) {
-      return const <String>[];
-    }
-
-    final text = _localSignalText(photo);
-    final tags = <String>[];
-    if (_looksLikeReceipt(text)) {
-      tags.add('收据小票');
-    } else if (_looksLikeDocumentOrCoursework(photo, text)) {
-      tags.add('文档');
-    }
-
-    if (_looksLikeCodeOrScreenTool(text)) {
-      tags.add('屏幕代码');
-    }
-
-    if (_looksLikeFoodOrder(text)) {
-      tags.add('美食');
-    }
-
-    return tags
-        .where((tag) => memoriaAlbumTagLabelToCoarseId.containsKey(tag))
-        .toSet()
-        .toList(growable: false);
-  }
-
-  bool _hasLowInformationTags(List<String> rawTags) {
-    if (rawTags.isEmpty) {
-      return true;
-    }
-    final mapped = rawTags
-        .where((tag) => memoriaAlbumTagLabelToCoarseId.containsKey(tag))
-        .toList(growable: false);
-    if (mapped.isEmpty) {
-      return true;
-    }
-    return mapped.every(_isLowInformationTag);
-  }
-
   bool _isLowInformationTag(String tag) {
     return tag == memoriaOtherLabel ||
         memoriaLegacyCoarseLabelToCoarseId.containsKey(tag) ||
         _genericLowInformationTags.contains(tag);
-  }
-
-  String _localSignalText(PhotoEntity photo) {
-    return <String>[
-      photo.path,
-      photo.ocrText ?? '',
-      ...(photo.ocrTags ?? const <String>[]),
-    ].join(' ').toLowerCase();
-  }
-
-  bool _looksLikeDocumentOrCoursework(PhotoEntity photo, String text) {
-    if (photo.isProbablyScreenshot) {
-      return true;
-    }
-    return RegExp(
-      r'(ppt|pdf|doc|word|excel|课件|课程|作业|试卷|题目|答案|讲义|论文|研究|表格|成绩|录取|报名|申请|通知|群聊|聊天|二维码|扫码|证件)',
-      caseSensitive: false,
-    ).hasMatch(text);
-  }
-
-  bool _looksLikeCodeOrScreenTool(String text) {
-    return RegExp(
-      r'(代码|编程|github|terminal|console|debug|error|exception|flutter|dart|python|javascript|java|kotlin|ide|vscode)',
-      caseSensitive: false,
-    ).hasMatch(text);
-  }
-
-  bool _looksLikeReceipt(String text) {
-    return RegExp(
-      r'(发票|账单|小票|收据|订单|付款|支付|合计|总计|¥|￥)',
-      caseSensitive: false,
-    ).hasMatch(text);
-  }
-
-  bool _looksLikeFoodOrder(String text) {
-    return RegExp(
-      r'(外卖|菜单|菜品|美团|饿了么|奶茶|咖啡|早餐|午餐|晚餐|餐厅|饭店|火锅|烧烤)',
-      caseSensitive: false,
-    ).hasMatch(text);
   }
 }

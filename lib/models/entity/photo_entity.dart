@@ -16,7 +16,7 @@ class PhotoEntity {
   @Index()
   late int timestamp;
 
-  // 📐 图片尺寸信息 (用于过滤截图和UI占位)
+  // 📐 图片尺寸信息（仅用于媒体展示和布局）
   late int width;
   late int height;
 
@@ -72,24 +72,4 @@ class PhotoEntity {
 
   // 计算图片宽高比
   double get aspectRatio => width > 0 ? width / height : 1.0;
-
-  // 判断是否可能是截图 (极端比例)
-  bool get isProbablyScreenshot {
-    final normalizedPath = path.toLowerCase();
-    const screenshotKeywords = <String>[
-      'screenshot',
-      'screen_shot',
-      'screen-shot',
-      'screen shot',
-      'capture',
-      'screen capture',
-      '截屏',
-      '截图',
-    ];
-    if (screenshotKeywords.any(normalizedPath.contains)) {
-      return true;
-    }
-    final ratio = aspectRatio;
-    return ratio > 0 && ratio < 0.52;
-  }
 }

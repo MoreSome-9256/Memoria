@@ -102,7 +102,6 @@ extension PhotoServiceAiReset on PhotoService {
       ...memoriaLegacyCoarseLabelToCoarseId.keys,
     };
     const passthroughLabels = <String>{
-      '截图',
       '视频',
       JunkPhotoFilterService.junkCandidateTag,
       JunkPhotoFilterService.pendingJunkCandidateTag,

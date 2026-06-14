@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:math' as math;
+import '../../models/vo/photo.dart';
 import '../../models/vo/story_section.dart';
 import '../../effects/subtitle_effect.dart';
 import '../../effects/glitch_effect.dart';
@@ -24,6 +25,8 @@ import '../../storage/objectbox/objectbox_service.dart';
 import '../../models/entity/story_entity.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
 import 'package:gal/gal.dart';
+import '../widgets/asset_backed_image.dart';
+import '../widgets/photo_image.dart';
 
 class OffscreenRenderWorker extends StatefulWidget {
   final String title;
@@ -43,8 +46,8 @@ class OffscreenRenderWorker extends StatefulWidget {
   final double shakeIntensity;
   final double shakeFrequency;
   final double glitchIntensity;
-  final double imageSaturation;   // 🌟 新增：饱和度
-  final String imageFilterType;   // 🌟 新增：滤镜类型
+  final double imageSaturation; // 🌟 新增：饱和度
+  final String imageFilterType; // 🌟 新增：滤镜类型
   final bool enableFlash;
   final bool useVignette;
   final bool useGrain;
@@ -315,7 +318,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
                             saturation: widget.imageSaturation,
                             filterType: widget.imageFilterType,
                             child: _buildPureImageLayer(
-                              currentSection.photo.path,
+                              currentSection.photo,
                               subtitleLayer,
                             ),
                           ),
@@ -395,28 +398,6 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       );
     }
   }
-  // 🎥 核心特效：Ken Burns 运镜效应 (缓慢放大)
-  /*Widget _buildKenBurnsImage(String imagePath) {
-    final file = File(imagePath);
-    return TweenAnimationBuilder(
-      key: ValueKey<String>(imagePath), // Key 变了，动画就会重置并重新执行
-      tween: Tween<double>(begin: 1.0, end: 1.15), // 从原尺寸缓慢放大到 1.15 倍
-      duration: const Duration(seconds: 5), // 设定略大于图片停留时间的动画
-      builder: (context, scale, child) {
-        return Transform.scale(
-          scale: scale,
-          child: file.existsSync()
-              ? Image.file(
-                  file,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  height: double.infinity,
-                )
-              : Container(color: Colors.grey[900]), // 找不到图的防崩兜底
-        );
-      },
-    );
-  }*/
 
   // 🎬 核心特效：根据长宽比自适应的视觉层（已支持字幕嵌入）
   void _updateStateForFrame(int frameIndex) {
@@ -512,6 +493,13 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   }
 
   Future<void> _startExport() async {
+    await warmAssetBackedImages(
+      widget.sections.map((section) => section.photo),
+    );
+    if (!mounted) return;
+    setState(() {});
+    await WidgetsBinding.instance.endOfFrame;
+
     // 🚀 保持 AI 自动写文案在后台运行
     List<String> currentCaptions = widget.sections.map((s) => s.text).toList();
     _aiCopyFuture = LLMService().generateSocialMediaCopy(
@@ -1036,10 +1024,9 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   }
 
   // 🎬 专门给取景器提供纯净画面的层（无黑边）
-  Widget _buildPureImageLayer(String imagePath, Widget subtitle) {
-    final file = File(imagePath);
+  Widget _buildPureImageLayer(Photo photo, Widget subtitle) {
     return Stack(
-      key: ValueKey<String>(imagePath),
+      key: ValueKey<String>(photo.id),
       fit: StackFit.expand,
       children: [
         TweenAnimationBuilder(
@@ -1048,14 +1035,13 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
           builder: (context, scale, child) {
             return Transform.scale(
               scale: scale,
-              child: file.existsSync()
-                  ? Image.file(
-                      file,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      height: double.infinity,
-                    )
-                  : Container(color: Colors.grey[900]),
+              child: PhotoImage(
+                photo: photo,
+                fit: BoxFit.cover,
+                width: double.infinity,
+                height: double.infinity,
+                enableSmartCache: false,
+              ),
             );
           },
         ),

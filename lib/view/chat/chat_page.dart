@@ -8,7 +8,7 @@ import '../../service/semantic_photo_search_service.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
-import '../widgets/path_image.dart';
+import '../widgets/asset_backed_image.dart';
 import 'select_photos_page.dart'; // 我们马上要建的选图页面
 
 class ChatPage extends StatefulWidget {
@@ -376,7 +376,11 @@ class _ChatPageState extends State<ChatPage> {
             borderRadius: BorderRadius.circular(12),
             child: AspectRatio(
               aspectRatio: 3 / 4,
-              child: PathImage(path: photoPaths[index], fit: BoxFit.cover),
+              child: AssetBackedImage(
+                path: photoPaths[index],
+                assetId: null,
+                fit: BoxFit.cover,
+              ),
             ),
           );
         },

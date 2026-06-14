@@ -430,9 +430,6 @@ class FaceClusterService {
     if (photo == null) {
       return false;
     }
-    if (photo.isProbablyScreenshot) {
-      return true;
-    }
     final tags = TagSanitizer.sanitizeVisualTags(
       photo.aiTags ?? const <String>[],
     );

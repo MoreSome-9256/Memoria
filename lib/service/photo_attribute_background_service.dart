@@ -326,8 +326,7 @@ class PhotoAttributeBackgroundService {
     required File imageFile,
   }) async {
     final visualTags = photo.aiTags ?? const <String>[];
-    final shouldRunOcr =
-        OcrService.shouldRunOcr(visualTags) || photo.isProbablyScreenshot;
+    final shouldRunOcr = OcrService.shouldRunOcr(visualTags);
     final ocrResult = shouldRunOcr
         ? await OcrService().analyzeImageFile(imageFile)
         : OcrResult.empty();
@@ -338,7 +337,6 @@ class PhotoAttributeBackgroundService {
       ocrText: ocrResult.text,
       location: photo.locationName ?? photo.district ?? photo.city,
       takenAt: DateTime.fromMillisecondsSinceEpoch(photo.timestamp),
-      isProbablyScreenshot: photo.isProbablyScreenshot,
       faceCount: photo.faceCount,
     );
 

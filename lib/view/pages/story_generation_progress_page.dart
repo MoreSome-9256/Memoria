@@ -3,18 +3,39 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 
+import '../../models/vo/photo.dart';
 import '../../models/vo/story_generation_models.dart';
 import '../../service/story_queue_service.dart';
 import '../../service/story_video_preparation_service.dart';
 import '../../service/story_generation_orchestrator.dart';
-import '../widgets/path_image.dart';
+import '../../utils/media_type_helper.dart';
+import '../widgets/media_thumbnail.dart';
+import '../widgets/asset_backed_image.dart';
 import 'story_result_page.dart';
 
+@visibleForTesting
+Widget buildStoryGenerationPreviewImage({
+  required List<Photo> selectedPhotos,
+  required String path,
+}) {
+  for (final photo in selectedPhotos) {
+    if (photo.path != path) {
+      continue;
+    }
+    return MediaThumbnail(
+      path: photo.path,
+      assetId: photo.id,
+      kind: MediaTypeHelper.fromStorageValue(photo.mediaKind, path: photo.path),
+      thumbnailBytes: photo.thumbnailBytes,
+      fit: BoxFit.cover,
+      showBadge: false,
+    );
+  }
+  return AssetBackedImage(path: path, assetId: null, fit: BoxFit.cover);
+}
+
 class StoryGenerationProgressPage extends StatefulWidget {
-  const StoryGenerationProgressPage({
-    super.key,
-    required this.request,
-  });
+  const StoryGenerationProgressPage({super.key, required this.request});
 
   final StoryGenerationRequest request;
 
@@ -162,22 +183,26 @@ class _StoryGenerationProgressPageState
           children: [
             Text(
               widget.request.title,
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
             Text(
               state?.headline ?? '正在准备故事素材',
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: Colors.grey[700],
-                    height: 1.45,
-                  ),
+                color: Colors.grey[700],
+                height: 1.45,
+              ),
             ),
-            if (widget.request.semanticSearchQuery?.trim().isNotEmpty == true) ...[
+            if (widget.request.semanticSearchQuery?.trim().isNotEmpty ==
+                true) ...[
               const SizedBox(height: 10),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.75),
                   borderRadius: BorderRadius.circular(18),
@@ -197,15 +222,16 @@ class _StoryGenerationProgressPageState
               _ProgressStepCard(
                 step: steps[index],
                 isLast: index == steps.length - 1,
+                previewBuilder: _buildPreviewImage,
               ),
             if (_isRunning) ...[
               const SizedBox(height: 12),
               Center(
                 child: Text(
                   '正在为你编织图文并茂的故事...',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.grey[700],
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: Colors.grey[700]),
                 ),
               ),
             ],
@@ -276,16 +302,25 @@ class _StoryGenerationProgressPageState
     final visibleCount = (firstPendingIndex + 1).clamp(1, steps.length);
     return steps.take(visibleCount).toList(growable: false);
   }
+
+  Widget _buildPreviewImage(String path) {
+    return buildStoryGenerationPreviewImage(
+      selectedPhotos: widget.request.selectedPhotos,
+      path: path,
+    );
+  }
 }
 
 class _ProgressStepCard extends StatefulWidget {
   const _ProgressStepCard({
     required this.step,
     required this.isLast,
+    required this.previewBuilder,
   });
 
   final StoryGenerationProgressStep step;
   final bool isLast;
+  final Widget Function(String path) previewBuilder;
 
   @override
   State<_ProgressStepCard> createState() => _ProgressStepCardState();
@@ -368,17 +403,17 @@ class _ProgressStepCardState extends State<_ProgressStepCard>
                 Text(
                   widget.step.title,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
                 if (widget.step.detail?.trim().isNotEmpty == true) ...[
                   const SizedBox(height: 8),
                   Text(
                     widget.step.detail!,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Colors.grey[700],
-                          height: 1.45,
-                        ),
+                      color: Colors.grey[700],
+                      height: 1.45,
+                    ),
                   ),
                 ],
                 if (widget.step.previewImagePaths.isNotEmpty) ...[
@@ -394,9 +429,8 @@ class _ProgressStepCardState extends State<_ProgressStepCard>
                           borderRadius: BorderRadius.circular(16),
                           child: SizedBox(
                             width: 120,
-                            child: PathImage(
-                              path: widget.step.previewImagePaths[index],
-                              fit: BoxFit.cover,
+                            child: widget.previewBuilder(
+                              widget.step.previewImagePaths[index],
                             ),
                           ),
                         );
@@ -411,9 +445,9 @@ class _ProgressStepCardState extends State<_ProgressStepCard>
                       padding: const EdgeInsets.only(bottom: 6),
                       child: Text(
                         '• $bullet',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              height: 1.45,
-                            ),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodyMedium?.copyWith(height: 1.45),
                       ),
                     ),
                 ],
@@ -437,7 +471,7 @@ class _ProgressStepCardState extends State<_ProgressStepCard>
         child: SizedBox(
           width: 34,
           height: 34,
-          child: PathImage(path: previewPath, fit: BoxFit.cover),
+          child: widget.previewBuilder(previewPath),
         ),
       );
 
@@ -490,11 +524,7 @@ class _ProgressStepCardState extends State<_ProgressStepCard>
                 size: 20,
               ),
             )
-          : Icon(
-              _statusIcon(widget.step.status),
-              color: color,
-              size: 20,
-            ),
+          : Icon(_statusIcon(widget.step.status), color: color, size: 20),
     );
   }
 

@@ -75,6 +75,8 @@ class AlbumPage extends StatefulWidget {
 
 enum _AlbumViewMode { tags, moments }
 
+enum _LocalCleanupAction { analysisData, allLocalCache }
+
 class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   static const double _contentBottomInset = 118;
   static const int _tagBrowserYieldChunk = 120;
@@ -294,31 +296,89 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _deleteCurrentAnalysisTask() async {
-    if (_isDeletingCurrentTask) {
+  Future<void> _showLocalCleanupDialog() async {
+    if (_isDeletingCurrentTask || _isClearingLocalCache) {
       return;
     }
-    final confirmed = await showDialog<bool>(
+    final foregroundProgress =
+        UnifiedAnalysisProgressStore.instance.progress.value;
+    final localCacheCleanupUnavailable =
+        _isStartingImport ||
+        AlbumRefreshService().isRunning ||
+        foregroundProgress.isRunning ||
+        AIService().isAnalyzing;
+    final selected = await showDialog<_LocalCleanupAction>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除当前任务'),
-        content: const Text(
-          '将中断当前前台任务，并清空本地数据库中的 AI 分析结果、候选队列、事件聚类、向量索引和低价值标记。照片记录和系统相册原图不会删除。',
+        title: const Text('清理本地数据'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '清空分析字段',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                '停止并删除当前分析任务，清空 AI 标签、向量、OCR、人脸和事件聚类；保留照片记录、已确认的低价值状态与系统相册原图，之后可重新分析。',
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                '清空全部本地缓存',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                '删除应用数据库中的照片记录、已保存故事、事件、推荐、人物、媒体索引和全部 AI 分析结果；不删除系统相册原图，也不会自动重新扫描。',
+              ),
+              if (localCacheCleanupUnavailable) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  '当前正在扫描或分析，只能先清空分析字段；全部本地缓存需要任务停止后才能清理。',
+                  style: TextStyle(color: Colors.orange),
+                ),
+              ],
+            ],
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(context).pop(),
             child: const Text('取消'),
           ),
-          FilledButton.icon(
-            onPressed: () => Navigator.of(context).pop(true),
-            icon: const Icon(Icons.delete_sweep_outlined),
-            label: const Text('删除任务'),
+          OutlinedButton(
+            onPressed: () =>
+                Navigator.of(context).pop(_LocalCleanupAction.analysisData),
+            child: const Text('清空分析字段'),
+          ),
+          FilledButton(
+            onPressed: localCacheCleanupUnavailable
+                ? null
+                : () => Navigator.of(
+                    context,
+                  ).pop(_LocalCleanupAction.allLocalCache),
+            child: const Text('清空全部本地缓存'),
           ),
         ],
       ),
     );
-    if (confirmed != true || !mounted) {
+    if (!mounted) {
+      return;
+    }
+    switch (selected) {
+      case _LocalCleanupAction.analysisData:
+        await _clearAnalysisData();
+      case _LocalCleanupAction.allLocalCache:
+        await _clearAllLocalCache();
+      case null:
+        return;
+    }
+  }
+
+  Future<void> _clearAnalysisData() async {
+    if (_isDeletingCurrentTask) {
       return;
     }
 
@@ -625,43 +685,49 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _clearLocalCacheOnly() async {
+  Future<void> _clearAllLocalCache() async {
     if (_isClearingLocalCache) {
       return;
     }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('清空本地缓存'),
-          content: const Text('这会删除本地相册缓存和 AI 分析结果，但不会删除原始图片和视频，也不会自动重新扫描。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('清空缓存'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true || !mounted) {
+    final foregroundProgress =
+        UnifiedAnalysisProgressStore.instance.progress.value;
+    if (_isStartingImport ||
+        AlbumRefreshService().isRunning ||
+        foregroundProgress.isRunning ||
+        AIService().isAnalyzing) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('请先停止当前扫描或分析任务，再清空全部本地缓存。'),
+        ),
+      );
       return;
     }
-
     setState(() => _isClearingLocalCache = true);
     try {
       await PhotoService().clearAllCachedData();
+      AIService().clearPendingJunkCleanupReport();
+      _DeferredImageLoadScheduler.reset();
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
+      await _refreshPendingAnalysisPrompt();
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('本地缓存已清空。'),
+          content: Text('全部本地缓存已清空。'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('清空本地缓存失败: $error'),
         ),
       );
     } finally {
@@ -1024,26 +1090,16 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   IconButton(
-                    icon: _isDeletingCurrentTask
+                    icon: _isDeletingCurrentTask || _isClearingLocalCache
                         ? const SizedBox.square(
                             dimension: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.cleaning_services),
-                    onPressed: _isDeletingCurrentTask
+                        : const Icon(Icons.cleaning_services_outlined),
+                    onPressed: _isDeletingCurrentTask || _isClearingLocalCache
                         ? null
-                        : () => unawaited(_deleteCurrentAnalysisTask()),
-                    tooltip: '删除当前任务并清空 AI 分析字段',
-                  ),
-                  IconButton(
-                    icon: _isClearingLocalCache
-                        ? const SizedBox.square(
-                            dimension: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.cleaning_services),
-                    onPressed: isBusy ? null : _clearLocalCacheOnly,
-                    tooltip: '清空本地缓存',
+                        : () => unawaited(_showLocalCleanupDialog()),
+                    tooltip: '清理本地数据',
                   ),
                   Padding(
                     padding: const EdgeInsets.only(right: 8),

@@ -55,6 +55,17 @@ void main() {
     expect(service.buildCoarseClusters(<PhotoEntity>[photo]), isEmpty);
   });
 
+  test('tag browser ignores tags before AI analysis completes', () {
+    final documentTag =
+        memoriaCoarseIdToFineLabels['document_screenshot']!.first;
+    final photo = _photo(id: 3, tag: documentTag)..isAiAnalyzed = false;
+    final service = AlbumTagBrowserService();
+
+    expect(service.browsableTagsForPhoto(photo), isEmpty);
+    expect(service.browsableCoarseIdsForPhoto(photo), isEmpty);
+    expect(service.buildCoarseClusters(<PhotoEntity>[photo]), isEmpty);
+  });
+
   test('tag browser keeps coarse fallback labels out of other', () {
     final people = memoriaCoarseIdToDefinition['people']!;
     final food = memoriaCoarseIdToDefinition['food_drink']!;
@@ -88,17 +99,15 @@ void main() {
     expect(coarseIds, isNot(contains('food_drink')));
   });
 
-  test('tag browser uses document signals for low-information coarse tags', () {
+  test('tag browser never infers document categories from local signals', () {
     final people = memoriaCoarseIdToDefinition['people']!;
-    final food = memoriaCoarseIdToDefinition['food_drink']!;
     final document = memoriaCoarseIdToDefinition['document_screenshot']!;
     final peopleTag = memoriaCoarseIdToFineLabels[people.id]!.first;
-    final foodTag = memoriaCoarseIdToFineLabels[food.id]!.first;
-    final documentTag = memoriaCoarseIdToFineLabels[document.id]!.first;
     final service = AlbumTagBrowserService();
     final photo = _photo(
       id: 1,
-      tags: <String>[peopleTag, foodTag],
+      tag: peopleTag,
+      path: '/photos/Screenshot_2026-06-14.png',
       width: 1080,
       height: 2400,
       ocrText: '课程课件 试卷 题目 答案 二维码',
@@ -108,37 +117,21 @@ void main() {
     final clusters = service.buildCoarseClusters(<PhotoEntity>[photo]);
     final coarseIds = clusters.map((cluster) => cluster.coarseId).toSet();
 
-    expect(tags, contains(documentTag));
-    expect(tags, isNot(contains(peopleTag)));
-    expect(tags, isNot(contains(foodTag)));
-    expect(coarseIds, contains(document.id));
-    expect(coarseIds, isNot(contains(people.id)));
-    expect(coarseIds, isNot(contains(food.id)));
+    expect(tags, <String>[peopleTag]);
+    expect(coarseIds, contains(people.id));
+    expect(coarseIds, isNot(contains(document.id)));
   });
 
-  test('tag browser treats low-information tall screenshots as documents', () {
-    final peopleTag = memoriaCoarseIdToFineLabels['people']!.first;
+  test('tag browser exposes document category only from AI visual tags', () {
     final document = memoriaCoarseIdToDefinition['document_screenshot']!;
     final documentTag = memoriaCoarseIdToFineLabels[document.id]!.first;
     final service = AlbumTagBrowserService();
-    final photo = _photo(id: 1, tag: peopleTag, width: 1080, height: 2400);
+    final photo = _photo(id: 1, tag: documentTag);
 
     final tags = service.browsableTagsForPhoto(photo);
     final coarseIds = service.browsableCoarseIdsForPhoto(photo);
 
-    expect(tags, contains(documentTag));
+    expect(tags, <String>[documentTag]);
     expect(coarseIds, contains(document.id));
-  });
-
-  test('tag browser lets screenshot evidence override visual fine tags', () {
-    final selfieTag = memoriaCoarseIdToFineLabels['people']![1];
-    final document = memoriaCoarseIdToDefinition['document_screenshot']!;
-    final service = AlbumTagBrowserService();
-    final photo = _photo(id: 1, tag: selfieTag, width: 1080, height: 2400);
-
-    final coarseIds = service.browsableCoarseIdsForPhoto(photo);
-
-    expect(coarseIds, contains(document.id));
-    expect(coarseIds, isNot(contains('people')));
   });
 }

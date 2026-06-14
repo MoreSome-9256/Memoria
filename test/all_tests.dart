@@ -32,9 +32,13 @@ import 'utils/story_prompt_helper_test.dart' as story_prompt_helper_test;
 import 'utils/theme_subclustering_test.dart' as theme_subclustering_test;
 import 'view/album_page_split_compile_test.dart'
     as album_page_split_compile_test;
+import 'view/asset_backed_media_contract_test.dart'
+    as asset_backed_media_contract_test;
 import 'view/album_page_split_contract_test.dart'
     as album_page_split_contract_test;
 import 'view/create_page_search_test.dart' as create_page_search_test;
+import 'view/story_generation_progress_page_test.dart'
+    as story_generation_progress_page_test;
 
 void main() {
   tag_taxonomy_v2_test.main();
@@ -47,7 +51,9 @@ void main() {
   semantic_photo_search_service_test.main();
   album_page_split_contract_test.main();
   album_page_split_compile_test.main();
+  asset_backed_media_contract_test.main();
   create_page_search_test.main();
+  story_generation_progress_page_test.main();
   event_service_test.main();
   face_cluster_service_test.main();
   media_embedding_record_test.main();

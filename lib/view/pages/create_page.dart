@@ -1,6 +1,5 @@
 // 创作流程页面，承载故事生成的具体操作步骤。
 
-import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
@@ -9,11 +8,12 @@ import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/semantic_photo_search_service.dart';
 import '../../utils/ocr_policy.dart';
+import '../../utils/media_type_helper.dart';
 import '../../utils/tag_sanitizer.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
-import '../widgets/path_image.dart';
+import '../widgets/media_thumbnail.dart';
 import 'story_config_page.dart';
 
 class _CreateLaunchPhotoRecord {
@@ -603,8 +603,6 @@ class _CreatePageState extends State<CreatePage> {
       itemBuilder: (context, index) {
         final photo = _searchResults[index];
         final isSelected = _selectedPhotoIds.contains(photo.id);
-        final file = File(photo.path);
-
         return GestureDetector(
           onTap: () => _toggleSelection(photo.id),
           child: Stack(
@@ -612,7 +610,17 @@ class _CreatePageState extends State<CreatePage> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(18),
-                child: PathImage(path: file.path, fit: BoxFit.cover),
+                child: MediaThumbnail(
+                  path: photo.path,
+                  assetId: photo.assetId,
+                  kind: MediaTypeHelper.fromStorageValue(
+                    photo.mediaKind,
+                    path: photo.path,
+                  ),
+                  thumbnailBytes: photo.thumbnailBytes,
+                  fit: BoxFit.cover,
+                  showBadge: false,
+                ),
               ),
 
               // 2. 右上角的选择指示器 (无黑罩，还原设计图的清爽感)

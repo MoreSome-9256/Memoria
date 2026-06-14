@@ -97,11 +97,13 @@ extension PhotoServiceAiReset on PhotoService {
       return 0;
     }
 
-    final taxonomyLabels = memoriaMasterLabels.toSet();
+    final taxonomyLabels = <String>{
+      ...memoriaMasterLabels,
+      ...memoriaLegacyCoarseLabelToCoarseId.keys,
+    };
     const passthroughLabels = <String>{
       '截图',
       '视频',
-      memoriaOtherLabel,
       JunkPhotoFilterService.junkCandidateTag,
       JunkPhotoFilterService.pendingJunkCandidateTag,
       JunkPhotoFilterService.keptJunkCandidateTag,
@@ -112,10 +114,26 @@ extension PhotoServiceAiReset on PhotoService {
     final updatedPhotoIds = <int>[];
     for (final photo in photos) {
       final aiTags = photo.aiTags ?? const <String>[];
+      final normalizedAiTags = aiTags
+          .map((tag) => tag.trim())
+          .where((tag) => tag.isNotEmpty)
+          .toList(growable: false);
       final isJunkCandidate =
           aiTags.contains(JunkPhotoFilterService.junkCandidateTag) ||
           aiTags.contains(JunkPhotoFilterService.pendingJunkCandidateTag) ||
           aiTags.contains(JunkPhotoFilterService.keptJunkCandidateTag);
+      final mediaKind = MediaTypeHelper.fromStorageValue(
+        photo.mediaKind,
+        path: photo.path,
+      );
+      final isOnlyOtherResult =
+          normalizedAiTags.isNotEmpty &&
+          normalizedAiTags.every((tag) => tag == memoriaOtherLabel);
+      final isStaleOtherOnlyImageResult =
+          photo.isAiAnalyzed &&
+          !isJunkCandidate &&
+          mediaKind == MemoriaMediaKind.image &&
+          isOnlyOtherResult;
       final needsReset =
           photo.isAiAnalyzed &&
           !isJunkCandidate &&
@@ -124,13 +142,13 @@ extension PhotoServiceAiReset on PhotoService {
       final hasOutdatedTags =
           photo.isAiAnalyzed &&
           aiTags.isNotEmpty &&
-          aiTags.any(
+          normalizedAiTags.any(
             (tag) =>
-                !taxonomyLabels.contains(tag.trim()) &&
-                !passthroughLabels.contains(tag.trim()),
+                !taxonomyLabels.contains(tag) &&
+                !passthroughLabels.contains(tag),
           );
 
-      if (!needsReset && !hasOutdatedTags) {
+      if (!needsReset && !hasOutdatedTags && !isStaleOtherOnlyImageResult) {
         continue;
       }
 

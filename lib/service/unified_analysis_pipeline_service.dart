@@ -595,12 +595,30 @@ class UnifiedAnalysisPipelineService {
       embeddingMetaJson: embeddingRecord.toMetaJson(),
     );
 
-    unawaited(
-      PhotoAttributeBackgroundService.instance().enqueueAttributeTask(
-        photoId: photo.id,
-        types: {PhotoAttributeType.location},
-      ),
+    await PhotoAttributeBackgroundService.instance().enqueueAttributeTask(
+      photoId: photo.id,
+      types: _attributeTypesForAnalyzedPhoto(photo),
     );
+  }
+
+  @visibleForTesting
+  Set<PhotoAttributeType> attributeTypesForAnalyzedPhotoForTesting(
+    PhotoEntity photo,
+  ) {
+    return _attributeTypesForAnalyzedPhoto(photo);
+  }
+
+  Set<PhotoAttributeType> _attributeTypesForAnalyzedPhoto(PhotoEntity photo) {
+    final types = <PhotoAttributeType>{PhotoAttributeType.location};
+    final mediaKind = MediaTypeHelper.fromStorageValue(
+      photo.mediaKind,
+      path: photo.path,
+    );
+    if (mediaKind == MemoriaMediaKind.image) {
+      types.add(PhotoAttributeType.faceDetection);
+      types.add(PhotoAttributeType.caption);
+    }
+    return types;
   }
 
   void _logMediaEmbeddingDiagnostics(
@@ -647,6 +665,12 @@ class UnifiedAnalysisPipelineService {
     }
 
     if (_analysisEnabled && _aiTotal > 0) {
+      _updateProgress(
+        stage: UnifiedAnalysisStage.flushing,
+        message: '正在补齐 OCR、人脸、caption 与欢乐值…',
+      );
+      await PhotoAttributeBackgroundService.instance().waitUntilIdle();
+
       _updateProgress(
         stage: UnifiedAnalysisStage.flushing,
         message: '正在刷新事件聚类…',

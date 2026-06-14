@@ -4,7 +4,6 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'dart:collection';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -83,7 +82,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   bool _isDeletingCurrentTask = false;
   bool _isClearingLocalCache = false;
   bool _tagBrowserAiRecoveryTriggered = false;
-  bool _hiddenPendingAnalysisPromptForSession = false;
+  bool _hiddenPendingAnalysisPrompt = false;
   bool _autoResumePendingStarted = false;
   int _pendingAnalysisCandidateCount = 0;
   bool _isShowingJunkCleanupDialog = false;
@@ -196,9 +195,14 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
       setState(() {
         _pendingAnalysisCandidateCount = count;
         if (count == 0) {
-          _hiddenPendingAnalysisPromptForSession = false;
+          _hiddenPendingAnalysisPrompt = false;
         }
       });
+    }
+    if (count == 0) {
+      unawaited(
+        AppAiSettingsService.instance.setPendingAnalysisPromptDismissed(false),
+      );
     }
 
     if (count > 0 &&
@@ -214,6 +218,26 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
         unawaited(_resumePendingAnalysisCandidates());
       }
     }
+  }
+
+  Future<void> _loadPendingAnalysisPromptPreference() async {
+    final hidden = await AppAiSettingsService.instance
+        .isPendingAnalysisPromptDismissed();
+    if (!mounted || hidden == _hiddenPendingAnalysisPrompt) {
+      return;
+    }
+    setState(() {
+      _hiddenPendingAnalysisPrompt = hidden;
+    });
+  }
+
+  Future<void> _hidePendingAnalysisPrompt() async {
+    if (mounted) {
+      setState(() {
+        _hiddenPendingAnalysisPrompt = true;
+      });
+    }
+    await AppAiSettingsService.instance.setPendingAnalysisPromptDismissed(true);
   }
 
   Future<void> _resumePendingAnalysisCandidates() async {
@@ -739,6 +763,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _onForegroundProgressForCardChanged();
+        unawaited(_loadPendingAnalysisPromptPreference());
         unawaited(AIService().refreshJunkCleanupReportFromDatabase());
       }
     });
@@ -1179,7 +1204,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
         AlbumRefreshService().isRunning ||
         UnifiedAnalysisProgressStore.instance.progress.value.isRunning ||
         AIService().isAnalyzing;
-    if (count <= 0 || _hiddenPendingAnalysisPromptForSession || isBusy) {
+    if (count <= 0 || _hiddenPendingAnalysisPrompt || isBusy) {
       return const SizedBox.shrink();
     }
 
@@ -1203,11 +1228,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
             ),
           ),
           TextButton(
-            onPressed: () {
-              setState(() {
-                _hiddenPendingAnalysisPromptForSession = true;
-              });
-            },
+            onPressed: () => unawaited(_hidePendingAnalysisPrompt()),
             child: const Text('隐藏'),
           ),
           FilledButton(

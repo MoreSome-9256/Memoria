@@ -1,7 +1,6 @@
 /// 低价值照片回收站，展示被 AI 标记为低价值候选的本地照片记录。
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 
 import '../../models/entity/photo_entity.dart';
 import '../../service/ai_service.dart';

@@ -1217,6 +1217,15 @@ const List<MemoriaCoarseTagDefinition> memoriaCoarseTagDefinitions =
         notes: '医院场景、就诊检查、药品药盒、病历报告、医疗器械。',
       ),
       MemoriaCoarseTagDefinition(
+        id: 'atmosphere_mood',
+        label: '氛围情绪',
+        prompts: <String>[
+          'a photo with a clear mood such as lively quiet warm romantic or solemn atmosphere',
+          'visual atmosphere and emotional tone of a memory photo',
+        ],
+        notes: '热闹、冷清、欢快、安静、温馨、单调、浪漫、庄重等氛围标签。',
+      ),
+      MemoriaCoarseTagDefinition(
         id: 'video_media',
         label: '视频',
         prompts: <String>[
@@ -1267,6 +1276,7 @@ const Map<String, List<String>> memoriaCoarseIdToFineLabels =
         '酒水饮料',
         '零食小吃',
         '聚餐',
+        '厨房餐桌',
       ],
       'pets_animals': <String>[
         '宠物',
@@ -1311,6 +1321,9 @@ const Map<String, List<String>> memoriaCoarseIdToFineLabels =
         '灯具装饰',
         '厨房用品',
         '餐具厨具',
+        '办公工位',
+        '室内空间',
+        '学习工作',
         '书籍杂志',
         '文具',
         '玩具玩偶',
@@ -1330,8 +1343,13 @@ const Map<String, List<String>> memoriaCoarseIdToFineLabels =
         '建筑',
         '住宅民居',
         '商场店铺',
+        '餐厅咖啡馆',
+        '学校建筑',
         '办公楼宇',
         '医院场馆',
+        '酒店旅馆',
+        '讲台教室',
+        '校园',
         '桥梁',
         '城市街景',
         '夜景',
@@ -1357,6 +1375,8 @@ const Map<String, List<String>> memoriaCoarseIdToFineLabels =
         '体育设施',
         '运动',
         '露营休闲',
+        '游乐设施',
+        '公园乐园',
       ],
       'handcraft': <String>[
         '手工',
@@ -1378,6 +1398,7 @@ const Map<String, List<String>> memoriaCoarseIdToFineLabels =
         '身份证件',
         '收据小票',
         '发票账单',
+        '黑板白板',
       ],
       'screen_code': <String>[
         '屏幕代码',
@@ -1399,8 +1420,21 @@ const Map<String, List<String>> memoriaCoarseIdToFineLabels =
         '节庆仪式',
       ],
       'medical_related': <String>[
-        '医院',
         '药品药盒',
+        '医疗器械',
+        '医疗场景',
+        '就诊检查',
+        '病历报告',
+      ],
+      'atmosphere_mood': <String>[
+        '热闹',
+        '冷清',
+        '欢快',
+        '安静',
+        '温馨',
+        '单调',
+        '浪漫',
+        '庄重',
       ],
       'video_media': <String>[
         '视频',

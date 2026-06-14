@@ -79,4 +79,40 @@ void main() {
     expect(query.timeRanges.single.recurringEndMonth, 10);
     expect(query.timeRanges.single.hasDateBoundary, isFalse);
   });
+
+  test('structured visual semantics must be English MobileCLIP prompts', () {
+    expect(
+      () => SemanticQueryParserService().buildQueryFromStructuredJson(
+        rawQuery: '夏天的海边',
+        jsonObject: <String, dynamic>{
+          'query_type': 'concrete',
+          'time_ranges': const <Object>[],
+          'local_time_windows': const <Object>[],
+          'locations': const <Object>[],
+          'coarse_tags': const <Object>[],
+          'tag_strictness': 'optional',
+          'positive_semantics': const <Map<String, Object>>[
+            <String, Object>{'text': '海边照片', 'weight': 1.0},
+          ],
+          'recall_semantics': const <Map<String, Object>>[
+            <String, Object>{'text': 'a sunny coastal scene', 'weight': 1.0},
+          ],
+          'negative_semantics': const <Object>[],
+          'attributes': const <String, Object>{},
+          'estimated_result_count': const <String, Object>{
+            'min': 1,
+            'max': 50,
+            'confidence': 0.8,
+          },
+        },
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('positive_semantics'),
+        ),
+      ),
+    );
+  });
 }

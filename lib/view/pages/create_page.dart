@@ -5,7 +5,6 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/semantic_photo_search_service.dart';
@@ -114,6 +113,39 @@ _CreateLaunchResult _buildCreateLaunchResult(_CreateLaunchRequest request) {
   );
 }
 
+@visibleForTesting
+List<PhotoEntity> mergeCreateSearchPhotosForTesting({
+  required Iterable<PhotoEntity> exactPhotos,
+  required Iterable<PhotoEntity> relatedPhotos,
+  int maxResults = 300,
+}) {
+  return _mergeCreateSearchPhotos(
+    exactPhotos: exactPhotos,
+    relatedPhotos: relatedPhotos,
+    maxResults: maxResults,
+  );
+}
+
+List<PhotoEntity> _mergeCreateSearchPhotos({
+  required Iterable<PhotoEntity> exactPhotos,
+  required Iterable<PhotoEntity> relatedPhotos,
+  required int maxResults,
+}) {
+  final merged = <PhotoEntity>[];
+  final seen = <int>{};
+
+  for (final photo in [...exactPhotos, ...relatedPhotos]) {
+    if (seen.add(photo.id)) {
+      merged.add(photo);
+    }
+    if (merged.length >= maxResults) {
+      break;
+    }
+  }
+
+  return merged;
+}
+
 class CreatePage extends StatefulWidget {
   const CreatePage({super.key});
 
@@ -191,20 +223,11 @@ class _CreatePageState extends State<CreatePage> {
     List<PhotoEntity> matchedPhotos;
     try {
       final result = await _semanticPhotoSearchService.search(query.trim());
-      final merged = <PhotoEntity>[];
-      final seen = <int>{};
-      for (final photo in [...result.exactPhotos, ...result.relatedPhotos]) {
-        if (photo.isProbablyScreenshot) {
-          continue;
-        }
-        if (seen.add(photo.id)) {
-          merged.add(photo);
-        }
-        if (merged.length >= _maxSemanticResults) {
-          break;
-        }
-      }
-      matchedPhotos = merged;
+      matchedPhotos = _mergeCreateSearchPhotos(
+        exactPhotos: result.exactPhotos,
+        relatedPhotos: result.relatedPhotos,
+        maxResults: _maxSemanticResults,
+      );
       _logDebug(
         '🧠 [统一语义检索] exact=${result.exactPhotos.length} '
         'related=${result.relatedPhotos.length} '

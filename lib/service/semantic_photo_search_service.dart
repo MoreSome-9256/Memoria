@@ -65,9 +65,7 @@ class SemanticPhotoSearchService {
     required SemanticSearchQuery query,
     required List<PhotoEntity> allPhotos,
   }) async {
-    final photos = allPhotos
-        .where((photo) => photo.isAiAnalyzed && !_isJunkQuarantined(photo))
-        .toList(growable: false);
+    final photos = _searchablePhotos(allPhotos);
     final activeModelVersion = await _mobileClipEmbeddingService
         .getSelectedModelVersion();
 
@@ -75,7 +73,7 @@ class SemanticPhotoSearchService {
       return _emptyResult(query, photos.length);
     }
 
-    final strictMetadataCandidates = _filterByMetadata(allPhotos, query);
+    final strictMetadataCandidates = _filterByMetadata(photos, query);
     final metadataCandidateCount = strictMetadataCandidates.length;
 
     if (query.isMetadataOnly ||
@@ -99,6 +97,8 @@ class SemanticPhotoSearchService {
         noExactMatchMessage: null,
       );
     }
+
+    _validateSemanticVectorInputs(query);
 
     final primaryMetadataCandidates = _filterByMetadata(photos, query);
     final vectors = await _buildSemanticVectors(query);
@@ -184,8 +184,52 @@ class SemanticPhotoSearchService {
     return photos;
   }
 
+  List<PhotoEntity> _searchablePhotos(List<PhotoEntity> allPhotos) {
+    return allPhotos
+        .where((photo) => photo.isAiAnalyzed && !_isJunkQuarantined(photo))
+        .toList(growable: false);
+  }
+
   bool _isJunkQuarantined(PhotoEntity photo) {
     return JunkPhotoFilterService.isQuarantined(photo.aiTags);
+  }
+
+  void _validateSemanticVectorInputs(SemanticSearchQuery query) {
+    if (query.isMetadataOnly) {
+      return;
+    }
+    for (final entry
+        in <({String field, List<SemanticSearchSemanticItem> items})>[
+          (field: 'positive_semantics', items: query.positiveSemantics),
+          (field: 'recall_semantics', items: query.recallSemantics),
+          (field: 'negative_semantics', items: query.negativeSemantics),
+        ]) {
+      for (final item in entry.items) {
+        if (item.containsCjk) {
+          throw FormatException(
+            '${entry.field} must contain English MobileCLIP prompts: ${item.text}',
+          );
+        }
+      }
+    }
+  }
+
+  @visibleForTesting
+  List<PhotoEntity> searchablePhotosForTesting(List<PhotoEntity> allPhotos) {
+    return _searchablePhotos(allPhotos);
+  }
+
+  @visibleForTesting
+  List<PhotoEntity> metadataCandidatesForTesting(
+    List<PhotoEntity> allPhotos,
+    SemanticSearchQuery query,
+  ) {
+    return _filterByMetadata(_searchablePhotos(allPhotos), query);
+  }
+
+  @visibleForTesting
+  void validateSemanticVectorInputsForTesting(SemanticSearchQuery query) {
+    _validateSemanticVectorInputs(query);
   }
 
   SemanticSearchResult _emptyResult(

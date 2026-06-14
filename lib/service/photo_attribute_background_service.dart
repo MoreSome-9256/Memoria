@@ -20,7 +20,7 @@ import 'media_analysis_image_reader.dart';
 import 'ocr_service.dart';
 import 'photo_caption_service.dart';
 
-enum PhotoAttributeType { location, faceDetection, caption }
+enum PhotoAttributeType { location, faceDetection, ocr, caption }
 
 class PhotoAttributeTask {
   const PhotoAttributeTask({
@@ -162,12 +162,14 @@ class PhotoAttributeBackgroundService {
 
     final processVisualAttributes =
         task.types.contains(PhotoAttributeType.faceDetection) ||
+        task.types.contains(PhotoAttributeType.ocr) ||
         task.types.contains(PhotoAttributeType.caption);
     if (processVisualAttributes) {
       await _processVisualAttributes(
         photo,
         photoBox,
         runFaceDetection: task.types.contains(PhotoAttributeType.faceDetection),
+        runOcr: task.types.contains(PhotoAttributeType.ocr),
         runCaption: task.types.contains(PhotoAttributeType.caption),
       );
     }
@@ -228,6 +230,7 @@ class PhotoAttributeBackgroundService {
     PhotoEntity photo,
     Box<PhotoEntity> photoBox, {
     required bool runFaceDetection,
+    required bool runOcr,
     required bool runCaption,
   }) async {
     final mediaKind = MediaTypeHelper.fromStorageValue(
@@ -270,6 +273,7 @@ class PhotoAttributeBackgroundService {
           photo: latest,
           photoBox: photoBox,
           imageFile: imageFile,
+          runOcr: runOcr,
         );
         latest = photoBox.get(photo.id) ?? latest;
       }
@@ -324,9 +328,10 @@ class PhotoAttributeBackgroundService {
     required PhotoEntity photo,
     required Box<PhotoEntity> photoBox,
     required File imageFile,
+    required bool runOcr,
   }) async {
     final visualTags = photo.aiTags ?? const <String>[];
-    final shouldRunOcr = OcrService.shouldRunOcr(visualTags);
+    final shouldRunOcr = runOcr && OcrService.shouldRunOcr(visualTags);
     final ocrResult = shouldRunOcr
         ? await OcrService().analyzeImageFile(imageFile)
         : OcrResult.empty();

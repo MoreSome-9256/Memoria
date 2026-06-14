@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_album/models/entity/photo_entity.dart';
 import 'package:photo_album/service/photo_attribute_background_service.dart';
 import 'package:photo_album/service/unified_analysis_pipeline_service.dart';
+import 'package:photo_album/service/app_ai_settings_service.dart';
 
 void main() {
   test('attribute queue coalesces pending tasks by photo id', () {
@@ -26,6 +27,7 @@ void main() {
     expect(pending.single.types, <PhotoAttributeType>{
       PhotoAttributeType.location,
       PhotoAttributeType.faceDetection,
+      PhotoAttributeType.ocr,
       PhotoAttributeType.caption,
     });
 
@@ -48,6 +50,22 @@ void main() {
       PhotoAttributeType.caption,
     });
     expect(videoTypes, <PhotoAttributeType>{PhotoAttributeType.location});
+  });
+
+  test('pipeline honors disabled OCR and face analysis settings', () {
+    final pipeline = UnifiedAnalysisPipelineService();
+    final types = pipeline.attributeTypesForAnalyzedPhotoForTesting(
+      _photo(id: 1, mediaKind: 'image', path: '/photos/1.jpg'),
+      settings: AppAiSettings.defaults.copyWith(
+        ocrEnabled: false,
+        faceAnalysisEnabled: false,
+      ),
+    );
+
+    expect(types, <PhotoAttributeType>{
+      PhotoAttributeType.location,
+      PhotoAttributeType.caption,
+    });
   });
 }
 

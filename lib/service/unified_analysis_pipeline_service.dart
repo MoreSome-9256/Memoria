@@ -10,6 +10,7 @@ import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
 import '../storage/vector_index/vector_index_constants.dart';
 import '../utils/media_type_helper.dart';
+import '../utils/ai_score_helper.dart';
 import 'analysis_pipeline_queue.dart';
 import 'unified_analysis_progress.dart';
 import 'unified_analysis_progress_store.dart';
@@ -580,12 +581,18 @@ class UnifiedAnalysisPipelineService {
         : await tagService.retrieveTags(tagEmbedding);
     final tags = isVideoLike ? const <String>['视频'] : rawTags;
 
+    final settings = await AppAiSettingsService.instance.load();
     PhotoService().updatePhotoInTransaction(photo.id, (p) {
       if (p == null) return;
       p.imageEmbedding = embedding;
       p.aiTags = tags;
-      p.isAiAnalyzed = true;
-      p.isAiAnalysisCandidate = false;
+      if (!settings.faceAnalysisEnabled) {
+        p.joyScore = AIScoreHelper.calculateJoyScore(
+          faceCount: 0,
+          maxSmileProb: 0,
+          tags: tags,
+        );
+      }
     });
 
     PhotoEmbeddingIndexRepository().upsertEmbedding(
@@ -597,26 +604,42 @@ class UnifiedAnalysisPipelineService {
 
     await PhotoAttributeBackgroundService.instance().enqueueAttributeTask(
       photoId: photo.id,
-      types: _attributeTypesForAnalyzedPhoto(photo),
+      types: _attributeTypesForAnalyzedPhoto(photo, settings: settings),
     );
+    await PhotoAttributeBackgroundService.instance().waitUntilIdle();
+
+    PhotoService().updatePhotoInTransaction(photo.id, (p) {
+      if (p == null) return;
+      p.isAiAnalyzed = true;
+      p.isAiAnalysisCandidate = false;
+    });
   }
 
   @visibleForTesting
   Set<PhotoAttributeType> attributeTypesForAnalyzedPhotoForTesting(
-    PhotoEntity photo,
-  ) {
-    return _attributeTypesForAnalyzedPhoto(photo);
+    PhotoEntity photo, {
+    AppAiSettings settings = AppAiSettings.defaults,
+  }) {
+    return _attributeTypesForAnalyzedPhoto(photo, settings: settings);
   }
 
-  Set<PhotoAttributeType> _attributeTypesForAnalyzedPhoto(PhotoEntity photo) {
+  Set<PhotoAttributeType> _attributeTypesForAnalyzedPhoto(
+    PhotoEntity photo, {
+    required AppAiSettings settings,
+  }) {
     final types = <PhotoAttributeType>{PhotoAttributeType.location};
     final mediaKind = MediaTypeHelper.fromStorageValue(
       photo.mediaKind,
       path: photo.path,
     );
     if (mediaKind == MemoriaMediaKind.image) {
-      types.add(PhotoAttributeType.faceDetection);
       types.add(PhotoAttributeType.caption);
+      if (settings.ocrEnabled) {
+        types.add(PhotoAttributeType.ocr);
+      }
+      if (settings.faceAnalysisEnabled) {
+        types.add(PhotoAttributeType.faceDetection);
+      }
     }
     return types;
   }

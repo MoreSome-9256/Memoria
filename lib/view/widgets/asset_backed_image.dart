@@ -37,6 +37,10 @@ Future<void> warmAssetBackedImages(Iterable<Photo> photos) async {
   }
 }
 
+Uint8List? peekCachedAssetBytes(String assetId) {
+  return _assetPreviewMemoryCache[assetId.trim()];
+}
+
 void _rememberAssetPreview(String assetId, Uint8List bytes) {
   _assetPreviewMemoryCache[assetId] = bytes;
   if (_assetPreviewMemoryCache.length > 96) {

@@ -3,6 +3,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -428,28 +429,6 @@ class _StoryResultPageState extends State<StoryResultPage> {
       return;
     }
 
-    // 如果有缓存的视频，直接分享视频
-    if (widget.storyEntityId != null) {
-      try {
-        final store = ObjectBoxService().store;
-        final storyBox = store.box<StoryEntity>();
-        final story = storyBox.get(widget.storyEntityId!);
-        if (story?.cachedVideoPath != null &&
-            await File(story!.cachedVideoPath!).exists()) {
-          final caption = [
-            widget.title,
-            if (widget.subtitle.trim().isNotEmpty) widget.subtitle.trim(),
-          ].join(' · ');
-          await Share.shareXFiles([
-            XFile(story.cachedVideoPath!, mimeType: 'video/mp4'),
-          ], text: caption);
-          return;
-        }
-      } catch (_) {
-        // 视频分享失败，回退到海报分享
-      }
-    }
-
     int styleIndex = 0;
 
     while (mounted) {
@@ -499,10 +478,22 @@ class _StoryResultPageState extends State<StoryResultPage> {
   }
 
   Future<File> _generateSharePosterFile({int styleIndex = 0}) async {
-    await warmAssetBackedImages(<Photo>[
+    final photos = <Photo>[
       widget.heroImage,
       ..._sections.map((section) => section.photo),
-    ]);
+    ];
+    await warmAssetBackedImages(photos);
+
+    final resolvedImageBytes = <String, Uint8List>{};
+    for (final photo in photos) {
+      final assetId = photo.id.trim();
+      if (assetId.isEmpty) continue;
+      final cached = peekCachedAssetBytes(assetId);
+      if (cached != null && cached.isNotEmpty) {
+        resolvedImageBytes[assetId] = cached;
+      }
+    }
+
     if (!mounted || !context.mounted) {
       throw StateError('Share poster generation was cancelled');
     }
@@ -543,6 +534,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
                       sections: _sections,
                       targetPlatform: widget.targetPlatform,
                       styleIndex: styleIndex,
+                      resolvedImageBytes: resolvedImageBytes,
                     ),
                   ),
                 ),
@@ -557,7 +549,22 @@ class _StoryResultPageState extends State<StoryResultPage> {
 
     try {
       await WidgetsBinding.instance.endOfFrame;
-      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      Size lastSize = Size.zero;
+      int stableFrames = 0;
+      while (stableFrames < 3) {
+        await WidgetsBinding.instance.endOfFrame;
+        final renderObject = boundaryKey.currentContext?.findRenderObject();
+        if (renderObject is RenderRepaintBoundary) {
+          final currentSize = renderObject.size;
+          if (currentSize == lastSize && currentSize.height > 0) {
+            stableFrames++;
+          } else {
+            stableFrames = 0;
+            lastSize = currentSize;
+          }
+        }
+      }
 
       final renderObject = boundaryKey.currentContext?.findRenderObject();
       if (renderObject is! RenderRepaintBoundary) {
@@ -960,6 +967,7 @@ class _StorySharePoster extends StatelessWidget {
     required this.sections,
     required this.targetPlatform,
     this.styleIndex = 0,
+    this.resolvedImageBytes,
   });
 
   final String title;
@@ -968,6 +976,7 @@ class _StorySharePoster extends StatelessWidget {
   final List<StorySection> sections;
   final String targetPlatform;
   final int styleIndex;
+  final Map<String, Uint8List>? resolvedImageBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -1182,10 +1191,17 @@ class _StorySharePoster extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 34),
-        _PosterHeroCard(photo: heroImage),
+        _PosterHeroCard(
+          photo: heroImage,
+          resolvedBytes: resolvedImageBytes?[heroImage.id.trim()],
+        ),
         const SizedBox(height: 32),
         for (var index = 0; index < visibleSections.length; index++)
-          _PosterSectionCard(section: visibleSections[index], index: index),
+          _PosterSectionCard(
+            section: visibleSections[index],
+            index: index,
+            resolvedBytes: resolvedImageBytes?[visibleSections[index].photo.id.trim()],
+          ),
         const SizedBox(height: 26),
         Container(
           width: double.infinity,
@@ -1220,9 +1236,10 @@ class _StorySharePoster extends StatelessWidget {
 }
 
 class _PosterHeroCard extends StatelessWidget {
-  const _PosterHeroCard({required this.photo});
+  const _PosterHeroCard({required this.photo, this.resolvedBytes});
 
   final Photo photo;
+  final Uint8List? resolvedBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -1249,6 +1266,7 @@ class _PosterHeroCard extends StatelessWidget {
               child: _PosterPhotoImage(
                 photo: photo,
                 alignment: Alignment.center,
+                resolvedBytes: resolvedBytes,
               ),
             ),
           ),
@@ -1285,10 +1303,15 @@ class _PosterHeroCard extends StatelessWidget {
 }
 
 class _PosterSectionCard extends StatelessWidget {
-  const _PosterSectionCard({required this.section, required this.index});
+  const _PosterSectionCard({
+    required this.section,
+    required this.index,
+    this.resolvedBytes,
+  });
 
   final StorySection section;
   final int index;
+  final Uint8List? resolvedBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -1301,6 +1324,7 @@ class _PosterSectionCard extends StatelessWidget {
         photo: section.photo,
         index: index,
         compact: index % 3 == 1,
+        resolvedBytes: resolvedBytes,
       ),
     );
     final textBlock = _PosterTextBlock(text: text, index: index);
@@ -1324,11 +1348,13 @@ class _PosterFramedImage extends StatelessWidget {
     required this.photo,
     required this.index,
     required this.compact,
+    this.resolvedBytes,
   });
 
   final Photo photo;
   final int index;
   final bool compact;
+  final Uint8List? resolvedBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -1350,7 +1376,11 @@ class _PosterFramedImage extends StatelessWidget {
         clipper: _PosterShapeClipper(style: index % 4),
         child: AspectRatio(
           aspectRatio: compact ? 0.9 : 1.16,
-          child: _PosterPhotoImage(photo: photo, alignment: Alignment.center),
+          child: _PosterPhotoImage(
+            photo: photo,
+            alignment: Alignment.center,
+            resolvedBytes: resolvedBytes,
+          ),
         ),
       ),
     );
@@ -1417,13 +1447,25 @@ class _PosterPhotoImage extends StatelessWidget {
   const _PosterPhotoImage({
     required this.photo,
     this.alignment = Alignment.center,
+    this.resolvedBytes,
   });
 
   final Photo photo;
   final AlignmentGeometry alignment;
+  final Uint8List? resolvedBytes;
 
   @override
   Widget build(BuildContext context) {
+    if (resolvedBytes != null && resolvedBytes!.isNotEmpty) {
+      return Image.memory(
+        resolvedBytes!,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        alignment: alignment,
+        gaplessPlayback: true,
+      );
+    }
     return DecoratedBox(
       decoration: const BoxDecoration(color: Color(0xFFE4DDD0)),
       child: PhotoImage(

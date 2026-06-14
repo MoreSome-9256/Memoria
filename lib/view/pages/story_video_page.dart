@@ -141,6 +141,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   double _textSize = 24.0;
   final String _fontFamily = 'sans-serif'; // 以后可以接入 Google Fonts
 
+  double _imageSaturation = 1.0; // 默认饱和度为 1.0
+  String _imageFilterType = 'none'; // 默认无滤镜
+
   bool _isExporting = false; // 🌟 控制是否处于导出模式
   double _exportProgress = 0.0; // 🌟 导出百分比 (0.0 到 1.0)
 
@@ -768,9 +771,14 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                     },
                     child: AnimatedSwitcher(
                       duration: 800.ms,
-                      child: _buildPureImageLayer(
-                        currentSection.photo,
-                        subtitleLayer,
+                      child: ColorGradingEffect(
+                        // 🌟 给当前图片套上电影级调色
+                        saturation: _imageSaturation,
+                        filterType: _imageFilterType,
+                        child: _buildPureImageLayer(
+                          currentSection.photo,
+                          subtitleLayer,
+                        ),
                       ),
                     ),
                   ),
@@ -1166,6 +1174,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       useCameraFrame: _useCameraFrame,
       useGlowRing: _useGlowRing,
       useCloudBorder: _useCloudBorder,
+      // 🌟 新增：把用户当前调好的滤镜发往后台！
+      imageSaturation: _imageSaturation,
+      imageFilterType: _imageFilterType,
     );
     Navigator.pop(context);
   }
@@ -1229,6 +1240,92 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                               const SizedBox(height: 16),
 
                               // --- 下面完全是你的原有代码，一字未改 ---
+                              const Divider(color: Colors.white24, height: 32),
+                              const Text(
+                                '🎨 色彩与滤镜',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+
+                              // 🌟 新增：滤镜风格下拉框
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text(
+                                    '影像风格',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  DropdownButton<String>(
+                                    value: _imageFilterType,
+                                    dropdownColor: Colors.grey[900],
+                                    style: const TextStyle(
+                                      color: Colors.orangeAccent,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    underline: const SizedBox(),
+                                    items: const [
+                                      DropdownMenuItem(
+                                        value: 'none',
+                                        child: Text('原画 (Original)'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'cinematic',
+                                        child: Text('青橙电影 (Cinematic)'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'vintage',
+                                        child: Text('复古胶片 (Vintage)'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'cyberpunk',
+                                        child: Text('赛博霓虹 (Cyber)'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'bw',
+                                        child: Text('黑白往事 (B&W)'),
+                                      ),
+                                    ],
+                                    onChanged: (val) {
+                                      if (val != null) {
+                                        setModalState(
+                                          () => _imageFilterType = val,
+                                        );
+                                        setState(() {});
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+
+                              // 🌟 新增：色相饱和度滑块
+                              Row(
+                                children: [
+                                  const Text(
+                                    '色彩饱和',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  Expanded(
+                                    child: Slider(
+                                      value: _imageSaturation,
+                                      min: 0.0, // 0 = 纯灰
+                                      max: 2.0, // 2 = 色彩爆炸
+                                      divisions: 20,
+                                      activeColor: Colors.orangeAccent,
+                                      onChanged: (val) {
+                                        setModalState(
+                                          () => _imageSaturation = val,
+                                        );
+                                        setState(() {});
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
 
                               // 1. 震动幅度滑块
                               Row(

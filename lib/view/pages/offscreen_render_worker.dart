@@ -23,6 +23,7 @@ import '../../service/video_cache_service.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 import '../../models/entity/story_entity.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
+import 'package:gal/gal.dart';
 
 class OffscreenRenderWorker extends StatefulWidget {
   final String title;
@@ -42,6 +43,8 @@ class OffscreenRenderWorker extends StatefulWidget {
   final double shakeIntensity;
   final double shakeFrequency;
   final double glitchIntensity;
+  final double imageSaturation;   // 🌟 新增：饱和度
+  final String imageFilterType;   // 🌟 新增：滤镜类型
   final bool enableFlash;
   final bool useVignette;
   final bool useGrain;
@@ -77,6 +80,8 @@ class OffscreenRenderWorker extends StatefulWidget {
     required this.useCameraFrame,
     required this.useGlowRing,
     required this.useCloudBorder,
+    required this.imageSaturation,
+    required this.imageFilterType,
     this.onProgress,
     this.storyEntityId,
   });
@@ -306,9 +311,13 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
                         },
                         child: AnimatedSwitcher(
                           duration: 800.ms,
-                          child: _buildPureImageLayer(
-                            currentSection.photo.path,
-                            subtitleLayer,
+                          child: ColorGradingEffect(
+                            saturation: widget.imageSaturation,
+                            filterType: widget.imageFilterType,
+                            child: _buildPureImageLayer(
+                              currentSection.photo.path,
+                              subtitleLayer,
+                            ),
                           ),
                         ),
                       ),
@@ -958,6 +967,25 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
       debugPrint('✅ 视频已移动到导出目录: $finalPath');
       debugPrint('📱 用户可在发布页面选择分享或手动保存到相册');
+
+      // ==========================================
+      // 🌟 终极修复：打通沙盒，强制将视频硬写入系统公共相册
+      // ==========================================
+      try {
+        bool hasAccess = await Gal.hasAccess(toAlbum: true);
+        if (!hasAccess) {
+          hasAccess = await Gal.requestAccess(toAlbum: true);
+        }
+        if (hasAccess) {
+          await Gal.putVideo(finalPath);
+          debugPrint('🖼️ 视频已成功自动保存到系统本地相册！');
+        } else {
+          debugPrint('⚠️ 用户拒绝了相册权限，无法自动保存');
+        }
+      } catch (e) {
+        debugPrint('❌ 自动保存相册失败: $e');
+      }
+      // ==========================================
 
       // 🌟 第三步：保存视频路径、音乐和渲染参数到故事实体
       if (widget.storyEntityId != null) {

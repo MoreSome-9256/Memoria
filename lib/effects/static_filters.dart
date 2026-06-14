@@ -226,3 +226,132 @@ class _GlowRingPainter extends CustomPainter {
         oldDelegate.beatIntensity != beatIntensity;
   }
 }
+
+/// 5. 电影级调色与饱和度滤镜 (Color Grading & Saturation)
+class ColorGradingEffect extends StatelessWidget {
+  final Widget child;
+  final double saturation; // 0.0 (黑白) 到 2.0 (超饱和)
+  final String filterType; // 预设滤镜风格
+
+  const ColorGradingEffect({
+    super.key,
+    required this.child,
+    this.saturation = 1.0,
+    this.filterType = 'none',
+  });
+
+  // 1. 计算【饱和度】矩阵 (标准亮度感知公式)
+  List<double> _getSaturationMatrix(double sat) {
+    final double invSat = 1 - sat;
+    final double R = 0.2126 * invSat;
+    final double G = 0.7152 * invSat;
+    final double B = 0.0722 * invSat;
+    return [
+      R + sat,
+      G,
+      B,
+      0,
+      0,
+      R,
+      G + sat,
+      B,
+      0,
+      0,
+      R,
+      G,
+      B + sat,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+    ];
+  }
+
+  // 2. 获取【预设风格滤镜】矩阵
+  List<double> _getFilterMatrix() {
+    switch (filterType) {
+      case 'vintage': // 🎞️ 复古暖色调 (加红/黄，降对比)
+        return [
+          1.1,
+          0.1,
+          0.0,
+          0,
+          15,
+          0.0,
+          1.0,
+          0.0,
+          0,
+          10,
+          0.0,
+          0.0,
+          0.9,
+          0,
+          -10,
+          0,
+          0,
+          0,
+          1,
+          0,
+        ];
+      case 'cinematic': // 🎬 电影感 (青橙色调 Teal & Orange)
+        return [
+          1.2, -0.1, -0.1, 0, 20, // 强化橙红
+          0.0, 1.0, 0.1, 0, 0,
+          -0.1, 0.2, 1.1, 0, 15, // 强化青蓝
+          0, 0, 0, 1, 0,
+        ];
+      case 'cyberpunk': // 🌃 赛博朋克 (洋红与青蓝碰撞)
+        return [
+          1.1, 0.0, 0.2, 0, 10, // 偏洋红
+          0.0, 0.9, 0.2, 0, 0,
+          0.1, 0.1, 1.3, 0, 20, // 强化蓝青
+          0, 0, 0, 1, 0,
+        ];
+      case 'bw': // ⏳ 经典黑白
+        return _getSaturationMatrix(0.0);
+      case 'none':
+      default: // 原图矩阵
+        return [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0];
+    }
+  }
+
+  // 3. 矩阵乘法：将【饱和度】与【滤镜风格】无缝叠加
+  List<double> _multiplyMatrices(List<double> a, List<double> b) {
+    final result = List<double>.filled(20, 0);
+    for (int i = 0; i < 4; i++) {
+      for (int j = 0; j < 5; j++) {
+        result[i * 5 + j] =
+            a[i * 5 + 0] * b[0 * 5 + j] +
+            a[i * 5 + 1] * b[1 * 5 + j] +
+            a[i * 5 + 2] * b[2 * 5 + j] +
+            a[i * 5 + 3] * b[3 * 5 + j] +
+            (j == 4 ? a[i * 5 + 4] : 0);
+      }
+    }
+    return result;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 合成最终颜色矩阵
+    final filterMatrix = _getFilterMatrix();
+    final satMatrix = _getSaturationMatrix(
+      filterType == 'bw' ? 0.0 : saturation,
+    );
+
+    // 如果没有任何修改，直接返回原图以节省性能
+    if (filterType == 'none' && saturation == 1.0) return child;
+
+    final finalMatrix = filterType == 'none'
+        ? satMatrix
+        : _multiplyMatrices(satMatrix, filterMatrix);
+
+    return ColorFiltered(
+      colorFilter: ColorFilter.matrix(finalMatrix),
+      child: child,
+    );
+  }
+}

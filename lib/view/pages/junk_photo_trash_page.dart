@@ -137,7 +137,7 @@ class _JunkPhotoTrashPageState extends State<JunkPhotoTrashPage> {
               ),
               Expanded(
                 child: GridView.builder(
-                  scrollCacheExtent: const ScrollCacheExtent.pixels(700),
+                  cacheExtent: 700.0,
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 3,

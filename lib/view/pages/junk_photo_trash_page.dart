@@ -1,7 +1,6 @@
 /// 低价值照片回收站，展示被 AI 标记为低价值候选的本地照片记录。
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 
 import '../../models/entity/photo_entity.dart';
 import '../../service/ai_service.dart';
@@ -137,7 +136,7 @@ class _JunkPhotoTrashPageState extends State<JunkPhotoTrashPage> {
               ),
               Expanded(
                 child: GridView.builder(
-                  scrollCacheExtent: const ScrollCacheExtent.pixels(700),
+                  cacheExtent: 700,
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 3,

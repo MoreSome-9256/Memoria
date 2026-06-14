@@ -235,6 +235,12 @@ class CreateRecommendationService {
     store.runInTransaction(TxMode.write, () => recBox.put(entity));
   }
 
+  List<PhotoEntity> mergeRecommendationPhotosForTesting(
+    SemanticSearchResult result,
+  ) {
+    return _mergeRecommendationPhotos(result);
+  }
+
   List<_ResolvedRecommendationPreset> _buildPresets(
     DateTime now,
     List<PhotoEntity> photos,
@@ -764,7 +770,7 @@ class CreateRecommendationService {
     final merged = <PhotoEntity>[];
     final seen = <int>{};
     for (final photo in result.exactPhotos) {
-      if (!seen.add(photo.id) || _isConfirmedJunk(photo)) continue;
+      if (!seen.add(photo.id) || _isQuarantinedJunk(photo)) continue;
       if (result.query.isMetadataOnly) {
         merged.add(photo);
         continue;
@@ -783,9 +789,8 @@ class CreateRecommendationService {
     return merged;
   }
 
-  bool _isConfirmedJunk(PhotoEntity photo) {
-    return photo.aiTags?.contains(JunkPhotoFilterService.junkCandidateTag) ??
-        false;
+  bool _isQuarantinedJunk(PhotoEntity photo) {
+    return JunkPhotoFilterService.isQuarantined(photo.aiTags);
   }
 
   String _buildFingerprint(List<PhotoEntity> photos) {

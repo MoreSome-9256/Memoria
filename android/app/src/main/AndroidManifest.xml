@@ -13,8 +13,7 @@
     <application
         android:label="Memoria-智能影记"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
-        android:requestLegacyExternalStorage="true">
+        android:icon="@mipmap/ic_launcher">
 
         <meta-data
             android:name="com.amap.api.v2.apikey"

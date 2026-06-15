@@ -1,4 +1,4 @@
-/// 垃圾照片清理服务，负责确认、恢复低价值照片和显式删除系统相册资源。
+// 垃圾照片清理服务，负责确认、恢复低价值照片和显式删除系统相册资源。
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -59,9 +59,18 @@ class JunkPhotoCleanupService {
       final batch = await JunkPhotoFilterService().evaluateBatch(embeddings);
       for (final photo in eligiblePhotos) {
         final decision = batch.decisionFor(photo.id);
-        final tags = <String>{...?photo.aiTags};
+        final tags = <String>{...?photo.aiTags}
+          ..removeWhere(
+            (tag) => tag.startsWith(JunkPhotoFilterService.junkReasonTagPrefix),
+          );
         if (decision.shouldFilter) {
-          tags.add(JunkPhotoFilterService.pendingJunkCandidateTag);
+          tags
+            ..add(JunkPhotoFilterService.pendingJunkCandidateTag)
+            ..addAll(
+              decision.hits.map(
+                (hit) => JunkPhotoFilterService.reasonTag(hit.categoryId),
+              ),
+            );
         } else {
           tags.remove(JunkPhotoFilterService.pendingJunkCandidateTag);
         }
@@ -94,6 +103,9 @@ class JunkPhotoCleanupService {
       final tags = <String>{...?photo.aiTags}
         ..remove(JunkPhotoFilterService.pendingJunkCandidateTag)
         ..remove(JunkPhotoFilterService.keptJunkCandidateTag)
+        ..removeWhere(
+          (tag) => tag.startsWith(JunkPhotoFilterService.junkReasonTagPrefix),
+        )
         ..removeWhere(
           (tag) =>
               JunkPhotoFilterService.isInternalJunkTag(tag) &&

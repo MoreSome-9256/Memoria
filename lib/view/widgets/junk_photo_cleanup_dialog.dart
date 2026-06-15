@@ -1,4 +1,4 @@
-/// 垃圾照片清理确认对话框，用于确认低价值候选标记。
+// 垃圾照片清理确认对话框，用于确认低价值候选标记。
 
 import 'package:flutter/material.dart';
 
@@ -19,7 +19,7 @@ class _JunkPhotoCleanupDialogState extends State<JunkPhotoCleanupDialog> {
   late final Set<int> _selectedPhotoIds = widget.report.candidates
       .map((candidate) => candidate.photoId)
       .toSet();
-  String? _activeReasonLabel;
+  String? _activeReasonCategoryId;
 
   void _toggle(int photoId, bool? checked) {
     setState(() {
@@ -41,7 +41,7 @@ class _JunkPhotoCleanupDialogState extends State<JunkPhotoCleanupDialog> {
   void _clearAll() {
     final visibleCandidates = _filteredCandidates;
     setState(() {
-      if (_activeReasonLabel == null) {
+      if (_activeReasonCategoryId == null) {
         _selectedPhotoIds.clear();
       } else {
         _selectedPhotoIds.removeAll(
@@ -52,16 +52,19 @@ class _JunkPhotoCleanupDialogState extends State<JunkPhotoCleanupDialog> {
   }
 
   List<JunkPhotoCleanupCandidate> get _filteredCandidates {
-    final activeReasonLabel = _activeReasonLabel;
-    if (activeReasonLabel == null) {
+    final activeReasonCategoryId = _activeReasonCategoryId;
+    if (activeReasonCategoryId == null) {
       return widget.report.candidates;
     }
 
     return widget.report.candidates
         .where(
-          (candidate) => candidate.reasons.any(
-            (reason) => reason.label == activeReasonLabel,
-          ),
+          (candidate) => candidate.reasons.isEmpty
+              ? activeReasonCategoryId ==
+                    JunkPhotoFilterService.unknownReasonCategoryId
+              : candidate.reasons.any(
+                  (reason) => reason.categoryId == activeReasonCategoryId,
+                ),
         )
         .toList(growable: false);
   }
@@ -105,38 +108,44 @@ class _JunkPhotoCleanupDialogState extends State<JunkPhotoCleanupDialog> {
                       '你可以勾选需要标记为低价值的照片。确认后会保留记录，但后续扫描、打标签和检索都会跳过；可在低价值照片回收站恢复。',
                     ),
                     const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        ChoiceChip(
-                          label: Text('全部 ${report.totalCount}'),
-                          selected: _activeReasonLabel == null,
-                          onSelected: (_) {
-                            setState(() {
-                              _activeReasonLabel = null;
-                            });
-                          },
-                        ),
-                        ...(() {
-                          final entries = report.reasonCounts.entries.toList()
-                            ..sort((a, b) => b.value.compareTo(a.value));
-                          return entries.map(
-                            (entry) => ChoiceChip(
-                              label: Text('${entry.key} ${entry.value}'),
-                              selected: _activeReasonLabel == entry.key,
-                              onSelected: (_) {
-                                setState(() {
-                                  _activeReasonLabel =
-                                      _activeReasonLabel == entry.key
-                                      ? null
-                                      : entry.key;
-                                });
-                              },
+                    SizedBox(
+                      height: 42,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          ChoiceChip(
+                            label: Text('全部 ${report.totalCount}'),
+                            selected: _activeReasonCategoryId == null,
+                            onSelected: (_) {
+                              setState(() {
+                                _activeReasonCategoryId = null;
+                              });
+                            },
+                          ),
+                          ...report.reasonSummaries.map(
+                            (summary) => Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: ChoiceChip(
+                                label: Text(
+                                  '${summary.label} ${summary.count}',
+                                ),
+                                selected:
+                                    _activeReasonCategoryId ==
+                                    summary.categoryId,
+                                onSelected: (_) {
+                                  setState(() {
+                                    _activeReasonCategoryId =
+                                        _activeReasonCategoryId ==
+                                            summary.categoryId
+                                        ? null
+                                        : summary.categoryId;
+                                  });
+                                },
+                              ),
                             ),
-                          );
-                        })(),
-                      ],
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 12),
                     if (isCompactLayout) ...[
@@ -300,10 +309,10 @@ class _JunkPhotoCleanupDialogState extends State<JunkPhotoCleanupDialog> {
                                             10,
                                           ),
                                           child: Text(
-                                            _formatTimestamp(
-                                              candidate.timestamp,
-                                            ),
-                                            maxLines: 1,
+                                            candidate.reasons.isEmpty
+                                                ? '命中原因：原因待复核\n${_formatTimestamp(candidate.timestamp)}'
+                                                : '命中原因：${candidate.reasons.map((reason) => reason.label).join('、')}\n${_formatTimestamp(candidate.timestamp)}',
+                                            maxLines: 3,
                                             overflow: TextOverflow.ellipsis,
                                             style: Theme.of(
                                               context,

@@ -123,7 +123,14 @@ class _PhotoScanCoordinator {
         if (existing == null) {
           newAssets.add(asset);
         } else {
-          await _refreshExistingThumbnailIfNeeded(existing, asset);
+          final refreshed = await _PhotoAssetBuilder(
+            _service,
+          )._refreshIfChanged(existing, asset, refreshThumbnail: false);
+          if (refreshed != null) {
+            _service._photoBox.put(refreshed);
+          } else {
+            await _refreshExistingThumbnailIfNeeded(existing, asset);
+          }
         }
       }
       if (newAssets.isEmpty) {

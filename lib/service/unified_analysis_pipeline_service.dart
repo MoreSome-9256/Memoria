@@ -72,6 +72,10 @@ class UnifiedAnalysisPipelineService {
       debugPrint('[pipeline] 流水线已在运行，忽略重复请求');
       return;
     }
+    if (analyzeWithAi &&
+        !await MediaPermissionService.hasAnalysisPermissions()) {
+      throw StateError('AI 打标签需要照片访问权限和照片拍摄地点权限。请从相册页点击扫描，并完成一次联合授权。');
+    }
 
     _isRunning = true;
     _stopRequested = false;
@@ -288,6 +292,7 @@ class UnifiedAnalysisPipelineService {
     required PermissionState permissionState,
   }) async {
     if (_analysisEnabled) {
+      PhotoAttributeBackgroundService.instance().beginRun();
       final settings = await AppAiSettingsService.instance.load();
       await PhotoService().requeuePhotosMissingEnabledAttributes(settings);
       final producerDone = Completer<void>();
@@ -673,12 +678,6 @@ class UnifiedAnalysisPipelineService {
       photoId: photo.id,
       types: _attributeTypesForAnalyzedPhoto(photo, settings: settings),
     );
-
-    PhotoService().updatePhotoInTransaction(photo.id, (p) {
-      if (p == null) return;
-      p.isAiAnalyzed = true;
-      p.isAiAnalysisCandidate = false;
-    });
   }
 
   @visibleForTesting

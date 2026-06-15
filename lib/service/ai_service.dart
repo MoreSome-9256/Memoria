@@ -69,7 +69,7 @@ class AIService {
             assetId: photo.assetId,
             path: photo.path,
             timestamp: photo.timestamp,
-            reasons: const <JunkPhotoHit>[],
+            reasons: JunkPhotoFilterService().reasonsFromTags(photo.aiTags),
           ),
         )
         .toList(growable: false);

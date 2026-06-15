@@ -115,4 +115,49 @@ void main() {
       throwsA(isA<FormatException>()),
     );
   });
+
+  test('metadata matches become related fallback when semantics miss', () {
+    final service = SemanticPhotoSearchService();
+    final query = SemanticSearchQuery.empty('某地的海边').copyWith(
+      locations: const <SemanticSearchLocation>[
+        SemanticSearchLocation(text: '某地', type: 'city'),
+      ],
+    );
+    final photo = _photo(id: 1, timestamp: 1)..city = '某地';
+
+    final candidates = service.metadataCandidatesForTesting(<PhotoEntity>[
+      photo,
+    ], query);
+    final hits = service.metadataFallbackHitsForTesting(
+      query: query,
+      strictMetadataCandidates: candidates,
+    );
+
+    expect(candidates, <PhotoEntity>[photo]);
+    expect(hits.keys, <int>[photo.id]);
+    expect(hits[photo.id]!.isExactMatch, isFalse);
+  });
+
+  test(
+    'specific POI can use global semantic recall when geo recall is sparse',
+    () {
+      final query = SemanticSearchQuery.empty('五四广场').copyWith(
+        queryType: SemanticSearchQueryType.concrete,
+        locations: const <SemanticSearchLocation>[
+          SemanticSearchLocation(text: '五四广场', type: 'poi'),
+        ],
+        positiveSemantics: const <SemanticSearchSemanticItem>[
+          SemanticSearchSemanticItem(text: 'a city square', weight: 1),
+        ],
+      );
+
+      expect(
+        SemanticPhotoSearchService().shouldUseGlobalPoiSemanticRecallForTesting(
+          query,
+          const <PhotoEntity>[],
+        ),
+        isTrue,
+      );
+    },
+  );
 }

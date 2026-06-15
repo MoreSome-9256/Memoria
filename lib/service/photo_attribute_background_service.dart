@@ -9,6 +9,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
     show InputImage;
 import 'package:objectbox/objectbox.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:photo_manager/photo_manager.dart';
 
 import '../models/entity/photo_entity.dart';
 import '../storage/objectbox/objectbox_service.dart';
@@ -19,6 +20,7 @@ import 'geo_cell_cache_service.dart';
 import 'media_analysis_image_reader.dart';
 import 'ocr_service.dart';
 import 'photo_caption_service.dart';
+import 'photo_search_index_service.dart';
 
 enum PhotoAttributeType { location, faceDetection, ocr, caption }
 
@@ -54,6 +56,7 @@ class PhotoAttributeBackgroundService {
   bool _isRunning = false;
   int _processed = 0;
   Completer<void>? _idleCompleter;
+  final Map<int, Object> _failedTasks = <int, Object>{};
 
   Future<void> enqueueAttributeTask({
     required int photoId,
@@ -88,14 +91,32 @@ class PhotoAttributeBackgroundService {
     }
   }
 
-  Future<void> waitUntilIdle() {
+  Future<void> waitUntilIdle() async {
     if (!_isRunning && _queue.isEmpty) {
-      return Future<void>.value();
+      _throwIfTasksFailed();
+      return;
     }
     if (!_isRunning) {
       unawaited(_runBackgroundWorker());
     }
-    return (_idleCompleter ??= Completer<void>()).future;
+    await (_idleCompleter ??= Completer<void>()).future;
+    _throwIfTasksFailed();
+  }
+
+  void beginRun() {
+    if (_isRunning || _queue.isNotEmpty || _pendingByPhotoId.isNotEmpty) {
+      throw StateError('属性分析 worker 尚未结束，不能开始新的分析任务。');
+    }
+    _failedTasks.clear();
+  }
+
+  void _throwIfTasksFailed() {
+    if (_failedTasks.isEmpty) return;
+    final ids = _failedTasks.keys.take(8).join(',');
+    throw StateError(
+      '属性分析失败 ${_failedTasks.length} 项，照片 ID: $ids。'
+      '失败项目会在下一次扫描时重新分析。',
+    );
   }
 
   void _enqueuePendingTask(PhotoAttributeTask task) {
@@ -130,6 +151,7 @@ class PhotoAttributeBackgroundService {
           await _processAttributeTask(task);
           _processed++;
         } catch (error) {
+          _failedTasks[task.photoId] = error;
           debugPrint(
             '[attribute-worker] task failed photoId=${task.photoId}: $error',
           );
@@ -173,20 +195,38 @@ class PhotoAttributeBackgroundService {
         runCaption: task.types.contains(PhotoAttributeType.caption),
       );
     }
+
+    store.runInTransaction(TxMode.write, () {
+      final completed = photoBox.get(task.photoId);
+      if (completed == null) return;
+      completed
+        ..isAiAnalyzed = true
+        ..isAiAnalysisCandidate = false;
+      photoBox.put(completed);
+    });
   }
 
   Future<void> _processLocationAttribute(
     PhotoEntity photo,
     Box<PhotoEntity> photoBox,
   ) async {
-    if (photo.latitude == null ||
-        photo.longitude == null ||
-        (photo.isLocationProcessed && photo.geoIndexVersion >= 1)) {
+    var latest = photoBox.get(photo.id) ?? photo;
+    if (latest.isLocationProcessed && latest.geoIndexVersion >= 1) {
+      return;
+    }
+    if (latest.latitude == null || latest.longitude == null) {
+      latest = await _refreshCoordinatesFromAsset(latest, photoBox);
+    }
+    if (latest.latitude == null || latest.longitude == null) {
+      debugPrint(
+        '[attribute-worker] location unavailable photoId=${photo.id} '
+        'assetId=${photo.assetId}',
+      );
       return;
     }
 
-    final lat = photo.latitude!;
-    final lng = photo.longitude!;
+    final lat = latest.latitude!;
+    final lng = latest.longitude!;
 
     if (lat.abs() < 0.001 && lng.abs() < 0.001) {
       return;
@@ -234,6 +274,49 @@ class PhotoAttributeBackgroundService {
       '[attribute-worker] location written photoId=${photo.id} '
       'location=${geoResult.locationName}',
     );
+  }
+
+  Future<PhotoEntity> _refreshCoordinatesFromAsset(
+    PhotoEntity photo,
+    Box<PhotoEntity> photoBox,
+  ) async {
+    try {
+      final asset = await AssetEntity.fromId(photo.assetId);
+      if (asset == null) {
+        return photo;
+      }
+      final latLng = await asset.latlngAsync();
+      final latitude = latLng?.latitude;
+      final longitude = latLng?.longitude;
+      if (latitude == null ||
+          longitude == null ||
+          (latitude.abs() < 0.001 && longitude.abs() < 0.001)) {
+        return photo;
+      }
+
+      final store = ObjectBoxService().store;
+      late PhotoEntity latest;
+      store.runInTransaction(TxMode.write, () {
+        latest = photoBox.get(photo.id) ?? photo;
+        latest
+          ..latitude = latitude
+          ..longitude = longitude
+          ..isLocationProcessed = false
+          ..geoIndexVersion = 0;
+        PhotoSearchIndexService.updateCoordinateFields(latest);
+        photoBox.put(latest);
+      });
+      debugPrint(
+        '[attribute-worker] GPS refreshed photoId=${photo.id} '
+        'lat=${latitude.toStringAsFixed(5)} lon=${longitude.toStringAsFixed(5)}',
+      );
+      return latest;
+    } catch (error) {
+      debugPrint(
+        '[attribute-worker] GPS refresh failed photoId=${photo.id}: $error',
+      );
+      return photo;
+    }
   }
 
   Future<void> _processVisualAttributes(

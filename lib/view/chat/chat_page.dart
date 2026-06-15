@@ -134,8 +134,8 @@ class _ChatPageState extends State<ChatPage> {
         text: cleanText,
         sender: MessageSender.ai,
         timestamp: DateTime.now(),
-        // 关键修复：统一存路径 String
-        relatedPhotoPaths: foundPhotos?.map((p) => p.path).toList(),
+        // Store assetId (always populated) instead of path (often empty)
+        relatedPhotoPaths: foundPhotos?.map((p) => p.assetId).toList(),
         searchTopic: text,
       );
 
@@ -158,14 +158,13 @@ class _ChatPageState extends State<ChatPage> {
 
   // 🌟 5. 跳转到二次确认页的逻辑
   void _navigateToCreateAndGenerate(
-    List<String> photoPaths,
+    List<String> photoAssetIds,
     String topic,
   ) async {
-    // 根据路径反向查出实体（因为传给下一页需要实体）
-    if (photoPaths.isEmpty) return;
+    if (photoAssetIds.isEmpty) return;
     final store = ObjectBoxService().store;
     final photoBox = store.box<PhotoEntity>();
-    final query = photoBox.query(PhotoEntity_.path.oneOf(photoPaths)).build();
+    final query = photoBox.query(PhotoEntity_.assetId.oneOf(photoAssetIds)).build();
     final photos = query.find();
     query.close();
 
@@ -364,12 +363,12 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  Widget _buildPhotoHorizontalList(List<String> photoPaths) {
+  Widget _buildPhotoHorizontalList(List<String> photoAssetIds) {
     return SizedBox(
-      height: 150, // 稍微改低一点横向高度，显得更精致
+      height: 150,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        itemCount: photoPaths.length,
+        itemCount: photoAssetIds.length,
         separatorBuilder: (context, index) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           return ClipRRect(
@@ -377,8 +376,8 @@ class _ChatPageState extends State<ChatPage> {
             child: AspectRatio(
               aspectRatio: 3 / 4,
               child: AssetBackedImage(
-                path: photoPaths[index],
-                assetId: null,
+                path: '',
+                assetId: photoAssetIds[index],
                 fit: BoxFit.cover,
               ),
             ),

@@ -78,6 +78,18 @@ class JunkPhotoCleanupCandidate {
   String get primaryLabel => reasons.isEmpty ? '低价值照片' : reasons.first.label;
 }
 
+class JunkPhotoReasonSummary {
+  const JunkPhotoReasonSummary({
+    required this.categoryId,
+    required this.label,
+    required this.count,
+  });
+
+  final String categoryId;
+  final String label;
+  final int count;
+}
+
 class JunkPhotoCleanupReport {
   const JunkPhotoCleanupReport({
     required this.reportId,
@@ -93,10 +105,42 @@ class JunkPhotoCleanupReport {
 
   bool get hasCandidates => totalCount > 0;
 
+  List<JunkPhotoReasonSummary> get reasonSummaries {
+    final summaries = <JunkPhotoReasonSummary>[];
+    final countsById = <String, int>{};
+    final labelsById = <String, String>{};
+    for (final candidate in candidates) {
+      final reasons = candidate.reasons.isEmpty
+          ? const <JunkPhotoHit>[JunkPhotoFilterService.unknownReason]
+          : candidate.reasons;
+      for (final reason in reasons) {
+        if (!countsById.containsKey(reason.categoryId)) {
+          labelsById[reason.categoryId] = reason.label;
+        }
+        countsById[reason.categoryId] =
+            (countsById[reason.categoryId] ?? 0) + 1;
+      }
+    }
+    for (final entry in countsById.entries) {
+      summaries.add(
+        JunkPhotoReasonSummary(
+          categoryId: entry.key,
+          label: labelsById[entry.key] ?? entry.key,
+          count: entry.value,
+        ),
+      );
+    }
+    summaries.sort((a, b) {
+      final countOrder = b.count.compareTo(a.count);
+      return countOrder != 0 ? countOrder : a.label.compareTo(b.label);
+    });
+    return List<JunkPhotoReasonSummary>.unmodifiable(summaries);
+  }
+
   List<String> get orderedReasonSummaries {
-    final entries = reasonCounts.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return entries.map((entry) => '${entry.key}${entry.value}张').toList();
+    return reasonSummaries
+        .map((summary) => '${summary.label}${summary.count}张')
+        .toList(growable: false);
   }
 
   List<String> get assetIds => candidates
@@ -109,10 +153,13 @@ class JunkPhotoCleanupReport {
   ) {
     final reasonCounts = <String, int>{};
     for (final candidate in candidates) {
-      final labels = candidate.reasons
-          .map((reason) => reason.label)
-          .toSet()
-          .toList(growable: false);
+      final labels =
+          (candidate.reasons.isEmpty
+                  ? const <JunkPhotoHit>[JunkPhotoFilterService.unknownReason]
+                  : candidate.reasons)
+              .map((reason) => reason.label)
+              .toSet()
+              .toList(growable: false);
       for (final label in labels) {
         reasonCounts[label] = (reasonCounts[label] ?? 0) + 1;
       }
@@ -135,6 +182,15 @@ class JunkPhotoFilterService {
   static const String junkCandidateTag = '__junk_candidate__';
   static const String pendingJunkCandidateTag = '__junk_pending__';
   static const String keptJunkCandidateTag = '__junk_kept__';
+  static const String junkReasonTagPrefix = '__junk_reason__:';
+  static const String unknownReasonCategoryId = 'unknown';
+  static const JunkPhotoHit unknownReason = JunkPhotoHit(
+    categoryId: unknownReasonCategoryId,
+    label: '原因待复核',
+    description: '该候选来自旧版本或手动操作，未记录自动识别原因，请人工确认。',
+    score: 0,
+    threshold: 0,
+  );
 
   static final JunkPhotoFilterService _instance =
       JunkPhotoFilterService._internal();
@@ -281,7 +337,35 @@ class JunkPhotoFilterService {
     final trimmed = value.trim();
     return trimmed == junkCandidateTag ||
         trimmed == pendingJunkCandidateTag ||
-        trimmed == keptJunkCandidateTag;
+        trimmed == keptJunkCandidateTag ||
+        trimmed.startsWith(junkReasonTagPrefix);
+  }
+
+  static String reasonTag(String categoryId) =>
+      '$junkReasonTagPrefix${categoryId.trim()}';
+
+  List<JunkPhotoHit> reasonsFromTags(Iterable<String>? tags) {
+    if (tags == null) return const <JunkPhotoHit>[];
+    final definitionById = <String, JunkPhotoCategoryDefinition>{
+      for (final definition in _definitions) definition.id: definition,
+    };
+    final hits = <JunkPhotoHit>[];
+    for (final tag in tags) {
+      if (!tag.startsWith(junkReasonTagPrefix)) continue;
+      final definition =
+          definitionById[tag.substring(junkReasonTagPrefix.length)];
+      if (definition == null) continue;
+      hits.add(
+        JunkPhotoHit(
+          categoryId: definition.id,
+          label: definition.label,
+          description: definition.description,
+          score: definition.threshold,
+          threshold: definition.threshold,
+        ),
+      );
+    }
+    return List<JunkPhotoHit>.unmodifiable(hits);
   }
 
   static bool isQuarantined(Iterable<String>? tags) {

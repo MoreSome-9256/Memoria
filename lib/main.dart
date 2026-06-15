@@ -16,6 +16,7 @@ import 'package:photo_album/service/amplify_cognito_config.dart';
 import 'package:photo_album/service/album_refresh_service.dart';
 import 'package:photo_album/service/app_ai_settings_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
+import 'package:photo_album/service/media_permission_service.dart';
 import 'package:photo_album/service/photo_service.dart';
 import 'package:photo_album/service/ai_progress_notification_service.dart';
 import 'package:photo_album/service/unified_analysis_pipeline_service.dart';
@@ -134,16 +135,20 @@ class _AppStartupCoordinator {
         'OCR policy: ml_kit_enabled=${OcrPolicy.mlKitEnabled} (runtime setting)',
       );
       if (aiSettings.autoAnalyzeNewPhotos) {
-        unawaited(
-          AlbumRefreshService().startRefresh(
-            clearCacheFirst: false,
-            analyzeWithAi: true,
-          ),
-        );
+        if (await MediaPermissionService.hasAnalysisPermissions()) {
+          unawaited(
+            AlbumRefreshService().startRefresh(
+              clearCacheFirst: false,
+              analyzeWithAi: true,
+            ),
+          );
+        }
       } else if (aiSettings.autoResumeAnalysis) {
-        unawaited(
-          UnifiedAnalysisPipelineService().startPendingAnalysisCandidates(),
-        );
+        if (await MediaPermissionService.hasAnalysisPermissions()) {
+          unawaited(
+            UnifiedAnalysisPipelineService().startPendingAnalysisCandidates(),
+          );
+        }
       }
     });
     return _startupFuture!;

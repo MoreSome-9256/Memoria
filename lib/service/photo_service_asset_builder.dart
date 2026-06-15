@@ -122,7 +122,7 @@ class _PhotoAssetBuilder {
         width * height < filterProfile.minPixels!) {
       return const _SingleAssetBuildResult(skippedSmallResolution: 1);
     }
-    final latLong = asset.latLng;
+    final latLong = await _resolveAssetLatLng(asset);
     final mimeType = asset.mimeType;
     final isLivePhoto = asset.isLivePhoto;
     final timestamp = _resolveBestAssetTimestampMs(asset);
@@ -192,8 +192,9 @@ class _PhotoAssetBuilder {
   // ── 仅当字段变化时刷新 ──────────────────────────────────────────
   Future<PhotoEntity?> _refreshIfChanged(
     PhotoEntity existing,
-    AssetEntity asset,
-  ) async {
+    AssetEntity asset, {
+    bool refreshThumbnail = true,
+  }) async {
     var changed = false;
     final ts = _resolveBestAssetTimestampMs(asset);
     if (PhotoFilterHelper.hasValidTimestamp(ts) && existing.timestamp != ts) {
@@ -237,13 +238,47 @@ class _PhotoAssetBuilder {
       existing.isLivePhoto = isLivePhoto;
       changed = true;
     }
-    final thumbnailBytes = await MediaThumbnailCacheService.instance
-        .generateCompressedBytes(asset);
-    if (thumbnailBytes != null && thumbnailBytes.isNotEmpty) {
-      existing.thumbnailBytes = thumbnailBytes;
+    final latLong = await _resolveAssetLatLng(asset);
+    final hasGps = PhotoFilterHelper.hasValidGps(
+      latLong?.latitude,
+      latLong?.longitude,
+    );
+    if (hasGps &&
+        (existing.latitude != latLong!.latitude ||
+            existing.longitude != latLong.longitude)) {
+      existing
+        ..latitude = latLong.latitude
+        ..longitude = latLong.longitude
+        ..isLocationProcessed = false
+        ..geoIndexVersion = 0;
+      PhotoSearchIndexService.updateCoordinateFields(existing);
       changed = true;
     }
+    if (refreshThumbnail) {
+      final thumbnailBytes = await MediaThumbnailCacheService.instance
+          .generateCompressedBytes(asset);
+      if (thumbnailBytes != null && thumbnailBytes.isNotEmpty) {
+        existing.thumbnailBytes = thumbnailBytes;
+        changed = true;
+      }
+    }
     return changed ? existing : null;
+  }
+
+  Future<LatLng?> _resolveAssetLatLng(AssetEntity asset) async {
+    final cached = asset.latLng;
+    if (PhotoFilterHelper.hasValidGps(cached?.latitude, cached?.longitude)) {
+      return cached;
+    }
+    try {
+      final loaded = await asset.latlngAsync();
+      return PhotoFilterHelper.hasValidGps(loaded?.latitude, loaded?.longitude)
+          ? loaded
+          : null;
+    } catch (error) {
+      debugPrint('[asset-builder] GPS 读取失败 assetId=${asset.id}: $error');
+      return null;
+    }
   }
 
   MemoriaMediaKind _resolveMediaKind({

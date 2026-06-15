@@ -433,17 +433,21 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   }
 
   Future<PermissionState> _requestPhotoPermission() async {
-    final state = await MediaPermissionService.requestPermission();
-    if (state.hasAccess) return state;
+    final state = await MediaPermissionService.requestAnalysisPermissions();
+    final hasLocationMetadataAccess =
+        await MediaPermissionService.hasLocationMetadataAccess();
+    if (state.hasAccess && hasLocationMetadataAccess) return state;
 
     if (!mounted) return state;
 
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('需要照片访问权限'),
-        content: const Text(
-          'Memoria 只会读取您允许访问的照片和视频。您可以在系统设置中选择部分照片，或允许访问全部照片。',
+        title: const Text('需要照片分析权限'),
+        content: Text(
+          !state.hasAccess
+              ? 'Memoria 需要读取您允许访问的照片和视频。您可以选择部分照片或允许全部照片。'
+              : 'Memoria 已能读取照片，但还缺少“照片和视频中的位置信息”权限。没有该权限会导致地点索引缺失，因此本次打标签不会启动。',
         ),
         actions: [
           TextButton(
@@ -465,7 +469,11 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
 
   Future<void> _showRefreshOptions() async {
     final permState = await _requestPhotoPermission();
-    if (!permState.hasAccess || !mounted) return;
+    if (!permState.hasAccess ||
+        !await MediaPermissionService.hasLocationMetadataAccess() ||
+        !mounted) {
+      return;
+    }
     final isLimited = permState.isLimited;
 
     final selected = await showModalBottomSheet<_ImportAction>(

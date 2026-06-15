@@ -5,6 +5,73 @@ import 'package:photo_album/utils/ocr_policy.dart';
 import 'package:photo_album/utils/tag_sanitizer.dart';
 
 void main() {
+  test('cleanup report exposes a review category for legacy candidates', () {
+    final report =
+        JunkPhotoCleanupReport.fromCandidates(<JunkPhotoCleanupCandidate>[
+          const JunkPhotoCleanupCandidate(
+            photoId: 1,
+            assetId: 'asset-1',
+            path: '',
+            timestamp: 1,
+            reasons: <JunkPhotoHit>[],
+          ),
+        ]);
+
+    expect(report.reasonCounts, <String, int>{'原因待复核': 1});
+    expect(report.reasonSummaries.single.categoryId, 'unknown');
+    expect(report.reasonSummaries.single.count, 1);
+  });
+
+  test('cleanup report groups reasons by stable category id', () {
+    const screenshot = JunkPhotoHit(
+      categoryId: 'screenshot',
+      label: '应用/网页截图',
+      description: '',
+      score: 0.3,
+      threshold: 0.2,
+    );
+    final report = JunkPhotoCleanupReport.fromCandidates(
+      <JunkPhotoCleanupCandidate>[
+        const JunkPhotoCleanupCandidate(
+          photoId: 1,
+          assetId: 'asset-1',
+          path: '',
+          timestamp: 1,
+          reasons: <JunkPhotoHit>[screenshot],
+        ),
+        const JunkPhotoCleanupCandidate(
+          photoId: 2,
+          assetId: 'asset-2',
+          path: '',
+          timestamp: 2,
+          reasons: <JunkPhotoHit>[screenshot],
+        ),
+      ],
+    );
+
+    expect(report.reasonSummaries.single.categoryId, 'screenshot');
+    expect(report.reasonSummaries.single.count, 2);
+  });
+
+  test('junk candidate reasons survive database tag round-trip', () {
+    final reasons = JunkPhotoFilterService().reasonsFromTags(<String>[
+      JunkPhotoFilterService.pendingJunkCandidateTag,
+      JunkPhotoFilterService.reasonTag('screenshot'),
+      JunkPhotoFilterService.reasonTag('document'),
+    ]);
+
+    expect(
+      reasons.map((reason) => reason.categoryId),
+      containsAll(<String>['screenshot', 'document']),
+    );
+    expect(
+      JunkPhotoFilterService.isInternalJunkTag(
+        JunkPhotoFilterService.reasonTag('document'),
+      ),
+      isTrue,
+    );
+  });
+
   test(
     'junk filter definitions include post-filter categories used by workers',
     () {
@@ -25,7 +92,7 @@ void main() {
     },
   );
 
-  test('junk state tags contain no semantic category guesses', () {
+  test('junk state and persisted reason tags stay internal', () {
     expect(
       JunkPhotoFilterService.isInternalJunkTag(
         JunkPhotoFilterService.pendingJunkCandidateTag,
@@ -34,7 +101,7 @@ void main() {
     );
     expect(
       JunkPhotoFilterService.isInternalJunkTag('__junk_reason__:meme'),
-      isFalse,
+      isTrue,
     );
     expect(
       JunkPhotoFilterService.hasFinalDecision(<String>[

@@ -94,6 +94,7 @@ Rules:
    These fields must contain visual meaning only. Never repeat exact dates, years, clock times, named cities, districts, POIs, coordinates, or other precise metadata in semantic text.
    Abstract visible context such as "a coastal city", "spring scenery", "afternoon light", or "night atmosphere" is allowed.
 2. Use absolute_date_ranges for explicit years or relative dates, annual_day_ranges for recurring dates or seasons, minute_of_day_ranges for local time-of-day, and weekdays for weekday constraints.
+   Also extract high-confidence implicit mechanical meaning. For example, sunset/晚霞/黄昏 implies late afternoon through early evening, sunrise/朝霞 implies early morning, and a starry sky implies night. Keep the visible concept in semantic fields as well. Do not invent weak or controversial time constraints from objects that can occur all day.
 3. Keep Chinese place names in objectbox_filters.geo. Do not translate raw_name, normalized_names, or amap_query_keywords. Never invent coordinates or decide that two places are identical.
 4. For exact POIs use strictness="exact". For countries, provinces, cities, and districts use strictness="broad". Set allow_nearby_siblings=true only when the user explicitly says nearby, around, 周边, 附近, or 旁边.
 5. Do not put scene words such as beach, park, night view, grassland, or starry sky into objectbox_filters.geo unless they are part of an official place name.
@@ -108,6 +109,10 @@ Rules:
 14. Do not use named places as a substitute for visible semantics. Put named places in objectbox_filters.geo and separately describe visible content.
 15. If the query is ambiguous, choose the most literal interpretation and encode alternatives only in soft_filters. Never invent a different city, event, or season.
 16. Before returning, verify that every noun and modifier in the user query is represented by objectbox_filters, embedding_queries_en, soft_filters, or negative_filters.
+17. Remove all mechanically searchable place and time meaning from visual semantics. For "青岛的海边", geo must contain 青岛 and visual semantics should describe only beach, sea, coast, and waves. Do not mention Qingdao or a coastal city in visual semantics.
+18. If the query contains only an administrative place such as a country, province, city, or district, or only a date/time filter, leave embedding_queries_en and soft_filters.visual_terms_en empty. For "青岛", return geo filters and no visual semantics so all mechanically matching photos remain eligible.
+19. A specific POI, scenic area, campus, business area, or landmark may use concise visible semantics based on stable place knowledge, because photo metadata may be shifted or incomplete. The place itself must still be written to objectbox_filters.geo, but semantic fields must contain no place names, translated place names, aliases, city names, district names, or POI names. For "五四广场", keep 五四广场 as a POI geo filter and use only visible semantics such as "a city square" and "a square near the sea with a large red landmark sculpture". Never write "五四广场", "May Fourth Square", "青岛", or "Qingdao" in semantic fields.
+20. Prefer precision for implicit mechanical constraints: add them only when the phrase itself strongly entails the constraint. "晚霞" must include a local late-afternoon/evening window and sunset semantics so it does not retrieve morning glow; "朝霞" must include an early-morning window. Explicit user time always overrides an inferred window.
 
 Available local indexes:
 - timestamp and recurring month filters
@@ -136,7 +141,7 @@ JSON:
   ],
   "tag_strictness": "prefer",
   "positive_semantics": [
-    {"text": "a summer travel photo by the beach in Qingdao", "weight": 0.55},
+    {"text": "a summer travel photo by the beach", "weight": 0.55},
     {"text": "a seaside memory with ocean waves and coast", "weight": 0.45}
   ],
   "recall_semantics": [
@@ -167,7 +172,7 @@ JSON:
   ],
   "tag_strictness": "prefer",
   "positive_semantics": [
-    {"text": "a night sky photo full of stars in Hawaii", "weight": 0.7},
+    {"text": "a night sky photo full of stars", "weight": 0.7},
     {"text": "a dark outdoor landscape under a starry sky", "weight": 0.3}
   ],
   "recall_semantics": [
@@ -191,23 +196,72 @@ JSON:
     {"text": "Nanjing Confucius Temple", "type": "poi", "aliases": ["南京夫子庙", "夫子庙", "Fuzimiao", "Confucius Temple"], "timezone": "Asia/Shanghai", "utc_offset": "+08:00"}
   ],
   "coarse_tags": [
-    {"id": "travel_landmark", "label_en": "travel landmark", "confidence": 0.86},
-    {"id": "city_street", "label_en": "city street", "confidence": 0.58}
+    {"id": "travel_landmark", "label_en": "travel landmark", "confidence": 0.8}
   ],
   "tag_strictness": "prefer",
   "positive_semantics": [
-    {"text": "a travel photo at Nanjing Confucius Temple", "weight": 0.58},
-    {"text": "a photo of traditional Chinese architecture and tourist streets", "weight": 0.42}
+    {"text": "traditional Chinese architecture beside a historic pedestrian street", "weight": 0.6},
+    {"text": "a sightseeing area with old buildings and lanterns", "weight": 0.4}
   ],
   "recall_semantics": [
-    {"text": "a sightseeing photo of a historic temple area in Nanjing", "weight": 0.5},
-    {"text": "a city travel photo with old buildings, lanterns, and a scenic street", "weight": 0.5}
+    {"text": "a historic Chinese tourist street", "weight": 1.0}
+  ],
+  "negative_semantics": [],
+  "estimated_result_count": {"min": 1, "max": 80, "confidence": 0.65},
+  "notes": "Specific POI keeps geo matching and adds stable visible semantics without repeating its name."
+}
+
+User: 五四广场
+JSON:
+{
+  "query_type": "concrete",
+  "time_ranges": [],
+  "local_time_windows": [],
+  "locations": [
+    {"text": "五四广场", "type": "poi", "aliases": ["五四广场"], "timezone": "Asia/Shanghai", "utc_offset": "+08:00"}
+  ],
+  "coarse_tags": [
+    {"id": "city_street", "label_en": "city street", "confidence": 0.7},
+    {"id": "travel_landmark", "label_en": "travel landmark", "confidence": 0.8}
+  ],
+  "tag_strictness": "prefer",
+  "positive_semantics": [
+    {"text": "a city square", "weight": 0.45},
+    {"text": "a square near the sea with a large red landmark sculpture", "weight": 0.55}
+  ],
+  "recall_semantics": [
+    {"text": "an open urban plaza near a coastal waterfront", "weight": 1.0}
+  ],
+  "negative_semantics": [],
+  "estimated_result_count": {"min": 1, "max": 80, "confidence": 0.65},
+  "notes": "Specific POI uses stable visible characteristics to recover photos with incomplete or shifted location metadata."
+}
+
+User: 晚霞
+JSON:
+{
+  "query_type": "concrete",
+  "time_ranges": [],
+  "local_time_windows": [
+    {"start": "15:30", "end": "21:00", "reason": "sunset and evening glow occur from late afternoon into early evening"}
+  ],
+  "locations": [],
+  "coarse_tags": [
+    {"id": "sky_sunset", "label_en": "sky and sunset", "confidence": 0.95}
+  ],
+  "tag_strictness": "prefer",
+  "positive_semantics": [
+    {"text": "a vivid sunset sky with warm evening glow", "weight": 0.7},
+    {"text": "colorful clouds illuminated after sunset", "weight": 0.3}
+  ],
+  "recall_semantics": [
+    {"text": "orange red and purple clouds in an evening sky", "weight": 1.0}
   ],
   "negative_semantics": [
-    {"text": "a screenshot of a text document or software interface", "weight": 1.0}
+    {"text": "sunrise and morning glow", "weight": 1.0}
   ],
-  "estimated_result_count": {"min": 1, "max": 80, "confidence": 0.65},
-  "notes": "Keeps the POI specificity instead of reducing it to Nanjing."
+  "estimated_result_count": {"min": 1, "max": 120, "confidence": 0.8},
+  "notes": "Sunset has both visible semantics and a high-confidence local time constraint."
 }
 
 Coarse tag catalog:
@@ -227,7 +281,7 @@ $rawQuery
     required String baseNotes,
   }) {
     final plan = _normalizeQueryPlanSchema(rawQuery, jsonObject);
-    final queryType = _requireQueryType(plan['query_type']);
+    final requestedQueryType = _requireQueryType(plan['query_type']);
     final timeRanges = _readTimeRanges(
       plan['time_ranges'],
       localTimeWindows: plan['local_time_windows'],
@@ -238,12 +292,36 @@ $rawQuery
     );
     final locations = _readLocations(plan['locations']);
     final coarseTags = _readCoarseTags(plan['coarse_tags']);
-    final positiveSemantics = _readSemanticItems(plan['positive_semantics']);
-    final recallSemantics = _readSemanticItems(plan['recall_semantics']);
-    final negativeSemantics = _normalizeNegativeSemantics(
+    final pureMechanicalQuery = _isPureMechanicalQuery(
       rawQuery,
-      _readSemanticItems(plan['negative_semantics']),
+      locations: locations,
+      timeRanges: normalizedTimeRanges,
+      weekdays: _readWeekdays(plan['weekdays']),
     );
+    final queryType = pureMechanicalQuery
+        ? SemanticSearchQueryType.metadata
+        : requestedQueryType;
+    final positiveSemantics = pureMechanicalQuery
+        ? const <SemanticSearchSemanticItem>[]
+        : _removeNamedLocationsFromSemantics(
+            _readSemanticItems(plan['positive_semantics']),
+            locations,
+          );
+    final recallSemantics = pureMechanicalQuery
+        ? const <SemanticSearchSemanticItem>[]
+        : _removeNamedLocationsFromSemantics(
+            _readSemanticItems(plan['recall_semantics']),
+            locations,
+          );
+    final negativeSemantics = pureMechanicalQuery
+        ? const <SemanticSearchSemanticItem>[]
+        : _normalizeNegativeSemantics(
+            rawQuery,
+            _removeNamedLocationsFromSemantics(
+              _readSemanticItems(plan['negative_semantics']),
+              locations,
+            ),
+          );
     final tagStrictness = _readTagStrictness(plan['tag_strictness']);
     final estimatedResultCount = _readEstimatedResultCount(
       plan['estimated_result_count'],
@@ -266,7 +344,9 @@ $rawQuery
       queryType: queryType,
       timeRanges: normalizedTimeRanges,
       locations: locations,
-      coarseTags: coarseTags,
+      coarseTags: pureMechanicalQuery
+          ? const <SemanticSearchCoarseTag>[]
+          : coarseTags,
       tagStrictness: tagStrictness,
       positiveSemantics: queryType == SemanticSearchQueryType.metadata
           ? const <SemanticSearchSemanticItem>[]
@@ -624,16 +704,16 @@ $rawQuery
     String rawQuery,
     List<SemanticSearchSemanticItem> items,
   ) {
-    if (!rawQuery.contains('海边') || rawQuery.contains('湖')) {
-      return items;
+    final normalized = <SemanticSearchSemanticItem>[...items];
+    if (rawQuery.contains('海边') && !rawQuery.contains('湖')) {
+      normalized.add(
+        const SemanticSearchSemanticItem(
+          text: 'a lake, lakeside, river, or riverside scene without the sea',
+          weight: 1.0,
+        ),
+      );
     }
-    return _normalizeSemanticWeights(<SemanticSearchSemanticItem>[
-      ...items,
-      const SemanticSearchSemanticItem(
-        text: 'a lake, lakeside, river, or riverside scene without the sea',
-        weight: 1.0,
-      ),
-    ]);
+    return _normalizeSemanticWeights(normalized);
   }
 
   List<SemanticSearchCoarseTag> _readCoarseTags(dynamic value) {
@@ -678,6 +758,106 @@ $rawQuery
       );
     }
     return _normalizeSemanticWeights(items);
+  }
+
+  List<SemanticSearchSemanticItem> _removeNamedLocationsFromSemantics(
+    List<SemanticSearchSemanticItem> items,
+    List<SemanticSearchLocation> locations,
+  ) {
+    final namedTerms =
+        <String>{
+              for (final location in locations) location.text,
+              for (final location in locations) ...location.aliases,
+            }
+            .map((value) => value.trim())
+            .where((value) => value.length >= 2)
+            .toList(growable: false)
+          ..sort((a, b) => b.length.compareTo(a.length));
+    if (namedTerms.isEmpty) {
+      return items;
+    }
+    final sanitized = <SemanticSearchSemanticItem>[];
+    for (final item in items) {
+      var text = item.text;
+      for (final term in namedTerms) {
+        text = text.replaceAll(
+          RegExp(RegExp.escape(term), caseSensitive: false),
+          ' ',
+        );
+      }
+      text = text
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .replaceAllMapped(
+            RegExp(r'\s+([,.;:])'),
+            (match) => match.group(1) ?? '',
+          )
+          .trim();
+      if (text.isEmpty) {
+        continue;
+      }
+      sanitized.add(
+        SemanticSearchSemanticItem(text: text, weight: item.weight),
+      );
+    }
+    return _normalizeSemanticWeights(sanitized);
+  }
+
+  bool _isPureMechanicalQuery(
+    String rawQuery, {
+    required List<SemanticSearchLocation> locations,
+    required List<SemanticSearchTimeRange> timeRanges,
+    required List<int> weekdays,
+  }) {
+    if (locations.isEmpty && timeRanges.isEmpty && weekdays.isEmpty) {
+      return false;
+    }
+    if (locations.any(
+      (location) => !_isAdministrativeLocation(location.type),
+    )) {
+      return false;
+    }
+    var remainder = rawQuery.trim().toLowerCase();
+    final mechanicalTerms =
+        <String>{
+              for (final location in locations) location.text,
+              for (final location in locations) ...location.aliases,
+            }
+            .map((value) => value.trim().toLowerCase())
+            .where((value) => value.isNotEmpty)
+            .toList(growable: false)
+          ..sort((a, b) => b.length.compareTo(a.length));
+    for (final term in mechanicalTerms) {
+      remainder = remainder.replaceAll(term, '');
+    }
+    remainder = remainder
+        .replaceAll(
+          RegExp(
+            r'(今天|昨日|昨天|前天|明天|后天|本周|这周|上周|下周|本月|这个月|上个月|下个月|今年|去年|前年|明年|周末|星期[一二三四五六日天]|周[一二三四五六日天]|\d{4}\s*年|\d{1,2}\s*月|\d{1,2}\s*[日号])',
+          ),
+          '',
+        )
+        .replaceAll(
+          RegExp(
+            r'(照片|图片|相片|影像|记忆|回忆|拍摄|拍的|拍过的|找找|查找|搜索|寻找|看看|看一下|给我看|显示|所有|全部)',
+          ),
+          '',
+        )
+        .replaceAll(RegExp(r'(的|在|于|从|到|里|内|附近|周边|旁边)'), '')
+        .replaceAll(RegExp(r'[\s,，.。;；:：\-_/\\()（）\[\]【】]+'), '')
+        .trim();
+    return remainder.isEmpty;
+  }
+
+  bool _isAdministrativeLocation(String type) {
+    return const <String>{
+      'country',
+      'province',
+      'city',
+      'district',
+      'development_zone',
+      'township',
+      'region_concept',
+    }.contains(type);
   }
 
   SemanticSearchQueryType _requireQueryType(dynamic value) {

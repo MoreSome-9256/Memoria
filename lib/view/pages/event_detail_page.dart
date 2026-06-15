@@ -9,6 +9,7 @@ import '../../models/event.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/vo/photo.dart';
 import '../../service/junk_photo_cleanup_service.dart';
+import '../../service/junk_photo_filter_service.dart';
 import '../../service/story_queue_service.dart';
 import '../../utils/media_type_helper.dart';
 import '../../utils/ocr_policy.dart';
@@ -374,7 +375,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
     if (_selectedPhotoIds.isEmpty) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('请至少选择一张照片再删除')));
+      ).showSnackBar(const SnackBar(content: Text('请至少选择一张照片再标记')));
       return;
     }
 
@@ -382,9 +383,9 @@ class _EventDetailPageState extends State<EventDetailPage> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('移入系统回收站'),
+          title: const Text('移入低价值回收站'),
           content: Text(
-            '将 ${_selectedPhotoIds.length} 张照片移入系统相册回收站，系统会再次请求确认。是否继续？',
+            '将 ${_selectedPhotoIds.length} 张照片标记为低价值候选，可在回收站中恢复或确认删除。是否继续？',
           ),
           actions: [
             TextButton(
@@ -393,7 +394,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('移入回收站'),
+              child: const Text('确认标记'),
             ),
           ],
         );
@@ -412,8 +413,18 @@ class _EventDetailPageState extends State<EventDetailPage> {
     final entities = _q2.find();
     _q2.close();
 
-    final removedCount = await JunkPhotoCleanupService()
-        .movePhotosToSystemTrash(entities);
+    final markedCount = await JunkPhotoCleanupService()
+        .markCandidatesAsLowValue(
+          entities.map(
+            (e) => JunkPhotoCleanupCandidate(
+              photoId: e.id,
+              assetId: e.assetId,
+              path: e.path,
+              timestamp: e.timestamp,
+              reasons: const [],
+            ),
+          ),
+        );
     for (final entity in entities) {
       StoryQueueService().removePhoto(entity.assetId);
     }
@@ -423,7 +434,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
     }
 
     setState(() {
-      if (removedCount > 0) {
+      if (markedCount > 0) {
         _photos = _photos
             .where((photo) => !_selectedPhotoIds.contains(photo.id))
             .toList(growable: false);
@@ -436,7 +447,9 @@ class _EventDetailPageState extends State<EventDetailPage> {
       SnackBar(
         behavior: SnackBarBehavior.floating,
         content: Text(
-          removedCount > 0 ? '已将 $removedCount 张照片移入系统回收站' : '没有删除任何照片',
+          markedCount > 0
+              ? '已将 $markedCount 张照片移入低价值回收站'
+              : '没有标记任何照片',
         ),
       ),
     );
@@ -521,9 +534,9 @@ class _EventDetailPageState extends State<EventDetailPage> {
                     ),
                     label: Text(
                       _selectedPhotoIds.isEmpty
-                          ? (_isDeleteMode ? '移入系统回收站' : '加入故事队列')
+                          ? (_isDeleteMode ? '移入回收站' : '加入故事队列')
                           : (_isDeleteMode
-                                ? '移入系统回收站 ${_selectedPhotoIds.length}'
+                                ? '移入回收站 ${_selectedPhotoIds.length}'
                                 : '加入故事队列 ${_selectedPhotoIds.length}'),
                     ),
                   ),
@@ -656,7 +669,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
                         ? '先展示这一组时刻的概要，图片会在滑到这里时继续懒加载。'
                         : _isSelectionMode
                         ? (_isDeleteMode
-                              ? '点击图片选择要从 App 本地数据库中删除的记录。'
+                              ? '点击图片选择要移入低价值回收站的照片。'
                               : '点击图片加入故事队列，再点右下角按钮继续。')
                         : '先预览照片内容，点击右下角按钮后再进入选图。',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(

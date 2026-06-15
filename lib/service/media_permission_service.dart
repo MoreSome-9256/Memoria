@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -23,6 +26,16 @@ class MediaPermissionService {
     androidPermission: AndroidPermission(
       type: RequestType.common,
       mediaLocation: false,
+    ),
+  );
+
+  /// Android protects original photo location metadata separately from visual
+  /// media access. Keep this out of [requestOption], otherwise a missing
+  /// metadata grant can make an otherwise valid photo grant look denied.
+  static const analysisRequestOption = PermissionRequestOption(
+    androidPermission: AndroidPermission(
+      type: RequestType.common,
+      mediaLocation: true,
     ),
   );
 
@@ -81,6 +94,30 @@ class MediaPermissionService {
     );
     await persistState(state);
     return state;
+  }
+
+  /// Requests visual-media and original-media-location access together before
+  /// the first AI tagging run. Must only be called from an explicit user tap.
+  static Future<PermissionState> requestAnalysisPermissions() async {
+    final state = await PhotoManager.requestPermissionExtend(
+      requestOption: Platform.isAndroid ? analysisRequestOption : requestOption,
+    );
+    await persistState(state);
+    return state;
+  }
+
+  /// Reads the real Android ACCESS_MEDIA_LOCATION state and never shows UI.
+  ///
+  /// photo_manager's aggregate PermissionState on Android 14+ only describes
+  /// visible-media access, so it cannot be used to verify this grant.
+  static Future<bool> hasLocationMetadataAccess() async {
+    if (!Platform.isAndroid) return true;
+    return Permission.accessMediaLocation.isGranted;
+  }
+
+  static Future<bool> hasAnalysisPermissions() async {
+    final visualState = await readLivePermissionState();
+    return visualState.hasAccess && await hasLocationMetadataAccess();
   }
 
   /// Safe for foreground/background isolates. Never invokes photo_manager.

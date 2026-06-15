@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:photo_album/models/vo/semantic_search_models.dart';
 import 'package:photo_album/service/semantic_query_parser_service.dart';
 
 void main() {
@@ -158,5 +159,195 @@ void main() {
     expect(query.timeRanges.single.annualStartDay, 152);
     expect(query.positiveSemanticTexts, contains('summer beach travel photo'));
     expect(query.positiveSemantics.every((item) => !item.containsCjk), isTrue);
+  });
+
+  test(
+    'pure administrative place query clears accidental visual semantics',
+    () {
+      final query = SemanticQueryParserService().buildQueryFromStructuredJson(
+        rawQuery: '青岛',
+        jsonObject: <String, dynamic>{
+          'version': 1,
+          'raw_query': '青岛',
+          'embedding_queries_en': <String>['a coastal city'],
+          'objectbox_filters': <String, dynamic>{
+            'absolute_date_ranges': const <Object>[],
+            'annual_day_ranges': const <Object>[],
+            'minute_of_day_ranges': const <Object>[],
+            'weekdays': const <int>[],
+            'geo': const <Map<String, dynamic>>[
+              <String, dynamic>{
+                'raw_name': '青岛',
+                'normalized_names': <String>['青岛', '青岛市'],
+                'kind_hint': 'city',
+              },
+            ],
+          },
+          'soft_filters': const <String, dynamic>{
+            'visual_terms_en': <String>['an urban landmark'],
+          },
+          'negative_filters': const <String, dynamic>{
+            'visual_terms_en': <String>[],
+          },
+        },
+      );
+
+      expect(query.queryType, SemanticSearchQueryType.metadata);
+      expect(query.positiveSemantics, isEmpty);
+      expect(query.recallSemantics, isEmpty);
+      expect(query.coarseTags, isEmpty);
+    },
+  );
+
+  test('specific POI query keeps stable visible semantics', () {
+    final query = SemanticQueryParserService().buildQueryFromStructuredJson(
+      rawQuery: '五四广场',
+      jsonObject: <String, dynamic>{
+        'version': 1,
+        'raw_query': '五四广场',
+        'embedding_queries_en': <String>[
+          'a city square',
+          'a square near the sea with a large red landmark sculpture',
+        ],
+        'objectbox_filters': <String, dynamic>{
+          'absolute_date_ranges': const <Object>[],
+          'annual_day_ranges': const <Object>[],
+          'minute_of_day_ranges': const <Object>[],
+          'weekdays': const <int>[],
+          'geo': const <Map<String, dynamic>>[
+            <String, dynamic>{
+              'raw_name': '五四广场',
+              'normalized_names': <String>['五四广场'],
+              'kind_hint': 'poi',
+            },
+          ],
+        },
+        'soft_filters': const <String, dynamic>{
+          'visual_terms_en': <String>[
+            'an open urban plaza near a coastal waterfront',
+          ],
+        },
+        'negative_filters': const <String, dynamic>{
+          'visual_terms_en': <String>[],
+        },
+      },
+    );
+
+    expect(query.queryType, SemanticSearchQueryType.concrete);
+    expect(query.positiveSemanticTexts, contains('a city square'));
+    expect(
+      query.positiveSemanticTexts,
+      contains('a square near the sea with a large red landmark sculpture'),
+    );
+  });
+
+  test('client removes named places from visual semantics', () {
+    final query = SemanticQueryParserService().buildQueryFromStructuredJson(
+      rawQuery: '青岛的海边',
+      jsonObject: <String, dynamic>{
+        'version': 1,
+        'raw_query': '青岛的海边',
+        'embedding_queries_en': <String>[
+          'a Qingdao beach beside the sea',
+          'ocean waves and coast',
+        ],
+        'objectbox_filters': <String, dynamic>{
+          'absolute_date_ranges': const <Object>[],
+          'annual_day_ranges': const <Object>[],
+          'minute_of_day_ranges': const <Object>[],
+          'weekdays': const <int>[],
+          'geo': const <Map<String, dynamic>>[
+            <String, dynamic>{
+              'raw_name': '青岛',
+              'normalized_names': <String>['青岛', '青岛市', 'Qingdao'],
+              'kind_hint': 'city',
+            },
+          ],
+        },
+        'soft_filters': const <String, dynamic>{
+          'visual_terms_en': <String>['coastal scenery near Qingdao'],
+        },
+        'negative_filters': const <String, dynamic>{
+          'visual_terms_en': <String>[],
+        },
+      },
+    );
+
+    expect(
+      <String>[
+        ...query.positiveSemanticTexts,
+        ...query.recallSemanticTexts,
+      ].every((text) => !text.toLowerCase().contains('qingdao')),
+      isTrue,
+    );
+    expect(query.positiveSemanticTexts, contains('a beach beside the sea'));
+  });
+
+  test('place plus visual subject keeps only visual search enabled', () {
+    final query = SemanticQueryParserService().buildQueryFromStructuredJson(
+      rawQuery: '青岛的海边',
+      jsonObject: <String, dynamic>{
+        'version': 1,
+        'raw_query': '青岛的海边',
+        'embedding_queries_en': <String>['a beach beside the sea'],
+        'objectbox_filters': <String, dynamic>{
+          'absolute_date_ranges': const <Object>[],
+          'annual_day_ranges': const <Object>[],
+          'minute_of_day_ranges': const <Object>[],
+          'weekdays': const <int>[],
+          'geo': const <Map<String, dynamic>>[
+            <String, dynamic>{
+              'raw_name': '青岛',
+              'normalized_names': <String>['青岛', '青岛市'],
+              'kind_hint': 'city',
+            },
+          ],
+        },
+        'soft_filters': const <String, dynamic>{
+          'visual_terms_en': <String>['ocean waves and coast'],
+        },
+        'negative_filters': const <String, dynamic>{
+          'visual_terms_en': <String>[],
+        },
+      },
+    );
+
+    expect(query.queryType, SemanticSearchQueryType.concrete);
+    expect(query.positiveSemanticTexts, <String>['a beach beside the sea']);
+  });
+
+  test('LLM-provided implicit time remains a mechanical filter', () {
+    final query = SemanticQueryParserService().buildQueryFromStructuredJson(
+      rawQuery: '晚霞',
+      jsonObject: <String, dynamic>{
+        'query_type': 'concrete',
+        'time_ranges': const <Object>[],
+        'local_time_windows': const <Map<String, Object>>[
+          <String, Object>{'start': '15:30', 'end': '21:00'},
+        ],
+        'locations': const <Object>[],
+        'coarse_tags': const <Object>[],
+        'tag_strictness': 'prefer',
+        'positive_semantics': const <Map<String, Object>>[
+          <String, Object>{'text': 'a late sunset sky', 'weight': 1.0},
+        ],
+        'recall_semantics': const <Map<String, Object>>[
+          <String, Object>{'text': 'evening glow in the sky', 'weight': 1.0},
+        ],
+        'negative_semantics': const <Object>[],
+        'attributes': const <String, Object>{},
+        'estimated_result_count': const <String, Object>{
+          'min': 1,
+          'max': 40,
+          'confidence': 0.8,
+        },
+      },
+    );
+
+    final localWindow = query.timeRanges.singleWhere(
+      (range) => range.hasLocalTimeWindow,
+    );
+    expect(localWindow.localStartMinute, 15 * 60 + 30);
+    expect(localWindow.localEndMinute, 21 * 60);
   });
 }

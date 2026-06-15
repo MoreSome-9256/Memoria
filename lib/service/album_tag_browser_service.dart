@@ -38,6 +38,7 @@ class AlbumTagBrowserService {
     '美食',
     '风景',
   };
+  static const String _standaloneVideoCoarseId = 'video_media';
 
   factory AlbumTagBrowserService() => _instance;
 
@@ -60,6 +61,9 @@ class AlbumTagBrowserService {
         continue;
       }
       for (final coarseId in coarseIds) {
+        if (coarseId == _standaloneVideoCoarseId) {
+          continue;
+        }
         clusterPhotos.putIfAbsent(coarseId, () => <PhotoEntity>[]).add(photo);
         final fineCounts = fineCountsByCoarse.putIfAbsent(
           coarseId,
@@ -82,6 +86,9 @@ class AlbumTagBrowserService {
 
     final clusters = <AlbumCoarseTagCluster>[];
     for (final definition in memoriaCoarseTagDefinitions) {
+      if (definition.id == _standaloneVideoCoarseId) {
+        continue;
+      }
       final photosInCluster = clusterPhotos[definition.id];
       if (photosInCluster == null || photosInCluster.isEmpty) {
         continue;
@@ -270,6 +277,9 @@ class AlbumTagBrowserService {
     for (final tag in browsableTagsForPhoto(photo)) {
       final coarseId = memoriaAlbumTagLabelToCoarseId[tag];
       if (coarseId != null && coarseId.isNotEmpty) {
+        if (coarseId == _standaloneVideoCoarseId) {
+          continue;
+        }
         coarseIds.add(coarseId);
       }
     }

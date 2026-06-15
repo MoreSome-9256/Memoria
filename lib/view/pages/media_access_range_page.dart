@@ -21,6 +21,8 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
   bool _batteryOptimized = false;
   bool _loadingBattery = true;
   PermissionState? _permState;
+  bool? _hasLocationMetadataAccess;
+  bool _requestingLocationMetadata = false;
   List<_AlbumItem> _albums = [];
   Set<String> _selectedIds = {};
   int _savedAlbumWhitelistCount = 0;
@@ -45,9 +47,17 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
 
   Future<void> _loadPermissionAndAlbums() async {
     final state = await MediaPermissionService.readPermissionState();
+    PermissionState? locationMetadataState;
+    if (Platform.isAndroid && state.hasAccess) {
+      locationMetadataState = state;
+    }
+    final hasLocationMetadataAccess = locationMetadataState == null
+        ? null
+        : await MediaPermissionService.hasLocationMetadataAccess();
     final sel = await AlbumSelectionPreferenceService().loadSelection();
     if (!mounted) return;
     _permState = state;
+    _hasLocationMetadataAccess = hasLocationMetadataAccess;
     _savedAlbumWhitelistCount = sel.selectedAlbumIds.length;
 
     if (state.hasAccess) {
@@ -115,11 +125,38 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
   }
 
   Future<void> _requestPermission() async {
-    final state = await MediaPermissionService.requestPermission();
+    final state = await MediaPermissionService.requestAnalysisPermissions();
     if (!mounted) return;
     setState(() => _permState = state);
     if (state.hasAccess) {
       await _loadPermissionAndAlbums();
+    }
+  }
+
+  Future<void> _requestLocationMetadataPermission() async {
+    setState(() => _requestingLocationMetadata = true);
+    try {
+      final state = await MediaPermissionService.requestAnalysisPermissions();
+      final hasLocationMetadataAccess =
+          await MediaPermissionService.hasLocationMetadataAccess();
+      if (!mounted) return;
+      setState(() {
+        _permState = state;
+        _hasLocationMetadataAccess = hasLocationMetadataAccess;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            hasLocationMetadataAccess
+                ? '已允许读取照片拍摄地点；重新分析时会补齐地点索引'
+                : '未获得拍摄地点权限，地点搜索将只使用已有数据',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _requestingLocationMetadata = false);
+      }
     }
   }
 
@@ -238,6 +275,74 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
             ),
           ),
           const SizedBox(height: 16),
+
+          if (Platform.isAndroid && hasAccess) ...[
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.location_on_outlined,
+                          color: theme.colorScheme.primary,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            '照片拍摄地点',
+                            style: theme.textTheme.titleMedium,
+                          ),
+                        ),
+                        Icon(
+                          _hasLocationMetadataAccess ?? false
+                              ? Icons.check_circle
+                              : Icons.info_outline,
+                          color: _hasLocationMetadataAccess ?? false
+                              ? Colors.green
+                              : Colors.orange,
+                          size: 20,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Android 会单独保护照片原始文件中的 GPS。允许后，重新打标签会补齐地点、景区和附近地标索引；这不会获取设备实时位置。',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 12),
+                    if (_hasLocationMetadataAccess == null)
+                      const LinearProgressIndicator()
+                    else if (_hasLocationMetadataAccess!)
+                      Text(
+                        '已允许读取拍摄地点',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.green,
+                        ),
+                      )
+                    else
+                      FilledButton.tonalIcon(
+                        onPressed: _requestingLocationMetadata
+                            ? null
+                            : _requestLocationMetadataPermission,
+                        icon: _requestingLocationMetadata
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.location_on_outlined, size: 18),
+                        label: const Text('允许读取拍摄地点'),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
 
           // ── 相册列表 ──
           if (hasAccess && !isLimited) ...[

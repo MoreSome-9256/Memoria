@@ -134,4 +134,18 @@ void main() {
     expect(tags, <String>[documentTag]);
     expect(coarseIds, contains(document.id));
   });
+
+  test('tag browser does not create a standalone video cluster', () {
+    final photo = _photo(id: 1, tags: const <String>['视频'])
+      ..mediaKind = 'video';
+
+    final clusters = AlbumTagBrowserService().buildCoarseClusters(<PhotoEntity>[
+      photo,
+    ]);
+
+    expect(
+      clusters.where((cluster) => cluster.coarseId == 'video_media'),
+      isEmpty,
+    );
+  });
 }

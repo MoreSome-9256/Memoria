@@ -194,11 +194,20 @@ class _StructuredStoryPayload {
   }
 }
 
-class _LocalRuntime {
-  const _LocalRuntime({required this.profile, required this.server});
+class _LocalVlmImagePayload {
+  const _LocalVlmImagePayload({
+    required this.path,
+    required this.capturedAtIso,
+    required this.locationName,
+    this.latitude,
+    this.longitude,
+  });
 
-  final OnDeviceInternvlProfile? profile;
-  final OnDeviceInternvlServerStatus? server;
+  final String path;
+  final String capturedAtIso;
+  final String locationName;
+  final double? latitude;
+  final double? longitude;
 }
 
 extension on String {

@@ -332,6 +332,7 @@ $rawQuery
               'strictness': item['strictness'],
               'allow_descendants': item['allow_descendants'],
               'allow_nearby_siblings': item['allow_nearby_siblings'],
+              'country_candidates': item['country_candidates'],
             };
           })
           .toList(growable: false),
@@ -428,6 +429,16 @@ $rawQuery
       return kind;
     }
     if (kind == 'scenic') return 'scenic_area';
+    if (kind == 'region_concept') return 'region_concept';
+    if (const <String>{
+      'development_zone',
+      'township',
+      'business_area',
+      'neighborhood',
+      'campus',
+    }.contains(kind)) {
+      return kind;
+    }
     return 'poi';
   }
 
@@ -602,6 +613,7 @@ $rawQuery
         strictness: _readGeoStrictness(item['strictness']),
         allowDescendants: item['allow_descendants'] == true,
         allowNearbySiblings: item['allow_nearby_siblings'] == true,
+        countryCandidates: _readStringList(item['country_candidates']),
       );
       locations[location.text] = location;
     }
@@ -794,6 +806,12 @@ $rawQuery
       'scenic_area',
       'poi',
       'location',
+      'development_zone',
+      'township',
+      'business_area',
+      'neighborhood',
+      'campus',
+      'region_concept',
     };
     if (allowed.contains(text)) {
       return text == 'location' ? 'poi' : text!;

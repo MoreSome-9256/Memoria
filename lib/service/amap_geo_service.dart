@@ -25,6 +25,8 @@ class AmapGeoResult {
   final String? businessAreaText;
   final String? aoiNameText;
   final String? poiNameText;
+  final String? aoiIdText;
+  final String? poiIdText;
 
   const AmapGeoResult({
     this.country,
@@ -38,6 +40,8 @@ class AmapGeoResult {
     this.businessAreaText,
     this.aoiNameText,
     this.poiNameText,
+    this.aoiIdText,
+    this.poiIdText,
   });
 
   String get geoTextTokens =>
@@ -50,6 +54,8 @@ class AmapGeoResult {
             businessAreaText,
             aoiNameText,
             poiNameText,
+            aoiIdText,
+            poiIdText,
             locationName,
             formattedAddress,
             adcode,
@@ -93,6 +99,38 @@ class AmapGeoService {
       return _parseRegeocode(raw);
     } catch (_) {
       return null;
+    }
+  }
+
+  static Future<AmapPlaceResult?> searchPlace({
+    required String keywords,
+    String? city,
+  }) async {
+    if (_amapWebKey.trim().isEmpty || keywords.trim().isEmpty) return null;
+    final client = HttpClient();
+    try {
+      final uri = Uri.https('restapi.amap.com', '/v3/place/text', {
+        'key': _amapWebKey,
+        'keywords': keywords.trim(),
+        if (city?.trim().isNotEmpty == true) 'city': city!.trim(),
+        'citylimit': city?.trim().isNotEmpty == true ? 'true' : 'false',
+        'offset': '5',
+        'page': '1',
+        'extensions': 'base',
+      });
+      final response = await (await client.getUrl(uri)).close();
+      final body = await response.transform(utf8.decoder).join();
+      final json = jsonDecode(body);
+      if (json is! Map || json['status'] != '1') return null;
+      final pois = json['pois'];
+      if (pois is! List || pois.isEmpty || pois.first is! Map) return null;
+      return AmapPlaceResult.fromJson(
+        (pois.first as Map).cast<String, dynamic>(),
+      );
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
     }
   }
 
@@ -152,6 +190,8 @@ class AmapGeoService {
     );
     final aoiNameText = _extractNamesText(regeocode['aois']);
     final poiNameText = _extractNamesText(regeocode['pois']);
+    final aoiIdText = _extractValuesText(regeocode['aois'], 'id');
+    final poiIdText = _extractValuesText(regeocode['pois'], 'id');
     final formattedAddress = _extractNonEmptyString(regeocode, [
       'formatted_address',
     ]);
@@ -175,6 +215,8 @@ class AmapGeoService {
       businessAreaText: businessAreaText,
       aoiNameText: aoiNameText,
       poiNameText: poiNameText,
+      aoiIdText: aoiIdText,
+      poiIdText: poiIdText,
     );
   }
 
@@ -212,6 +254,17 @@ class AmapGeoService {
         .toSet()
         .toList(growable: false);
     return names.isEmpty ? null : names.map((name) => '|$name|').join();
+  }
+
+  static String? _extractValuesText(dynamic value, String key) {
+    if (value is! List) return null;
+    final values = value
+        .whereType<Map>()
+        .map((item) => item[key]?.toString().trim() ?? '')
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    return values.isEmpty ? null : values.map((item) => '|$item|').join();
   }
 
   static String? _extractLocationName(
@@ -351,5 +404,50 @@ class AmapGeoService {
     const ignored = <String>{'[]', '[[]]'};
     if (ignored.contains(normalized)) return false;
     return true;
+  }
+}
+
+class AmapPlaceResult {
+  const AmapPlaceResult({
+    required this.name,
+    this.poiId,
+    this.type,
+    this.province,
+    this.city,
+    this.district,
+    this.adcode,
+    this.latitude,
+    this.longitude,
+  });
+
+  factory AmapPlaceResult.fromJson(Map<String, dynamic> json) {
+    final location = json['location']?.toString().split(',') ?? const <String>[];
+    return AmapPlaceResult(
+      name: json['name']?.toString().trim() ?? '',
+      poiId: json['id']?.toString().trim(),
+      type: json['type']?.toString().trim(),
+      province: _value(json['pname']),
+      city: _value(json['cityname']),
+      district: _value(json['adname']),
+      adcode: _value(json['adcode']),
+      longitude: location.isNotEmpty ? double.tryParse(location[0]) : null,
+      latitude: location.length > 1 ? double.tryParse(location[1]) : null,
+    );
+  }
+
+  final String name;
+  final String? poiId;
+  final String? type;
+  final String? province;
+  final String? city;
+  final String? district;
+  final String? adcode;
+  final double? latitude;
+  final double? longitude;
+
+  static String? _value(dynamic value) {
+    if (value is String && value.trim().isNotEmpty) return value.trim();
+    if (value is List && value.isNotEmpty) return _value(value.first);
+    return null;
   }
 }

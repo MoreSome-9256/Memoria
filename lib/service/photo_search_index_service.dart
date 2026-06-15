@@ -1,11 +1,12 @@
 import '../models/entity/photo_entity.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
+import 'geo_coordinate_service.dart';
 
 class PhotoSearchIndexService {
   PhotoSearchIndexService._();
 
-  static const int currentVersion = 1;
+  static const int currentVersion = 2;
   static Future<void>? _backfillInFlight;
 
   static bool updateTimeFields(PhotoEntity photo) {
@@ -37,6 +38,34 @@ class PhotoSearchIndexService {
       ..capturedMinuteOfDay = date.hour * 60 + date.minute
       ..capturedWeekday = date.weekday
       ..searchIndexVersion = currentVersion;
+    return true;
+  }
+
+  static bool updateCoordinateFields(PhotoEntity photo) {
+    final latitude = photo.latitude;
+    final longitude = photo.longitude;
+    if (latitude == null || longitude == null) return false;
+    final amap = GeoCoordinateService.wgs84ToGcj02(latitude, longitude);
+    final fine = GeoCoordinateService.cellKey(amap.latitude, amap.longitude, 3);
+    final mid = GeoCoordinateService.cellKey(amap.latitude, amap.longitude, 2);
+    final coarse = GeoCoordinateService.cellKey(
+      amap.latitude,
+      amap.longitude,
+      1,
+    );
+    final changed =
+        photo.latAmapE6 != amap.latitudeE6 ||
+        photo.lonAmapE6 != amap.longitudeE6 ||
+        photo.geoCellFine != fine ||
+        photo.geoCellMid != mid ||
+        photo.geoCellCoarse != coarse;
+    if (!changed) return false;
+    photo
+      ..latAmapE6 = amap.latitudeE6
+      ..lonAmapE6 = amap.longitudeE6
+      ..geoCellFine = fine
+      ..geoCellMid = mid
+      ..geoCellCoarse = coarse;
     return true;
   }
 
@@ -72,7 +101,12 @@ class PhotoSearchIndexService {
       query.close();
       if (photos.isEmpty) return;
 
-      final changed = photos.where(updateTimeFields).toList(growable: false);
+      final changed = photos.where(updateTimeFields).toList();
+      for (final photo in photos) {
+        if (updateCoordinateFields(photo) && !changed.contains(photo)) {
+          changed.add(photo);
+        }
+      }
       if (changed.isEmpty) return;
       box.putMany(changed);
       await Future<void>.delayed(Duration.zero);

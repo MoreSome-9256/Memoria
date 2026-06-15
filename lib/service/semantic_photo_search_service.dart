@@ -13,6 +13,7 @@ import 'semantic_search_metadata_matcher.dart';
 import 'semantic_query_parser_service.dart';
 import 'photo_service.dart';
 import 'photo_search_index_service.dart';
+import 'place_resolver_service.dart';
 import 'searchable_photo_policy.dart';
 import 'semantic_query_plan_compiler.dart';
 
@@ -46,7 +47,7 @@ class SemanticPhotoSearchService {
   static const String _messageNoExactRelated = '没有找到完全匹配的照片，下面是可能相关的结果。';
 
   Future<SemanticSearchResult> search(String rawQuery) async {
-    final query = await _queryParser.parseQuery(rawQuery);
+    final query = await _resolvePlaces(await _queryParser.parseQuery(rawQuery));
     final photos = await _loadCandidatePhotos(query);
     return _searchParsedQuery(rawQuery: rawQuery, query: query, photos: photos);
   }
@@ -54,12 +55,21 @@ class SemanticPhotoSearchService {
   Future<SemanticSearchResult> searchWithQuery(
     SemanticSearchQuery query,
   ) async {
+    query = await _resolvePlaces(query);
     final photos = await _loadCandidatePhotos(query);
     return _searchParsedQuery(
       rawQuery: query.rawQuery,
       query: query,
       photos: photos,
     );
+  }
+
+  Future<SemanticSearchQuery> _resolvePlaces(SemanticSearchQuery query) async {
+    if (query.locations.isEmpty) return query;
+    final locations = await PlaceResolverService.instance.resolveAll(
+      query.locations,
+    );
+    return query.copyWith(locations: locations);
   }
 
   Future<SemanticSearchResult> _searchParsedQuery({
@@ -87,7 +97,7 @@ class SemanticPhotoSearchService {
           query: query,
           exactPhotos: const <PhotoEntity>[],
           relatedPhotos: _sortMetadataOnlyPhotos(possible, query),
-          hits: const <int, SemanticSearchHit>{},
+          hits: _metadataOnlyHits(possible, query, isExact: false),
           totalAnalyzedPhotos: totalAnalyzedPhotos,
           filteredCandidateCount: possible.length,
           metadataCandidateCount: 0,
@@ -103,7 +113,7 @@ class SemanticPhotoSearchService {
         query: query,
         exactPhotos: metadataOnlyPhotos,
         relatedPhotos: const <PhotoEntity>[],
-        hits: const <int, SemanticSearchHit>{},
+        hits: _metadataOnlyHits(metadataOnlyPhotos, query, isExact: true),
         totalAnalyzedPhotos: totalAnalyzedPhotos,
         filteredCandidateCount: metadataOnlyPhotos.length,
         metadataCandidateCount: metadataCandidateCount,
@@ -570,6 +580,47 @@ class SemanticPhotoSearchService {
       return right.timestamp.compareTo(left.timestamp);
     });
     return sorted;
+  }
+
+  Map<int, SemanticSearchHit> _metadataOnlyHits(
+    List<PhotoEntity> photos,
+    SemanticSearchQuery query, {
+    required bool isExact,
+  }) {
+    return <int, SemanticSearchHit>{
+      for (final photo in photos)
+        photo.id: _metadataOnlyHit(photo, query, isExact: isExact),
+    };
+  }
+
+  SemanticSearchHit _metadataOnlyHit(
+    PhotoEntity photo,
+    SemanticSearchQuery query, {
+    required bool isExact,
+  }) {
+    final location = _metadataMatcher.matchLocation(photo, query.locations);
+    final explanation = <String>[
+      if (query.hasTimeConstraints) 'time filters matched',
+      if (location.matchedLocations.isNotEmpty)
+        'location: ${location.matchedLocations.join(' / ')}',
+      if (query.hasAttributeConstraints) 'photo attributes matched',
+      if (!isExact) 'relaxed metadata match',
+    ];
+    final locationScore = query.locations.isEmpty ? 1.0 : location.score;
+    return SemanticSearchHit(
+      photoId: photo.id,
+      score: isExact ? locationScore : locationScore * 0.8,
+      semanticScore: 0,
+      qualifiedPositiveScore: 0,
+      negativeScore: 0,
+      coarseTagBonus: 0,
+      matchedCoarseTags: const <String>[],
+      matchedLocations: location.matchedLocations,
+      bestPositiveSemantic: null,
+      bestNegativeSemantic: null,
+      explanation: explanation,
+      isExactMatch: isExact,
+    );
   }
 
   double _bestLocationScore(

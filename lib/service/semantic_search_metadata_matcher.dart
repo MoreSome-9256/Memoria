@@ -2,6 +2,7 @@ import '../models/entity/photo_entity.dart';
 import '../models/vo/semantic_search_models.dart';
 import '../utils/tag_sanitizer.dart';
 import '../data/tag_taxonomy_v2.dart';
+import 'geo_coordinate_service.dart';
 
 class SemanticSearchMetadataMatcher {
   const SemanticSearchMetadataMatcher();
@@ -216,6 +217,18 @@ class SemanticSearchMetadataMatcher {
   }
 
   double _scoreLocation(PhotoEntity photo, SemanticSearchLocation location) {
+    if (location.type == 'region_concept' &&
+        location.countryCandidates.any(
+          (country) => photo.country?.contains(country) == true,
+        )) {
+      return 1.0;
+    }
+    final idMatched =
+        (location.amapPoiId?.isNotEmpty == true &&
+            photo.poiIdText?.contains('|${location.amapPoiId}|') == true) ||
+        (location.amapAoiId?.isNotEmpty == true &&
+            photo.aoiIdText?.contains('|${location.amapAoiId}|') == true);
+    if (idMatched) return 1.0;
     final weightedParts = <_WeightedLocationPart>[
       _WeightedLocationPart(photo.locationName, 1.0, _LocationFieldScope.poi),
       _WeightedLocationPart(photo.poiNameText, 1.0, _LocationFieldScope.poi),
@@ -271,6 +284,29 @@ class SemanticSearchMetadataMatcher {
           best = score;
         }
       }
+    }
+    if ((location.strictness == 'nearby' || location.allowNearbySiblings) &&
+        location.hasResolvedCenter &&
+        photo.latAmapE6 != null &&
+        photo.lonAmapE6 != null) {
+      final distance = GeoCoordinateService.distanceMeters(
+        photo.latAmapE6! / 1000000,
+        photo.lonAmapE6! / 1000000,
+        location.centerLatAmapE6! / 1000000,
+        location.centerLonAmapE6! / 1000000,
+      );
+      if (distance <= location.coreRadiusMeters) return mathMin(0.82, 1.0);
+    }
+    if (location.hasResolvedCenter &&
+        photo.latAmapE6 != null &&
+        photo.lonAmapE6 != null) {
+      final distance = GeoCoordinateService.distanceMeters(
+        photo.latAmapE6! / 1000000,
+        photo.lonAmapE6! / 1000000,
+        location.centerLatAmapE6! / 1000000,
+        location.centerLonAmapE6! / 1000000,
+      );
+      if (distance <= location.coreRadiusMeters) return mathMin(0.82, 1.0);
     }
     return best;
   }

@@ -1,6 +1,7 @@
 import '../models/entity/photo_entity.dart';
 import '../models/vo/semantic_search_models.dart';
 import '../objectbox.g.dart';
+import 'photo_search_index_service.dart';
 
 class SemanticQueryPlanCompiler {
   const SemanticQueryPlanCompiler();
@@ -12,7 +13,11 @@ class SemanticQueryPlanCompiler {
     Condition<PhotoEntity> condition = PhotoEntity_.isAiAnalyzed
         .equals(true)
         .and(PhotoEntity_.isAiAnalysisCandidate.equals(false))
-        .and(PhotoEntity_.searchIndexVersion.equals(1));
+        .and(
+          PhotoEntity_.searchIndexVersion.equals(
+            PhotoSearchIndexService.currentVersion,
+          ),
+        );
 
     final time = _compileTime(query, relaxed: relaxed);
     if (time != null) condition = condition.and(time);
@@ -110,6 +115,13 @@ class SemanticQueryPlanCompiler {
   }) {
     final locationConditions = <Condition<PhotoEntity>>[];
     for (final location in locations) {
+      if (location.type == 'region_concept' &&
+          location.countryCandidates.isNotEmpty) {
+        locationConditions.add(
+          PhotoEntity_.country.oneOf(location.countryCandidates),
+        );
+        continue;
+      }
       final terms = <String>{location.text, ...location.aliases}
           .map((term) => term.trim())
           .where((term) => term.length >= 2)
@@ -118,10 +130,41 @@ class SemanticQueryPlanCompiler {
       for (final term in terms) {
         termConditions.addAll(_geoTermConditions(term, location.type, relaxed));
       }
+      if (location.amapPoiId?.isNotEmpty == true) {
+        termConditions.add(
+          PhotoEntity_.poiIdText.contains('|${location.amapPoiId}|'),
+        );
+      }
+      if (location.amapAoiId?.isNotEmpty == true) {
+        termConditions.add(
+          PhotoEntity_.aoiIdText.contains('|${location.amapAoiId}|'),
+        );
+      }
+      final radius = relaxed
+          ? location.softRadiusMeters
+          : location.coreRadiusMeters;
+      final coordinateGroup = _coordinateBox(location, radius);
+      if (coordinateGroup != null) {
+        termConditions.add(coordinateGroup);
+      }
       final locationGroup = _orAll(termConditions);
       if (locationGroup != null) locationConditions.add(locationGroup);
     }
     return _orAll(locationConditions);
+  }
+
+  Condition<PhotoEntity>? _coordinateBox(
+    SemanticSearchLocation location,
+    int radiusMeters,
+  ) {
+    final lat = location.centerLatAmapE6;
+    final lon = location.centerLonAmapE6;
+    if (lat == null || lon == null || radiusMeters <= 0) return null;
+    final latDelta = (radiusMeters / 111320 * 1000000).ceil();
+    final lonDelta = (radiusMeters / 90000 * 1000000).ceil();
+    return PhotoEntity_.latAmapE6
+        .between(lat - latDelta, lat + latDelta)
+        .and(PhotoEntity_.lonAmapE6.between(lon - lonDelta, lon + lonDelta));
   }
 
   List<Condition<PhotoEntity>> _geoTermConditions(

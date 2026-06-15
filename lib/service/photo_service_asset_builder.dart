@@ -153,6 +153,7 @@ class _PhotoAssetBuilder {
       ..longitude = hasGps ? latLong!.longitude : null
       ..isLocationProcessed = false;
     PhotoSearchIndexService.updateTimeFields(photo);
+    PhotoSearchIndexService.updateCoordinateFields(photo);
 
     if (filterProfile.minTimestampMs != null &&
         photo.timestamp < filterProfile.minTimestampMs!) {

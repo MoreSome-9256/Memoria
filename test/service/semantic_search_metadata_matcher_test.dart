@@ -283,6 +283,81 @@ void main() {
       expect(matcher.matchesLocation(scenicContext, query), isFalse);
       expect(matcher.matchesLocation(villageContext, query), isFalse);
     });
+
+    test('matches a child POI when address confirms target containment', () {
+      final childPoi = _photo(
+        id: 10,
+        timestamp: 1,
+        city: '南京市',
+        locationName: '青年旅舍',
+        formattedAddress: '江苏省南京市秦淮区夫子庙青年旅舍',
+      );
+
+      expect(
+        matcher.matchesLocation(childPoi, const <SemanticSearchLocation>[
+          SemanticSearchLocation(text: '夫子庙', type: 'poi', strictness: 'exact'),
+        ]),
+        isTrue,
+      );
+    });
+
+    test('matches a nearby sibling inside the resolved core radius', () {
+      final sibling =
+          _photo(
+              id: 10,
+              timestamp: 1,
+              city: '南京市',
+              locationName: '青年旅舍',
+              formattedAddress: '江苏省南京市秦淮区贡院街青年旅舍',
+            )
+            ..latAmapE6 = 32020000
+            ..lonAmapE6 = 118790000;
+
+      expect(
+        matcher.matchesLocation(sibling, const <SemanticSearchLocation>[
+          SemanticSearchLocation(
+            text: '夫子庙',
+            type: 'poi',
+            strictness: 'exact',
+            centerLatAmapE6: 32020100,
+            centerLonAmapE6: 118790000,
+            coreRadiusMeters: 350,
+          ),
+        ]),
+        isTrue,
+      );
+    });
+
+    test('uses core radius for exact and nearby place queries', () {
+      final photo = _photo(id: 11, timestamp: 1)
+        ..latAmapE6 = 39908700
+        ..lonAmapE6 = 116397500;
+      const exact = SemanticSearchLocation(
+        text: '目标地点',
+        type: 'poi',
+        centerLatAmapE6: 39908750,
+        centerLonAmapE6: 116397500,
+        coreRadiusMeters: 300,
+      );
+      const nearby = SemanticSearchLocation(
+        text: '目标地点附近',
+        type: 'poi',
+        strictness: 'nearby',
+        allowNearbySiblings: true,
+        centerLatAmapE6: 39908750,
+        centerLonAmapE6: 116397500,
+        coreRadiusMeters: 300,
+      );
+
+      expect(
+        matcher.matchesLocation(photo, const <SemanticSearchLocation>[exact]),
+        isTrue,
+      );
+      expect(
+        matcher.matchesLocation(photo, const <SemanticSearchLocation>[nearby]),
+        isTrue,
+      );
+    });
   });
 
   test('maps sanitized visual tags to coarse tag matches', () {

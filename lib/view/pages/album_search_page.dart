@@ -1,6 +1,7 @@
-/// 相册搜索页面，支持语义检索和关键词检索照片。
+// 相册搜索页面，支持语义检索和关键词检索照片。
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../../models/entity/photo_entity.dart';
 import '../../models/vo/semantic_search_models.dart';
@@ -361,6 +362,13 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     Map<int, SemanticSearchHit> hits,
   ) {
     final tagSummaries = _buildFineTagSummaries(allPhotos, hits);
+    final explanations = allPhotos
+        .map((photo) => hits[photo.id])
+        .whereType<SemanticSearchHit>()
+        .expand((hit) => hit.explanation)
+        .toSet()
+        .take(4)
+        .toList(growable: false);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -439,6 +447,24 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
                 ],
               ),
             ),
+          ],
+          if (explanations.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(
+              '匹配依据',
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            for (final explanation in explanations)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '• $explanation',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
           ],
         ],
       ),
@@ -920,7 +946,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         ),
         child: SafeArea(
           child: CustomScrollView(
-            cacheExtent: 700,
+            scrollCacheExtent: const ScrollCacheExtent.pixels(700),
             slivers: [
               SliverToBoxAdapter(
                 child: Padding(

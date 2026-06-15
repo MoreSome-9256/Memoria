@@ -86,6 +86,14 @@ class SemanticSearchLocation {
     this.strictness = 'exact',
     this.allowDescendants = false,
     this.allowNearbySiblings = false,
+    this.countryCandidates = const <String>[],
+    this.amapPoiId,
+    this.amapAoiId,
+    this.adcode,
+    this.centerLatAmapE6,
+    this.centerLonAmapE6,
+    this.coreRadiusMeters = 300,
+    this.softRadiusMeters = 1000,
   });
 
   final String text;
@@ -96,6 +104,17 @@ class SemanticSearchLocation {
   final String strictness;
   final bool allowDescendants;
   final bool allowNearbySiblings;
+  final List<String> countryCandidates;
+  final String? amapPoiId;
+  final String? amapAoiId;
+  final String? adcode;
+  final int? centerLatAmapE6;
+  final int? centerLonAmapE6;
+  final int coreRadiusMeters;
+  final int softRadiusMeters;
+
+  bool get hasResolvedCenter =>
+      centerLatAmapE6 != null && centerLonAmapE6 != null;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -107,6 +126,14 @@ class SemanticSearchLocation {
       'strictness': strictness,
       'allow_descendants': allowDescendants,
       'allow_nearby_siblings': allowNearbySiblings,
+      'country_candidates': countryCandidates,
+      'amap_poi_id': amapPoiId,
+      'amap_aoi_id': amapAoiId,
+      'adcode': adcode,
+      'center_lat_amap_e6': centerLatAmapE6,
+      'center_lon_amap_e6': centerLonAmapE6,
+      'core_radius_meters': coreRadiusMeters,
+      'soft_radius_meters': softRadiusMeters,
     };
   }
 }

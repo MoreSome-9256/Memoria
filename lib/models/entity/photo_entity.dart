@@ -49,6 +49,16 @@ class PhotoEntity {
   // 📍 地理坐标 (WGS84 标准坐标)
   double? latitude;
   double? longitude;
+  @Index()
+  int? latAmapE6;
+  @Index()
+  int? lonAmapE6;
+  @Index()
+  String? geoCellFine;
+  @Index()
+  String? geoCellMid;
+  @Index()
+  String? geoCellCoarse;
 
   // 🏙️ 地址信息 (高德解析结果)
   @Index()
@@ -77,6 +87,10 @@ class PhotoEntity {
   String? aoiNameText;
   @Index()
   String? poiNameText;
+  @Index()
+  String? aoiIdText;
+  @Index()
+  String? poiIdText;
   @Index()
   String? geoTextTokens;
   int geoIndexedAt = 0;

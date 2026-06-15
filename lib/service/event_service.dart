@@ -1,4 +1,4 @@
-/// 事件聚合服务，负责按时间、位置和内容把照片整理成事件。
+// 事件聚合服务，负责按时间、位置和内容把照片整理成事件。
 
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
@@ -10,7 +10,7 @@ import '../utils/tag_sanitizer.dart';
 import '../utils/event_cluster_helper.dart';
 import '../utils/smart_title_generator.dart';
 import '../service/llm_service.dart';
-import '../service/amap_geo_service.dart';
+import 'geo_cell_cache_service.dart';
 import 'junk_photo_filter_service.dart';
 
 class EventService {
@@ -181,10 +181,9 @@ class EventService {
     for (final event in events) {
       try {
         print("开始解析事件地址: id=${event.id}");
-        final addr = await AmapGeoService.reverseGeocode(
+        final addr = await GeoCellCacheService.instance.reverseGeocode(
           latitude: event.avgLatitude!,
           longitude: event.avgLongitude!,
-          extensions: 'all',
         );
 
         if (addr == null) {
@@ -273,10 +272,9 @@ class EventService {
       if (lat == null || lon == null) continue;
 
       try {
-        final addr = await AmapGeoService.reverseGeocode(
+        final addr = await GeoCellCacheService.instance.reverseGeocode(
           latitude: lat,
           longitude: lon,
-          extensions: 'all',
         );
 
         if (addr == null) {
@@ -298,6 +296,8 @@ class EventService {
           latest.businessAreaText = addr.businessAreaText;
           latest.aoiNameText = addr.aoiNameText;
           latest.poiNameText = addr.poiNameText;
+          latest.aoiIdText = addr.aoiIdText;
+          latest.poiIdText = addr.poiIdText;
           latest.geoTextTokens = addr.geoTextTokens;
           latest.geoIndexedAt = DateTime.now().millisecondsSinceEpoch;
           latest.geoIndexVersion = 1;

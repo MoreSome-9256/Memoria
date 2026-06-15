@@ -1,11 +1,30 @@
+import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
-import 'package:llama_cpp_dart/llama_cpp_dart.dart';
+import 'package:llamadart/llamadart.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'ai_model_weight_service.dart';
 import 'media_analysis_image_reader.dart';
+
+class LocalVlmModelConfig {
+  const LocalVlmModelConfig({
+    required this.id,
+    required this.modelPath,
+    required this.projectorPath,
+  });
+
+  final String id;
+  final String modelPath;
+  final String projectorPath;
+}
+
+class LocalVlmAssetInput {
+  const LocalVlmAssetInput({required this.assetId, required this.treatAsVideo});
+
+  final String assetId;
+  final bool treatAsVideo;
+}
 
 class LocalVlmDescriptionService {
   LocalVlmDescriptionService._();
@@ -13,10 +32,21 @@ class LocalVlmDescriptionService {
       LocalVlmDescriptionService._();
 
   LlamaEngine? _engine;
-  static const int _mobileFrameSize = 512;
-  static const int _mobileVideoFrameCount = 4;
+  LocalVlmModelConfig? _overrideConfig;
+  Future<LlamaEngine>? _loading;
+  Future<void> _generationTail = Future<void>.value();
+  static const int _mobileFrameSize = 448;
+  static const int _mobileVideoFrameCount = 3;
 
   Future<bool> get isEnabled async => true;
+
+  /// Allows another compatible GGUF vision model, including Gemma-family
+  /// models, without changing the caption pipeline.
+  Future<void> configureModel(LocalVlmModelConfig? config) async {
+    if (_sameConfig(_overrideConfig, config)) return;
+    _overrideConfig = config;
+    await _resetEngine();
+  }
 
   Future<String> generateAssetDescription({
     required String assetId,
@@ -24,69 +54,95 @@ class LocalVlmDescriptionService {
     String prompt =
         'Describe the visible content in one concise, concrete paragraph.',
   }) async {
-    return _generateDescriptionFromFrames(
-      frameResult: await MediaAnalysisImageReader.instance
-          .readFrameFilesFromAsset(
-            assetId.trim(),
-            videoLike: treatAsVideo,
-            maxFrames: treatAsVideo ? _mobileVideoFrameCount : 1,
-            imageSize: _mobileFrameSize,
-          ),
-      treatAsVideo: treatAsVideo,
+    return generateAssetsDescription(
+      assets: <LocalVlmAssetInput>[
+        LocalVlmAssetInput(assetId: assetId, treatAsVideo: treatAsVideo),
+      ],
       prompt: prompt,
+      maxTokens: 160,
     );
   }
 
-  Future<String> _generateDescriptionFromFrames({
-    required MediaAnalysisFrameFiles frameResult,
-    required bool treatAsVideo,
+  Future<String> generateAssetsDescription({
+    required List<LocalVlmAssetInput> assets,
     required String prompt,
+    int maxTokens = 320,
   }) async {
-    if (!await isEnabled) {
-      return '';
-    }
-    final cleanupPaths = List<String>.from(frameResult.cleanupPaths);
-    EngineChat? chat;
-    var generationFailed = false;
+    if (assets.isEmpty) throw ArgumentError('At least one asset is required.');
+    final previous = _generationTail;
+    final completer = Completer<void>();
+    _generationTail = completer.future;
+    await previous;
     try {
-      final engine = await _ensureEngine();
-      chat = await engine.createChat();
-      final frameBytes = await _readFrameBytes(frameResult.frames);
-      if (frameBytes.isEmpty) {
+      return await _generateAssetsDescriptionLocked(
+        assets: assets,
+        prompt: prompt,
+        maxTokens: maxTokens,
+      );
+    } finally {
+      completer.complete();
+    }
+  }
+
+  Future<String> _generateAssetsDescriptionLocked({
+    required List<LocalVlmAssetInput> assets,
+    required String prompt,
+    required int maxTokens,
+  }) async {
+    final frameResults = <MediaAnalysisFrameFiles>[];
+    try {
+      for (final asset in assets.take(9)) {
+        frameResults.add(
+          await MediaAnalysisImageReader.instance.readFrameFilesFromAsset(
+            asset.assetId.trim(),
+            videoLike: asset.treatAsVideo,
+            maxFrames: assets.length == 1 && asset.treatAsVideo
+                ? _mobileVideoFrameCount
+                : 1,
+            imageSize: _mobileFrameSize,
+          ),
+        );
+      }
+      final frameFiles = frameResults
+          .expand((result) => result.frames)
+          .toList();
+      if (frameFiles.isEmpty) {
         throw StateError('No readable visual frames were extracted.');
       }
-      final media = treatAsVideo
-          ? LlamaMedia.videoFrames(frameBytes, idPrefix: 'frame')
-          : <LlamaMedia>[LlamaMedia.imageBytes(frameBytes.first, id: 'image')];
-      chat.addUser(prompt, media: media);
+      final engine = await _ensureEngine().timeout(const Duration(minutes: 2));
+      final content = <LlamaContentPart>[
+        for (final frame in frameFiles) LlamaImageContent(path: frame.path),
+        LlamaTextContent(prompt),
+      ];
+      final response = engine.create(
+        <LlamaChatMessage>[
+          LlamaChatMessage.withContent(
+            role: LlamaChatRole.user,
+            content: content,
+          ),
+        ],
+        params: GenerationParams(
+          maxTokens: maxTokens.clamp(32, 512),
+          temp: 0.2,
+          topP: 0.9,
+        ),
+      );
       final buffer = StringBuffer();
-      await for (final event in chat.generate(
-        sampler: const SamplerParams(temperature: 0.2, topP: 0.9),
-        maxTokens: 160,
-      )) {
-        if (event is TokenEvent) {
-          buffer.write(event.text);
-        } else if (event is DoneEvent && event.trailingText.isNotEmpty) {
-          buffer.write(event.trailingText);
-        }
+      await for (final chunk in response.timeout(const Duration(minutes: 3))) {
+        final text = chunk.choices.firstOrNull?.delta.content;
+        if (text != null) buffer.write(text);
       }
-      return buffer.toString().trim();
+      final result = buffer.toString().trim();
+      if (result.isEmpty) throw StateError('Local VLM returned empty output.');
+      return result;
     } catch (_) {
-      generationFailed = true;
+      await _resetEngine();
       rethrow;
     } finally {
-      try {
-        await chat?.dispose();
-      } catch (_) {}
-      if (generationFailed) {
-        await _resetEngine();
-      }
-      for (final path in cleanupPaths) {
+      for (final path in frameResults.expand((result) => result.cleanupPaths)) {
         try {
           final file = File(path);
-          if (await file.exists()) {
-            await file.delete();
-          }
+          if (await file.exists()) await file.delete();
         } catch (_) {}
       }
     }
@@ -94,69 +150,62 @@ class LocalVlmDescriptionService {
 
   Future<LlamaEngine> _ensureEngine() async {
     final existing = _engine;
-    if (existing != null) {
-      return existing;
+    if (existing != null) return existing;
+    final activeLoad = _loading;
+    if (activeLoad != null) return activeLoad;
+    final load = _loadEngine();
+    _loading = load;
+    try {
+      return await load;
+    } finally {
+      if (identical(_loading, load)) _loading = null;
     }
-    final isAvailable = await AiModelWeightService.instance
-        .ensureWeightsAvailableForInference(AiModelWeightId.smolVlm2);
-    if (!isAvailable) {
-      throw StateError(
-        'SmolVLM2 model weights not found. Please download the model first using AiModelWeightService.instance.downloadWeights(AiModelWeightId.smolVlm2).',
+  }
+
+  Future<LlamaEngine> _loadEngine() async {
+    final config = _overrideConfig ?? await _defaultConfig();
+    final engine = LlamaEngine(LlamaBackend());
+    try {
+      await engine.setLogLevel(LlamaLogLevel.warn);
+      await engine.loadModel(
+        config.modelPath,
+        modelParams: ModelParams(gpuLayers: Platform.isAndroid ? 0 : 99),
       );
+      await engine.loadMultimodalProjector(config.projectorPath);
+      _engine = engine;
+      return engine;
+    } catch (_) {
+      await engine.dispose();
+      rethrow;
+    }
+  }
+
+  Future<LocalVlmModelConfig> _defaultConfig() async {
+    final available = await AiModelWeightService.instance
+        .ensureWeightsAvailableForInference(AiModelWeightId.smolVlm2);
+    if (!available) {
+      throw StateError('SmolVLM2 model weights are not available.');
     }
     final docs = await getApplicationDocumentsDirectory();
-    final modelDir = Directory('${docs.path}/models/smolvlm2');
-    final modelFile = File('${modelDir.path}/smolvlm2.gguf');
-    final mmprojFile = File('${modelDir.path}/mmproj.gguf');
-    if (!modelFile.existsSync() || !mmprojFile.existsSync()) {
-      throw StateError(
-        'SmolVLM2 model assets are missing. Expected ${modelFile.path} and ${mmprojFile.path}.',
-      );
+    final directory = Directory('${docs.path}/models/smolvlm2');
+    final model = File('${directory.path}/smolvlm2.gguf');
+    final projector = File('${directory.path}/mmproj.gguf');
+    if (!model.existsSync() || !projector.existsSync()) {
+      throw StateError('SmolVLM2 model or visual projector is missing.');
     }
-    final engine = await (Platform.isAndroid
-        ? LlamaEngine.spawn(
-            libraryPath: 'libllama.so',
-            modelParams: ModelParams(path: modelFile.path, gpuLayers: 0),
-            contextParams: const ContextParams(
-              nCtx: 2048,
-              nBatch: 256,
-              nUbatch: 128,
-              nThreads: 4,
-              nThreadsBatch: 4,
-              offloadKqv: false,
-              opOffload: false,
-            ),
-            multimodalParams: MultimodalParams(mmprojPath: mmprojFile.path),
-          )
-        : LlamaEngine.spawnFromProcess(
-            modelParams: ModelParams(path: modelFile.path, gpuLayers: 99),
-            contextParams: const ContextParams(nCtx: 4096),
-            multimodalParams: MultimodalParams(mmprojPath: mmprojFile.path),
-          ));
-    if (!engine.multimodalLoaded || !engine.supportsVision) {
-      await engine.dispose();
-      throw StateError('SmolVLM2 visual projector failed to initialize.');
-    }
-    _engine = engine;
-    return engine;
+    return LocalVlmModelConfig(
+      id: 'smolvlm2',
+      modelPath: model.path,
+      projectorPath: projector.path,
+    );
   }
 
-  Future<List<Uint8List>> _readFrameBytes(List<File> frames) async {
-    final bytes = <Uint8List>[];
-    for (final frame in frames) {
-      if (await frame.exists()) {
-        final data = await frame.readAsBytes();
-        if (data.isNotEmpty) {
-          bytes.add(data);
-        }
-      }
-    }
-    return bytes;
-  }
+  bool _sameConfig(LocalVlmModelConfig? left, LocalVlmModelConfig? right) =>
+      left?.id == right?.id &&
+      left?.modelPath == right?.modelPath &&
+      left?.projectorPath == right?.projectorPath;
 
-  Future<void> dispose() async {
-    await _resetEngine();
-  }
+  Future<void> dispose() => _resetEngine();
 
   Future<void> _resetEngine() async {
     final engine = _engine;

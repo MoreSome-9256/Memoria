@@ -19,7 +19,9 @@ import 'models/entity/create_recommendation_entity.dart';
 import 'models/entity/digital_album_book_entity.dart';
 import 'models/entity/event_entity.dart';
 import 'models/entity/face_entity.dart';
+import 'models/entity/geo_cell_cache_entity.dart';
 import 'models/entity/photo_entity.dart';
+import 'models/entity/place_resolve_cache_entity.dart';
 import 'models/entity/story_entity.dart';
 import 'service/analysis/analysis_image_entity.dart';
 import 'service/analysis/analysis_task_entity.dart';
@@ -742,7 +744,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(8, 8597624262250363654),
     name: 'PhotoEntity',
-    lastPropertyId: const obx_int.IdUid(50, 7224361708935670960),
+    lastPropertyId: const obx_int.IdUid(57, 2049556598514886200),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1064,6 +1066,55 @@ final _entities = <obx_int.ModelEntity>[
         type: 9,
         flags: 2048,
         indexId: const obx_int.IdUid(59, 3255543267126672134),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(51, 5177447250225003328),
+        name: 'latAmapE6',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(63, 9196790153425102408),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(52, 7599867059095123971),
+        name: 'lonAmapE6',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(64, 856019773534168398),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(53, 4835436257697957092),
+        name: 'geoCellFine',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(65, 8790304929149370284),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(54, 8242148792238540882),
+        name: 'geoCellMid',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(66, 6241680630493681173),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(55, 1564406603952692103),
+        name: 'geoCellCoarse',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(67, 2052889082332266389),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(56, 5955232339336177812),
+        name: 'aoiIdText',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(68, 8540223093482630222),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(57, 2049556598514886200),
+        name: 'poiIdText',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(69, 5922756641253799326),
       ),
     ],
     relations: <obx_int.ModelRelation>[],
@@ -1417,6 +1468,298 @@ final _entities = <obx_int.ModelEntity>[
     relations: <obx_int.ModelRelation>[],
     backlinks: <obx_int.ModelBacklink>[],
   ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(14, 1173587977414554246),
+    name: 'GeoCellCacheEntity',
+    lastPropertyId: const obx_int.IdUid(23, 5759001663304614717),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 5569146419375213800),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 8082062163297427190),
+        name: 'lookupKey',
+        type: 9,
+        flags: 34848,
+        indexId: const obx_int.IdUid(60, 5898495325173952351),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 1984985192806427940),
+        name: 'cellKey',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(61, 7712020067862883102),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 5413045135656256076),
+        name: 'level',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(62, 4522936202727657192),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 484614813137128190),
+        name: 'centerLatAmapE6',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 7681673113278831718),
+        name: 'centerLonAmapE6',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 8761303169854874701),
+        name: 'country',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 7055465962487037532),
+        name: 'province',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 9103777844391587480),
+        name: 'city',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 1801649750502638977),
+        name: 'district',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 247288130999067402),
+        name: 'adcode',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 906751264784110607),
+        name: 'township',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 5478541463966636738),
+        name: 'locationName',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 108666245435178613),
+        name: 'formattedAddress',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 5276798511035926981),
+        name: 'businessAreaText',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 1743700503513913764),
+        name: 'aoiIdText',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(17, 4587442868649378298),
+        name: 'aoiSummaryText',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 8426215515626700775),
+        name: 'poiIdText',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 6810977829557484628),
+        name: 'poiSummaryText',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 1102020992124789388),
+        name: 'geoTextTokens',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 6417590118454894751),
+        name: 'rawCompactJson',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(22, 3641769031739332111),
+        name: 'updatedAt',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(23, 5759001663304614717),
+        name: 'source',
+        type: 9,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(15, 5439288142837443834),
+    name: 'PlaceResolveCacheEntity',
+    lastPropertyId: const obx_int.IdUid(21, 5737893917662516005),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 7675460572438874646),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 8475811280448282720),
+        name: 'lookupKey',
+        type: 9,
+        flags: 34848,
+        indexId: const obx_int.IdUid(70, 6450739453039660233),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(3, 676655118977065888),
+        name: 'normalizedText',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(71, 9088040365869150643),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(4, 905630843239819458),
+        name: 'queryText',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(5, 8248674717331938691),
+        name: 'cityHint',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(6, 7755735845357419441),
+        name: 'adcodeHint',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(7, 6457285447207251515),
+        name: 'resolvedKind',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(72, 2331229325810434751),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(8, 6050043018955480228),
+        name: 'canonicalName',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(9, 3346187918901997009),
+        name: 'amapPoiId',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(73, 6986695452496431645),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(10, 3578870048088328310),
+        name: 'amapAoiId',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(74, 366679411834607743),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(11, 487235054301780926),
+        name: 'province',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(12, 8748192752927975059),
+        name: 'city',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(13, 2485881107901779674),
+        name: 'district',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(14, 4999497181515390487),
+        name: 'adcode',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(15, 4903042974080398672),
+        name: 'centerLatAmapE6',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(16, 4079653312400937963),
+        name: 'centerLonAmapE6',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(17, 8081393088483104571),
+        name: 'coreRadiusMeters',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(18, 8021472108782392106),
+        name: 'softRadiusMeters',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(19, 2304548106744195998),
+        name: 'aliasesText',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 8916493236222690280),
+        name: 'confidence',
+        type: 8,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 5737893917662516005),
+        name: 'updatedAt',
+        type: 6,
+        flags: 0,
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
 ];
 
 /// Shortcut for [obx.Store.new] that passes [getObjectBoxModel] and for Flutter
@@ -1462,8 +1805,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
     // Typically, this is done with `dart run build_runner build`.
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
-    lastEntityId: const obx_int.IdUid(13, 5122727067842506599),
-    lastIndexId: const obx_int.IdUid(59, 3255543267126672134),
+    lastEntityId: const obx_int.IdUid(15, 5439288142837443834),
+    lastIndexId: const obx_int.IdUid(74, 366679411834607743),
     lastRelationId: const obx_int.IdUid(0, 0),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [1998729358182538669],
@@ -2378,7 +2721,22 @@ obx_int.ModelDefinition getObjectBoxModel() {
         final poiNameTextOffset = object.poiNameText == null
             ? null
             : fbb.writeString(object.poiNameText!);
-        fbb.startTable(51);
+        final geoCellFineOffset = object.geoCellFine == null
+            ? null
+            : fbb.writeString(object.geoCellFine!);
+        final geoCellMidOffset = object.geoCellMid == null
+            ? null
+            : fbb.writeString(object.geoCellMid!);
+        final geoCellCoarseOffset = object.geoCellCoarse == null
+            ? null
+            : fbb.writeString(object.geoCellCoarse!);
+        final aoiIdTextOffset = object.aoiIdText == null
+            ? null
+            : fbb.writeString(object.aoiIdText!);
+        final poiIdTextOffset = object.poiIdText == null
+            ? null
+            : fbb.writeString(object.poiIdText!);
+        fbb.startTable(58);
         fbb.addInt64(0, object.id);
         fbb.addOffset(1, assetIdOffset);
         fbb.addOffset(2, pathOffset);
@@ -2428,6 +2786,13 @@ obx_int.ModelDefinition getObjectBoxModel() {
         fbb.addOffset(47, businessAreaTextOffset);
         fbb.addOffset(48, aoiNameTextOffset);
         fbb.addOffset(49, poiNameTextOffset);
+        fbb.addInt64(50, object.latAmapE6);
+        fbb.addInt64(51, object.lonAmapE6);
+        fbb.addOffset(52, geoCellFineOffset);
+        fbb.addOffset(53, geoCellMidOffset);
+        fbb.addOffset(54, geoCellCoarseOffset);
+        fbb.addOffset(55, aoiIdTextOffset);
+        fbb.addOffset(56, poiIdTextOffset);
         fbb.finish(fbb.endTable());
         return object.id;
       },
@@ -2649,7 +3014,32 @@ obx_int.ModelDefinition getObjectBoxModel() {
           ).vTableGetNullable(buffer, rootOffset, 100)
           ..poiNameText = const fb.StringReader(
             asciiOptimization: true,
-          ).vTableGetNullable(buffer, rootOffset, 102);
+          ).vTableGetNullable(buffer, rootOffset, 102)
+          ..latAmapE6 = const fb.Int64Reader().vTableGetNullable(
+            buffer,
+            rootOffset,
+            104,
+          )
+          ..lonAmapE6 = const fb.Int64Reader().vTableGetNullable(
+            buffer,
+            rootOffset,
+            106,
+          )
+          ..geoCellFine = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 108)
+          ..geoCellMid = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 110)
+          ..geoCellCoarse = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 112)
+          ..aoiIdText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 114)
+          ..poiIdText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 116);
 
         return object;
       },
@@ -3113,6 +3503,329 @@ obx_int.ModelDefinition getObjectBoxModel() {
           updatedAtMs: updatedAtMsParam,
           resultJson: resultJsonParam,
         );
+
+        return object;
+      },
+    ),
+    GeoCellCacheEntity: obx_int.EntityDefinition<GeoCellCacheEntity>(
+      model: _entities[12],
+      toOneRelations: (GeoCellCacheEntity object) => [],
+      toManyRelations: (GeoCellCacheEntity object) => {},
+      getId: (GeoCellCacheEntity object) => object.id,
+      setId: (GeoCellCacheEntity object, int id) {
+        object.id = id;
+      },
+      objectToFB: (GeoCellCacheEntity object, fb.Builder fbb) {
+        final lookupKeyOffset = fbb.writeString(object.lookupKey);
+        final cellKeyOffset = fbb.writeString(object.cellKey);
+        final countryOffset = object.country == null
+            ? null
+            : fbb.writeString(object.country!);
+        final provinceOffset = object.province == null
+            ? null
+            : fbb.writeString(object.province!);
+        final cityOffset = object.city == null
+            ? null
+            : fbb.writeString(object.city!);
+        final districtOffset = object.district == null
+            ? null
+            : fbb.writeString(object.district!);
+        final adcodeOffset = object.adcode == null
+            ? null
+            : fbb.writeString(object.adcode!);
+        final townshipOffset = object.township == null
+            ? null
+            : fbb.writeString(object.township!);
+        final locationNameOffset = object.locationName == null
+            ? null
+            : fbb.writeString(object.locationName!);
+        final formattedAddressOffset = object.formattedAddress == null
+            ? null
+            : fbb.writeString(object.formattedAddress!);
+        final businessAreaTextOffset = object.businessAreaText == null
+            ? null
+            : fbb.writeString(object.businessAreaText!);
+        final aoiIdTextOffset = object.aoiIdText == null
+            ? null
+            : fbb.writeString(object.aoiIdText!);
+        final aoiSummaryTextOffset = object.aoiSummaryText == null
+            ? null
+            : fbb.writeString(object.aoiSummaryText!);
+        final poiIdTextOffset = object.poiIdText == null
+            ? null
+            : fbb.writeString(object.poiIdText!);
+        final poiSummaryTextOffset = object.poiSummaryText == null
+            ? null
+            : fbb.writeString(object.poiSummaryText!);
+        final geoTextTokensOffset = object.geoTextTokens == null
+            ? null
+            : fbb.writeString(object.geoTextTokens!);
+        final rawCompactJsonOffset = object.rawCompactJson == null
+            ? null
+            : fbb.writeString(object.rawCompactJson!);
+        final sourceOffset = fbb.writeString(object.source);
+        fbb.startTable(24);
+        fbb.addInt64(0, object.id);
+        fbb.addOffset(1, lookupKeyOffset);
+        fbb.addOffset(2, cellKeyOffset);
+        fbb.addInt64(3, object.level);
+        fbb.addInt64(4, object.centerLatAmapE6);
+        fbb.addInt64(5, object.centerLonAmapE6);
+        fbb.addOffset(6, countryOffset);
+        fbb.addOffset(7, provinceOffset);
+        fbb.addOffset(8, cityOffset);
+        fbb.addOffset(9, districtOffset);
+        fbb.addOffset(10, adcodeOffset);
+        fbb.addOffset(11, townshipOffset);
+        fbb.addOffset(12, locationNameOffset);
+        fbb.addOffset(13, formattedAddressOffset);
+        fbb.addOffset(14, businessAreaTextOffset);
+        fbb.addOffset(15, aoiIdTextOffset);
+        fbb.addOffset(16, aoiSummaryTextOffset);
+        fbb.addOffset(17, poiIdTextOffset);
+        fbb.addOffset(18, poiSummaryTextOffset);
+        fbb.addOffset(19, geoTextTokensOffset);
+        fbb.addOffset(20, rawCompactJsonOffset);
+        fbb.addInt64(21, object.updatedAt);
+        fbb.addOffset(22, sourceOffset);
+        fbb.finish(fbb.endTable());
+        return object.id;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+
+        final object = GeoCellCacheEntity()
+          ..id = const fb.Int64Reader().vTableGet(buffer, rootOffset, 4, 0)
+          ..lookupKey = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGet(buffer, rootOffset, 6, '')
+          ..cellKey = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGet(buffer, rootOffset, 8, '')
+          ..level = const fb.Int64Reader().vTableGet(buffer, rootOffset, 10, 0)
+          ..centerLatAmapE6 = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            12,
+            0,
+          )
+          ..centerLonAmapE6 = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            14,
+            0,
+          )
+          ..country = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 16)
+          ..province = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 18)
+          ..city = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 20)
+          ..district = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 22)
+          ..adcode = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 24)
+          ..township = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 26)
+          ..locationName = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 28)
+          ..formattedAddress = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 30)
+          ..businessAreaText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 32)
+          ..aoiIdText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 34)
+          ..aoiSummaryText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 36)
+          ..poiIdText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 38)
+          ..poiSummaryText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 40)
+          ..geoTextTokens = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 42)
+          ..rawCompactJson = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 44)
+          ..updatedAt = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            46,
+            0,
+          )
+          ..source = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGet(buffer, rootOffset, 48, '');
+
+        return object;
+      },
+    ),
+    PlaceResolveCacheEntity: obx_int.EntityDefinition<PlaceResolveCacheEntity>(
+      model: _entities[13],
+      toOneRelations: (PlaceResolveCacheEntity object) => [],
+      toManyRelations: (PlaceResolveCacheEntity object) => {},
+      getId: (PlaceResolveCacheEntity object) => object.id,
+      setId: (PlaceResolveCacheEntity object, int id) {
+        object.id = id;
+      },
+      objectToFB: (PlaceResolveCacheEntity object, fb.Builder fbb) {
+        final lookupKeyOffset = fbb.writeString(object.lookupKey);
+        final normalizedTextOffset = fbb.writeString(object.normalizedText);
+        final queryTextOffset = object.queryText == null
+            ? null
+            : fbb.writeString(object.queryText!);
+        final cityHintOffset = object.cityHint == null
+            ? null
+            : fbb.writeString(object.cityHint!);
+        final adcodeHintOffset = object.adcodeHint == null
+            ? null
+            : fbb.writeString(object.adcodeHint!);
+        final resolvedKindOffset = fbb.writeString(object.resolvedKind);
+        final canonicalNameOffset = object.canonicalName == null
+            ? null
+            : fbb.writeString(object.canonicalName!);
+        final amapPoiIdOffset = object.amapPoiId == null
+            ? null
+            : fbb.writeString(object.amapPoiId!);
+        final amapAoiIdOffset = object.amapAoiId == null
+            ? null
+            : fbb.writeString(object.amapAoiId!);
+        final provinceOffset = object.province == null
+            ? null
+            : fbb.writeString(object.province!);
+        final cityOffset = object.city == null
+            ? null
+            : fbb.writeString(object.city!);
+        final districtOffset = object.district == null
+            ? null
+            : fbb.writeString(object.district!);
+        final adcodeOffset = object.adcode == null
+            ? null
+            : fbb.writeString(object.adcode!);
+        final aliasesTextOffset = object.aliasesText == null
+            ? null
+            : fbb.writeString(object.aliasesText!);
+        fbb.startTable(22);
+        fbb.addInt64(0, object.id);
+        fbb.addOffset(1, lookupKeyOffset);
+        fbb.addOffset(2, normalizedTextOffset);
+        fbb.addOffset(3, queryTextOffset);
+        fbb.addOffset(4, cityHintOffset);
+        fbb.addOffset(5, adcodeHintOffset);
+        fbb.addOffset(6, resolvedKindOffset);
+        fbb.addOffset(7, canonicalNameOffset);
+        fbb.addOffset(8, amapPoiIdOffset);
+        fbb.addOffset(9, amapAoiIdOffset);
+        fbb.addOffset(10, provinceOffset);
+        fbb.addOffset(11, cityOffset);
+        fbb.addOffset(12, districtOffset);
+        fbb.addOffset(13, adcodeOffset);
+        fbb.addInt64(14, object.centerLatAmapE6);
+        fbb.addInt64(15, object.centerLonAmapE6);
+        fbb.addInt64(16, object.coreRadiusMeters);
+        fbb.addInt64(17, object.softRadiusMeters);
+        fbb.addOffset(18, aliasesTextOffset);
+        fbb.addFloat64(19, object.confidence);
+        fbb.addInt64(20, object.updatedAt);
+        fbb.finish(fbb.endTable());
+        return object.id;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+
+        final object = PlaceResolveCacheEntity()
+          ..id = const fb.Int64Reader().vTableGet(buffer, rootOffset, 4, 0)
+          ..lookupKey = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGet(buffer, rootOffset, 6, '')
+          ..normalizedText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGet(buffer, rootOffset, 8, '')
+          ..queryText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 10)
+          ..cityHint = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 12)
+          ..adcodeHint = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 14)
+          ..resolvedKind = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGet(buffer, rootOffset, 16, '')
+          ..canonicalName = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 18)
+          ..amapPoiId = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 20)
+          ..amapAoiId = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 22)
+          ..province = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 24)
+          ..city = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 26)
+          ..district = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 28)
+          ..adcode = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 30)
+          ..centerLatAmapE6 = const fb.Int64Reader().vTableGetNullable(
+            buffer,
+            rootOffset,
+            32,
+          )
+          ..centerLonAmapE6 = const fb.Int64Reader().vTableGetNullable(
+            buffer,
+            rootOffset,
+            34,
+          )
+          ..coreRadiusMeters = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            36,
+            0,
+          )
+          ..softRadiusMeters = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            38,
+            0,
+          )
+          ..aliasesText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 40)
+          ..confidence = const fb.Float64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            42,
+            0,
+          )
+          ..updatedAt = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            44,
+            0,
+          );
 
         return object;
       },
@@ -3910,6 +4623,41 @@ class PhotoEntity_ {
   static final poiNameText = obx.QueryStringProperty<PhotoEntity>(
     _entities[7].properties[48],
   );
+
+  /// See [PhotoEntity.latAmapE6].
+  static final latAmapE6 = obx.QueryIntegerProperty<PhotoEntity>(
+    _entities[7].properties[49],
+  );
+
+  /// See [PhotoEntity.lonAmapE6].
+  static final lonAmapE6 = obx.QueryIntegerProperty<PhotoEntity>(
+    _entities[7].properties[50],
+  );
+
+  /// See [PhotoEntity.geoCellFine].
+  static final geoCellFine = obx.QueryStringProperty<PhotoEntity>(
+    _entities[7].properties[51],
+  );
+
+  /// See [PhotoEntity.geoCellMid].
+  static final geoCellMid = obx.QueryStringProperty<PhotoEntity>(
+    _entities[7].properties[52],
+  );
+
+  /// See [PhotoEntity.geoCellCoarse].
+  static final geoCellCoarse = obx.QueryStringProperty<PhotoEntity>(
+    _entities[7].properties[53],
+  );
+
+  /// See [PhotoEntity.aoiIdText].
+  static final aoiIdText = obx.QueryStringProperty<PhotoEntity>(
+    _entities[7].properties[54],
+  );
+
+  /// See [PhotoEntity.poiIdText].
+  static final poiIdText = obx.QueryStringProperty<PhotoEntity>(
+    _entities[7].properties[55],
+  );
 }
 
 /// [ChatMessage] entity fields to define ObjectBox queries.
@@ -4176,5 +4924,236 @@ class AnalysisTaskEntity_ {
   /// See [AnalysisTaskEntity.resultJson].
   static final resultJson = obx.QueryStringProperty<AnalysisTaskEntity>(
     _entities[11].properties[11],
+  );
+}
+
+/// [GeoCellCacheEntity] entity fields to define ObjectBox queries.
+class GeoCellCacheEntity_ {
+  /// See [GeoCellCacheEntity.id].
+  static final id = obx.QueryIntegerProperty<GeoCellCacheEntity>(
+    _entities[12].properties[0],
+  );
+
+  /// See [GeoCellCacheEntity.lookupKey].
+  static final lookupKey = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[1],
+  );
+
+  /// See [GeoCellCacheEntity.cellKey].
+  static final cellKey = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[2],
+  );
+
+  /// See [GeoCellCacheEntity.level].
+  static final level = obx.QueryIntegerProperty<GeoCellCacheEntity>(
+    _entities[12].properties[3],
+  );
+
+  /// See [GeoCellCacheEntity.centerLatAmapE6].
+  static final centerLatAmapE6 = obx.QueryIntegerProperty<GeoCellCacheEntity>(
+    _entities[12].properties[4],
+  );
+
+  /// See [GeoCellCacheEntity.centerLonAmapE6].
+  static final centerLonAmapE6 = obx.QueryIntegerProperty<GeoCellCacheEntity>(
+    _entities[12].properties[5],
+  );
+
+  /// See [GeoCellCacheEntity.country].
+  static final country = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[6],
+  );
+
+  /// See [GeoCellCacheEntity.province].
+  static final province = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[7],
+  );
+
+  /// See [GeoCellCacheEntity.city].
+  static final city = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[8],
+  );
+
+  /// See [GeoCellCacheEntity.district].
+  static final district = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[9],
+  );
+
+  /// See [GeoCellCacheEntity.adcode].
+  static final adcode = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[10],
+  );
+
+  /// See [GeoCellCacheEntity.township].
+  static final township = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[11],
+  );
+
+  /// See [GeoCellCacheEntity.locationName].
+  static final locationName = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[12],
+  );
+
+  /// See [GeoCellCacheEntity.formattedAddress].
+  static final formattedAddress = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[13],
+  );
+
+  /// See [GeoCellCacheEntity.businessAreaText].
+  static final businessAreaText = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[14],
+  );
+
+  /// See [GeoCellCacheEntity.aoiIdText].
+  static final aoiIdText = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[15],
+  );
+
+  /// See [GeoCellCacheEntity.aoiSummaryText].
+  static final aoiSummaryText = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[16],
+  );
+
+  /// See [GeoCellCacheEntity.poiIdText].
+  static final poiIdText = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[17],
+  );
+
+  /// See [GeoCellCacheEntity.poiSummaryText].
+  static final poiSummaryText = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[18],
+  );
+
+  /// See [GeoCellCacheEntity.geoTextTokens].
+  static final geoTextTokens = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[19],
+  );
+
+  /// See [GeoCellCacheEntity.rawCompactJson].
+  static final rawCompactJson = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[20],
+  );
+
+  /// See [GeoCellCacheEntity.updatedAt].
+  static final updatedAt = obx.QueryIntegerProperty<GeoCellCacheEntity>(
+    _entities[12].properties[21],
+  );
+
+  /// See [GeoCellCacheEntity.source].
+  static final source = obx.QueryStringProperty<GeoCellCacheEntity>(
+    _entities[12].properties[22],
+  );
+}
+
+/// [PlaceResolveCacheEntity] entity fields to define ObjectBox queries.
+class PlaceResolveCacheEntity_ {
+  /// See [PlaceResolveCacheEntity.id].
+  static final id = obx.QueryIntegerProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[0],
+  );
+
+  /// See [PlaceResolveCacheEntity.lookupKey].
+  static final lookupKey = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[1],
+  );
+
+  /// See [PlaceResolveCacheEntity.normalizedText].
+  static final normalizedText =
+      obx.QueryStringProperty<PlaceResolveCacheEntity>(
+        _entities[13].properties[2],
+      );
+
+  /// See [PlaceResolveCacheEntity.queryText].
+  static final queryText = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[3],
+  );
+
+  /// See [PlaceResolveCacheEntity.cityHint].
+  static final cityHint = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[4],
+  );
+
+  /// See [PlaceResolveCacheEntity.adcodeHint].
+  static final adcodeHint = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[5],
+  );
+
+  /// See [PlaceResolveCacheEntity.resolvedKind].
+  static final resolvedKind = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[6],
+  );
+
+  /// See [PlaceResolveCacheEntity.canonicalName].
+  static final canonicalName = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[7],
+  );
+
+  /// See [PlaceResolveCacheEntity.amapPoiId].
+  static final amapPoiId = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[8],
+  );
+
+  /// See [PlaceResolveCacheEntity.amapAoiId].
+  static final amapAoiId = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[9],
+  );
+
+  /// See [PlaceResolveCacheEntity.province].
+  static final province = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[10],
+  );
+
+  /// See [PlaceResolveCacheEntity.city].
+  static final city = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[11],
+  );
+
+  /// See [PlaceResolveCacheEntity.district].
+  static final district = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[12],
+  );
+
+  /// See [PlaceResolveCacheEntity.adcode].
+  static final adcode = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[13],
+  );
+
+  /// See [PlaceResolveCacheEntity.centerLatAmapE6].
+  static final centerLatAmapE6 =
+      obx.QueryIntegerProperty<PlaceResolveCacheEntity>(
+        _entities[13].properties[14],
+      );
+
+  /// See [PlaceResolveCacheEntity.centerLonAmapE6].
+  static final centerLonAmapE6 =
+      obx.QueryIntegerProperty<PlaceResolveCacheEntity>(
+        _entities[13].properties[15],
+      );
+
+  /// See [PlaceResolveCacheEntity.coreRadiusMeters].
+  static final coreRadiusMeters =
+      obx.QueryIntegerProperty<PlaceResolveCacheEntity>(
+        _entities[13].properties[16],
+      );
+
+  /// See [PlaceResolveCacheEntity.softRadiusMeters].
+  static final softRadiusMeters =
+      obx.QueryIntegerProperty<PlaceResolveCacheEntity>(
+        _entities[13].properties[17],
+      );
+
+  /// See [PlaceResolveCacheEntity.aliasesText].
+  static final aliasesText = obx.QueryStringProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[18],
+  );
+
+  /// See [PlaceResolveCacheEntity.confidence].
+  static final confidence = obx.QueryDoubleProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[19],
+  );
+
+  /// See [PlaceResolveCacheEntity.updatedAt].
+  static final updatedAt = obx.QueryIntegerProperty<PlaceResolveCacheEntity>(
+    _entities[13].properties[20],
   );
 }

@@ -14,8 +14,8 @@ import '../models/entity/photo_entity.dart';
 import '../storage/objectbox/objectbox_service.dart';
 import '../utils/ai_score_helper.dart';
 import '../utils/media_type_helper.dart';
-import 'amap_geo_service.dart';
 import 'face_pipeline_service.dart';
+import 'geo_cell_cache_service.dart';
 import 'media_analysis_image_reader.dart';
 import 'ocr_service.dart';
 import 'photo_caption_service.dart';
@@ -192,10 +192,9 @@ class PhotoAttributeBackgroundService {
       return;
     }
 
-    final geoResult = await AmapGeoService.reverseGeocode(
+    final geoResult = await GeoCellCacheService.instance.reverseGeocode(
       latitude: lat,
       longitude: lng,
-      extensions: 'all',
     );
 
     if (geoResult == null) {
@@ -221,6 +220,8 @@ class PhotoAttributeBackgroundService {
       p.businessAreaText = geoResult.businessAreaText;
       p.aoiNameText = geoResult.aoiNameText;
       p.poiNameText = geoResult.poiNameText;
+      p.aoiIdText = geoResult.aoiIdText;
+      p.poiIdText = geoResult.poiIdText;
       p.geoTextTokens = geoResult.geoTextTokens;
       p.geoIndexedAt = DateTime.now().millisecondsSinceEpoch;
       p.geoIndexVersion = 1;

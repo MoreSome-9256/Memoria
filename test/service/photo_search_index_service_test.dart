@@ -47,4 +47,18 @@ void main() {
     expect(result.geoTextTokens, contains('|山东大学软件园校区|'));
     expect(result.geoTextTokens, contains('|济南市|'));
   });
+
+  test('derives Amap coordinates and tiered geo cells', () {
+    final photo = PhotoEntity()
+      ..latitude = 39.9087
+      ..longitude = 116.3975;
+
+    expect(PhotoSearchIndexService.updateCoordinateFields(photo), isTrue);
+    expect(photo.latAmapE6, isNotNull);
+    expect(photo.lonAmapE6, isNotNull);
+    expect(photo.geoCellFine, isNotEmpty);
+    expect(photo.geoCellMid, isNotEmpty);
+    expect(photo.geoCellCoarse, isNotEmpty);
+    expect(PhotoSearchIndexService.updateCoordinateFields(photo), isFalse);
+  });
 }

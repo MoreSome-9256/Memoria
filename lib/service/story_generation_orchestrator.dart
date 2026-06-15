@@ -14,11 +14,9 @@ import '../storage/objectbox/objectbox_service.dart';
 import '../utils/media_type_helper.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
-import 'internvl_experiment_service.dart';
 import 'local_vlm_description_service.dart';
 import 'llm_service.dart';
 import 'music_service.dart';
-import 'on_device_internvl_service.dart';
 import 'story_service.dart';
 
 part 'story_generation_orchestrator_generation.dart';
@@ -33,9 +31,6 @@ class StoryGenerationOrchestrator {
       StoryGenerationOrchestrator._internal();
 
   factory StoryGenerationOrchestrator() => _instance;
-
-  final InternvlExperimentService _internvlExperimentService =
-      InternvlExperimentService();
 
   Future<StoryGenerationOutput> generateStory({
     required StoryGenerationRequest request,

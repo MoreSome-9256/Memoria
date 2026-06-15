@@ -13,6 +13,8 @@ class LocalVlmDescriptionService {
       LocalVlmDescriptionService._();
 
   LlamaEngine? _engine;
+  static const int _mobileFrameSize = 512;
+  static const int _mobileVideoFrameCount = 4;
 
   Future<bool> get isEnabled async => true;
 
@@ -27,7 +29,8 @@ class LocalVlmDescriptionService {
           .readFrameFilesFromAsset(
             assetId.trim(),
             videoLike: treatAsVideo,
-            maxFrames: treatAsVideo ? 8 : 1,
+            maxFrames: treatAsVideo ? _mobileVideoFrameCount : 1,
+            imageSize: _mobileFrameSize,
           ),
       treatAsVideo: treatAsVideo,
       prompt: prompt,
@@ -44,6 +47,7 @@ class LocalVlmDescriptionService {
     }
     final cleanupPaths = List<String>.from(frameResult.cleanupPaths);
     EngineChat? chat;
+    var generationFailed = false;
     try {
       final engine = await _ensureEngine();
       chat = await engine.createChat();
@@ -67,8 +71,16 @@ class LocalVlmDescriptionService {
         }
       }
       return buffer.toString().trim();
+    } catch (_) {
+      generationFailed = true;
+      rethrow;
     } finally {
-      await chat?.dispose();
+      try {
+        await chat?.dispose();
+      } catch (_) {}
+      if (generationFailed) {
+        await _resetEngine();
+      }
       for (final path in cleanupPaths) {
         try {
           final file = File(path);
@@ -105,7 +117,15 @@ class LocalVlmDescriptionService {
         ? LlamaEngine.spawn(
             libraryPath: 'libllama.so',
             modelParams: ModelParams(path: modelFile.path, gpuLayers: 0),
-            contextParams: const ContextParams(nCtx: 2048),
+            contextParams: const ContextParams(
+              nCtx: 2048,
+              nBatch: 256,
+              nUbatch: 128,
+              nThreads: 4,
+              nThreadsBatch: 4,
+              offloadKqv: false,
+              opOffload: false,
+            ),
             multimodalParams: MultimodalParams(mmprojPath: mmprojFile.path),
           )
         : LlamaEngine.spawnFromProcess(
@@ -113,6 +133,10 @@ class LocalVlmDescriptionService {
             contextParams: const ContextParams(nCtx: 4096),
             multimodalParams: MultimodalParams(mmprojPath: mmprojFile.path),
           ));
+    if (!engine.multimodalLoaded || !engine.supportsVision) {
+      await engine.dispose();
+      throw StateError('SmolVLM2 visual projector failed to initialize.');
+    }
     _engine = engine;
     return engine;
   }
@@ -131,6 +155,10 @@ class LocalVlmDescriptionService {
   }
 
   Future<void> dispose() async {
+    await _resetEngine();
+  }
+
+  Future<void> _resetEngine() async {
     final engine = _engine;
     _engine = null;
     await engine?.dispose();

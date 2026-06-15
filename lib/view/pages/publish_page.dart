@@ -81,8 +81,7 @@ class _PublishPageState extends State<PublishPage> {
           children: [
             Icon(Icons.content_copy, color: Colors.white),
             SizedBox(width: 8),
-            Text('📋 文案已复制到剪贴板',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            Text('📋 文案已复制到剪贴板', style: TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
         backgroundColor: Colors.blue.shade400,
@@ -101,8 +100,9 @@ class _PublishPageState extends State<PublishPage> {
             content: const Text('❌ 视频文件未找到'),
             backgroundColor: Colors.redAccent,
             behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         );
       }
@@ -126,8 +126,9 @@ class _PublishPageState extends State<PublishPage> {
             content: Text('分享失败: $e'),
             backgroundColor: Colors.redAccent,
             behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         );
       }
@@ -143,8 +144,9 @@ class _PublishPageState extends State<PublishPage> {
           content: const Text('❌ 视频文件未找到'),
           backgroundColor: Colors.redAccent,
           behavior: SnackBarBehavior.floating,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       );
       return;
@@ -157,7 +159,9 @@ class _PublishPageState extends State<PublishPage> {
     );
   }
 
-  /// 打开文件所在文件夹，用 open_file_manager 包按平台分别实现
+  /// 保存视频到系统 Downloads/Memoria 目录并用文件管理器打开
+  static const _fileManagerChannel = MethodChannel('memoria/file_manager');
+
   Future<void> _openFolder() async {
     final videoFile = File(widget.exportedVideoPath);
     if (!videoFile.existsSync()) {
@@ -168,28 +172,42 @@ class _PublishPageState extends State<PublishPage> {
             backgroundColor: Colors.redAccent,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12)),
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         );
       }
       return;
     }
 
-    // 视频保存在 Documents/StoryExports/ 下
-    // iOS：iosConfig 的 folderPath 是相对于 app Documents 目录的子路径
-    // Android：用完整绝对路径
-    final dirPath = path.dirname(widget.exportedVideoPath);
-
-    await openFileManager(
-      androidConfig: AndroidConfig(
-        folderType: AndroidFolderType.other,
-        folderPath: dirPath, // 完整绝对路径
-      ),
-      iosConfig: IosConfig(
-        // 相对于 app Documents 目录的子路径，即 "StoryExports"
-        folderPath: 'StoryExports',
-      ),
-    );
+    try {
+      if (Platform.isAndroid) {
+        await _fileManagerChannel.invokeMethod('saveToDownloadsAndOpen', {
+          'filePath': widget.exportedVideoPath,
+        });
+      } else {
+        await openFileManager(
+          androidConfig: AndroidConfig(
+            folderType: AndroidFolderType.other,
+            folderPath: path.dirname(widget.exportedVideoPath),
+          ),
+          iosConfig: IosConfig(folderPath: 'StoryExports'),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('打开文件管理器失败: $e'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -220,7 +238,9 @@ class _PublishPageState extends State<PublishPage> {
                   title: const Text(
                     '🎉 分享你的故事',
                     style: TextStyle(
-                        fontWeight: FontWeight.bold, color: Colors.black87),
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
                   ),
                   centerTitle: true,
                   backgroundColor: Colors.transparent,
@@ -232,7 +252,9 @@ class _PublishPageState extends State<PublishPage> {
                   child: SingleChildScrollView(
                     physics: const BouncingScrollPhysics(),
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 24.0, vertical: 16.0),
+                      horizontal: 24.0,
+                      vertical: 16.0,
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
@@ -244,30 +266,35 @@ class _PublishPageState extends State<PublishPage> {
                             color: Colors.pinkAccent.withValues(alpha: 0.1),
                             boxShadow: [
                               BoxShadow(
-                                color:
-                                    Colors.pinkAccent.withValues(alpha: 0.2),
+                                color: Colors.pinkAccent.withValues(alpha: 0.2),
                                 blurRadius: 20,
                                 spreadRadius: 5,
                               ),
                             ],
                           ),
-                          child: const Icon(Icons.share,
-                              color: Colors.pinkAccent, size: 72),
+                          child: const Icon(
+                            Icons.share,
+                            color: Colors.pinkAccent,
+                            size: 72,
+                          ),
                         ),
                         const SizedBox(height: 16),
 
                         const Text(
                           '视频已准备好分享！',
                           style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.black87),
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.black87,
+                          ),
                         ),
                         const SizedBox(height: 8),
                         Text(
                           'AI 已为您生成【${widget.targetPlatform}】专属文案，一键分享到社交平台',
                           style: const TextStyle(
-                              color: Colors.black54, fontSize: 15),
+                            color: Colors.black54,
+                            fontSize: 15,
+                          ),
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 32),
@@ -276,8 +303,7 @@ class _PublishPageState extends State<PublishPage> {
                         ClipRRect(
                           borderRadius: BorderRadius.circular(24),
                           child: BackdropFilter(
-                            filter:
-                                ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
                             child: Container(
                               decoration: BoxDecoration(
                                 color: Colors.white.withValues(alpha: 0.5),
@@ -297,14 +323,15 @@ class _PublishPageState extends State<PublishPage> {
                                               MainAxisAlignment.center,
                                           children: [
                                             CircularProgressIndicator(
-                                                color: Colors.pinkAccent),
+                                              color: Colors.pinkAccent,
+                                            ),
                                             SizedBox(height: 20),
                                             Text(
                                               '🤖 AI 正在疯狂查阅小红书爆款指南...',
                                               style: TextStyle(
-                                                  color: Colors.black54,
-                                                  fontWeight:
-                                                      FontWeight.w500),
+                                                color: Colors.black54,
+                                                fontWeight: FontWeight.w500,
+                                              ),
                                             ),
                                           ],
                                         ),
@@ -338,16 +365,19 @@ class _PublishPageState extends State<PublishPage> {
                           child: FilledButton.icon(
                             onPressed: _isLoading ? null : _shareVideo,
                             icon: const Icon(Icons.share_rounded),
-                            label: const Text('一键分享到社交平台',
-                                style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold)),
+                            label: const Text(
+                              '一键分享到社交平台',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                             style: FilledButton.styleFrom(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 18),
+                              padding: const EdgeInsets.symmetric(vertical: 18),
                               backgroundColor: Colors.pinkAccent,
                               shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16)),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
                               elevation: 4,
                             ),
                           ),
@@ -360,38 +390,44 @@ class _PublishPageState extends State<PublishPage> {
                           child: FilledButton.icon(
                             onPressed: _playVideo,
                             icon: const Icon(Icons.play_circle_outline_rounded),
-                            label: const Text('预览视频',
-                                style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold)),
+                            label: const Text(
+                              '预览视频',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                             style: FilledButton.styleFrom(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 16),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
                               backgroundColor: Colors.deepOrange.shade400,
                               shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16)),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
                               elevation: 4,
                             ),
                           ),
                         ),
                         const SizedBox(height: 12),
 
-                        // 3. 打开文件夹（系统文件管理器）
+                        // 3. 保存并打开文件
                         SizedBox(
                           width: double.infinity,
                           child: FilledButton.icon(
                             onPressed: _openFolder,
                             icon: const Icon(Icons.folder_open_rounded),
-                            label: const Text('在文件管理器中查看',
-                                style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold)),
+                            label: const Text(
+                              '保存并查看视频',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                             style: FilledButton.styleFrom(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 16),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
                               backgroundColor: Colors.deepPurple.shade300,
                               shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16)),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
                               elevation: 4,
                             ),
                           ),
@@ -404,18 +440,22 @@ class _PublishPageState extends State<PublishPage> {
                           child: OutlinedButton.icon(
                             onPressed: _isLoading ? null : _copyToClipboard,
                             icon: const Icon(Icons.copy_rounded),
-                            label: const Text('仅复制文案',
-                                style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold)),
+                            label: const Text(
+                              '仅复制文案',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                             style: OutlinedButton.styleFrom(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 16),
+                              padding: const EdgeInsets.symmetric(vertical: 16),
                               side: BorderSide(
-                                  color: Colors.pinkAccent.shade200,
-                                  width: 2),
+                                color: Colors.pinkAccent.shade200,
+                                width: 2,
+                              ),
                               shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16)),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
                               foregroundColor: Colors.pinkAccent,
                             ),
                           ),
@@ -425,16 +465,19 @@ class _PublishPageState extends State<PublishPage> {
                         // 5. 返回首页
                         TextButton(
                           onPressed: () => Navigator.popUntil(
-                              context, (route) => route.isFirst),
+                            context,
+                            (route) => route.isFirst,
+                          ),
                           style: TextButton.styleFrom(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 16)),
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
                           child: const Text(
                             '返回首页',
                             style: TextStyle(
-                                color: Colors.black54,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold),
+                              color: Colors.black54,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 24),
@@ -487,15 +530,15 @@ class _VideoPlayerPageState extends State<_VideoPlayerPage> {
       }
 
       _controller = VideoPlayerController.file(file);
-      
+
       await _controller!.initialize();
-      
+
       if (mounted) {
         setState(() => _initialized = true);
         _controller!.setLooping(true);
         _controller!.play();
       }
-      
+
       _controller!.addListener(() {
         if (mounted) setState(() {});
       });
@@ -558,9 +601,7 @@ class _VideoPlayerPageState extends State<_VideoPlayerPage> {
     if (_controller == null) {
       return const Scaffold(
         backgroundColor: Colors.black,
-        body: Center(
-          child: CircularProgressIndicator(color: Colors.white),
-        ),
+        body: Center(child: CircularProgressIndicator(color: Colors.white)),
       );
     }
 
@@ -607,8 +648,11 @@ class _VideoPlayerPageState extends State<_VideoPlayerPage> {
                         Align(
                           alignment: Alignment.topLeft,
                           child: IconButton(
-                            icon: const Icon(Icons.close,
-                                color: Colors.white, size: 28),
+                            icon: const Icon(
+                              Icons.close,
+                              color: Colors.white,
+                              size: 28,
+                            ),
                             onPressed: () => Navigator.of(context).pop(),
                           ),
                         ),
@@ -618,7 +662,9 @@ class _VideoPlayerPageState extends State<_VideoPlayerPage> {
                         // 底部：进度条 + 播放控制
                         Padding(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -642,8 +688,9 @@ class _VideoPlayerPageState extends State<_VideoPlayerPage> {
                                     Text(
                                       '${_formatDuration(_controller!.value.position)} / ${_formatDuration(_controller!.value.duration)}',
                                       style: const TextStyle(
-                                          color: Colors.white70,
-                                          fontSize: 12),
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                      ),
                                     ),
                                   const Spacer(),
                                   if (_controller != null)

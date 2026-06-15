@@ -1,5 +1,6 @@
 /// 故事结果页面，展示生成后的故事内容和分享入口。
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -270,6 +271,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
   bool _isSaving = false;
   bool _hasSaved = false;
   bool _isSaved = false;
+  int? _liveStoryEntityId;
 
   @override
   void initState() {
@@ -289,6 +291,49 @@ class _StoryResultPageState extends State<StoryResultPage> {
         });
       }
     } catch (_) {}
+  }
+
+  int? get _effectiveStoryEntityId =>
+      widget.storyEntityId ?? _liveStoryEntityId;
+
+  Future<int?> _ensureStoryEntity() async {
+    final existing = _effectiveStoryEntityId;
+    if (existing != null) return existing;
+
+    try {
+      final sectionMaps = _sections
+          .map(
+            (section) => <String, dynamic>{
+              'text': section.text,
+              'photo': section.photo,
+            },
+          )
+          .toList(growable: false);
+
+      final story = StoryEntity()
+        ..title = widget.title
+        ..subtitle = widget.subtitle
+        ..content = StoryEntity.sectionsToMarkdown(sectionMaps)
+        ..createdAt = DateTime.now().millisecondsSinceEpoch
+        ..updatedAt = DateTime.now().millisecondsSinceEpoch
+        ..eventId = 0
+        ..photoIds = []
+        ..photoCount = _sections.length
+        ..isManuallySaved = false;
+
+      final store = ObjectBoxService().store;
+      final storyBox = store.box<StoryEntity>();
+      storyBox.put(story);
+
+      if (mounted) {
+        setState(() {
+          _liveStoryEntityId = story.id;
+        });
+      }
+      return story.id;
+    } catch (_) {
+      return null;
+    }
   }
 
   void _editText(int index) {
@@ -330,10 +375,14 @@ class _StoryResultPageState extends State<StoryResultPage> {
     if (_isSaving) {
       return;
     }
-    if (widget.storyEntityId == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('无法保存：缺少故事 ID')));
+
+    final storyEntityId = _effectiveStoryEntityId ?? await _ensureStoryEntity();
+    if (storyEntityId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('无法保存：缺少故事 ID')));
+      }
       return;
     }
 
@@ -344,7 +393,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
     try {
       final store = ObjectBoxService().store;
       final storyBox = store.box<StoryEntity>();
-      final story = storyBox.get(widget.storyEntityId!);
+      final story = storyBox.get(storyEntityId);
       if (story == null) {
         throw StateError('Story not found');
       }
@@ -512,31 +561,23 @@ class _StoryResultPageState extends State<StoryResultPage> {
     late OverlayEntry overlayEntry;
     overlayEntry = OverlayEntry(
       builder: (overlayContext) {
-        return Positioned.fill(
+        return Positioned(
+          top: -99999,
+          left: 0,
           child: Material(
-            color: Colors.transparent,
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: OverflowBox(
-                alignment: Alignment.topCenter,
-                minWidth: 1080,
-                maxWidth: 1080,
-                minHeight: 0,
-                maxHeight: double.infinity,
-                child: SizedBox(
-                  width: 1080,
-                  child: RepaintBoundary(
-                    key: boundaryKey,
-                    child: _StorySharePoster(
-                      title: widget.title,
-                      subtitle: widget.subtitle,
-                      heroImage: widget.heroImage,
-                      sections: _sections,
-                      targetPlatform: widget.targetPlatform,
-                      styleIndex: styleIndex,
-                      resolvedImageBytes: resolvedImageBytes,
-                    ),
-                  ),
+            type: MaterialType.transparency,
+            child: SizedBox(
+              width: 1080,
+              child: RepaintBoundary(
+                key: boundaryKey,
+                child: _StorySharePoster(
+                  title: widget.title,
+                  subtitle: widget.subtitle,
+                  heroImage: widget.heroImage,
+                  sections: _sections,
+                  targetPlatform: widget.targetPlatform,
+                  styleIndex: styleIndex,
+                  resolvedImageBytes: resolvedImageBytes,
                 ),
               ),
             ),
@@ -550,25 +591,23 @@ class _StoryResultPageState extends State<StoryResultPage> {
     try {
       await WidgetsBinding.instance.endOfFrame;
 
-      Size lastSize = Size.zero;
-      int stableFrames = 0;
-      while (stableFrames < 3) {
-        await WidgetsBinding.instance.endOfFrame;
-        final renderObject = boundaryKey.currentContext?.findRenderObject();
-        if (renderObject is RenderRepaintBoundary) {
-          final currentSize = renderObject.size;
-          if (currentSize == lastSize && currentSize.height > 0) {
-            stableFrames++;
-          } else {
-            stableFrames = 0;
-            lastSize = currentSize;
-          }
-        }
-      }
-
       final renderObject = boundaryKey.currentContext?.findRenderObject();
       if (renderObject is! RenderRepaintBoundary) {
         throw StateError('Share poster is not ready');
+      }
+
+      int frameCount = 0;
+      while (frameCount < 15) {
+        final completer = Completer<void>();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!completer.isCompleted) completer.complete();
+        });
+        await completer.future;
+        frameCount++;
+        if (frameCount >= 3) {
+          final size = renderObject.size;
+          if (size.height > 100) break;
+        }
       }
 
       final image = await renderObject.toImage(pixelRatio: 2.0);
@@ -585,6 +624,9 @@ class _StoryResultPageState extends State<StoryResultPage> {
   }
 
   Future<void> _openDigitalAlbum() async {
+    final storyEntityId = _effectiveStoryEntityId ?? await _ensureStoryEntity();
+    if (!mounted) return;
+
     final result = await Navigator.of(context).push<DigitalAlbumBookResult>(
       MaterialPageRoute<DigitalAlbumBookResult>(
         builder: (context) => DigitalAlbumBookPage(
@@ -592,7 +634,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
           subtitle: widget.subtitle,
           sections: _sections,
           storyTemplateId: widget.storyTemplateId,
-          storyEntityId: widget.storyEntityId,
+          storyEntityId: storyEntityId,
         ),
       ),
     );
@@ -649,11 +691,12 @@ class _StoryResultPageState extends State<StoryResultPage> {
 
     // 解析音乐文件路径（优先从数据库二进制恢复）
     String? resolvedMusicPath;
-    if (widget.storyEntityId != null) {
+    final storyEntityId = _effectiveStoryEntityId;
+    if (storyEntityId != null) {
       try {
         final store = ObjectBoxService().store;
         final storyBox = store.box<StoryEntity>();
-        final story = storyBox.get(widget.storyEntityId!);
+        final story = storyBox.get(storyEntityId);
         if (story != null) {
           resolvedMusicPath = await StoryService.resolveMusicFile(story);
         }
@@ -663,10 +706,10 @@ class _StoryResultPageState extends State<StoryResultPage> {
 
     // 从数据库恢复上次导出的视频参数
     Map<String, dynamic>? savedParams;
-    if (widget.storyEntityId != null) {
+    if (storyEntityId != null) {
       try {
         final storyBox = ObjectBoxService().store.box<StoryEntity>();
-        final story = storyBox.get(widget.storyEntityId!);
+        final story = storyBox.get(storyEntityId);
         if (story?.videoParamsJson != null) {
           savedParams =
               jsonDecode(story!.videoParamsJson!) as Map<String, dynamic>;
@@ -674,6 +717,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
       } catch (_) {}
     }
 
+    if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => StoryVideoPage(
@@ -684,7 +728,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
           isHorizontal: widget.isHorizontal,
           dynamicBeatData: widget.dynamicBeatData,
           targetPlatform: widget.targetPlatform,
-          storyEntityId: widget.storyEntityId,
+          storyEntityId: storyEntityId,
           onComplete: (_, _) {},
           currentTextStyle:
               savedParams?['currentTextStyle'] as String? ?? 'hero',
@@ -1200,7 +1244,8 @@ class _StorySharePoster extends StatelessWidget {
           _PosterSectionCard(
             section: visibleSections[index],
             index: index,
-            resolvedBytes: resolvedImageBytes?[visibleSections[index].photo.id.trim()],
+            resolvedBytes:
+                resolvedImageBytes?[visibleSections[index].photo.id.trim()],
           ),
         const SizedBox(height: 26),
         Container(

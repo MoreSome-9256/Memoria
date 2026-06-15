@@ -788,7 +788,7 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       }
       if (shouldSave) {
         final saved = await _saveBook();
-        if (!saved) {
+        if (!saved && widget.storyEntityId != null) {
           return;
         }
       }

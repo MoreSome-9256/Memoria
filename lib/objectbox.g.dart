@@ -742,7 +742,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(8, 8597624262250363654),
     name: 'PhotoEntity',
-    lastPropertyId: const obx_int.IdUid(31, 8224221571986436293),
+    lastPropertyId: const obx_int.IdUid(34, 6042943680795048852),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -932,6 +932,24 @@ final _entities = <obx_int.ModelEntity>[
         type: 1,
         flags: 8,
         indexId: const obx_int.IdUid(41, 7387194497188768424),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(32, 1202861073585316263),
+        name: 'isOcrAnalyzed',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(33, 142443738444035292),
+        name: 'isCaptionAnalyzed',
+        type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(34, 6042943680795048852),
+        name: 'isFaceAnalyzed',
+        type: 1,
+        flags: 0,
       ),
     ],
     relations: <obx_int.ModelRelation>[],
@@ -2228,7 +2246,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
         final thumbnailBytesOffset = object.thumbnailBytes == null
             ? null
             : fbb.writeListInt8(object.thumbnailBytes!);
-        fbb.startTable(32);
+        fbb.startTable(35);
         fbb.addInt64(0, object.id);
         fbb.addOffset(1, assetIdOffset);
         fbb.addOffset(2, pathOffset);
@@ -2259,6 +2277,9 @@ obx_int.ModelDefinition getObjectBoxModel() {
         fbb.addBool(27, object.isLivePhoto);
         fbb.addOffset(29, thumbnailBytesOffset);
         fbb.addBool(30, object.isAiAnalysisCandidate);
+        fbb.addBool(31, object.isOcrAnalyzed);
+        fbb.addBool(32, object.isCaptionAnalyzed);
+        fbb.addBool(33, object.isFaceAnalyzed);
         fbb.finish(fbb.endTable());
         return object.id;
       },
@@ -2383,6 +2404,24 @@ obx_int.ModelDefinition getObjectBoxModel() {
             buffer,
             rootOffset,
             64,
+            false,
+          )
+          ..isOcrAnalyzed = const fb.BoolReader().vTableGet(
+            buffer,
+            rootOffset,
+            66,
+            false,
+          )
+          ..isCaptionAnalyzed = const fb.BoolReader().vTableGet(
+            buffer,
+            rootOffset,
+            68,
+            false,
+          )
+          ..isFaceAnalyzed = const fb.BoolReader().vTableGet(
+            buffer,
+            rootOffset,
+            70,
             false,
           );
 
@@ -3549,6 +3588,21 @@ class PhotoEntity_ {
   /// See [PhotoEntity.isAiAnalysisCandidate].
   static final isAiAnalysisCandidate = obx.QueryBooleanProperty<PhotoEntity>(
     _entities[7].properties[29],
+  );
+
+  /// See [PhotoEntity.isOcrAnalyzed].
+  static final isOcrAnalyzed = obx.QueryBooleanProperty<PhotoEntity>(
+    _entities[7].properties[30],
+  );
+
+  /// See [PhotoEntity.isCaptionAnalyzed].
+  static final isCaptionAnalyzed = obx.QueryBooleanProperty<PhotoEntity>(
+    _entities[7].properties[31],
+  );
+
+  /// See [PhotoEntity.isFaceAnalyzed].
+  static final isFaceAnalyzed = obx.QueryBooleanProperty<PhotoEntity>(
+    _entities[7].properties[32],
   );
 }
 

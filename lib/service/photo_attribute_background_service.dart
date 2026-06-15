@@ -245,7 +245,7 @@ class PhotoAttributeBackgroundService {
       photo.assetId,
     );
     if (input == null || input.analysisImageBytes.isEmpty) {
-      return;
+      throw StateError('无法读取属性分析图片 photoId=${photo.id}');
     }
 
     final imageFile = await _writeTempAnalysisImage(
@@ -313,6 +313,7 @@ class PhotoAttributeBackgroundService {
       p.faceCount = faces.length;
       p.smileProb = maxSmile;
       p.joyScore = joyScore;
+      p.isFaceAnalyzed = true;
 
       photoBox.put(p);
     });
@@ -353,6 +354,8 @@ class PhotoAttributeBackgroundService {
       p.ocrText = ocrResult.text.isEmpty ? null : ocrResult.text;
       p.ocrTags = ocrResult.tags;
       p.aiCaption = caption.trim().isEmpty ? null : caption.trim();
+      p.isOcrAnalyzed = runOcr;
+      p.isCaptionAnalyzed = true;
 
       photoBox.put(p);
     });

@@ -242,6 +242,8 @@ class UnifiedAnalysisPipelineService {
 
   Future<void> _runIncrementalPipeline({bool requestPermission = true}) async {
     if (_analysisEnabled) {
+      final settings = await AppAiSettingsService.instance.load();
+      await PhotoService().requeuePhotosMissingEnabledAttributes(settings);
       await Future.wait(<Future<void>>[
         _runProducer(requestPermission: requestPermission),
         _runConsumer(),
@@ -596,6 +598,14 @@ class UnifiedAnalysisPipelineService {
     );
     await PhotoAttributeBackgroundService.instance().waitUntilIdle();
 
+    final completedPhoto = ObjectBoxService().store.box<PhotoEntity>().get(
+      photo.id,
+    );
+    if (completedPhoto == null ||
+        !_hasCompletedEnabledAttributes(completedPhoto, settings: settings)) {
+      throw StateError('已启用的属性分析未完成 photoId=${photo.id}');
+    }
+
     PhotoService().updatePhotoInTransaction(photo.id, (p) {
       if (p == null) return;
       p.isAiAnalyzed = true;
@@ -630,6 +640,28 @@ class UnifiedAnalysisPipelineService {
       }
     }
     return types;
+  }
+
+  bool _hasCompletedEnabledAttributes(
+    PhotoEntity photo, {
+    required AppAiSettings settings,
+  }) {
+    final mediaKind = MediaTypeHelper.fromStorageValue(
+      photo.mediaKind,
+      path: photo.path,
+    );
+    if (mediaKind != MemoriaMediaKind.image) return true;
+    return photo.isCaptionAnalyzed &&
+        (!settings.ocrEnabled || photo.isOcrAnalyzed) &&
+        (!settings.faceAnalysisEnabled || photo.isFaceAnalyzed);
+  }
+
+  @visibleForTesting
+  bool hasCompletedEnabledAttributesForTesting(
+    PhotoEntity photo, {
+    AppAiSettings settings = AppAiSettings.defaults,
+  }) {
+    return _hasCompletedEnabledAttributes(photo, settings: settings);
   }
 
   void _logMediaEmbeddingDiagnostics(

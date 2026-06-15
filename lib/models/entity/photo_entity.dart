@@ -58,10 +58,13 @@ class PhotoEntity {
   List<double>? imageEmbedding; // MobileCLIP 图像向量，用于后续聚类
   String? ocrText; // OCR 提取出的原始文本
   List<String>? ocrTags; // 从 OCR 文本中提炼出的短标签
+  bool isOcrAnalyzed = false;
+  bool isCaptionAnalyzed = false;
 
   // 👤 人脸识别信息 (用于后续 AI 选图)
   int faceCount = 0; // 检测到的人脸数量
   double smileProb = 0.0; // 微笑概率 (0.0 - 1.0)
+  bool isFaceAnalyzed = false;
 
   // 😊 情感分析 (AI 增强)
   double? joyScore; // 欢乐值评分 (0.0 - 1.0)，综合人脸微笑度和场景标签

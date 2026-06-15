@@ -67,6 +67,36 @@ void main() {
       PhotoAttributeType.caption,
     });
   });
+
+  test('pipeline completes only after enabled image attributes finish', () {
+    final pipeline = UnifiedAnalysisPipelineService();
+    final photo = _photo(id: 1, mediaKind: 'image', path: '/photos/1.jpg');
+
+    expect(pipeline.hasCompletedEnabledAttributesForTesting(photo), isFalse);
+
+    photo
+      ..isCaptionAnalyzed = true
+      ..isOcrAnalyzed = true
+      ..isFaceAnalyzed = true;
+    expect(pipeline.hasCompletedEnabledAttributesForTesting(photo), isTrue);
+  });
+
+  test('disabled optional attributes do not block completion', () {
+    final pipeline = UnifiedAnalysisPipelineService();
+    final photo = _photo(id: 1, mediaKind: 'image', path: '/photos/1.jpg')
+      ..isCaptionAnalyzed = true;
+
+    expect(
+      pipeline.hasCompletedEnabledAttributesForTesting(
+        photo,
+        settings: AppAiSettings.defaults.copyWith(
+          ocrEnabled: false,
+          faceAnalysisEnabled: false,
+        ),
+      ),
+      isTrue,
+    );
+  });
 }
 
 PhotoEntity _photo({

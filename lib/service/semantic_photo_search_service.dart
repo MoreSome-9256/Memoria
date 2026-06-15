@@ -6,6 +6,7 @@ import '../models/vo/semantic_search_models.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
 import '../storage/vector_index/photo_embedding_index_repository.dart';
+import 'app_ai_settings_service.dart';
 import 'mobileclip_embedding_service.dart';
 import 'semantic_matching_service.dart';
 import 'semantic_search_metadata_matcher.dart';
@@ -182,8 +183,9 @@ class SemanticPhotoSearchService {
         .build();
     final photos = q.find();
     q.close();
+    final settings = await AppAiSettingsService.instance.load();
     return PhotoService().reconcileAccessiblePhotos(
-      SearchablePhotoPolicy.filter(photos),
+      SearchablePhotoPolicy.filter(photos, settings: settings),
     );
   }
 

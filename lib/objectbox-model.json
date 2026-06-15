@@ -626,7 +626,7 @@
     },
     {
       "id": "8:8597624262250363654",
-      "lastPropertyId": "31:8224221571986436293",
+      "lastPropertyId": "34:6042943680795048852",
       "name": "PhotoEntity",
       "properties": [
         {
@@ -795,6 +795,21 @@
           "indexId": "41:7387194497188768424",
           "type": 1,
           "flags": 8
+        },
+        {
+          "id": "32:1202861073585316263",
+          "name": "isOcrAnalyzed",
+          "type": 1
+        },
+        {
+          "id": "33:142443738444035292",
+          "name": "isCaptionAnalyzed",
+          "type": 1
+        },
+        {
+          "id": "34:6042943680795048852",
+          "name": "isFaceAnalyzed",
+          "type": 1
         }
       ],
       "relations": []

@@ -6,6 +6,7 @@ import '../models/vo/semantic_search_models.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
 import 'photo_service.dart';
+import 'app_ai_settings_service.dart';
 import 'junk_photo_filter_service.dart';
 import 'recommendation_query_template_service.dart';
 import 'searchable_photo_policy.dart';
@@ -51,7 +52,11 @@ class CreateRecommendationService {
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
     photoQuery.limit = _locationPresetPhotoSample;
-    final photos = SearchablePhotoPolicy.filter(photoQuery.find());
+    final settings = await AppAiSettingsService.instance.load();
+    final photos = SearchablePhotoPolicy.filter(
+      photoQuery.find(),
+      settings: settings,
+    );
     photoQuery.close();
     final presets = _buildPresets(now, photos);
     final presetKeys = presets.map((item) => item.recommendationKey).toSet();

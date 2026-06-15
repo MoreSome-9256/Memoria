@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_album/models/entity/photo_entity.dart';
 import 'package:photo_album/models/vo/semantic_search_models.dart';
 import 'package:photo_album/service/junk_photo_filter_service.dart';
+import 'package:photo_album/service/app_ai_settings_service.dart';
 import 'package:photo_album/service/semantic_photo_search_service.dart';
 import 'package:photo_album/service/searchable_photo_policy.dart';
 
@@ -42,6 +43,23 @@ void main() {
         junkCandidate,
       ]).map((photo) => photo.id),
       <int>[1],
+    );
+  });
+
+  test('searchable photo policy enforces enabled attribute completion', () {
+    final photo = _photo(id: 1, timestamp: 1, analyzed: true);
+    expect(
+      SearchablePhotoPolicy.allows(photo, settings: AppAiSettings.defaults),
+      isFalse,
+    );
+
+    photo
+      ..isCaptionAnalyzed = true
+      ..isOcrAnalyzed = true
+      ..isFaceAnalyzed = true;
+    expect(
+      SearchablePhotoPolicy.allows(photo, settings: AppAiSettings.defaults),
+      isTrue,
     );
   });
   test('metadata candidates use the same searchable photo boundary', () {

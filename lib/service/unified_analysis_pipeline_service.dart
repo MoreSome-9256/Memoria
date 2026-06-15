@@ -599,15 +599,6 @@ class UnifiedAnalysisPipelineService {
       photoId: photo.id,
       types: _attributeTypesForAnalyzedPhoto(photo, settings: settings),
     );
-    await PhotoAttributeBackgroundService.instance().waitUntilIdle();
-
-    final completedPhoto = ObjectBoxService().store.box<PhotoEntity>().get(
-      photo.id,
-    );
-    if (completedPhoto == null ||
-        !_hasCompletedEnabledAttributes(completedPhoto, settings: settings)) {
-      throw StateError('已启用的属性分析未完成 photoId=${photo.id}');
-    }
 
     PhotoService().updatePhotoInTransaction(photo.id, (p) {
       if (p == null) return;

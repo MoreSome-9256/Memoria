@@ -8,8 +8,9 @@ import 'package:share_plus/share_plus.dart';
 import 'package:path/path.dart' as path;
 import 'package:video_player/video_player.dart';
 import 'package:open_file_manager/open_file_manager.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:open_file/open_file.dart';
 import '../../service/llm_service.dart';
-
 class PublishPage extends StatefulWidget {
   final String title;
   final String subtitle;
@@ -159,9 +160,9 @@ class _PublishPageState extends State<PublishPage> {
     );
   }
 
-  /// 保存视频到系统 Downloads/Memoria 目录并用文件管理器打开
-  static const _fileManagerChannel = MethodChannel('memoria/file_manager');
-
+  /// 保存视频并打开
+  /// Android: 使用系统文件选择器让用户选择保存位置
+  /// iOS: 保存到共享文件夹并打开文件APP展示
   Future<void> _openFolder() async {
     final videoFile = File(widget.exportedVideoPath);
     if (!videoFile.existsSync()) {
@@ -182,23 +183,15 @@ class _PublishPageState extends State<PublishPage> {
 
     try {
       if (Platform.isAndroid) {
-        await _fileManagerChannel.invokeMethod('saveToDownloadsAndOpen', {
-          'filePath': widget.exportedVideoPath,
-        });
+        await _saveVideoOnAndroid(videoFile);
       } else {
-        await openFileManager(
-          androidConfig: AndroidConfig(
-            folderType: AndroidFolderType.other,
-            folderPath: path.dirname(widget.exportedVideoPath),
-          ),
-          iosConfig: IosConfig(folderPath: 'StoryExports'),
-        );
+        await _saveVideoOnIOS(videoFile);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('打开文件管理器失败: $e'),
+            content: Text('保存视频失败: $e'),
             backgroundColor: Colors.redAccent,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
@@ -208,6 +201,70 @@ class _PublishPageState extends State<PublishPage> {
         );
       }
     }
+  }
+
+  /// Android: 使用 Storage Access Framework 让用户选择保存位置
+  Future<void> _saveVideoOnAndroid(File videoFile) async {
+    final bytes = await videoFile.readAsBytes();
+
+    final String? savedPath = await FilePicker.saveFile(
+      dialogTitle: '选择保存位置',
+      fileName: path.basename(widget.exportedVideoPath),
+      type: FileType.custom,
+      allowedExtensions: ['mp4'],
+      bytes: bytes,
+    );
+
+    if (savedPath == null) return;
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.white),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '✅ 视频已保存',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.green.shade400,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        action: SnackBarAction(
+          label: '打开文件',
+          textColor: Colors.white,
+          onPressed: () async {
+            final result = await OpenFile.open(savedPath);
+            if (result.type != ResultType.done && mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('无法打开文件: ${result.message}'),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  /// iOS: 保存到共享文件夹并打开文件APP展示
+  Future<void> _saveVideoOnIOS(File videoFile) async {
+    // iOS 没有暴露给用户的文件系统，使用原有逻辑
+    await openFileManager(
+      androidConfig: AndroidConfig(
+        folderType: AndroidFolderType.other,
+        folderPath: path.dirname(widget.exportedVideoPath),
+      ),
+      iosConfig: IosConfig(folderPath: 'StoryExports'),
+    );
   }
 
   @override

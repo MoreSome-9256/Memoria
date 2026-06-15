@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_album/models/entity/photo_entity.dart';
 import 'package:photo_album/models/vo/semantic_search_models.dart';
+import 'package:photo_album/service/place_search_policy.dart';
 import 'package:photo_album/service/semantic_search_metadata_matcher.dart';
 
 PhotoEntity _photo({
@@ -356,6 +357,33 @@ void main() {
       expect(
         matcher.matchesLocation(photo, const <SemanticSearchLocation>[nearby]),
         isTrue,
+      );
+    });
+
+    test('accepts plausible GPS drift but rejects cross-city distance', () {
+      final radius = PlaceSearchPolicy.radiusFor('poi');
+      final nearPhoto = _photo(id: 13, timestamp: 1)
+        ..latAmapE6 = 32000000
+        ..lonAmapE6 = 118820000;
+      final farPhoto = _photo(id: 14, timestamp: 1)
+        ..latAmapE6 = 32400000
+        ..lonAmapE6 = 118820000;
+      final location = SemanticSearchLocation(
+        text: '目标地点',
+        type: 'poi',
+        centerLatAmapE6: 32018000,
+        centerLonAmapE6: 118820000,
+        coreRadiusMeters: radius.coreMeters,
+        softRadiusMeters: radius.softMeters,
+      );
+
+      expect(
+        matcher.matchesLocation(nearPhoto, <SemanticSearchLocation>[location]),
+        isTrue,
+      );
+      expect(
+        matcher.matchesLocation(farPhoto, <SemanticSearchLocation>[location]),
+        isFalse,
       );
     });
   });

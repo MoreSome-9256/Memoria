@@ -92,8 +92,8 @@ class SemanticSearchLocation {
     this.adcode,
     this.centerLatAmapE6,
     this.centerLonAmapE6,
-    this.coreRadiusMeters = 300,
-    this.softRadiusMeters = 1000,
+    this.coreRadiusMeters = 2500,
+    this.softRadiusMeters = 8000,
   });
 
   final String text;

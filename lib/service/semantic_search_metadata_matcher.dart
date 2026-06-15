@@ -285,18 +285,6 @@ class SemanticSearchMetadataMatcher {
         }
       }
     }
-    if ((location.strictness == 'nearby' || location.allowNearbySiblings) &&
-        location.hasResolvedCenter &&
-        photo.latAmapE6 != null &&
-        photo.lonAmapE6 != null) {
-      final distance = GeoCoordinateService.distanceMeters(
-        photo.latAmapE6! / 1000000,
-        photo.lonAmapE6! / 1000000,
-        location.centerLatAmapE6! / 1000000,
-        location.centerLonAmapE6! / 1000000,
-      );
-      if (distance <= location.coreRadiusMeters) return mathMin(0.82, 1.0);
-    }
     if (location.hasResolvedCenter &&
         photo.latAmapE6 != null &&
         photo.lonAmapE6 != null) {
@@ -392,7 +380,7 @@ class SemanticSearchMetadataMatcher {
   }
 
   bool _looksLikeBroadContext(String value) {
-    return RegExp('(景区|风景区|区域|片区|街道|社区|村|城区|市区|玄武湖|公园|湖)\$').hasMatch(value);
+    return RegExp('(景区|风景区|区域|片区|街道|社区|村|城区|市区|公园|湖)\$').hasMatch(value);
   }
 
   String _normalizeLocationText(String? value) {

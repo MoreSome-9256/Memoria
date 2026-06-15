@@ -25,8 +25,8 @@ class PlaceResolveCacheEntity {
   String? adcode;
   int? centerLatAmapE6;
   int? centerLonAmapE6;
-  int coreRadiusMeters = 300;
-  int softRadiusMeters = 1000;
+  int coreRadiusMeters = 2500;
+  int softRadiusMeters = 8000;
   String? aliasesText;
   double confidence = 0;
   int updatedAt = 0;

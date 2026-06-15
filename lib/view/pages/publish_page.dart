@@ -255,9 +255,8 @@ class _PublishPageState extends State<PublishPage> {
     );
   }
 
-  /// iOS: 保存到共享文件夹并打开文件APP展示
+  /// iOS: 打开"文件"APP 展示 StoryExports 文件夹
   Future<void> _saveVideoOnIOS(File videoFile) async {
-    // iOS 没有暴露给用户的文件系统，使用原有逻辑
     await openFileManager(
       androidConfig: AndroidConfig(
         folderType: AndroidFolderType.other,

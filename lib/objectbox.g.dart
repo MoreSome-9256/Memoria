@@ -742,7 +742,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(8, 8597624262250363654),
     name: 'PhotoEntity',
-    lastPropertyId: const obx_int.IdUid(47, 1281475173012702512),
+    lastPropertyId: const obx_int.IdUid(50, 7224361708935670960),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1043,6 +1043,27 @@ final _entities = <obx_int.ModelEntity>[
         name: 'geoIndexVersion',
         type: 6,
         flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(48, 5194391832398697073),
+        name: 'businessAreaText',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(57, 9089354418540908138),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(49, 4228563275956839224),
+        name: 'aoiNameText',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(58, 20783118083493226),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(50, 7224361708935670960),
+        name: 'poiNameText',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(59, 3255543267126672134),
       ),
     ],
     relations: <obx_int.ModelRelation>[],
@@ -1442,7 +1463,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
     lastEntityId: const obx_int.IdUid(13, 5122727067842506599),
-    lastIndexId: const obx_int.IdUid(56, 6390145666095184089),
+    lastIndexId: const obx_int.IdUid(59, 3255543267126672134),
     lastRelationId: const obx_int.IdUid(0, 0),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [1998729358182538669],
@@ -2348,7 +2369,16 @@ obx_int.ModelDefinition getObjectBoxModel() {
         final geoTextTokensOffset = object.geoTextTokens == null
             ? null
             : fbb.writeString(object.geoTextTokens!);
-        fbb.startTable(48);
+        final businessAreaTextOffset = object.businessAreaText == null
+            ? null
+            : fbb.writeString(object.businessAreaText!);
+        final aoiNameTextOffset = object.aoiNameText == null
+            ? null
+            : fbb.writeString(object.aoiNameText!);
+        final poiNameTextOffset = object.poiNameText == null
+            ? null
+            : fbb.writeString(object.poiNameText!);
+        fbb.startTable(51);
         fbb.addInt64(0, object.id);
         fbb.addOffset(1, assetIdOffset);
         fbb.addOffset(2, pathOffset);
@@ -2395,6 +2425,9 @@ obx_int.ModelDefinition getObjectBoxModel() {
         fbb.addOffset(44, geoTextTokensOffset);
         fbb.addInt64(45, object.geoIndexedAt);
         fbb.addInt64(46, object.geoIndexVersion);
+        fbb.addOffset(47, businessAreaTextOffset);
+        fbb.addOffset(48, aoiNameTextOffset);
+        fbb.addOffset(49, poiNameTextOffset);
         fbb.finish(fbb.endTable());
         return object.id;
       },
@@ -2607,7 +2640,16 @@ obx_int.ModelDefinition getObjectBoxModel() {
             rootOffset,
             96,
             0,
-          );
+          )
+          ..businessAreaText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 98)
+          ..aoiNameText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 100)
+          ..poiNameText = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 102);
 
         return object;
       },
@@ -3852,6 +3894,21 @@ class PhotoEntity_ {
   /// See [PhotoEntity.geoIndexVersion].
   static final geoIndexVersion = obx.QueryIntegerProperty<PhotoEntity>(
     _entities[7].properties[45],
+  );
+
+  /// See [PhotoEntity.businessAreaText].
+  static final businessAreaText = obx.QueryStringProperty<PhotoEntity>(
+    _entities[7].properties[46],
+  );
+
+  /// See [PhotoEntity.aoiNameText].
+  static final aoiNameText = obx.QueryStringProperty<PhotoEntity>(
+    _entities[7].properties[47],
+  );
+
+  /// See [PhotoEntity.poiNameText].
+  static final poiNameText = obx.QueryStringProperty<PhotoEntity>(
+    _entities[7].properties[48],
   );
 }
 

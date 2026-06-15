@@ -72,6 +72,12 @@ class PhotoEntity {
   @Index()
   String? township;
   @Index()
+  String? businessAreaText;
+  @Index()
+  String? aoiNameText;
+  @Index()
+  String? poiNameText;
+  @Index()
   String? geoTextTokens;
   int geoIndexedAt = 0;
   int geoIndexVersion = 0;

@@ -140,6 +140,9 @@ class SemanticQueryPlanCompiler {
         PhotoEntity_.formattedAddress.contains(term),
         PhotoEntity_.adcode.equals(term),
         PhotoEntity_.township.contains(term),
+        PhotoEntity_.businessAreaText.contains(term),
+        PhotoEntity_.aoiNameText.contains(term),
+        PhotoEntity_.poiNameText.contains(term),
         PhotoEntity_.geoTextTokens.contains(term),
       ];
     }
@@ -148,12 +151,18 @@ class SemanticQueryPlanCompiler {
         PhotoEntity_.district.contains(term),
         PhotoEntity_.township.contains(term),
         PhotoEntity_.formattedAddress.contains(term),
+        PhotoEntity_.businessAreaText.contains(term),
+        PhotoEntity_.aoiNameText.contains(term),
+        PhotoEntity_.poiNameText.contains(term),
         PhotoEntity_.geoTextTokens.contains(term),
       ];
     }
     return <Condition<PhotoEntity>>[
       PhotoEntity_.locationName.contains(term),
       PhotoEntity_.formattedAddress.contains(term),
+      PhotoEntity_.businessAreaText.contains(term),
+      PhotoEntity_.aoiNameText.contains(term),
+      PhotoEntity_.poiNameText.contains(term),
       PhotoEntity_.geoTextTokens.contains(term),
     ];
   }

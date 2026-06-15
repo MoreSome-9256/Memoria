@@ -626,7 +626,7 @@
     },
     {
       "id": "8:8597624262250363654",
-      "lastPropertyId": "47:1281475173012702512",
+      "lastPropertyId": "50:7224361708935670960",
       "name": "PhotoEntity",
       "properties": [
         {
@@ -905,6 +905,27 @@
           "id": "47:1281475173012702512",
           "name": "geoIndexVersion",
           "type": 6
+        },
+        {
+          "id": "48:5194391832398697073",
+          "name": "businessAreaText",
+          "indexId": "57:9089354418540908138",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "49:4228563275956839224",
+          "name": "aoiNameText",
+          "indexId": "58:20783118083493226",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "50:7224361708935670960",
+          "name": "poiNameText",
+          "indexId": "59:3255543267126672134",
+          "type": 9,
+          "flags": 2048
         }
       ],
       "relations": []
@@ -1206,7 +1227,7 @@
     }
   ],
   "lastEntityId": "13:5122727067842506599",
-  "lastIndexId": "56:6390145666095184089",
+  "lastIndexId": "59:3255543267126672134",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

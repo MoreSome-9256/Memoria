@@ -181,7 +181,7 @@ class PhotoAttributeBackgroundService {
   ) async {
     if (photo.latitude == null ||
         photo.longitude == null ||
-        photo.isLocationProcessed) {
+        (photo.isLocationProcessed && photo.geoIndexVersion >= 1)) {
       return;
     }
 
@@ -195,6 +195,7 @@ class PhotoAttributeBackgroundService {
     final geoResult = await AmapGeoService.reverseGeocode(
       latitude: lat,
       longitude: lng,
+      extensions: 'all',
     );
 
     if (geoResult == null) {
@@ -217,6 +218,9 @@ class PhotoAttributeBackgroundService {
       p.formattedAddress = geoResult.formattedAddress;
       p.adcode = geoResult.adcode;
       p.township = geoResult.township;
+      p.businessAreaText = geoResult.businessAreaText;
+      p.aoiNameText = geoResult.aoiNameText;
+      p.poiNameText = geoResult.poiNameText;
       p.geoTextTokens = geoResult.geoTextTokens;
       p.geoIndexedAt = DateTime.now().millisecondsSinceEpoch;
       p.geoIndexVersion = 1;

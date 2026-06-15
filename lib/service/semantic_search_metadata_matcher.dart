@@ -218,6 +218,13 @@ class SemanticSearchMetadataMatcher {
   double _scoreLocation(PhotoEntity photo, SemanticSearchLocation location) {
     final weightedParts = <_WeightedLocationPart>[
       _WeightedLocationPart(photo.locationName, 1.0, _LocationFieldScope.poi),
+      _WeightedLocationPart(photo.poiNameText, 1.0, _LocationFieldScope.poi),
+      _WeightedLocationPart(photo.aoiNameText, 0.98, _LocationFieldScope.poi),
+      _WeightedLocationPart(
+        photo.businessAreaText,
+        0.88,
+        _LocationFieldScope.address,
+      ),
       _WeightedLocationPart(
         photo.geoTextTokens,
         0.95,

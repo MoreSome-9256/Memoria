@@ -22,6 +22,9 @@ class AmapGeoResult {
   final String? formattedAddress;
   final String? adcode;
   final String? township;
+  final String? businessAreaText;
+  final String? aoiNameText;
+  final String? poiNameText;
 
   const AmapGeoResult({
     this.country,
@@ -32,6 +35,9 @@ class AmapGeoResult {
     this.formattedAddress,
     this.adcode,
     this.township,
+    this.businessAreaText,
+    this.aoiNameText,
+    this.poiNameText,
   });
 
   String get geoTextTokens =>
@@ -41,6 +47,9 @@ class AmapGeoResult {
             city,
             district,
             township,
+            businessAreaText,
+            aoiNameText,
+            poiNameText,
             locationName,
             formattedAddress,
             adcode,
@@ -138,6 +147,11 @@ class AmapGeoService {
     city ??= province;
     final adcode = _extractNonEmptyString(addressComponent, ['adcode']);
     final township = _extractNonEmptyString(addressComponent, ['township']);
+    final businessAreaText = _extractNamesText(
+      addressComponent['businessAreas'],
+    );
+    final aoiNameText = _extractNamesText(regeocode['aois']);
+    final poiNameText = _extractNamesText(regeocode['pois']);
     final formattedAddress = _extractNonEmptyString(regeocode, [
       'formatted_address',
     ]);
@@ -158,6 +172,9 @@ class AmapGeoService {
       formattedAddress: formattedAddress,
       adcode: adcode,
       township: township,
+      businessAreaText: businessAreaText,
+      aoiNameText: aoiNameText,
+      poiNameText: poiNameText,
     );
   }
 
@@ -180,6 +197,21 @@ class AmapGeoService {
       }
     }
     return null;
+  }
+
+  static String? _extractNamesText(dynamic value) {
+    if (value is! List) return null;
+    final names = value
+        .whereType<Map>()
+        .map(
+          (item) =>
+              _extractNonEmptyString(item.cast<String, dynamic>(), ['name']),
+        )
+        .whereType<String>()
+        .where((name) => name.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    return names.isEmpty ? null : names.map((name) => '|$name|').join();
   }
 
   static String? _extractLocationName(

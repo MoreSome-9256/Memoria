@@ -295,6 +295,9 @@ class EventService {
           latest.adcode = addr.adcode;
           latest.formattedAddress = addr.formattedAddress;
           latest.township = addr.township;
+          latest.businessAreaText = addr.businessAreaText;
+          latest.aoiNameText = addr.aoiNameText;
+          latest.poiNameText = addr.poiNameText;
           latest.geoTextTokens = addr.geoTextTokens;
           latest.geoIndexedAt = DateTime.now().millisecondsSinceEpoch;
           latest.geoIndexVersion = 1;

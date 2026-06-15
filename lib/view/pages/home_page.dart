@@ -27,6 +27,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static const int _maxHeroAssetSample = 120;
   List<AssetEntity> _heroAssets = [];
   int _currentPhotoIndex = 0;
   Timer? _timer;
@@ -59,7 +60,10 @@ class _HomePageState extends State<HomePage> {
     );
     if (paths.isEmpty) return;
     final total = await paths.first.assetCountAsync;
-    final assets = await paths.first.getAssetListRange(start: 0, end: total);
+    final assets = await paths.first.getAssetListRange(
+      start: 0,
+      end: total.clamp(0, _maxHeroAssetSample),
+    );
     assets.shuffle();
     if (assets.isNotEmpty && mounted) {
       setState(() {

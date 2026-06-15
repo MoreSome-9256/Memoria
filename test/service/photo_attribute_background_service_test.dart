@@ -27,7 +27,6 @@ void main() {
     expect(pending.single.types, <PhotoAttributeType>{
       PhotoAttributeType.location,
       PhotoAttributeType.faceDetection,
-      PhotoAttributeType.ocr,
       PhotoAttributeType.caption,
     });
 
@@ -47,6 +46,7 @@ void main() {
     expect(imageTypes, <PhotoAttributeType>{
       PhotoAttributeType.location,
       PhotoAttributeType.faceDetection,
+      PhotoAttributeType.ocr,
       PhotoAttributeType.caption,
     });
     expect(videoTypes, <PhotoAttributeType>{PhotoAttributeType.location});

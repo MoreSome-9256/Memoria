@@ -71,4 +71,32 @@ void main() {
       expect(queue.isEmpty, isTrue);
     },
   );
+
+  test(
+    'AnalysisPipelineQueue drains queued work after producer closes',
+    () async {
+      final queue = AnalysisPipelineQueue();
+      final itemPhoto = photo('asset-3', 3);
+      queue.enqueue(
+        PipelineQueueItem(
+          photoId: 11,
+          photo: itemPhoto,
+          enqueuedAt: DateTime.now(),
+        ),
+      );
+      queue.enqueue(
+        PipelineQueueItem(
+          photoId: 12,
+          photo: itemPhoto,
+          enqueuedAt: DateTime.now(),
+        ),
+      );
+
+      queue.close();
+
+      expect((await queue.dequeue())?.photoId, 11);
+      expect((await queue.dequeue())?.photoId, 12);
+      expect(await queue.dequeue(), isNull);
+    },
+  );
 }

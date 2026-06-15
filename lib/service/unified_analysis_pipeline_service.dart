@@ -290,10 +290,15 @@ class UnifiedAnalysisPipelineService {
     if (_analysisEnabled) {
       final settings = await AppAiSettingsService.instance.load();
       await PhotoService().requeuePhotosMissingEnabledAttributes(settings);
-      final producer = _runProducer(
-        permissionState: permissionState,
-      ).whenComplete(_queue.close);
-      final consumer = _runConsumer().whenComplete(_queue.close);
+      final producerDone = Completer<void>();
+      final producer = _runProducer(permissionState: permissionState)
+          .whenComplete(() {
+            _queue.close();
+            if (!producerDone.isCompleted) {
+              producerDone.complete();
+            }
+          });
+      final consumer = _runConsumer(producerDone.future);
       await Future.wait(<Future<void>>[producer, consumer]);
     } else {
       await _runProducer(permissionState: permissionState);
@@ -344,7 +349,6 @@ class UnifiedAnalysisPipelineService {
     );
     debugPrint('[pipeline] 目标相册: count=${targetAlbums.length}');
     if (targetAlbums.isEmpty) {
-      _queue.close();
       final message = selectedIds.isEmpty
           ? '没有找到可读取的系统相册。'
           : '当前白名单相册没有匹配到系统相册：${selectedIds.join(", ")}。请重新选择白名单相册。';
@@ -356,7 +360,6 @@ class UnifiedAnalysisPipelineService {
 
     debugPrint('[pipeline] 预估总数=$_scanTotal');
     if (_scanTotal <= 0) {
-      _queue.close();
       throw const PhotoScanException(
         PhotoScanError.noEligiblePhoto,
         '目标相册中没有可读取的图片或视频。',
@@ -455,7 +458,6 @@ class UnifiedAnalysisPipelineService {
       _handoffBatchToAi(handoffBatch, enqueueForConsumer: enqueueForConsumer);
     }
     _scanCompletedNormally = !_stopRequested;
-    _queue.close();
     debugPrint(
       '[pipeline] 生产者结束: scanned=$scanned accepted=$accepted skipped=$skipped pendingAi=$_aiTotal stopped=$_stopRequested',
     );
@@ -465,67 +467,79 @@ class UnifiedAnalysisPipelineService {
     return JunkPhotoFilterService.isQuarantined(photo.aiTags);
   }
 
-  Future<void> _runConsumer() async {
-    final firstItem = await _queue.dequeue();
-    if (firstItem == null) {
-      debugPrint('[pipeline] 没有待分析媒体，消费者无需预热模型');
-      return;
-    }
-
-    _updateProgress(
-      stage: UnifiedAnalysisStage.warmingUp,
-      message: 'AI 模型正在预热，请稍候…',
-    );
-
-    final settings = await AppAiSettingsService.instance.load();
-    final backend = await MobileClipBackendPreferenceService()
-        .getSelectedBackend();
-
-    final liteRt = MobileClipLiteRtService.withRuntimeOptions(
-      accelerator: settings.inferenceAccelerator,
-      xnnpackThreadCount: settings.xnnpackThreadCount,
-      modelBatchSize: settings.analysisBatchSize,
-    );
-
-    await liteRt.warmUp();
-    await MobileClipTagService().warmUp();
-
-    debugPrint('[pipeline] AI 引擎预热完成');
-
-    _updateProgress(
-      stage: UnifiedAnalysisStage.processing,
-      message: _aiTotal > 0 ? '消费者开始打标签 $_aiTotal 个媒体' : '消费者已预热，等待生产者投递',
-    );
-
-    PipelineQueueItem? item = firstItem;
-    while (item != null) {
-      if (_stopRequested || await _readForegroundStopRequested()) {
-        break;
+  Future<void> _runConsumer(Future<void> producerDone) async {
+    try {
+      final firstItem = await _queue.dequeue();
+      if (firstItem == null) {
+        debugPrint('[pipeline] 没有待分析媒体，消费者无需预热模型');
+        return;
       }
 
-      try {
-        await _processSinglePhoto(item.photo, backend: backend, liteRt: liteRt);
-        _aiCompleted++;
-        _activeCandidatePhotoIds.remove(item.photoId);
+      _updateProgress(
+        stage: UnifiedAnalysisStage.warmingUp,
+        message: 'AI 模型正在预热，请稍候…',
+      );
 
-        _updateProgress(
-          stage: UnifiedAnalysisStage.processing,
-          message: '消费者已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed',
-        );
-      } catch (error) {
-        debugPrint('[pipeline] 处理失败 photoId=${item.photoId}: $error');
-        _aiFailed++;
-        _activeCandidatePhotoIds.remove(item.photoId);
-        _updateProgress(
-          stage: UnifiedAnalysisStage.processing,
-          message:
-              '消费者已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed，队列 ${_queue.size}',
-        );
+      final settings = await AppAiSettingsService.instance.load();
+      final backend = await MobileClipBackendPreferenceService()
+          .getSelectedBackend();
+
+      final liteRt = MobileClipLiteRtService.withRuntimeOptions(
+        accelerator: settings.inferenceAccelerator,
+        xnnpackThreadCount: settings.xnnpackThreadCount,
+        modelBatchSize: settings.analysisBatchSize,
+      );
+
+      await liteRt.warmUp();
+      await MobileClipTagService().warmUp();
+
+      debugPrint('[pipeline] AI 引擎预热完成');
+
+      _updateProgress(
+        stage: UnifiedAnalysisStage.processing,
+        message: _aiTotal > 0 ? '消费者开始打标签 $_aiTotal 个媒体' : '消费者已预热，等待生产者投递',
+      );
+
+      PipelineQueueItem? item = firstItem;
+      while (item != null) {
+        if (_stopRequested || await _readForegroundStopRequested()) {
+          break;
+        }
+
+        try {
+          await _processSinglePhoto(
+            item.photo,
+            backend: backend,
+            liteRt: liteRt,
+          );
+          _aiCompleted++;
+          _activeCandidatePhotoIds.remove(item.photoId);
+
+          _updateProgress(
+            stage: UnifiedAnalysisStage.processing,
+            message: '消费者已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed',
+          );
+        } catch (error) {
+          debugPrint('[pipeline] 处理失败 photoId=${item.photoId}: $error');
+          _aiFailed++;
+          _activeCandidatePhotoIds.remove(item.photoId);
+          _updateProgress(
+            stage: UnifiedAnalysisStage.processing,
+            message:
+                '消费者已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed，队列 ${_queue.size}',
+          );
+        }
+        item = await _queue.dequeue();
       }
-      item = await _queue.dequeue();
-    }
 
-    debugPrint('[pipeline] 消费者结束: completed=$_aiCompleted failed=$_aiFailed');
+      debugPrint('[pipeline] 消费者已清空队列，等待生产者结束');
+    } catch (_) {
+      _stopRequested = true;
+      rethrow;
+    } finally {
+      await producerDone;
+      debugPrint('[pipeline] 消费者结束: completed=$_aiCompleted failed=$_aiFailed');
+    }
   }
 
   void _handoffBatchToAi(

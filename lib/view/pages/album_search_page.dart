@@ -224,7 +224,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     );
   }
 
-  Widget _buildRelatedOnlyNotice() {
+  Widget _buildRelatedOnlyNotice(SemanticSearchResult result) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -233,9 +233,9 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         color: const Color(0xFFFFF4E5),
         border: Border.all(color: const Color(0xFFF4B267)),
       ),
-      child: const Text(
-        '未找到您所需的图片，只找到一些相关图片。',
-        style: TextStyle(
+      child: Text(
+        result.noExactMatchMessage ?? '没有找到完全匹配的照片，下面是可能相关的结果。',
+        style: const TextStyle(
           color: Color(0xFF8A4B08),
           fontWeight: FontWeight.w700,
           height: 1.35,
@@ -963,7 +963,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                    child: _buildRelatedOnlyNotice(),
+                    child: _buildRelatedOnlyNotice(result),
                   ),
                 ),
               if ((_isLockedResultMode && currentPhotos.isNotEmpty) ||

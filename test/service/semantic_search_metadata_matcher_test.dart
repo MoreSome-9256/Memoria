@@ -31,10 +31,11 @@ PhotoEntity _photo({
 SemanticSearchQuery _query({
   List<SemanticSearchTimeRange> ranges = const <SemanticSearchTimeRange>[],
   List<SemanticSearchLocation> locations = const <SemanticSearchLocation>[],
+  List<int> weekdays = const <int>[],
 }) {
   return SemanticSearchQuery.empty(
     'test',
-  ).copyWith(timeRanges: ranges, locations: locations);
+  ).copyWith(timeRanges: ranges, locations: locations, weekdays: weekdays);
 }
 
 void main() {
@@ -171,6 +172,35 @@ void main() {
           _query(ranges: const [range]),
         ),
         isTrue,
+      );
+    });
+
+    test('matches annual day ranges and weekday filters', () {
+      final monday = _photo(
+        id: 15,
+        timestamp: DateTime(2026, 6, 15, 12).millisecondsSinceEpoch,
+      );
+      const range = SemanticSearchTimeRange(
+        startTimeMs: null,
+        endTimeMs: null,
+        reason: 'summer days',
+        annualStartDay: 150,
+        annualEndDay: 250,
+      );
+
+      expect(
+        matcher.matchesTime(
+          monday,
+          _query(ranges: const [range], weekdays: const <int>[1]),
+        ),
+        isTrue,
+      );
+      expect(
+        matcher.matchesTime(
+          monday,
+          _query(ranges: const [range], weekdays: const <int>[6, 7]),
+        ),
+        isFalse,
       );
     });
   });

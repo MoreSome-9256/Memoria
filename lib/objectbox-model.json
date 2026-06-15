@@ -626,7 +626,7 @@
     },
     {
       "id": "8:8597624262250363654",
-      "lastPropertyId": "34:6042943680795048852",
+      "lastPropertyId": "47:1281475173012702512",
       "name": "PhotoEntity",
       "properties": [
         {
@@ -691,22 +691,30 @@
         {
           "id": "11:6738160506724768430",
           "name": "district",
-          "type": 9
+          "indexId": "50:4388427494471689247",
+          "type": 9,
+          "flags": 2048
         },
         {
           "id": "12:3408794665271959396",
           "name": "locationName",
-          "type": 9
+          "indexId": "51:1560167327080032126",
+          "type": 9,
+          "flags": 2048
         },
         {
           "id": "13:2992636217807983314",
           "name": "formattedAddress",
-          "type": 9
+          "indexId": "52:3186757895812196308",
+          "type": 9,
+          "flags": 2048
         },
         {
           "id": "14:974637116546315242",
           "name": "adcode",
-          "type": 9
+          "indexId": "53:8103554590429192001",
+          "type": 9,
+          "flags": 2048
         },
         {
           "id": "15:1633660929943653901",
@@ -810,6 +818,93 @@
           "id": "34:6042943680795048852",
           "name": "isFaceAnalyzed",
           "type": 1
+        },
+        {
+          "id": "35:7058355607779141680",
+          "name": "capturedAtMillis",
+          "indexId": "42:7475107979752408024",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "36:1558829915739549284",
+          "name": "capturedYear",
+          "indexId": "43:2860892135410672358",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "37:2782275124371099304",
+          "name": "capturedMonth",
+          "indexId": "44:5252736816399829388",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "38:250893880655296962",
+          "name": "capturedDay",
+          "indexId": "45:1258017000721032011",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "39:8222413609669803542",
+          "name": "capturedDayOfYear",
+          "indexId": "46:1180385124245042355",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "40:236572881219088200",
+          "name": "capturedMinuteOfDay",
+          "indexId": "47:880267192612860947",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "41:700090476293130451",
+          "name": "capturedWeekday",
+          "indexId": "48:2288312784746759333",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "42:6074474480750238091",
+          "name": "searchIndexVersion",
+          "indexId": "49:4035881654471806489",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "43:987726826824825203",
+          "name": "country",
+          "indexId": "54:2101767395457731410",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "44:3055892960116153462",
+          "name": "township",
+          "indexId": "55:8985631440835213434",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "45:4618959247104790013",
+          "name": "geoTextTokens",
+          "indexId": "56:6390145666095184089",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "46:4893880422153576052",
+          "name": "geoIndexedAt",
+          "type": 6
+        },
+        {
+          "id": "47:1281475173012702512",
+          "name": "geoIndexVersion",
+          "type": 6
         }
       ],
       "relations": []
@@ -1111,7 +1206,7 @@
     }
   ],
   "lastEntityId": "13:5122727067842506599",
-  "lastIndexId": "41:7387194497188768424",
+  "lastIndexId": "56:6390145666095184089",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

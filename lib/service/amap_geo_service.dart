@@ -14,25 +14,45 @@ import 'dart:convert';
 import 'dart:io';
 
 class AmapGeoResult {
+  final String? country;
   final String? province;
   final String? city;
   final String? district;
   final String? locationName;
   final String? formattedAddress;
   final String? adcode;
+  final String? township;
 
   const AmapGeoResult({
+    this.country,
     this.province,
     this.city,
     this.district,
     this.locationName,
     this.formattedAddress,
     this.adcode,
+    this.township,
   });
+
+  String get geoTextTokens =>
+      <String?>[
+            country,
+            province,
+            city,
+            district,
+            township,
+            locationName,
+            formattedAddress,
+            adcode,
+          ]
+          .whereType<String>()
+          .where((value) => value.trim().isNotEmpty)
+          .map((value) => '|${value.trim()}|')
+          .join();
 
   @override
   String toString() =>
-      'AmapGeoResult(province: $province, city: $city, district: $district, '
+      'AmapGeoResult(country: $country, province: $province, city: $city, district: $district, '
       'locationName: $locationName, formattedAddress: $formattedAddress, adcode: $adcode)';
 }
 
@@ -76,16 +96,13 @@ class AmapGeoService {
   }) async {
     final client = HttpClient();
     try {
-      final uri = Uri.https(
-        'restapi.amap.com',
-        '/v3/geocode/regeo',
-        <String, String>{
-          'key': _amapWebKey,
-          'location': '$longitude,$latitude',
-          'extensions': extensions,
-          'coordsys': 'gps',
-        },
-      );
+      final uri =
+          Uri.https('restapi.amap.com', '/v3/geocode/regeo', <String, String>{
+            'key': _amapWebKey,
+            'location': '$longitude,$latitude',
+            'extensions': extensions,
+            'coordsys': 'gps',
+          });
       final request = await client.getUrl(uri);
       final response = await request.close();
       final body = await response.transform(utf8.decoder).join();
@@ -113,15 +130,17 @@ class AmapGeoService {
       throw Exception('高德返回缺少addressComponent');
     }
 
+    final country = _extractNonEmptyString(addressComponent, ['country']);
     final province = _extractNonEmptyString(addressComponent, ['province']);
     final district = _extractNonEmptyString(addressComponent, ['district']);
     String? city = _extractNonEmptyString(addressComponent, ['city']);
     city ??= district;
     city ??= province;
     final adcode = _extractNonEmptyString(addressComponent, ['adcode']);
-    final formattedAddress = _extractNonEmptyString(
-      regeocode, ['formatted_address'],
-    );
+    final township = _extractNonEmptyString(addressComponent, ['township']);
+    final formattedAddress = _extractNonEmptyString(regeocode, [
+      'formatted_address',
+    ]);
     final locationName = _extractLocationName(
       regeocode,
       addressComponent,
@@ -131,12 +150,14 @@ class AmapGeoService {
     );
 
     return AmapGeoResult(
+      country: country,
       province: province,
       city: city,
       district: district,
       locationName: locationName,
       formattedAddress: formattedAddress,
       adcode: adcode,
+      township: township,
     );
   }
 
@@ -201,7 +222,11 @@ class AmapGeoService {
     final neighborhood = addressComponent['neighborhood'];
     if (neighborhood is Map<String, dynamic>) {
       final neighborhoodName = _extractNonEmptyString(neighborhood, ['name']);
-      if (_isUsefulLocationName(neighborhoodName, city: city, district: district)) {
+      if (_isUsefulLocationName(
+        neighborhoodName,
+        city: city,
+        district: district,
+      )) {
         return neighborhoodName;
       }
     }
@@ -248,8 +273,7 @@ class AmapGeoService {
       if (district != null && district.isNotEmpty) district,
       if (township != null && township.isNotEmpty) township,
       if (streetName != null && streetName.isNotEmpty) streetName,
-    }.toList()
-      ..sort((a, b) => b.length.compareTo(a.length));
+    }.toList()..sort((a, b) => b.length.compareTo(a.length));
 
     var changed = true;
     while (changed && candidate.isNotEmpty) {
@@ -284,7 +308,11 @@ class AmapGeoService {
     return null;
   }
 
-  static bool _isUsefulLocationName(String? value, {String? city, String? district}) {
+  static bool _isUsefulLocationName(
+    String? value, {
+    String? city,
+    String? district,
+  }) {
     final normalized = value?.trim();
     if (normalized == null || normalized.isEmpty) return false;
     if (normalized == city || normalized == district) return false;

@@ -27,6 +27,8 @@ class SemanticSearchTimeRange {
     this.localEndMinute,
     this.recurringStartMonth,
     this.recurringEndMonth,
+    this.annualStartDay,
+    this.annualEndDay,
   });
 
   final int? startTimeMs;
@@ -40,14 +42,20 @@ class SemanticSearchTimeRange {
   final int? localEndMinute;
   final int? recurringStartMonth;
   final int? recurringEndMonth;
+  final int? annualStartDay;
+  final int? annualEndDay;
 
   bool get hasDateBoundary => startTimeMs != null || endTimeMs != null;
   bool get hasLocalTimeWindow =>
       localStartMinute != null && localEndMinute != null;
   bool get hasRecurringMonthRange =>
       recurringStartMonth != null && recurringEndMonth != null;
+  bool get hasAnnualDayRange => annualStartDay != null && annualEndDay != null;
   bool get hasConstraint =>
-      hasDateBoundary || hasLocalTimeWindow || hasRecurringMonthRange;
+      hasDateBoundary ||
+      hasLocalTimeWindow ||
+      hasRecurringMonthRange ||
+      hasAnnualDayRange;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -61,6 +69,8 @@ class SemanticSearchTimeRange {
       'local_end_minute': localEndMinute,
       'recurring_start_month': recurringStartMonth,
       'recurring_end_month': recurringEndMonth,
+      'annual_start_day': annualStartDay,
+      'annual_end_day': annualEndDay,
       'reason': reason,
     };
   }
@@ -73,6 +83,9 @@ class SemanticSearchLocation {
     this.aliases = const <String>[],
     this.timezone,
     this.utcOffsetMinutes,
+    this.strictness = 'exact',
+    this.allowDescendants = false,
+    this.allowNearbySiblings = false,
   });
 
   final String text;
@@ -80,6 +93,9 @@ class SemanticSearchLocation {
   final List<String> aliases;
   final String? timezone;
   final int? utcOffsetMinutes;
+  final String strictness;
+  final bool allowDescendants;
+  final bool allowNearbySiblings;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -88,6 +104,9 @@ class SemanticSearchLocation {
       'aliases': aliases,
       'timezone': timezone,
       'utc_offset_minutes': utcOffsetMinutes,
+      'strictness': strictness,
+      'allow_descendants': allowDescendants,
+      'allow_nearby_siblings': allowNearbySiblings,
     };
   }
 }
@@ -195,6 +214,7 @@ class SemanticSearchQuery {
     required this.negativeSemantics,
     required this.estimatedResultCount,
     required this.attributes,
+    this.weekdays = const <int>[],
     required this.usedLlm,
     required this.llmConfigured,
     required this.parserSource,
@@ -240,13 +260,15 @@ class SemanticSearchQuery {
   final List<SemanticSearchSemanticItem> negativeSemantics;
   final SemanticSearchEstimatedResultCount estimatedResultCount;
   final SemanticSearchAttributes attributes;
+  final List<int> weekdays;
   final bool usedLlm;
   final bool llmConfigured;
   final String parserSource;
   final String debugJson;
   final String notes;
 
-  bool get hasTimeConstraints => timeRanges.any((item) => item.hasConstraint);
+  bool get hasTimeConstraints =>
+      weekdays.isNotEmpty || timeRanges.any((item) => item.hasConstraint);
   bool get hasLocationConstraints => locations.isNotEmpty;
   bool get hasCoarseTags => coarseTags.isNotEmpty;
   bool get hasPositiveSemantics => positiveSemantics.isNotEmpty;
@@ -286,6 +308,7 @@ class SemanticSearchQuery {
     List<SemanticSearchSemanticItem>? negativeSemantics,
     SemanticSearchEstimatedResultCount? estimatedResultCount,
     SemanticSearchAttributes? attributes,
+    List<int>? weekdays,
     bool? usedLlm,
     bool? llmConfigured,
     String? parserSource,
@@ -305,6 +328,7 @@ class SemanticSearchQuery {
       negativeSemantics: negativeSemantics ?? this.negativeSemantics,
       estimatedResultCount: estimatedResultCount ?? this.estimatedResultCount,
       attributes: attributes ?? this.attributes,
+      weekdays: weekdays ?? this.weekdays,
       usedLlm: usedLlm ?? this.usedLlm,
       llmConfigured: llmConfigured ?? this.llmConfigured,
       parserSource: parserSource ?? this.parserSource,

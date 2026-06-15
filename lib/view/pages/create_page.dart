@@ -160,6 +160,7 @@ class _CreatePageState extends State<CreatePage> {
       SemanticPhotoSearchService();
   bool _isSearching = false;
   String? _searchError;
+  String? _searchNotice;
   static const int _maxSemanticResults = 300;
 
   // 搜索结果
@@ -207,6 +208,7 @@ class _CreatePageState extends State<CreatePage> {
       _searchResults = <PhotoEntity>[];
       _selectedPhotoIds.clear();
       _searchError = null;
+      _searchNotice = null;
     });
   }
 
@@ -222,12 +224,15 @@ class _CreatePageState extends State<CreatePage> {
       _searchResults = <PhotoEntity>[];
       _selectedPhotoIds.clear();
       _searchError = null;
+      _searchNotice = null;
     });
 
     List<PhotoEntity> matchedPhotos;
     String? searchError;
+    String? searchNotice;
     try {
       final result = await _semanticPhotoSearchService.search(query.trim());
+      searchNotice = result.noExactMatchMessage;
       matchedPhotos = _mergeCreateSearchPhotos(
         exactPhotos: result.exactPhotos,
         relatedPhotos: result.relatedPhotos,
@@ -250,6 +255,7 @@ class _CreatePageState extends State<CreatePage> {
       setState(() {
         _searchResults = matchedPhotos;
         _searchError = searchError;
+        _searchNotice = searchNotice;
         _selectedPhotoIds
           ..clear()
           ..addAll(matchedPhotos.map((photo) => photo.id));
@@ -519,7 +525,7 @@ class _CreatePageState extends State<CreatePage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '为您搜集到${_searchResults.length}张相关照片',
+                  _searchNotice ?? '为您搜集到${_searchResults.length}张匹配照片',
                   style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
                 ),
               ],

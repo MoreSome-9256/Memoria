@@ -209,12 +209,17 @@ class PhotoAttributeBackgroundService {
       final p = photoBox.get(photo.id);
       if (p == null) return;
 
+      p.country = geoResult.country;
       p.province = geoResult.province;
       p.city = geoResult.city;
       p.district = geoResult.district;
       p.locationName = geoResult.locationName;
       p.formattedAddress = geoResult.formattedAddress;
       p.adcode = geoResult.adcode;
+      p.township = geoResult.township;
+      p.geoTextTokens = geoResult.geoTextTokens;
+      p.geoIndexedAt = DateTime.now().millisecondsSinceEpoch;
+      p.geoIndexVersion = 1;
       p.isLocationProcessed = true;
 
       photoBox.put(p);

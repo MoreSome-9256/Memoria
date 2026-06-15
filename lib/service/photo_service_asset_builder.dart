@@ -152,6 +152,7 @@ class _PhotoAssetBuilder {
       ..latitude = hasGps ? latLong!.latitude : null
       ..longitude = hasGps ? latLong!.longitude : null
       ..isLocationProcessed = false;
+    PhotoSearchIndexService.updateTimeFields(photo);
 
     if (filterProfile.minTimestampMs != null &&
         photo.timestamp < filterProfile.minTimestampMs!) {
@@ -196,6 +197,9 @@ class _PhotoAssetBuilder {
     final ts = _resolveBestAssetTimestampMs(asset);
     if (PhotoFilterHelper.hasValidTimestamp(ts) && existing.timestamp != ts) {
       existing.timestamp = ts;
+      changed = true;
+    }
+    if (PhotoSearchIndexService.updateTimeFields(existing)) {
       changed = true;
     }
     if (existing.path.isNotEmpty) {

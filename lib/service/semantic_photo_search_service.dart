@@ -12,7 +12,9 @@ import 'semantic_matching_service.dart';
 import 'semantic_search_metadata_matcher.dart';
 import 'semantic_query_parser_service.dart';
 import 'photo_service.dart';
+import 'photo_search_index_service.dart';
 import 'searchable_photo_policy.dart';
+import 'semantic_query_plan_compiler.dart';
 
 class SemanticPhotoSearchService {
   SemanticPhotoSearchService._internal();
@@ -30,6 +32,8 @@ class SemanticPhotoSearchService {
       PhotoEmbeddingIndexRepository();
   final SemanticSearchMetadataMatcher _metadataMatcher =
       const SemanticSearchMetadataMatcher();
+  final SemanticQueryPlanCompiler _queryPlanCompiler =
+      const SemanticQueryPlanCompiler();
 
   static const double _positiveSemanticParticipationThreshold = 0.17;
   static const double _exactPositiveThreshold = 0.23;
@@ -39,40 +43,36 @@ class SemanticPhotoSearchService {
   static const double _minimumFinalScore = 0.15;
   static const int _maxResultsPerBucket = 240;
 
-  static const String _messageNoExactRelated = '未找到您所需的图片，只找到一些相关图片。';
+  static const String _messageNoExactRelated = '没有找到完全匹配的照片，下面是可能相关的结果。';
 
   Future<SemanticSearchResult> search(String rawQuery) async {
-    final allPhotos = await _loadSearchablePhotos();
     final query = await _queryParser.parseQuery(rawQuery);
-    return _searchParsedQuery(
-      rawQuery: rawQuery,
-      query: query,
-      allPhotos: allPhotos,
-    );
+    final photos = await _loadCandidatePhotos(query);
+    return _searchParsedQuery(rawQuery: rawQuery, query: query, photos: photos);
   }
 
   Future<SemanticSearchResult> searchWithQuery(
     SemanticSearchQuery query,
   ) async {
-    final allPhotos = await _loadSearchablePhotos();
+    final photos = await _loadCandidatePhotos(query);
     return _searchParsedQuery(
       rawQuery: query.rawQuery,
       query: query,
-      allPhotos: allPhotos,
+      photos: photos,
     );
   }
 
   Future<SemanticSearchResult> _searchParsedQuery({
     required String rawQuery,
     required SemanticSearchQuery query,
-    required List<PhotoEntity> allPhotos,
+    required List<PhotoEntity> photos,
   }) async {
-    final photos = SearchablePhotoPolicy.filter(allPhotos);
     final activeModelVersion = await _mobileClipEmbeddingService
         .getSelectedModelVersion();
+    final totalAnalyzedPhotos = _countAnalyzedPhotos();
 
-    if (rawQuery.trim().isEmpty || allPhotos.isEmpty) {
-      return _emptyResult(query, photos.length);
+    if (rawQuery.trim().isEmpty) {
+      return _emptyResult(query, totalAnalyzedPhotos);
     }
 
     final strictMetadataCandidates = _filterByMetadata(photos, query);
@@ -81,7 +81,19 @@ class SemanticPhotoSearchService {
     if (query.isMetadataOnly ||
         (!query.hasPositiveSemantics && !query.hasNegativeSemantics)) {
       if (strictMetadataCandidates.isEmpty) {
-        return _emptyResult(query, photos.length);
+        final possible = await _loadCandidatePhotos(query, relaxed: true);
+        if (possible.isEmpty) return _emptyResult(query, totalAnalyzedPhotos);
+        return SemanticSearchResult(
+          query: query,
+          exactPhotos: const <PhotoEntity>[],
+          relatedPhotos: _sortMetadataOnlyPhotos(possible, query),
+          hits: const <int, SemanticSearchHit>{},
+          totalAnalyzedPhotos: totalAnalyzedPhotos,
+          filteredCandidateCount: possible.length,
+          metadataCandidateCount: 0,
+          tagCandidateCount: possible.length,
+          noExactMatchMessage: _messageNoExactRelated,
+        );
       }
       final metadataOnlyPhotos = _sortMetadataOnlyPhotos(
         strictMetadataCandidates,
@@ -92,7 +104,7 @@ class SemanticPhotoSearchService {
         exactPhotos: metadataOnlyPhotos,
         relatedPhotos: const <PhotoEntity>[],
         hits: const <int, SemanticSearchHit>{},
-        totalAnalyzedPhotos: photos.length,
+        totalAnalyzedPhotos: totalAnalyzedPhotos,
         filteredCandidateCount: metadataOnlyPhotos.length,
         metadataCandidateCount: metadataCandidateCount,
         tagCandidateCount: metadataOnlyPhotos.length,
@@ -132,27 +144,30 @@ class SemanticPhotoSearchService {
     );
 
     final relatedHits = <int, SemanticSearchHit>{};
-    final primaryRelatedHits =
-        primaryScores.hits.values
-            .where((hit) => !hit.isExactMatch)
-            .toList(growable: false)
-          ..sort((a, b) => b.score.compareTo(a.score));
-    for (final hit in primaryRelatedHits) {
-      relatedHits[hit.photoId] = hit;
-    }
-
-    for (final photo in exactPhotos) {
-      relatedHits.remove(photo.id);
+    List<PhotoEntity> possibleCandidates = const <PhotoEntity>[];
+    if (exactPhotos.isEmpty) {
+      possibleCandidates = await _loadCandidatePhotos(query, relaxed: true);
+      final possibleScores = _scoreCandidates(
+        _applyTagStrategy(possibleCandidates, query),
+        activeModelVersion: activeModelVersion,
+        vectors: vectors,
+        coarseTags: query.coarseTags,
+        tagStrictness: query.tagStrictness,
+        locations: query.locations,
+        semanticThreshold: 0.12,
+        forceRelated: true,
+      );
+      relatedHits.addAll(possibleScores.hits);
     }
 
     final relatedPhotos = _orderedPhotosForHits(
-      photos,
+      possibleCandidates,
       relatedHits.values.toList(growable: false)
         ..sort((a, b) => b.score.compareTo(a.score)),
     );
 
     final hits = <int, SemanticSearchHit>{
-      ...primaryScores.hits,
+      if (exactPhotos.isNotEmpty) ...primaryScores.hits,
       ...relatedHits,
     };
 
@@ -165,7 +180,7 @@ class SemanticPhotoSearchService {
           .take(_maxResultsPerBucket)
           .toList(growable: false),
       hits: hits,
-      totalAnalyzedPhotos: photos.length,
+      totalAnalyzedPhotos: totalAnalyzedPhotos,
       filteredCandidateCount: exactPhotos.length + relatedPhotos.length,
       metadataCandidateCount: metadataCandidateCount,
       tagCandidateCount: primaryTagCandidateCount,
@@ -175,18 +190,31 @@ class SemanticPhotoSearchService {
     );
   }
 
-  Future<List<PhotoEntity>> _loadSearchablePhotos() async {
+  Future<List<PhotoEntity>> _loadCandidatePhotos(
+    SemanticSearchQuery query, {
+    bool relaxed = false,
+  }) async {
+    await PhotoSearchIndexService.backfillMissingIndexes();
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
     final q = photoBox
-        .query(PhotoEntity_.isAiAnalyzed.equals(true))
+        .query(_queryPlanCompiler.compile(query, relaxed: relaxed))
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
     final photos = q.find();
     q.close();
     final settings = await AppAiSettingsService.instance.load();
-    return PhotoService().reconcileAccessiblePhotos(
+    final accessible = await PhotoService().reconcileAccessiblePhotos(
       SearchablePhotoPolicy.filter(photos, settings: settings),
     );
+    return relaxed ? accessible : _filterByMetadata(accessible, query);
+  }
+
+  int _countAnalyzedPhotos() {
+    final box = ObjectBoxService().store.box<PhotoEntity>();
+    final query = box.query(PhotoEntity_.isAiAnalyzed.equals(true)).build();
+    final count = query.count();
+    query.close();
+    return count;
   }
 
   List<PhotoEntity> _searchablePhotos(List<PhotoEntity> allPhotos) {
@@ -387,6 +415,7 @@ class SemanticPhotoSearchService {
     required SemanticSearchTagStrictness tagStrictness,
     required List<SemanticSearchLocation> locations,
     double semanticThreshold = _relatedSemanticThreshold,
+    bool forceRelated = false,
   }) {
     final hits = <int, SemanticSearchHit>{};
     for (final photo in candidates) {
@@ -398,6 +427,7 @@ class SemanticPhotoSearchService {
         tagStrictness: tagStrictness,
         locations: locations,
         semanticThreshold: semanticThreshold,
+        forceRelated: forceRelated,
       );
       if (hit == null) {
         continue;
@@ -415,6 +445,7 @@ class SemanticPhotoSearchService {
     required SemanticSearchTagStrictness tagStrictness,
     required List<SemanticSearchLocation> locations,
     required double semanticThreshold,
+    required bool forceRelated,
   }) {
     final embeddingChoice = _readSearchEmbedding(
       photo,
@@ -469,12 +500,15 @@ class SemanticPhotoSearchService {
         coarseTagMatch.matchedLabels.isEmpty;
 
     final isExact =
+        !forceRelated &&
         primary.qualifiedPositiveScore >= _exactPositiveThreshold &&
         !coarseTagRequiredForExact &&
         finalScore >= _minimumFinalScore;
     final isRelated =
         !isExact &&
-        recall.qualifiedPositiveScore >= _relatedSemanticThreshold &&
+        (forceRelated
+            ? rankingSemanticScore >= semanticThreshold
+            : recall.qualifiedPositiveScore >= _relatedSemanticThreshold) &&
         !coarseTagRequiredForRelated &&
         finalScore >= _minimumFinalScore;
     if (!isExact && !isRelated) {

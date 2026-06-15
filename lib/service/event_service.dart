@@ -287,12 +287,17 @@ class EventService {
         store.runInTransaction(TxMode.write, () {
           final latest = photoBox.get(photo.id);
           if (latest == null) return;
+          latest.country = addr.country;
           latest.province = addr.province;
           latest.city = addr.city;
           latest.district = addr.district;
           latest.locationName = addr.locationName;
           latest.adcode = addr.adcode;
           latest.formattedAddress = addr.formattedAddress;
+          latest.township = addr.township;
+          latest.geoTextTokens = addr.geoTextTokens;
+          latest.geoIndexedAt = DateTime.now().millisecondsSinceEpoch;
+          latest.geoIndexVersion = 1;
           latest.isLocationProcessed = true;
           photoBox.put(latest);
         });

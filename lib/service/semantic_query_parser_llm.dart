@@ -73,41 +73,41 @@ Return exactly one JSON object. Do not return Markdown, comments, prose, or code
 
 Required top-level schema:
 {
-  "query_type": "metadata | attribute | concrete | abstract | collection",
-  "time_ranges": [],
-  "local_time_windows": [],
-  "locations": [],
-  "coarse_tags": [],
-  "tag_strictness": "strict | prefer | optional",
-  "positive_semantics": [],
-  "recall_semantics": [],
-  "negative_semantics": [],
-  "attributes": {"min_face_count": null, "max_face_count": null, "min_smile_probability": null, "min_joy_score": null, "media_kinds": []},
-  "estimated_result_count": {"min": 0, "max": 0, "confidence": 0.0},
-  "notes": ""
+  "version": 1,
+  "raw_query": "$rawQuery",
+  "embedding_queries_en": [],
+  "objectbox_filters": {
+    "absolute_date_ranges": [],
+    "annual_day_ranges": [],
+    "minute_of_day_ranges": [],
+    "weekdays": [],
+    "geo": []
+  },
+  "soft_filters": {"visual_terms_original": [], "visual_terms_en": [], "geo": []},
+  "negative_filters": {"visual_terms_en": [], "geo_terms": []},
+  "fallback_policy": {"enable_possible_results": true, "show_possible_only_when_strict_empty": true}
 }
 
 Rules:
-0. Build a complete one-pass retrieval plan. The app will not ask you to reinterpret the query after retrieval. Separate non-negotiable metadata constraints from visual recall signals and describe every important part of the user's intent.
-1. Every text value in positive_semantics, recall_semantics, and negative_semantics must be English. MobileCLIP text alignment is English-first.
+0. Build a complete one-pass QueryPlan. Put every mechanically filterable condition in objectbox_filters.
+1. Every text value in embedding_queries_en, soft_filters.visual_terms_en, and negative_filters.visual_terms_en must be English. MobileCLIP text alignment is English-first.
    These fields must contain visual meaning only. Never repeat exact dates, years, clock times, named cities, districts, POIs, coordinates, or other precise metadata in semantic text.
-   Abstract visible context such as "a coastal city", "spring scenery", "afternoon light", or "night atmosphere" is allowed. Put precise time and place constraints only in time_ranges, local_time_windows, and locations.
-2. time_ranges are calendar/date constraints only. Use ISO 8601 strings with UTC offsets. For an unqualified recurring season such as "夏天", do not bind it to the current year; use {"recurring_start_month": 6, "recurring_end_month": 10}. Only use an absolute year when the user explicitly says this year, last year, or names a year.
-3. local_time_windows are local time-of-day constraints such as night, morning, dusk, sunrise, or sunset. They are not date ranges. Include utc_offset when the place is known; otherwise still return the local window and leave utc_offset null.
-4. For location queries, output a concise English canonical place name. Put the exact user-supplied surface form, native-language local names, common abbreviations, and romanizations in aliases. For scenic areas and POIs, aliases are critical. Do not enumerate nearby districts or tourist areas unless the user explicitly named them.
-5. Do not put scene words such as beach, park, night view, grassland, or starry sky into locations unless they are part of an official place name.
-6. A phrase such as "威海海边" contains a hard city constraint (Weihai) plus seaside visual semantics. Never replace it with another coastal city, and distinguish sea/coast from lakes and rivers with negative_semantics when needed.
-7. Preserve specificity. "Qingdao West Coast" is more specific than "Qingdao"; "Nanjing Confucius Temple" is more specific than "Nanjing".
-8. Choose coarse_tags only from the catalog below. Do not invent IDs. Use them as a high-precision index: include every clearly relevant category, but do not add a broad category merely because it could sometimes co-occur.
-9. positive_semantics are the precision layer. Return 2 to 5 independent, concrete, visually observable English photo descriptions that jointly cover the required subject, scene, action, atmosphere, and distinguishing details. Avoid vague phrases such as "good memories" when concrete evidence exists.
-10. recall_semantics are the controlled recall layer. Return 2 to 4 alternative visible formulations, synonyms, or compositions for the same intent. They may broaden appearance, but must never change explicit place, time, subject, medium, or scene type.
-11. negative_semantics are contrastive exclusions. Add likely confusions and near-misses, not only screenshots. Examples: sea versus lake, food versus tableware, wedding versus ordinary group photo, snow versus bright clouds.
-12. Set tag_strictness "strict" when a category is indispensable, "prefer" when it is strong evidence, and "optional" only when tags are genuinely not useful.
-13. Use query_type "attribute" for measurable properties such as smiling people or group portraits; "metadata" only when no visual matching is needed.
-   Put measurable requirements in attributes. Allowed media_kinds are image, dynamicImage, and video. Use conservative numeric thresholds: smiling usually means min_face_count 1 and min_smile_probability around 0.45; group photos usually mean min_face_count 2.
-14. Do not use named places as a substitute for visible semantics. Put named places in locations, and separately describe what the desired scene should visibly contain.
-15. If the query is ambiguous, choose the most literal interpretation and encode alternatives only in recall_semantics. Never invent a different city, event, or season.
-16. Before returning, verify that every noun and modifier in the user query is represented by metadata, coarse_tags, positive_semantics, recall_semantics, or negative_semantics.
+   Abstract visible context such as "a coastal city", "spring scenery", "afternoon light", or "night atmosphere" is allowed.
+2. Use absolute_date_ranges for explicit years or relative dates, annual_day_ranges for recurring dates or seasons, minute_of_day_ranges for local time-of-day, and weekdays for weekday constraints.
+3. Keep Chinese place names in objectbox_filters.geo. Do not translate raw_name, normalized_names, or amap_query_keywords. Never invent coordinates or decide that two places are identical.
+4. For exact POIs use strictness="exact". For countries, provinces, cities, and districts use strictness="broad". Set allow_nearby_siblings=true only when the user explicitly says nearby, around, 周边, 附近, or 旁边.
+5. Do not put scene words such as beach, park, night view, grassland, or starry sky into objectbox_filters.geo unless they are part of an official place name.
+6. A phrase such as "威海海边" contains a hard city constraint (威海) plus seaside visual semantics. Never replace it with another coastal city, and distinguish sea/coast from lakes and rivers with negative_filters.visual_terms_en when needed.
+7. Preserve specificity. "青岛西海岸" is more specific than "青岛"; "南京夫子庙" is more specific than "南京".
+8. embedding_queries_en is the precision layer. Return 2 to 5 independent, concrete, visually observable English descriptions that jointly cover the required subject, scene, action, atmosphere, and distinguishing details.
+9. soft_filters.visual_terms_en is the controlled recall layer. Return 2 to 4 alternative visible formulations for the same intent. They must never change explicit place, time, subject, medium, or scene type.
+10. negative_filters.visual_terms_en contains contrastive exclusions and likely near-misses, such as sea versus lake or wedding versus an ordinary group photo.
+11. Keep exact facts hard. Do not silently move explicit dates, weekdays, times, or named places into soft_filters.
+12. Geo strictness and descendant flags describe user intent only. The app, local cache, and Amap resolve actual place facts.
+13. If no visual matching is needed, embedding_queries_en may be empty. Never add a generic visual query merely to fill the field.
+14. Do not use named places as a substitute for visible semantics. Put named places in objectbox_filters.geo and separately describe visible content.
+15. If the query is ambiguous, choose the most literal interpretation and encode alternatives only in soft_filters. Never invent a different city, event, or season.
+16. Before returning, verify that every noun and modifier in the user query is represented by objectbox_filters, embedding_queries_en, soft_filters, or negative_filters.
 
 Available local indexes:
 - timestamp and recurring month filters
@@ -117,6 +117,7 @@ Available local indexes:
 - limited face count, smile, and joy attributes
 
 Few-shot examples:
+The examples below illustrate intent separation. Always emit the QueryPlan v1 schema above, not the legacy field names shown in examples.
 
 User: 去年夏天青岛海边的记忆
 JSON:
@@ -225,30 +226,30 @@ $rawQuery
     required String parserSource,
     required String baseNotes,
   }) {
-    final queryType = _requireQueryType(jsonObject['query_type']);
+    final plan = _normalizeQueryPlanSchema(rawQuery, jsonObject);
+    final queryType = _requireQueryType(plan['query_type']);
     final timeRanges = _readTimeRanges(
-      jsonObject['time_ranges'],
-      localTimeWindows: jsonObject['local_time_windows'],
+      plan['time_ranges'],
+      localTimeWindows: plan['local_time_windows'],
     );
     final normalizedTimeRanges = _normalizeRecurringSeason(
       rawQuery,
       timeRanges,
     );
-    final locations = _readLocations(jsonObject['locations']);
-    final coarseTags = _readCoarseTags(jsonObject['coarse_tags']);
-    final positiveSemantics = _readSemanticItems(
-      jsonObject['positive_semantics'],
-    );
-    final recallSemantics = _readSemanticItems(jsonObject['recall_semantics']);
+    final locations = _readLocations(plan['locations']);
+    final coarseTags = _readCoarseTags(plan['coarse_tags']);
+    final positiveSemantics = _readSemanticItems(plan['positive_semantics']);
+    final recallSemantics = _readSemanticItems(plan['recall_semantics']);
     final negativeSemantics = _normalizeNegativeSemantics(
       rawQuery,
-      _readSemanticItems(jsonObject['negative_semantics']),
+      _readSemanticItems(plan['negative_semantics']),
     );
-    final tagStrictness = _readTagStrictness(jsonObject['tag_strictness']);
+    final tagStrictness = _readTagStrictness(plan['tag_strictness']);
     final estimatedResultCount = _readEstimatedResultCount(
-      jsonObject['estimated_result_count'],
+      plan['estimated_result_count'],
     );
-    final attributes = _readAttributes(jsonObject['attributes']);
+    final attributes = _readAttributes(plan['attributes']);
+    final weekdays = _readWeekdays(plan['weekdays']);
 
     _validateSearchPlan(
       queryType: queryType,
@@ -278,14 +279,156 @@ $rawQuery
           : negativeSemantics,
       estimatedResultCount: estimatedResultCount,
       attributes: attributes,
+      weekdays: weekdays,
       usedLlm: usedLlm,
       llmConfigured: llmConfigured,
       parserSource: parserSource,
-      debugJson: _prettyJson.convert(jsonObject),
-      notes: (jsonObject['notes']?.toString().trim().isNotEmpty ?? false)
-          ? '$baseNotes; ${jsonObject['notes'].toString().trim()}'
+      debugJson: _prettyJson.convert(plan),
+      notes: (plan['notes']?.toString().trim().isNotEmpty ?? false)
+          ? '$baseNotes; ${plan['notes'].toString().trim()}'
           : baseNotes,
     );
+  }
+
+  Map<String, dynamic> _normalizeQueryPlanSchema(
+    String rawQuery,
+    Map<String, dynamic> jsonObject,
+  ) {
+    if (jsonObject['objectbox_filters'] is! Map) return jsonObject;
+    final filters = jsonObject['objectbox_filters'] as Map;
+    final embeddings = _readFlexibleStringList(
+      jsonObject['embedding_queries_en'],
+    );
+    final soft = jsonObject['soft_filters'] is Map
+        ? jsonObject['soft_filters'] as Map
+        : const <String, dynamic>{};
+    final negative = jsonObject['negative_filters'] is Map
+        ? jsonObject['negative_filters'] as Map
+        : const <String, dynamic>{};
+    final geo = filters['geo'] is List ? filters['geo'] as List : const [];
+    return <String, dynamic>{
+      'query_type': embeddings.isEmpty ? 'metadata' : 'concrete',
+      'time_ranges': <dynamic>[
+        ..._mapAbsoluteRanges(filters['absolute_date_ranges']),
+        ..._mapAnnualDayRanges(filters['annual_day_ranges']),
+      ],
+      'local_time_windows': _mapMinuteRanges(filters['minute_of_day_ranges']),
+      'weekdays': filters['weekdays'] ?? const <int>[],
+      'locations': geo
+          .whereType<Map>()
+          .map((item) {
+            final rawName = (item['raw_name'] ?? '').toString().trim();
+            return <String, dynamic>{
+              'text': rawName,
+              'type': _normalizeGeoKind(item['kind_hint']),
+              'aliases': <String>{
+                rawName,
+                ..._readFlexibleStringList(item['normalized_names']),
+                ..._readFlexibleStringList(item['amap_query_keywords']),
+                (item['province_hint'] ?? '').toString().trim(),
+                (item['city_hint'] ?? '').toString().trim(),
+                (item['district_hint'] ?? '').toString().trim(),
+              }.where((value) => value.isNotEmpty).toList(growable: false),
+              'strictness': item['strictness'],
+              'allow_descendants': item['allow_descendants'],
+              'allow_nearby_siblings': item['allow_nearby_siblings'],
+            };
+          })
+          .toList(growable: false),
+      'coarse_tags': const <Object>[],
+      'tag_strictness': 'optional',
+      'positive_semantics': _weightedItems(embeddings),
+      'recall_semantics': _weightedItems(
+        _readFlexibleStringList(soft['visual_terms_en']).isEmpty
+            ? embeddings
+            : _readFlexibleStringList(soft['visual_terms_en']),
+      ),
+      'negative_semantics': _weightedItems(
+        _readFlexibleStringList(negative['visual_terms_en']),
+      ),
+      'attributes': const <String, dynamic>{},
+      'estimated_result_count': const <String, dynamic>{
+        'min': 1,
+        'max': 240,
+        'confidence': 0.5,
+      },
+      'notes': 'QueryPlan v${jsonObject['version'] ?? 1}',
+      'raw_query': jsonObject['raw_query'] ?? rawQuery,
+    };
+  }
+
+  List<Map<String, dynamic>> _mapAbsoluteRanges(dynamic value) {
+    if (value is! List) return const <Map<String, dynamic>>[];
+    return value
+        .whereType<Map>()
+        .map(
+          (item) => <String, dynamic>{
+            'start_time_ms': item['start_millis'],
+            'end_time_ms': item['end_millis'],
+            'reason': 'absolute date range',
+          },
+        )
+        .toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _mapAnnualDayRanges(dynamic value) {
+    if (value is! List) return const <Map<String, dynamic>>[];
+    return value
+        .whereType<Map>()
+        .map(
+          (item) => <String, dynamic>{
+            'annual_start_day': item['start_day_of_year'] ?? item['start_day'],
+            'annual_end_day': item['end_day_of_year'] ?? item['end_day'],
+            'reason': 'annual day range',
+          },
+        )
+        .toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _mapMinuteRanges(dynamic value) {
+    if (value is! List) return const <Map<String, dynamic>>[];
+    return value
+        .whereType<Map>()
+        .map(
+          (item) => <String, dynamic>{
+            'start_minute': item['start_minute'],
+            'end_minute': item['end_minute'],
+            'reason': 'minute of day range',
+          },
+        )
+        .toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _weightedItems(List<String> values) {
+    if (values.isEmpty) return const <Map<String, dynamic>>[];
+    final weight = 1 / values.length;
+    return values
+        .map((text) => <String, dynamic>{'text': text, 'weight': weight})
+        .toList(growable: false);
+  }
+
+  List<String> _readFlexibleStringList(dynamic value) {
+    if (value is! List) return const <String>[];
+    return value
+        .map((item) => item is Map ? item['text'] : item)
+        .map((item) => item?.toString().trim() ?? '')
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  String _normalizeGeoKind(dynamic value) {
+    final kind = value?.toString().trim().toLowerCase() ?? '';
+    if (const <String>{
+      'country',
+      'province',
+      'city',
+      'district',
+    }.contains(kind)) {
+      return kind;
+    }
+    if (kind == 'scenic') return 'scenic_area';
+    return 'poi';
   }
 
   void _validateSearchPlan({
@@ -364,8 +507,11 @@ $rawQuery
     final endRaw = item['end'] ?? item['end_iso'] ?? item['end_time_ms'];
     final startTimeMs = _toTimestampMs(startRaw);
     final endTimeMs = _toTimestampMs(endRaw);
+    final annualStartDay = _readDayOfYear(item['annual_start_day']);
+    final annualEndDay = _readDayOfYear(item['annual_end_day']);
     if (startTimeMs == null &&
         endTimeMs == null &&
+        (annualStartDay == null || annualEndDay == null) &&
         (recurringStartMonth == null || recurringEndMonth == null)) {
       return null;
     }
@@ -378,6 +524,8 @@ $rawQuery
       timezone: _readOptionalString(item['timezone']),
       recurringStartMonth: recurringStartMonth,
       recurringEndMonth: recurringEndMonth,
+      annualStartDay: annualStartDay,
+      annualEndDay: annualEndDay,
     );
   }
 
@@ -385,6 +533,9 @@ $rawQuery
     String rawQuery,
     List<SemanticSearchTimeRange> ranges,
   ) {
+    if (ranges.any((range) => range.hasAnnualDayRange)) {
+      return ranges;
+    }
     if (RegExp(r'(今年|当年|去年|前年|明年|\d{4}\s*年)').hasMatch(rawQuery)) {
       return ranges;
     }
@@ -413,8 +564,10 @@ $rawQuery
   }
 
   SemanticSearchTimeRange? _readLocalTimeWindow(Map item) {
-    final startMinute = _readMinuteOfDay(item['start']);
-    final endMinute = _readMinuteOfDay(item['end']);
+    final startMinute =
+        _toMinuteOfDay(item['start_minute']) ?? _readMinuteOfDay(item['start']);
+    final endMinute =
+        _toMinuteOfDay(item['end_minute']) ?? _readMinuteOfDay(item['end']);
     final offsetMinutes = _readUtcOffsetMinutes(item['utc_offset']);
     if (startMinute == null || endMinute == null) {
       return null;
@@ -446,6 +599,9 @@ $rawQuery
         aliases: _readStringList(item['aliases']),
         timezone: _readOptionalString(item['timezone']),
         utcOffsetMinutes: _readUtcOffsetMinutes(item['utc_offset']),
+        strictness: _readGeoStrictness(item['strictness']),
+        allowDescendants: item['allow_descendants'] == true,
+        allowNearbySiblings: item['allow_nearby_siblings'] == true,
       );
       locations[location.text] = location;
     }
@@ -645,6 +801,13 @@ $rawQuery
     throw FormatException('search plan has invalid location type');
   }
 
+  String _readGeoStrictness(dynamic value) {
+    final text = value?.toString().trim().toLowerCase();
+    return const <String>{'exact', 'broad', 'nearby'}.contains(text)
+        ? text!
+        : 'exact';
+  }
+
   String? _readOptionalString(dynamic value) {
     final text = value?.toString().trim() ?? '';
     return text.isEmpty ? null : text;
@@ -718,6 +881,26 @@ $rawQuery
   int? _readMonth(dynamic value) {
     final month = _toInt(value);
     return month != null && month >= 1 && month <= 12 ? month : null;
+  }
+
+  int? _readDayOfYear(dynamic value) {
+    final day = _toInt(value);
+    return day != null && day >= 1 && day <= 366 ? day : null;
+  }
+
+  int? _toMinuteOfDay(dynamic value) {
+    final minute = _toInt(value);
+    return minute != null && minute >= 0 && minute <= 1439 ? minute : null;
+  }
+
+  List<int> _readWeekdays(dynamic value) {
+    if (value is! List) return const <int>[];
+    return value
+        .map(_toInt)
+        .whereType<int>()
+        .where((item) => item >= 1 && item <= 7)
+        .toSet()
+        .toList(growable: false);
   }
 
   double? _toDouble(dynamic value) {

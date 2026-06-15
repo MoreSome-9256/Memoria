@@ -115,4 +115,48 @@ void main() {
       ),
     );
   });
+
+  test('QueryPlan v1 preserves Chinese geo and mechanical filters', () {
+    final query = SemanticQueryParserService().buildQueryFromStructuredJson(
+      rawQuery: '周末夏天在青岛海边',
+      jsonObject: <String, dynamic>{
+        'version': 1,
+        'raw_query': '周末夏天在青岛海边',
+        'embedding_queries_en': <String>[
+          'summer beach travel photo',
+          'seaside scenery',
+        ],
+        'objectbox_filters': <String, dynamic>{
+          'absolute_date_ranges': const <Object>[],
+          'annual_day_ranges': const <Map<String, int>>[
+            <String, int>{'start_day_of_year': 152, 'end_day_of_year': 243},
+          ],
+          'minute_of_day_ranges': const <Object>[],
+          'weekdays': const <int>[6, 7],
+          'geo': const <Map<String, dynamic>>[
+            <String, dynamic>{
+              'raw_name': '青岛',
+              'normalized_names': <String>['青岛', '青岛市'],
+              'amap_query_keywords': <String>['青岛', '青岛市'],
+              'kind_hint': 'city',
+              'strictness': 'broad',
+            },
+          ],
+        },
+        'soft_filters': const <String, dynamic>{
+          'visual_terms_en': <String>['a coastal city in summer'],
+        },
+        'negative_filters': const <String, dynamic>{
+          'visual_terms_en': <String>['a lake without the sea'],
+        },
+      },
+    );
+
+    expect(query.locations.single.text, '青岛');
+    expect(query.locations.single.aliases, contains('青岛市'));
+    expect(query.weekdays, <int>[6, 7]);
+    expect(query.timeRanges.single.annualStartDay, 152);
+    expect(query.positiveSemanticTexts, contains('summer beach travel photo'));
+    expect(query.positiveSemantics.every((item) => !item.containsCjk), isTrue);
+  });
 }

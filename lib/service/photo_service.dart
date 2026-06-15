@@ -26,6 +26,7 @@ import 'junk_photo_filter_service.dart';
 import 'media_permission_service.dart';
 import 'media_thumbnail_cache_service.dart';
 import 'mobileclip_tag_service.dart';
+import 'photo_search_index_service.dart';
 import 'semantic_matching_service.dart';
 
 part 'photo_service_models.dart';

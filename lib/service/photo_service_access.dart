@@ -55,6 +55,9 @@ extension PhotoServiceAccess on PhotoService {
       photo.timestamp = timestamp;
       changed = true;
     }
+    if (PhotoSearchIndexService.updateTimeFields(photo)) {
+      changed = true;
+    }
     if (asset.width > 0 && photo.width != asset.width) {
       photo.width = asset.width;
       changed = true;
@@ -425,6 +428,9 @@ extension PhotoServiceAccess on PhotoService {
     if (PhotoFilterHelper.hasValidTimestamp(timestamp) &&
         photo.timestamp != timestamp) {
       photo.timestamp = timestamp;
+      changed = true;
+    }
+    if (PhotoSearchIndexService.updateTimeFields(photo)) {
       changed = true;
     }
     if (asset.width > 0 && photo.width != asset.width) {

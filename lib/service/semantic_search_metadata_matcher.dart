@@ -19,6 +19,9 @@ class SemanticSearchMetadataMatcher {
     final recurringMonthRanges = query.timeRanges
         .where((range) => range.hasRecurringMonthRange)
         .toList(growable: false);
+    final annualDayRanges = query.timeRanges
+        .where((range) => range.hasAnnualDayRange)
+        .toList(growable: false);
 
     if (dateRanges.isNotEmpty &&
         !dateRanges.any((range) => matchesDateRange(photo, range))) {
@@ -40,7 +43,30 @@ class SemanticSearchMetadataMatcher {
         )) {
       return false;
     }
+    if (annualDayRanges.isNotEmpty &&
+        !annualDayRanges.any((range) => matchesAnnualDay(photo, range))) {
+      return false;
+    }
+    if (query.weekdays.isNotEmpty) {
+      final date = DateTime.fromMillisecondsSinceEpoch(
+        normalizeTimestampMs(photo.timestamp),
+      );
+      if (!query.weekdays.contains(date.weekday)) return false;
+    }
     return true;
+  }
+
+  bool matchesAnnualDay(PhotoEntity photo, SemanticSearchTimeRange range) {
+    final start = range.annualStartDay;
+    final end = range.annualEndDay;
+    if (start == null || end == null) return true;
+    final date = DateTime.fromMillisecondsSinceEpoch(
+      normalizeTimestampMs(photo.timestamp),
+    );
+    final day = date.difference(DateTime(date.year)).inDays + 1;
+    return start <= end
+        ? day >= start && day <= end
+        : day >= start || day <= end;
   }
 
   bool matchesRecurringMonth(PhotoEntity photo, SemanticSearchTimeRange range) {
@@ -193,6 +219,11 @@ class SemanticSearchMetadataMatcher {
     final weightedParts = <_WeightedLocationPart>[
       _WeightedLocationPart(photo.locationName, 1.0, _LocationFieldScope.poi),
       _WeightedLocationPart(
+        photo.geoTextTokens,
+        0.95,
+        _LocationFieldScope.address,
+      ),
+      _WeightedLocationPart(
         photo.formattedAddress,
         0.92,
         _LocationFieldScope.address,
@@ -200,6 +231,8 @@ class SemanticSearchMetadataMatcher {
       _WeightedLocationPart(photo.district, 0.82, _LocationFieldScope.district),
       _WeightedLocationPart(photo.city, 0.72, _LocationFieldScope.city),
       _WeightedLocationPart(photo.province, 0.58, _LocationFieldScope.province),
+      _WeightedLocationPart(photo.country, 0.55, _LocationFieldScope.province),
+      _WeightedLocationPart(photo.township, 0.76, _LocationFieldScope.district),
       _WeightedLocationPart(photo.adcode, 0.50, _LocationFieldScope.code),
     ];
     final primary = _normalizeLocationText(location.text);

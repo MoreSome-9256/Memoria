@@ -742,7 +742,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(8, 8597624262250363654),
     name: 'PhotoEntity',
-    lastPropertyId: const obx_int.IdUid(34, 6042943680795048852),
+    lastPropertyId: const obx_int.IdUid(47, 1281475173012702512),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -813,25 +813,29 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(11, 6738160506724768430),
         name: 'district',
         type: 9,
-        flags: 0,
+        flags: 2048,
+        indexId: const obx_int.IdUid(50, 4388427494471689247),
       ),
       obx_int.ModelProperty(
         id: const obx_int.IdUid(12, 3408794665271959396),
         name: 'locationName',
         type: 9,
-        flags: 0,
+        flags: 2048,
+        indexId: const obx_int.IdUid(51, 1560167327080032126),
       ),
       obx_int.ModelProperty(
         id: const obx_int.IdUid(13, 2992636217807983314),
         name: 'formattedAddress',
         type: 9,
-        flags: 0,
+        flags: 2048,
+        indexId: const obx_int.IdUid(52, 3186757895812196308),
       ),
       obx_int.ModelProperty(
         id: const obx_int.IdUid(14, 974637116546315242),
         name: 'adcode',
         type: 9,
-        flags: 0,
+        flags: 2048,
+        indexId: const obx_int.IdUid(53, 8103554590429192001),
       ),
       obx_int.ModelProperty(
         id: const obx_int.IdUid(15, 1633660929943653901),
@@ -949,6 +953,95 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(34, 6042943680795048852),
         name: 'isFaceAnalyzed',
         type: 1,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(35, 7058355607779141680),
+        name: 'capturedAtMillis',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(42, 7475107979752408024),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(36, 1558829915739549284),
+        name: 'capturedYear',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(43, 2860892135410672358),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(37, 2782275124371099304),
+        name: 'capturedMonth',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(44, 5252736816399829388),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(38, 250893880655296962),
+        name: 'capturedDay',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(45, 1258017000721032011),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(39, 8222413609669803542),
+        name: 'capturedDayOfYear',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(46, 1180385124245042355),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(40, 236572881219088200),
+        name: 'capturedMinuteOfDay',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(47, 880267192612860947),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(41, 700090476293130451),
+        name: 'capturedWeekday',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(48, 2288312784746759333),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(42, 6074474480750238091),
+        name: 'searchIndexVersion',
+        type: 6,
+        flags: 8,
+        indexId: const obx_int.IdUid(49, 4035881654471806489),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(43, 987726826824825203),
+        name: 'country',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(54, 2101767395457731410),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(44, 3055892960116153462),
+        name: 'township',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(55, 8985631440835213434),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(45, 4618959247104790013),
+        name: 'geoTextTokens',
+        type: 9,
+        flags: 2048,
+        indexId: const obx_int.IdUid(56, 6390145666095184089),
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(46, 4893880422153576052),
+        name: 'geoIndexedAt',
+        type: 6,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(47, 1281475173012702512),
+        name: 'geoIndexVersion',
+        type: 6,
         flags: 0,
       ),
     ],
@@ -1349,7 +1442,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
     lastEntityId: const obx_int.IdUid(13, 5122727067842506599),
-    lastIndexId: const obx_int.IdUid(41, 7387194497188768424),
+    lastIndexId: const obx_int.IdUid(56, 6390145666095184089),
     lastRelationId: const obx_int.IdUid(0, 0),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [1998729358182538669],
@@ -2246,7 +2339,16 @@ obx_int.ModelDefinition getObjectBoxModel() {
         final thumbnailBytesOffset = object.thumbnailBytes == null
             ? null
             : fbb.writeListInt8(object.thumbnailBytes!);
-        fbb.startTable(35);
+        final countryOffset = object.country == null
+            ? null
+            : fbb.writeString(object.country!);
+        final townshipOffset = object.township == null
+            ? null
+            : fbb.writeString(object.township!);
+        final geoTextTokensOffset = object.geoTextTokens == null
+            ? null
+            : fbb.writeString(object.geoTextTokens!);
+        fbb.startTable(48);
         fbb.addInt64(0, object.id);
         fbb.addOffset(1, assetIdOffset);
         fbb.addOffset(2, pathOffset);
@@ -2280,6 +2382,19 @@ obx_int.ModelDefinition getObjectBoxModel() {
         fbb.addBool(31, object.isOcrAnalyzed);
         fbb.addBool(32, object.isCaptionAnalyzed);
         fbb.addBool(33, object.isFaceAnalyzed);
+        fbb.addInt64(34, object.capturedAtMillis);
+        fbb.addInt64(35, object.capturedYear);
+        fbb.addInt64(36, object.capturedMonth);
+        fbb.addInt64(37, object.capturedDay);
+        fbb.addInt64(38, object.capturedDayOfYear);
+        fbb.addInt64(39, object.capturedMinuteOfDay);
+        fbb.addInt64(40, object.capturedWeekday);
+        fbb.addInt64(41, object.searchIndexVersion);
+        fbb.addOffset(42, countryOffset);
+        fbb.addOffset(43, townshipOffset);
+        fbb.addOffset(44, geoTextTokensOffset);
+        fbb.addInt64(45, object.geoIndexedAt);
+        fbb.addInt64(46, object.geoIndexVersion);
         fbb.finish(fbb.endTable());
         return object.id;
       },
@@ -2423,6 +2538,75 @@ obx_int.ModelDefinition getObjectBoxModel() {
             rootOffset,
             70,
             false,
+          )
+          ..capturedAtMillis = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            72,
+            0,
+          )
+          ..capturedYear = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            74,
+            0,
+          )
+          ..capturedMonth = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            76,
+            0,
+          )
+          ..capturedDay = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            78,
+            0,
+          )
+          ..capturedDayOfYear = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            80,
+            0,
+          )
+          ..capturedMinuteOfDay = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            82,
+            0,
+          )
+          ..capturedWeekday = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            84,
+            0,
+          )
+          ..searchIndexVersion = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            86,
+            0,
+          )
+          ..country = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 88)
+          ..township = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 90)
+          ..geoTextTokens = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 92)
+          ..geoIndexedAt = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            94,
+            0,
+          )
+          ..geoIndexVersion = const fb.Int64Reader().vTableGet(
+            buffer,
+            rootOffset,
+            96,
+            0,
           );
 
         return object;
@@ -3603,6 +3787,71 @@ class PhotoEntity_ {
   /// See [PhotoEntity.isFaceAnalyzed].
   static final isFaceAnalyzed = obx.QueryBooleanProperty<PhotoEntity>(
     _entities[7].properties[32],
+  );
+
+  /// See [PhotoEntity.capturedAtMillis].
+  static final capturedAtMillis = obx.QueryIntegerProperty<PhotoEntity>(
+    _entities[7].properties[33],
+  );
+
+  /// See [PhotoEntity.capturedYear].
+  static final capturedYear = obx.QueryIntegerProperty<PhotoEntity>(
+    _entities[7].properties[34],
+  );
+
+  /// See [PhotoEntity.capturedMonth].
+  static final capturedMonth = obx.QueryIntegerProperty<PhotoEntity>(
+    _entities[7].properties[35],
+  );
+
+  /// See [PhotoEntity.capturedDay].
+  static final capturedDay = obx.QueryIntegerProperty<PhotoEntity>(
+    _entities[7].properties[36],
+  );
+
+  /// See [PhotoEntity.capturedDayOfYear].
+  static final capturedDayOfYear = obx.QueryIntegerProperty<PhotoEntity>(
+    _entities[7].properties[37],
+  );
+
+  /// See [PhotoEntity.capturedMinuteOfDay].
+  static final capturedMinuteOfDay = obx.QueryIntegerProperty<PhotoEntity>(
+    _entities[7].properties[38],
+  );
+
+  /// See [PhotoEntity.capturedWeekday].
+  static final capturedWeekday = obx.QueryIntegerProperty<PhotoEntity>(
+    _entities[7].properties[39],
+  );
+
+  /// See [PhotoEntity.searchIndexVersion].
+  static final searchIndexVersion = obx.QueryIntegerProperty<PhotoEntity>(
+    _entities[7].properties[40],
+  );
+
+  /// See [PhotoEntity.country].
+  static final country = obx.QueryStringProperty<PhotoEntity>(
+    _entities[7].properties[41],
+  );
+
+  /// See [PhotoEntity.township].
+  static final township = obx.QueryStringProperty<PhotoEntity>(
+    _entities[7].properties[42],
+  );
+
+  /// See [PhotoEntity.geoTextTokens].
+  static final geoTextTokens = obx.QueryStringProperty<PhotoEntity>(
+    _entities[7].properties[43],
+  );
+
+  /// See [PhotoEntity.geoIndexedAt].
+  static final geoIndexedAt = obx.QueryIntegerProperty<PhotoEntity>(
+    _entities[7].properties[44],
+  );
+
+  /// See [PhotoEntity.geoIndexVersion].
+  static final geoIndexVersion = obx.QueryIntegerProperty<PhotoEntity>(
+    _entities[7].properties[45],
   );
 }
 

@@ -16,6 +16,24 @@ class PhotoEntity {
   @Index()
   late int timestamp;
 
+  // Search-time mechanical indexes. Keep these derived from [timestamp].
+  @Index()
+  int capturedAtMillis = 0;
+  @Index()
+  int capturedYear = 0;
+  @Index()
+  int capturedMonth = 0;
+  @Index()
+  int capturedDay = 0;
+  @Index()
+  int capturedDayOfYear = 0;
+  @Index()
+  int capturedMinuteOfDay = 0;
+  @Index()
+  int capturedWeekday = 0;
+  @Index()
+  int searchIndexVersion = 0;
+
   // 📐 图片尺寸信息（仅用于媒体展示和布局）
   late int width;
   late int height;
@@ -34,16 +52,29 @@ class PhotoEntity {
 
   // 🏙️ 地址信息 (高德解析结果)
   @Index()
+  String? country;
+
+  @Index()
   String? province; // 省：北京市 / 山东省
 
   @Index()
   String? city; // 市：北京市 / 青岛市 (直辖市这里可能为空或与省相同)
 
+  @Index()
   String? district; // 区：朝阳区 / 市南区
+  @Index()
   String? locationName; // 更细粒度地点：学校/商场/园区/楼栋/POI
+  @Index()
   String? formattedAddress; // 完整地址：北京市朝阳区xx街道...
 
+  @Index()
   String? adcode; // 城市编码 (如 110101)，用于精确数据分析
+  @Index()
+  String? township;
+  @Index()
+  String? geoTextTokens;
+  int geoIndexedAt = 0;
+  int geoIndexVersion = 0;
 
   // 状态标记
   bool isLocationProcessed = false;

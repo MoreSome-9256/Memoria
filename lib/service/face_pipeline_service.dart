@@ -28,8 +28,14 @@ class _ExistingFaceSnapshot {
 }
 
 class FacePipelineService {
-  FacePipelineService({FaceEmbeddingService? embeddingService})
+  FacePipelineService._({FaceEmbeddingService? embeddingService})
     : _embeddingService = embeddingService ?? OnnxFaceEmbeddingService();
+
+  static final FacePipelineService instance = FacePipelineService._();
+
+  factory FacePipelineService.forTest({
+    required FaceEmbeddingService embeddingService,
+  }) => FacePipelineService._(embeddingService: embeddingService);
 
   static const bool _persistDebugCrops = bool.fromEnvironment(
     'FACE_DEBUG_CROPS',

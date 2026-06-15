@@ -1,10 +1,18 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_album/models/entity/photo_entity.dart';
 import 'package:photo_album/service/photo_attribute_background_service.dart';
+import 'package:photo_album/service/face_pipeline_service.dart';
 import 'package:photo_album/service/unified_analysis_pipeline_service.dart';
 import 'package:photo_album/service/app_ai_settings_service.dart';
 
 void main() {
+  test('face pipeline shares one process-wide ONNX session owner', () {
+    expect(
+      identical(FacePipelineService.instance, FacePipelineService.instance),
+      isTrue,
+    );
+  });
+
   test('attribute queue coalesces pending tasks by photo id', () {
     final service = PhotoAttributeBackgroundService.instance()
       ..resetForTesting();

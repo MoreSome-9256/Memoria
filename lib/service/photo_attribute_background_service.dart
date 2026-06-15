@@ -289,7 +289,7 @@ class PhotoAttributeBackgroundService {
       }
 
       if (runFaceDetection) {
-        await FacePipelineService().rebuildFacesForPhoto(
+        await FacePipelineService.instance.rebuildFacesForPhoto(
           photo: latest,
           imageFile: imageFile,
           imageBytes: input.analysisImageBytes,

@@ -72,6 +72,28 @@ void main() {
     }
   });
 
+  test(
+    'screenshot and document categories mark every score above threshold',
+    () {
+      final definitions = JunkPhotoFilterService().definitions;
+      for (final id in const <String>['screenshot', 'document']) {
+        final definition = definitions.singleWhere((item) => item.id == id);
+        expect(definition.alwaysMarkAboveThreshold, isTrue);
+      }
+    },
+  );
+
+  test('small albums still detect strong category matches', () {
+    expect(
+      JunkPhotoFilterService.significantOutlierIds(const <int, double>{
+        1: 0.05,
+        2: 0.24,
+        3: 0.08,
+      }, absoluteFloor: 0.2),
+      <int>{2},
+    );
+  });
+
   test('distribution filter selects only significant upper outliers', () {
     final scores = <int, double>{
       for (var i = 0; i < 30; i++) i: 0.14 + (i % 4) * 0.002,
@@ -96,7 +118,7 @@ void main() {
     );
   });
 
-  test('distribution filter does not guess from a small album', () {
+  test('small albums still detect an unambiguous strong outlier', () {
     final scores = <int, double>{
       for (var i = 0; i < 10; i++) i: 0.12,
       100: 0.9,
@@ -104,7 +126,7 @@ void main() {
 
     expect(
       JunkPhotoFilterService.significantOutlierIds(scores, absoluteFloor: 0.2),
-      isEmpty,
+      <int>{100},
     );
   });
 

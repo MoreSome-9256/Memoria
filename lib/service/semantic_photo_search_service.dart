@@ -10,7 +10,8 @@ import 'mobileclip_embedding_service.dart';
 import 'semantic_matching_service.dart';
 import 'semantic_search_metadata_matcher.dart';
 import 'semantic_query_parser_service.dart';
-import 'junk_photo_filter_service.dart';
+import 'photo_service.dart';
+import 'searchable_photo_policy.dart';
 
 class SemanticPhotoSearchService {
   SemanticPhotoSearchService._internal();
@@ -40,7 +41,7 @@ class SemanticPhotoSearchService {
   static const String _messageNoExactRelated = '未找到您所需的图片，只找到一些相关图片。';
 
   Future<SemanticSearchResult> search(String rawQuery) async {
-    final allPhotos = await _loadAllPhotos();
+    final allPhotos = await _loadSearchablePhotos();
     final query = await _queryParser.parseQuery(rawQuery);
     return _searchParsedQuery(
       rawQuery: rawQuery,
@@ -52,7 +53,7 @@ class SemanticPhotoSearchService {
   Future<SemanticSearchResult> searchWithQuery(
     SemanticSearchQuery query,
   ) async {
-    final allPhotos = await _loadAllPhotos();
+    final allPhotos = await _loadSearchablePhotos();
     return _searchParsedQuery(
       rawQuery: query.rawQuery,
       query: query,
@@ -65,7 +66,7 @@ class SemanticPhotoSearchService {
     required SemanticSearchQuery query,
     required List<PhotoEntity> allPhotos,
   }) async {
-    final photos = _searchablePhotos(allPhotos);
+    final photos = SearchablePhotoPolicy.filter(allPhotos);
     final activeModelVersion = await _mobileClipEmbeddingService
         .getSelectedModelVersion();
 
@@ -173,25 +174,21 @@ class SemanticPhotoSearchService {
     );
   }
 
-  Future<List<PhotoEntity>> _loadAllPhotos() async {
+  Future<List<PhotoEntity>> _loadSearchablePhotos() async {
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
     final q = photoBox
-        .query()
+        .query(PhotoEntity_.isAiAnalyzed.equals(true))
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
     final photos = q.find();
     q.close();
-    return photos;
+    return PhotoService().reconcileAccessiblePhotos(
+      SearchablePhotoPolicy.filter(photos),
+    );
   }
 
   List<PhotoEntity> _searchablePhotos(List<PhotoEntity> allPhotos) {
-    return allPhotos
-        .where((photo) => photo.isAiAnalyzed && !_isJunkQuarantined(photo))
-        .toList(growable: false);
-  }
-
-  bool _isJunkQuarantined(PhotoEntity photo) {
-    return JunkPhotoFilterService.isQuarantined(photo.aiTags);
+    return SearchablePhotoPolicy.filter(allPhotos);
   }
 
   void _validateSemanticVectorInputs(SemanticSearchQuery query) {
@@ -376,12 +373,7 @@ class SemanticPhotoSearchService {
         negativeVectors: negativeVectors,
       );
     } catch (error) {
-      debugPrint('SemanticPhotoSearchService build vectors failed: $error');
-      return const _SemanticVectorBundle(
-        positiveVectors: <_SemanticVector>[],
-        recallVectors: <_SemanticVector>[],
-        negativeVectors: <_SemanticVector>[],
-      );
+      throw StateError('语义向量模型不可用，无法完成本次搜索: $error');
     }
   }
 

@@ -4,6 +4,7 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/semantic_photo_search_service.dart';
@@ -158,6 +159,7 @@ class _CreatePageState extends State<CreatePage> {
   final SemanticPhotoSearchService _semanticPhotoSearchService =
       SemanticPhotoSearchService();
   bool _isSearching = false;
+  String? _searchError;
   static const int _maxSemanticResults = 300;
 
   // 搜索结果
@@ -204,6 +206,7 @@ class _CreatePageState extends State<CreatePage> {
       _isSearching = false;
       _searchResults = <PhotoEntity>[];
       _selectedPhotoIds.clear();
+      _searchError = null;
     });
   }
 
@@ -218,9 +221,11 @@ class _CreatePageState extends State<CreatePage> {
       _isSearching = true;
       _searchResults = <PhotoEntity>[];
       _selectedPhotoIds.clear();
+      _searchError = null;
     });
 
     List<PhotoEntity> matchedPhotos;
+    String? searchError;
     try {
       final result = await _semanticPhotoSearchService.search(query.trim());
       matchedPhotos = _mergeCreateSearchPhotos(
@@ -236,6 +241,7 @@ class _CreatePageState extends State<CreatePage> {
     } catch (e) {
       _logDebug('⚠️ 统一语义检索失败: $e');
       matchedPhotos = const <PhotoEntity>[];
+      searchError = e.toString().replaceFirst(RegExp(r'^\w+Exception:\s*'), '');
     }
 
     _logDebug("🎯 [综合过滤] 最终命中照片数: ${matchedPhotos.length}");
@@ -243,6 +249,7 @@ class _CreatePageState extends State<CreatePage> {
     if (mounted) {
       setState(() {
         _searchResults = matchedPhotos;
+        _searchError = searchError;
         _selectedPhotoIds
           ..clear()
           ..addAll(matchedPhotos.map((photo) => photo.id));
@@ -400,6 +407,8 @@ class _CreatePageState extends State<CreatePage> {
                             color: Color(0xFFD17EAD),
                           ),
                         )
+                      : _searchError != null
+                      ? _buildSearchErrorState()
                       : _searchResults.isEmpty
                       ? _buildEmptyState()
                       : _buildPhotoGrid(),
@@ -586,7 +595,7 @@ class _CreatePageState extends State<CreatePage> {
   // 🖼️ 构建无黑罩的照片网格
   Widget _buildPhotoGrid() {
     return GridView.builder(
-      cacheExtent: 700,
+      scrollCacheExtent: const ScrollCacheExtent.pixels(700),
       padding: const EdgeInsets.only(
         left: 20,
         right: 20,
@@ -800,6 +809,38 @@ class _CreatePageState extends State<CreatePage> {
             ).textTheme.bodyLarge?.copyWith(color: Colors.grey),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSearchErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline_rounded,
+              size: 72,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            const SizedBox(height: 16),
+            Text('搜索未完成', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text(
+              _searchError ?? '未知错误',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              onPressed: () => _performSearch(_searchController.text),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('重试'),
+            ),
+          ],
+        ),
       ),
     );
   }

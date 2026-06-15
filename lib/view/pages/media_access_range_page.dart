@@ -8,6 +8,7 @@ import 'package:photo_manager/photo_manager.dart';
 
 import '../../service/album_selection_preference_service.dart';
 import '../../service/photo_service.dart';
+import '../../service/media_permission_service.dart';
 
 class MediaAccessRangePage extends StatefulWidget {
   const MediaAccessRangePage({super.key});
@@ -42,14 +43,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
   }
 
   Future<void> _loadPermissionAndAlbums() async {
-    final state = await PhotoManager.requestPermissionExtend(
-      requestOption: const PermissionRequestOption(
-        androidPermission: AndroidPermission(
-          type: RequestType.all,
-          mediaLocation: false,
-        ),
-      ),
-    );
+    final state = await MediaPermissionService.readPermissionState();
     final sel = await AlbumSelectionPreferenceService().loadSelection();
     if (!mounted) return;
     _permState = state;
@@ -125,14 +119,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
   }
 
   Future<void> _requestPermission() async {
-    final state = await PhotoManager.requestPermissionExtend(
-      requestOption: const PermissionRequestOption(
-        androidPermission: AndroidPermission(
-          type: RequestType.all,
-          mediaLocation: false,
-        ),
-      ),
-    );
+    final state = await MediaPermissionService.requestPermission();
     if (!mounted) return;
     setState(() => _permState = state);
     if (state.hasAccess) {
@@ -239,6 +226,13 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                               size: 18,
                             ),
                             label: const Text('选择更多照片'),
+                          ),
+                          TextButton.icon(
+                            onPressed: () async {
+                              await MediaPermissionService.openSystemSettings();
+                            },
+                            icon: const Icon(Icons.settings_outlined, size: 18),
+                            label: const Text('允许全部照片'),
                           ),
                         ],
                       ),

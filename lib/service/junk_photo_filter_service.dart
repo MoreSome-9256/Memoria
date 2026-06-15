@@ -11,6 +11,7 @@ class JunkPhotoCategoryDefinition {
     required this.description,
     required this.prototypePrompts,
     required this.threshold,
+    this.alwaysMarkAboveThreshold = false,
   });
 
   final String id;
@@ -18,6 +19,7 @@ class JunkPhotoCategoryDefinition {
   final String description;
   final List<String> prototypePrompts;
   final double threshold;
+  final bool alwaysMarkAboveThreshold;
 }
 
 class JunkPhotoHit {
@@ -152,6 +154,7 @@ class JunkPhotoFilterService {
             'a poster with a large QR code',
           ],
           threshold: 0.2,
+          alwaysMarkAboveThreshold: true,
         ),
         JunkPhotoCategoryDefinition(
           id: 'meme',
@@ -200,6 +203,7 @@ class JunkPhotoFilterService {
             'a desktop software screenshot',
           ],
           threshold: 0.2,
+          alwaysMarkAboveThreshold: true,
         ),
         JunkPhotoCategoryDefinition(
           id: 'document',
@@ -212,6 +216,7 @@ class JunkPhotoFilterService {
             'a receipt invoice or printed form',
           ],
           threshold: 0.2,
+          alwaysMarkAboveThreshold: true,
         ),
         JunkPhotoCategoryDefinition(
           id: 'abstract_low_value',
@@ -337,10 +342,12 @@ class JunkPhotoFilterService {
       for (final entry in validEmbeddings.entries) {
         scores[entry.key] = _bestPromptScore(entry.value, promptVectors);
       }
-      final outlierIds = significantOutlierIds(
-        scores,
-        absoluteFloor: definition.threshold,
-      );
+      final outlierIds = definition.alwaysMarkAboveThreshold
+          ? scores.entries
+                .where((entry) => entry.value >= definition.threshold)
+                .map((entry) => entry.key)
+                .toSet()
+          : significantOutlierIds(scores, absoluteFloor: definition.threshold);
       for (final photoId in outlierIds) {
         hitsByPhotoId
             .putIfAbsent(photoId, () => <JunkPhotoHit>[])
@@ -365,35 +372,19 @@ class JunkPhotoFilterService {
         hits: List<JunkPhotoHit>.unmodifiable(hits),
       );
     }
-    final rankedCandidates =
-        decisions.entries
-            .where((entry) => entry.value.shouldFilter)
-            .toList(growable: false)
-          ..sort(
-            (a, b) => _decisionStrength(
-              b.value,
-            ).compareTo(_decisionStrength(a.value)),
-          );
-    final maxCandidates = math.max(1, (validEmbeddings.length * 0.05).floor());
-    final allowedIds = rankedCandidates
-        .take(maxCandidates)
-        .map((entry) => entry.key)
-        .toSet();
-    return JunkPhotoBatchResult(
-      decisions: Map.unmodifiable(<int, JunkPhotoDecision>{
-        for (final entry in decisions.entries)
-          entry.key: allowedIds.contains(entry.key)
-              ? entry.value
-              : JunkPhotoDecision.keep(),
-      }),
-    );
+    return JunkPhotoBatchResult(decisions: Map.unmodifiable(decisions));
   }
 
   static Set<int> significantOutlierIds(
     Map<int, double> scores, {
     required double absoluteFloor,
   }) {
-    if (scores.length < 20) return const <int>{};
+    if (scores.length <= 8) {
+      return scores.entries
+          .where((entry) => entry.value >= absoluteFloor)
+          .map((entry) => entry.key)
+          .toSet();
+    }
     final sorted = scores.values.toList(growable: false)..sort();
     final median = _median(sorted);
     final deviations =
@@ -401,7 +392,7 @@ class JunkPhotoFilterService {
           ..sort();
     final mad = _median(deviations);
     final robustSpread = math.max(mad * 1.4826, 0.008);
-    final minimumLift = scores.length < 20 ? 0.055 : 0.04;
+    final minimumLift = scores.length < 20 ? 0.05 : 0.04;
     final cutoff = math.max(
       absoluteFloor,
       math.max(median + minimumLift, median + robustSpread * 3.5),
@@ -410,13 +401,6 @@ class JunkPhotoFilterService {
         .where((entry) => entry.value >= cutoff)
         .map((entry) => entry.key)
         .toSet();
-  }
-
-  static double _decisionStrength(JunkPhotoDecision decision) {
-    if (decision.hits.isEmpty) return 0;
-    return decision.hits
-        .map((hit) => hit.score - hit.threshold)
-        .reduce(math.max);
   }
 
   double _bestPromptScore(

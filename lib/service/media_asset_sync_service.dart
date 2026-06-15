@@ -9,6 +9,7 @@ import 'package:photo_manager/photo_manager.dart';
 
 import '../storage/objectbox/entities/media_asset_entity.dart';
 import '../storage/objectbox/media_asset_repository.dart';
+import 'media_permission_service.dart';
 
 class MediaSyncSummary {
   const MediaSyncSummary({
@@ -40,14 +41,18 @@ class MediaAssetSyncService {
   bool _isReconciling = false;
 
   Future<PermissionState> requestPhotoPermission() {
-    return PhotoManager.requestPermissionExtend();
+    return MediaPermissionService.requestPermission();
+  }
+
+  Future<PermissionState> readPhotoPermission() {
+    return MediaPermissionService.readPermissionState();
   }
 
   Future<bool> presentLimitedSelectorIfNeeded() async {
     if (!Platform.isIOS) {
       return false;
     }
-    final state = await PhotoManager.requestPermissionExtend();
+    final state = await readPhotoPermission();
     if (state != PermissionState.limited) {
       return false;
     }
@@ -67,7 +72,7 @@ class MediaAssetSyncService {
     _isReconciling = true;
 
     try {
-      final permission = await requestPhotoPermission();
+      final permission = await readPhotoPermission();
       if (!permission.isAuth && !permission.hasAccess) {
         throw StateError('没有相册权限，无法扫描资源。');
       }

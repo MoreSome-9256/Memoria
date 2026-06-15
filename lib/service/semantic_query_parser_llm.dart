@@ -89,7 +89,9 @@ Required top-level schema:
 
 Rules:
 0. Build a complete one-pass retrieval plan. The app will not ask you to reinterpret the query after retrieval. Separate non-negotiable metadata constraints from visual recall signals and describe every important part of the user's intent.
-1. All values intended for visual or semantic matching must be English. MobileCLIP text alignment is English-first.
+1. Every text value in positive_semantics, recall_semantics, and negative_semantics must be English. MobileCLIP text alignment is English-first.
+   These fields must contain visual meaning only. Never repeat exact dates, years, clock times, named cities, districts, POIs, coordinates, or other precise metadata in semantic text.
+   Abstract visible context such as "a coastal city", "spring scenery", "afternoon light", or "night atmosphere" is allowed. Put precise time and place constraints only in time_ranges, local_time_windows, and locations.
 2. time_ranges are calendar/date constraints only. Use ISO 8601 strings with UTC offsets. For an unqualified recurring season such as "夏天", do not bind it to the current year; use {"recurring_start_month": 6, "recurring_end_month": 10}. Only use an absolute year when the user explicitly says this year, last year, or names a year.
 3. local_time_windows are local time-of-day constraints such as night, morning, dusk, sunrise, or sunset. They are not date ranges. Include utc_offset when the place is known; otherwise still return the local window and leave utc_offset null.
 4. For location queries, output a concise English canonical place name. Put the exact user-supplied surface form, native-language local names, common abbreviations, and romanizations in aliases. For scenic areas and POIs, aliases are critical. Do not enumerate nearby districts or tourist areas unless the user explicitly named them.

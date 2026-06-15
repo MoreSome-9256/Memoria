@@ -225,7 +225,10 @@ class _PhotoScanCoordinator {
     }
 
     final albSel = await AlbumSelectionPreferenceService().loadSelection();
-    final selectedIds = albSel.selectedAlbumIds.toSet();
+    final selectedIds = MediaPermissionService.effectiveAlbumWhitelist(
+      state: state,
+      savedAlbumIds: albSel.selectedAlbumIds,
+    );
     final albumStates = <_IncrementalAlbumState>[];
 
     if (selectedIds.isEmpty) {
@@ -260,7 +263,7 @@ class _PhotoScanCoordinator {
       }
     }
 
-    if (runCleanupOnce) {
+    if (runCleanupOnce && !state.isLimited) {
       _service._removeUnavailablePhotos().ignore();
     }
 
@@ -359,11 +362,18 @@ class _PhotoScanCoordinator {
     }
 
     final albSel = await AlbumSelectionPreferenceService().loadSelection();
-    final selectedIds = albSel.selectedAlbumIds.toSet();
+    final selectedIds = MediaPermissionService.effectiveAlbumWhitelist(
+      state: state,
+      savedAlbumIds: albSel.selectedAlbumIds,
+    );
 
     // 没有选中的相册 → 用 onlyAll 路径获取全部
     if (selectedIds.isEmpty) {
-      return _resolveAllAlbums(requestType, runCleanupOnce, forceRefresh);
+      return _resolveAllAlbums(
+        requestType,
+        runCleanupOnce && !state.isLimited,
+        forceRefresh,
+      );
     }
 
     // 按选定相册分别加载
@@ -420,7 +430,7 @@ class _PhotoScanCoordinator {
     _cachedTotalCount = unique.length;
     _cachedSelectionSignature = signature;
 
-    if (runCleanupOnce) {
+    if (runCleanupOnce && !state.isLimited) {
       _service._removeUnavailablePhotos().ignore();
     }
 

@@ -1,11 +1,9 @@
 // 相册页面，负责照片浏览、事件查看和标签筛选。
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'dart:collection';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/event_entity.dart';
@@ -19,6 +17,7 @@ import '../../service/event_service.dart';
 import '../../service/junk_photo_cleanup_service.dart';
 import '../../service/junk_photo_filter_service.dart';
 import '../../service/app_ai_settings_service.dart';
+import '../../service/media_permission_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_queue_service.dart';
 import '../../service/unified_analysis_pipeline_service.dart';
@@ -286,7 +285,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
             FilledButton(
               onPressed: () async {
                 Navigator.pop(context);
-                await PhotoManager.openSetting();
+                await MediaPermissionService.openSystemSettings();
               },
               child: const Text('去系统设置'),
             ),
@@ -417,84 +416,39 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<PermissionState> _requestPhotoPermission({
-    required String title,
-    required String message,
-    required RequestType type,
-  }) async {
-    var state = await PhotoManager.requestPermissionExtend(
-      requestOption: PermissionRequestOption(
-        androidPermission: AndroidPermission(type: type, mediaLocation: false),
-      ),
-    );
+  Future<PermissionState> _requestPhotoPermission() async {
+    final state = await MediaPermissionService.requestPermission();
     if (state.hasAccess) return state;
 
     if (!mounted) return state;
 
-    final retry = await showDialog<bool>(
+    await showDialog<void>(
       context: context,
-      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
+        title: const Text('需要照片访问权限'),
+        content: const Text(
+          'Memoria 只会读取您允许访问的照片和视频。您可以在系统设置中选择部分照片，或允许访问全部照片。',
+        ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
+            onPressed: () => Navigator.pop(ctx),
             child: const Text('取消'),
           ),
           FilledButton(
             onPressed: () async {
-              final s = await PhotoManager.requestPermissionExtend(
-                requestOption: PermissionRequestOption(
-                  androidPermission: AndroidPermission(
-                    type: type,
-                    mediaLocation: false,
-                  ),
-                ),
-              );
-              if (ctx.mounted) {
-                Navigator.pop(ctx, s.hasAccess);
-              }
+              await MediaPermissionService.openSystemSettings();
+              if (ctx.mounted) Navigator.pop(ctx);
             },
-            child: const Text('授予权限'),
+            child: const Text('打开系统设置'),
           ),
         ],
       ),
     );
-
-    if (retry != true || !mounted) return state;
-
-    state = await PhotoManager.requestPermissionExtend(
-      requestOption: PermissionRequestOption(
-        androidPermission: AndroidPermission(type: type, mediaLocation: false),
-      ),
-    );
-
-    if (!state.hasAccess && mounted) {
-      await showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('权限被拒绝'),
-          content: const Text('请在系统设置中手动开启相册访问权限。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('知道了'),
-            ),
-          ],
-        ),
-      );
-    }
-
     return state;
   }
 
   Future<void> _showRefreshOptions() async {
-    final permState = await _requestPhotoPermission(
-      title: '需要相册访问权限',
-      message: 'Memoria 需要读取您的照片和视频，才能进行分析和管理。',
-      type: RequestType.all,
-    );
+    final permState = await _requestPhotoPermission();
     if (!permState.hasAccess || !mounted) return;
     final isLimited = permState.isLimited;
 
@@ -574,21 +528,11 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
       case _ImportAction.rebuildAll:
         await _confirmAndRebuildAnalysis();
       case _ImportAction.addMorePhotos:
-        if (Platform.isAndroid) {
-          await <Permission>[Permission.photos, Permission.videos].request();
-        } else {
-          await PhotoManager.presentLimited(type: RequestType.all);
-        }
+        await MediaPermissionService.selectMorePhotos();
         PhotoService().invalidateScanSessionCache();
       case _ImportAction.requestFullAccess:
-        final state = await PhotoManager.requestPermissionExtend(
-          requestOption: const PermissionRequestOption(
-            androidPermission: AndroidPermission(
-              type: RequestType.all,
-              mediaLocation: false,
-            ),
-          ),
-        );
+        await MediaPermissionService.openSystemSettings();
+        final state = await MediaPermissionService.readPermissionState();
         PhotoService().invalidateScanSessionCache();
         if (!mounted) return;
         final text = state.isAuth
@@ -604,7 +548,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
                 ? SnackBarAction(
                     label: '系统设置',
                     onPressed: () {
-                      unawaited(PhotoManager.openSetting());
+                      unawaited(MediaPermissionService.openSystemSettings());
                     },
                   )
                 : null,

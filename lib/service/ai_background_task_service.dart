@@ -6,9 +6,11 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../storage/objectbox/objectbox_service.dart';
+import 'media_permission_service.dart';
 import 'unified_analysis_pipeline_service.dart';
 
 @pragma('vm:entry-point')
@@ -57,6 +59,7 @@ class _AlbumCacheTaskHandler extends TaskHandler {
         clearCacheFirst: request.clearCacheFirst,
         analyzeWithAi: request.analyzeWithAi,
         storeReferenceBytes: request.storeReferenceBytes,
+        permissionState: request.permissionState,
       );
     } catch (error, stackTrace) {
       debugPrint('[foreground-pipeline] 执行失败: $error');
@@ -87,6 +90,8 @@ class AiBackgroundTaskService {
   static const _pendingUnifiedStoreReferenceKey =
       'foreground_pending_unified_store_reference';
   static const _pendingUnifiedRunIdKey = 'foreground_pending_unified_run_id';
+  static const _pendingUnifiedPermissionStateKey =
+      'foreground_pending_unified_permission_state';
 
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
@@ -166,6 +171,11 @@ class AiBackgroundTaskService {
       return;
     }
     await _ensureInitialized();
+    final permissionState =
+        await MediaPermissionService.readLivePermissionState();
+    if (!permissionState.hasAccess) {
+      throw StateError('没有可用的照片访问权限，请先在应用内授权。');
+    }
     final prefs = await SharedPreferences.getInstance();
     final runId = DateTime.now().microsecondsSinceEpoch.toString();
     await prefs.setString(_pendingUnifiedRunIdKey, 'starting:$runId');
@@ -187,6 +197,10 @@ class AiBackgroundTaskService {
     await prefs.setBool(_pendingUnifiedClearCacheKey, clearCacheFirst);
     await prefs.setBool(_pendingUnifiedAnalyzeKey, analyzeWithAi);
     await prefs.setString(_pendingUnifiedRunIdKey, runId);
+    await prefs.setString(
+      _pendingUnifiedPermissionStateKey,
+      permissionState.name,
+    );
     await prefs.setBool('foreground_unified_pipeline_stop_requested', false);
     await ObjectBoxService().ensureInitialized();
     await prefs.setString(
@@ -214,6 +228,11 @@ class AiBackgroundTaskService {
       clearCacheFirst: prefs.getBool(_pendingUnifiedClearCacheKey) ?? false,
       analyzeWithAi: prefs.getBool(_pendingUnifiedAnalyzeKey) ?? true,
       storeReferenceBytes: Uint8List.fromList(base64Decode(encodedReference)),
+      permissionState: PermissionState.values.firstWhere(
+        (state) =>
+            state.name == prefs.getString(_pendingUnifiedPermissionStateKey),
+        orElse: () => PermissionState.notDetermined,
+      ),
     );
   }
 
@@ -224,6 +243,7 @@ class AiBackgroundTaskService {
     await prefs.remove(_pendingUnifiedAnalyzeKey);
     await prefs.remove(_pendingUnifiedStoreReferenceKey);
     await prefs.remove(_pendingUnifiedRunIdKey);
+    await prefs.remove(_pendingUnifiedPermissionStateKey);
   }
 
   Future<bool> isCurrentUnifiedRun(String runId) async {
@@ -263,10 +283,12 @@ class _UnifiedPipelineForegroundRequest {
     required this.clearCacheFirst,
     required this.analyzeWithAi,
     required this.storeReferenceBytes,
+    required this.permissionState,
   });
 
   final String runId;
   final bool clearCacheFirst;
   final bool analyzeWithAi;
   final Uint8List storeReferenceBytes;
+  final PermissionState permissionState;
 }

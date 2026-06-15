@@ -126,6 +126,7 @@ class UnifiedAnalysisPipelineService {
     bool clearCacheFirst = false,
     bool analyzeWithAi = true,
     Uint8List? storeReferenceBytes,
+    required PermissionState permissionState,
   }) async {
     UnifiedAnalysisProgressStore.instance.markForegroundIsolate();
     _isRunning = true;
@@ -158,20 +159,16 @@ class UnifiedAnalysisPipelineService {
         await prefs.setBool(_foregroundStopRequestedKey, false);
 
         if (clearCacheFirst) {
-          await _runFullRebuildPipeline(requestPermission: false);
+          await _runFullRebuildPipeline(permissionState: permissionState);
         } else {
-          await _runIncrementalPipeline(requestPermission: false);
+          await _runIncrementalPipeline(permissionState: permissionState);
         }
 
         await AiBackgroundTaskService.instance.stop();
       } else if (clearCacheFirst) {
-        await _runFullRebuildPipeline(
-          requestPermission: storeReferenceBytes == null,
-        );
+        await _runFullRebuildPipeline(permissionState: permissionState);
       } else {
-        await _runIncrementalPipeline(
-          requestPermission: storeReferenceBytes == null,
-        );
+        await _runIncrementalPipeline(permissionState: permissionState);
       }
     } catch (error) {
       debugPrint('[pipeline] ❌ 流水线失败: $error');
@@ -240,44 +237,47 @@ class UnifiedAnalysisPipelineService {
     await startUnifiedPipeline(clearCacheFirst: false, analyzeWithAi: true);
   }
 
-  Future<void> _runIncrementalPipeline({bool requestPermission = true}) async {
+  Future<void> _runIncrementalPipeline({
+    required PermissionState permissionState,
+  }) async {
     if (_analysisEnabled) {
       final settings = await AppAiSettingsService.instance.load();
       await PhotoService().requeuePhotosMissingEnabledAttributes(settings);
       await Future.wait(<Future<void>>[
-        _runProducer(requestPermission: requestPermission),
+        _runProducer(permissionState: permissionState),
         _runConsumer(),
       ]);
     } else {
-      await _runProducer(requestPermission: requestPermission);
+      await _runProducer(permissionState: permissionState);
     }
     await _onPipelineCompleted();
   }
 
-  Future<void> _runFullRebuildPipeline({bool requestPermission = true}) async {
+  Future<void> _runFullRebuildPipeline({
+    required PermissionState permissionState,
+  }) async {
     debugPrint('[pipeline] 全量重建模式：先清空再重建');
 
     _updateProgress(stage: UnifiedAnalysisStage.scanning, message: '正在清空缓存…');
     await PhotoService().clearAllCachedData();
 
-    await _runIncrementalPipeline(requestPermission: requestPermission);
+    await _runIncrementalPipeline(permissionState: permissionState);
   }
 
   Future<void> _runProducer({
     bool enqueueForConsumer = true,
-    bool requestPermission = true,
+    required PermissionState permissionState,
   }) async {
     final settings = await AppAiSettingsService.instance.load();
     final requestType = _resolveRequestType(settings);
 
-    await PhotoManager.setIgnorePermissionCheck(!requestPermission);
-    final permission = await MediaPermissionService.readPermissionState();
+    await PhotoManager.setIgnorePermissionCheck(true);
     debugPrint(
-      '[pipeline] 相册权限只读检查: state=$permission '
-      'hasAccess=${permission.hasAccess} limited=${permission.isLimited} '
+      '[pipeline] 使用启动前授权快照: state=$permissionState '
+      'hasAccess=${permissionState.hasAccess} limited=${permissionState.isLimited} '
       'requestType=${requestType.value}',
     );
-    if (!permission.hasAccess) {
+    if (!permissionState.hasAccess) {
       throw const PhotoScanException(
         PhotoScanError.permissionDenied,
         '没有相册权限，无法读取系统相册。请返回应用并在照片访问设置中授权。',
@@ -285,7 +285,10 @@ class UnifiedAnalysisPipelineService {
     }
 
     final albSel = await AlbumSelectionPreferenceService().loadSelection();
-    final selectedIds = albSel.selectedAlbumIds.toSet();
+    final selectedIds = MediaPermissionService.effectiveAlbumWhitelist(
+      state: permissionState,
+      savedAlbumIds: albSel.selectedAlbumIds,
+    );
 
     final targetAlbums = await _resolveProducerTargetAlbums(
       requestType: requestType,

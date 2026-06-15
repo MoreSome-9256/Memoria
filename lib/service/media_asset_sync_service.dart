@@ -45,7 +45,7 @@ class MediaAssetSyncService {
   }
 
   Future<PermissionState> readPhotoPermission() {
-    return MediaPermissionService.readPermissionState();
+    return MediaPermissionService.readLivePermissionState();
   }
 
   Future<bool> presentLimitedSelectorIfNeeded() async {
@@ -56,7 +56,7 @@ class MediaAssetSyncService {
     if (state != PermissionState.limited) {
       return false;
     }
-    await PhotoManager.presentLimited();
+    await MediaPermissionService.selectMorePhotos();
     return true;
   }
 
@@ -92,7 +92,9 @@ class MediaAssetSyncService {
         return MediaSyncSummary(
           discovered: 0,
           insertedOrUpdated: 0,
-          removed: _cleanupMissing(const <String>{}),
+          removed: permission.isAuth && !permission.isLimited
+              ? _cleanupMissing(const <String>{})
+              : 0,
           limitedAccess: permission == PermissionState.limited,
         );
       }
@@ -150,7 +152,9 @@ class MediaAssetSyncService {
         insertedOrUpdated += batch.length;
       }
 
-      final removed = _cleanupMissing(discoveredAssetIds);
+      final removed = permission.isAuth && !permission.isLimited
+          ? _cleanupMissing(discoveredAssetIds)
+          : 0;
       return MediaSyncSummary(
         discovered: discoveredAssetIds.length,
         insertedOrUpdated: insertedOrUpdated,

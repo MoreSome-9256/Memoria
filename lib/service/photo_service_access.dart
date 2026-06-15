@@ -26,9 +26,15 @@ extension PhotoServiceAccess on PhotoService {
 
     final asset = await AssetEntity.fromId(assetId);
     if (asset == null) {
-      await _removePhotoRecordsByIds(<int>[photo.id]);
+      final canDelete =
+          await MediaPermissionService.canDeleteUnavailableMedia();
+      if (canDelete) {
+        await _removePhotoRecordsByIds(<int>[photo.id]);
+      }
       throw PhotoOriginalAccessException(
-        '系统相册资源不可访问，已移除本地记录 photoId=${photo.id} assetId=$assetId purpose=$purpose',
+        canDelete
+            ? '系统相册资源不可访问，已移除本地记录 photoId=${photo.id} assetId=$assetId purpose=$purpose'
+            : '当前授权不包含该资源，或系统暂时无法确认资源状态。请检查照片访问范围。',
       );
     }
 
@@ -37,9 +43,8 @@ extension PhotoServiceAccess on PhotoService {
       quality: 30,
     );
     if (thumbnail == null || thumbnail.isEmpty) {
-      await _removePhotoRecordsByIds(<int>[photo.id]);
       throw PhotoOriginalAccessException(
-        '无法通过系统相册 API 读取媒体，已移除本地记录 photoId=${photo.id} assetId=$assetId purpose=$purpose',
+        '无法通过系统相册 API 读取媒体 photoId=${photo.id} assetId=$assetId purpose=$purpose',
       );
     }
 
@@ -99,9 +104,8 @@ extension PhotoServiceAccess on PhotoService {
       ),
     );
     if (bytes == null || bytes.isEmpty) {
-      await _removePhotoRecordsByIds(<int>[photo.id]);
       throw PhotoOriginalAccessException(
-        '读取系统相册媒体失败，已移除本地记录 photoId=${photo.id} assetId=${photo.assetId} purpose=$purpose',
+        '读取系统相册媒体失败 photoId=${photo.id} assetId=${photo.assetId} purpose=$purpose',
       );
     }
     return bytes;
@@ -130,6 +134,9 @@ extension PhotoServiceAccess on PhotoService {
   Future<int> removeUnavailablePhotosByIds(Iterable<int> photoIds) async {
     final ids = photoIds.where((id) => id > 0).toSet().toList(growable: false);
     if (ids.isEmpty) {
+      return 0;
+    }
+    if (!await MediaPermissionService.canDeleteUnavailableMedia()) {
       return 0;
     }
 
@@ -165,6 +172,9 @@ extension PhotoServiceAccess on PhotoService {
   }
 
   Future<int> _removeUnavailablePhotos() async {
+    if (!await MediaPermissionService.canDeleteUnavailableMedia()) {
+      return 0;
+    }
     final localPhotos = _photoBox.getAll();
     if (localPhotos.isEmpty) {
       return 0;
@@ -213,6 +223,8 @@ extension PhotoServiceAccess on PhotoService {
     }
 
     final stopwatch = Stopwatch()..start();
+    final canDeleteUnavailable =
+        await MediaPermissionService.canDeleteUnavailableMedia();
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final removedIds = <int>{};
     final repairedIds = <int>{};
@@ -227,7 +239,7 @@ extension PhotoServiceAccess on PhotoService {
               PhotoService._photoAccessCacheTtl.inMilliseconds) {
         cacheHits++;
         if (cacheEntry.isRemoved) {
-          if (photo.id > 0) {
+          if (canDeleteUnavailable && photo.id > 0) {
             removedIds.add(photo.id);
           }
           removedCount++;
@@ -238,7 +250,7 @@ extension PhotoServiceAccess on PhotoService {
 
       final asset = await AssetEntity.fromId(photo.assetId);
       if (asset == null) {
-        if (photo.id > 0) {
+        if (canDeleteUnavailable && photo.id > 0) {
           removedIds.add(photo.id);
         }
         _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
@@ -250,11 +262,11 @@ extension PhotoServiceAccess on PhotoService {
       }
 
       var needsUpdate = false;
-      
+
       if (_refreshPhotoFromAssetMetadata(photo, asset)) {
         needsUpdate = true;
       }
-      
+
       if (photo.thumbnailBytes == null || photo.thumbnailBytes!.isEmpty) {
         final thumbnailBytes = await MediaThumbnailCacheService.instance
             .generateCompressedBytes(asset);
@@ -263,17 +275,15 @@ extension PhotoServiceAccess on PhotoService {
           needsUpdate = true;
         }
       }
-      
+
       if (needsUpdate) {
         if (photo.id > 0) {
           repairedIds.add(photo.id);
         }
         repairedCount++;
       }
-      
-      _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(
-        checkedAtMs: nowMs,
-      );
+
+      _photoAccessCache[cacheKey] = _PhotoAccessCacheEntry(checkedAtMs: nowMs);
     }
 
     final repairedPhotos = repairedIds.isEmpty
@@ -286,14 +296,21 @@ extension PhotoServiceAccess on PhotoService {
     if (repairedPhotos.isNotEmpty) {
       _photoBox.putMany(repairedPhotos);
     }
-    await _removePhotoRecordsByIds(removedPhotoIds);
+    if (canDeleteUnavailable) {
+      await _removePhotoRecordsByIds(removedPhotoIds);
+    }
     for (final photo in repairedPhotos) {
       _photoAccessCache.remove('id:${photo.id}');
       _photoAccessCache.remove('asset:${photo.assetId}');
     }
 
+    final inaccessibleIds = <int>{
+      for (final photo in candidates)
+        if (_photoAccessCache[_photoAccessCacheKey(photo)]?.isRemoved ?? false)
+          photo.id,
+    };
     final result = candidates
-        .where((photo) => !removedIds.contains(photo.id))
+        .where((photo) => !inaccessibleIds.contains(photo.id))
         .toList(growable: false);
     stopwatch.stop();
     if (kDebugMode &&

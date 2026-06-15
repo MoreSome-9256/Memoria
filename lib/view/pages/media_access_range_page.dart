@@ -23,6 +23,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
   PermissionState? _permState;
   List<_AlbumItem> _albums = [];
   Set<String> _selectedIds = {};
+  int _savedAlbumWhitelistCount = 0;
   bool _loadingAlbums = true;
 
   @override
@@ -47,13 +48,17 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
     final sel = await AlbumSelectionPreferenceService().loadSelection();
     if (!mounted) return;
     _permState = state;
+    _savedAlbumWhitelistCount = sel.selectedAlbumIds.length;
 
     if (state.hasAccess) {
       final allAlbums = await PhotoManager.getAssetPathList(
         type: RequestType.common,
       );
 
-      final savedIds = sel.selectedAlbumIds.toSet();
+      final savedIds = MediaPermissionService.effectiveAlbumWhitelist(
+        state: state,
+        savedAlbumIds: sel.selectedAlbumIds,
+      );
       final selectedIds = <String>{};
       for (final album in allAlbums) {
         final lower = album.name.toLowerCase();
@@ -61,15 +66,6 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
             savedIds.contains(album.name) ||
             savedIds.contains(lower)) {
           selectedIds.add(album.id);
-        }
-      }
-
-      if (selectedIds.isEmpty) {
-        for (final album in allAlbums) {
-          final lower = album.name.toLowerCase();
-          if (lower == 'dcim' || lower == 'camera' || lower == '相机') {
-            selectedIds.add(album.id);
-          }
         }
       }
 
@@ -206,16 +202,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                         children: [
                           TextButton.icon(
                             onPressed: () async {
-                              if (Platform.isAndroid) {
-                                await <Permission>[
-                                  Permission.photos,
-                                  Permission.videos,
-                                ].request();
-                              } else {
-                                await PhotoManager.presentLimited(
-                                  type: RequestType.all,
-                                );
-                              }
+                              await MediaPermissionService.selectMorePhotos();
                               PhotoService().invalidateScanSessionCache();
                               if (!mounted) return;
                               setState(() => _loadingAlbums = true);
@@ -253,7 +240,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
           const SizedBox(height: 16),
 
           // ── 相册列表 ──
-          if (hasAccess) ...[
+          if (hasAccess && !isLimited) ...[
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -272,7 +259,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '选中需要进行分析的相册，未选中的相册将被跳过。',
+                      '未选择时使用系统当前允许访问的全部照片；选择相册后，将只分析白名单内的相册。',
                       style: theme.textTheme.bodySmall,
                     ),
                     const SizedBox(height: 12),
@@ -303,6 +290,17 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
             ),
             const SizedBox(height: 16),
           ],
+          if (isLimited)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  '当前按系统选择的部分照片进行分析。部分授权下不叠加相册白名单，避免再次过滤已授权照片。'
+                  '${_savedAlbumWhitelistCount > 0 ? ' 已保存的 $_savedAlbumWhitelistCount 个相册白名单会暂时停用，并在允许全部照片后自动恢复。' : ''}',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+            ),
 
           // ── 电池优化 ──
           if (Platform.isAndroid)

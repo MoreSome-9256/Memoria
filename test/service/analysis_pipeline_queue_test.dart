@@ -57,4 +57,18 @@ void main() {
       expect(queue.isClosed, isTrue);
     },
   );
+
+  test(
+    'AnalysisPipelineQueue close wakes an idle consumer without work',
+    () async {
+      final queue = AnalysisPipelineQueue();
+
+      final pending = queue.dequeue();
+      queue.close();
+
+      expect(await pending, isNull);
+      expect(queue.isClosed, isTrue);
+      expect(queue.isEmpty, isTrue);
+    },
+  );
 }

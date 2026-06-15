@@ -46,7 +46,6 @@ enum _ImportAction {
   addMorePhotos,
   requestFullAccess,
   managePermissions,
-  cleanLowValue,
 }
 
 // Keep the tag overview and detail sheet on the same snapshot window so a
@@ -74,7 +73,7 @@ class AlbumPage extends StatefulWidget {
 
 enum _AlbumViewMode { tags, moments }
 
-enum _LocalCleanupAction { analysisData, allLocalCache }
+enum _LocalCleanupAction { identifyLowValue, analysisData, allLocalCache }
 
 class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   static const double _contentBottomInset = 118;
@@ -309,12 +308,19 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
     final selected = await showDialog<_LocalCleanupAction>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('清理本地数据'),
+        title: const Text('整理与清理'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const Text(
+                '后台识别低价值图片',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              const Text('在前台服务中分批检查已完成分析的照片。识别完成后可确认标记，不会直接删除系统相册原图。'),
+              const SizedBox(height: 16),
               const Text(
                 '清空分析字段',
                 style: TextStyle(fontWeight: FontWeight.w600),
@@ -348,6 +354,14 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
             child: const Text('取消'),
           ),
           OutlinedButton(
+            onPressed: localCacheCleanupUnavailable
+                ? null
+                : () => Navigator.of(
+                    context,
+                  ).pop(_LocalCleanupAction.identifyLowValue),
+            child: const Text('识别低价值图片'),
+          ),
+          OutlinedButton(
             onPressed: () =>
                 Navigator.of(context).pop(_LocalCleanupAction.analysisData),
             child: const Text('清空分析字段'),
@@ -367,6 +381,8 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
       return;
     }
     switch (selected) {
+      case _LocalCleanupAction.identifyLowValue:
+        await _startBackgroundJunkCleanup();
       case _LocalCleanupAction.analysisData:
         await _clearAnalysisData();
       case _LocalCleanupAction.allLocalCache:
@@ -495,13 +511,6 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
                   onTap: () => Navigator.pop(context, _ImportAction.rebuildAll),
                 ),
                 ListTile(
-                  leading: const Icon(Icons.delete_sweep_outlined),
-                  title: const Text('一键标记低价值图片'),
-                  subtitle: const Text('确认全部待处理候选，后续扫描和检索将跳过'),
-                  onTap: () =>
-                      Navigator.pop(context, _ImportAction.cleanLowValue),
-                ),
-                ListTile(
                   leading: const Icon(Icons.tune),
                   title: const Text('管理照片访问权限'),
                   subtitle: const Text('修改授权范围、选择分析相册'),
@@ -558,50 +567,28 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
         await Navigator.of(context).push<void>(
           MaterialPageRoute<void>(builder: (_) => const MediaAccessRangePage()),
         );
-      case _ImportAction.cleanLowValue:
-        await _cleanAllLowValuePhotos();
     }
   }
 
-  Future<void> _cleanAllLowValuePhotos() async {
-    final report = await AIService().refreshJunkCleanupReportFromDatabase(
-      replaceExisting: false,
-    );
-    if (!mounted) return;
-    if (report == null || !report.hasCandidates) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('当前没有待确认的低价值候选。')));
-      return;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('一键标记低价值图片'),
-        content: Text(
-          '将 ${report.totalCount} 张待处理候选标记为低价值。记录和系统相册原图都会保留，后续扫描、打标签和检索将跳过。',
+  Future<void> _startBackgroundJunkCleanup() async {
+    try {
+      await UnifiedAnalysisPipelineService().startJunkCleanup();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('已在后台开始分批识别低价值图片。完成后可在相册页确认处理。'),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('确认标记'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    final marked = await JunkPhotoCleanupService().markCandidatesAsLowValue(
-      report.candidates,
-    );
-    AIService().clearPendingJunkCleanupReport();
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('已标记 $marked 张低价值图片，后续扫描和检索将跳过。')));
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('无法启动低价值图片识别: $error'),
+        ),
+      );
+    }
   }
 
   Future<void> _confirmAndRebuildAnalysis() async {
@@ -764,9 +751,6 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    AIService().junkCleanupReportListenable.addListener(
-      _onJunkCleanupReportChanged,
-    );
     UnifiedAnalysisProgressStore.instance.progress.addListener(
       _onForegroundProgressForCardChanged,
     );
@@ -854,9 +838,6 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    AIService().junkCleanupReportListenable.removeListener(
-      _onJunkCleanupReportChanged,
-    );
     UnifiedAnalysisProgressStore.instance.progress.removeListener(
       _onForegroundProgressForCardChanged,
     );
@@ -928,10 +909,6 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
       _foregroundCardElapsedTimer?.cancel();
       _foregroundCardElapsedTimer = null;
     }
-  }
-
-  void _onJunkCleanupReportChanged() {
-    unawaited(_handleJunkCleanupReportChanged());
   }
 
   void _submitSemanticSearch() {
@@ -1043,7 +1020,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
                     onPressed: _isDeletingCurrentTask || _isClearingLocalCache
                         ? null
                         : () => unawaited(_showLocalCleanupDialog()),
-                    tooltip: '清理本地数据',
+                    tooltip: '整理与清理',
                   ),
                   Padding(
                     padding: const EdgeInsets.only(right: 8),

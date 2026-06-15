@@ -1,6 +1,7 @@
 /// 垃圾照片清理服务，负责确认、恢复低价值照片和显式删除系统相册资源。
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:photo_manager/photo_manager.dart';
 
 import '../models/entity/event_entity.dart';
@@ -29,41 +30,49 @@ class JunkPhotoCleanupService {
         .query(PhotoEntity_.isAiAnalyzed.equals(true))
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
-    final photos = query.find();
+    final photoIds = query.findIds();
     query.close();
-    final indexedEmbeddings = _embeddingIndex.readEmbeddingsForPhotos(
-      photos,
-      modelVersion: buildPhotoEmbeddingModelVersion(),
-    );
 
-    final eligiblePhotos = <PhotoEntity>[];
-    final embeddings = <int, List<double>>{};
-    for (final photo in photos) {
-      final embedding = photo.imageEmbedding ?? indexedEmbeddings[photo.id];
-      if (embedding == null || embedding.isEmpty) continue;
-      embeddings[photo.id] = embedding;
-      if (!JunkPhotoFilterService.hasFinalDecision(photo.aiTags)) {
-        eligiblePhotos.add(photo);
+    const batchSize = 256;
+    var evaluated = 0;
+    for (var offset = 0; offset < photoIds.length; offset += batchSize) {
+      final end = math.min(offset + batchSize, photoIds.length);
+      final photos = photoBox
+          .getMany(photoIds.sublist(offset, end))
+          .whereType<PhotoEntity>()
+          .toList(growable: false);
+      final indexedEmbeddings = _embeddingIndex.readEmbeddingsForPhotos(
+        photos,
+        modelVersion: buildPhotoEmbeddingModelVersion(),
+      );
+      final eligiblePhotos = <PhotoEntity>[];
+      final embeddings = <int, List<double>>{};
+      for (final photo in photos) {
+        final embedding = photo.imageEmbedding ?? indexedEmbeddings[photo.id];
+        if (embedding == null || embedding.isEmpty) continue;
+        embeddings[photo.id] = embedding;
+        if (!JunkPhotoFilterService.hasFinalDecision(photo.aiTags)) {
+          eligiblePhotos.add(photo);
+        }
       }
-    }
 
-    final batch = await JunkPhotoFilterService().evaluateBatch(embeddings);
-    final updates = <PhotoEntity>[];
-    for (final photo in eligiblePhotos) {
-      final decision = batch.decisionFor(photo.id);
-      final tags = <String>{...?photo.aiTags};
-      if (decision.shouldFilter) {
-        tags.add(JunkPhotoFilterService.pendingJunkCandidateTag);
-      } else {
-        tags.remove(JunkPhotoFilterService.pendingJunkCandidateTag);
+      final batch = await JunkPhotoFilterService().evaluateBatch(embeddings);
+      for (final photo in eligiblePhotos) {
+        final decision = batch.decisionFor(photo.id);
+        final tags = <String>{...?photo.aiTags};
+        if (decision.shouldFilter) {
+          tags.add(JunkPhotoFilterService.pendingJunkCandidateTag);
+        } else {
+          tags.remove(JunkPhotoFilterService.pendingJunkCandidateTag);
+        }
+        photo.aiTags = tags.toList(growable: false);
       }
-      photo.aiTags = tags.toList(growable: false);
-      updates.add(photo);
+      if (eligiblePhotos.isNotEmpty) {
+        photoBox.putMany(eligiblePhotos);
+      }
+      evaluated += embeddings.length;
     }
-    if (updates.isNotEmpty) {
-      photoBox.putMany(updates);
-    }
-    return updates.length;
+    return evaluated;
   }
 
   Future<int> markCandidatesAsLowValue(

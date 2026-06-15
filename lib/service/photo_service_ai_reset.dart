@@ -60,7 +60,10 @@ extension PhotoServiceAiReset on PhotoService {
   }
 
   Future<List<PhotoEntity>> loadPendingJunkCandidatePhotos() async {
-    return _loadPhotosWithAiTag(JunkPhotoFilterService.pendingJunkCandidateTag);
+    return _loadPhotosWithAiTag(
+      JunkPhotoFilterService.pendingJunkCandidateTag,
+      limit: 300,
+    );
   }
 
   Future<List<PhotoEntity>> loadAnalyzedPhotosForJunkScoring() async {
@@ -75,17 +78,34 @@ extension PhotoServiceAiReset on PhotoService {
     }
   }
 
-  Future<List<PhotoEntity>> _loadPhotosWithAiTag(String tag) async {
+  Future<List<PhotoEntity>> _loadPhotosWithAiTag(
+    String tag, {
+    int? limit,
+  }) async {
     final query = _photoBox
         .query(PhotoEntity_.isAiAnalyzed.equals(true))
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
-    final photos = query.find();
+    final photoIds = query.findIds();
     query.close();
-    final junkPhotos = photos
-        .where((photo) => photo.aiTags?.contains(tag) ?? false)
-        .toList(growable: false);
-    return reconcileAccessiblePhotos(junkPhotos);
+    const batchSize = 256;
+    final junkPhotos = <PhotoEntity>[];
+    for (var offset = 0; offset < photoIds.length; offset += batchSize) {
+      final end = math.min(offset + batchSize, photoIds.length);
+      junkPhotos.addAll(
+        _photoBox
+            .getMany(photoIds.sublist(offset, end))
+            .whereType<PhotoEntity>()
+            .where((photo) => photo.aiTags?.contains(tag) ?? false),
+      );
+      if (limit != null && junkPhotos.length >= limit) {
+        break;
+      }
+    }
+    final selected = limit == null
+        ? junkPhotos
+        : junkPhotos.take(limit).toList(growable: false);
+    return reconcileAccessiblePhotos(selected);
   }
 
   Future<int> requeueAllPhotosForAi() async {
@@ -265,7 +285,9 @@ extension PhotoServiceAiReset on PhotoService {
     final missingIds = query
         .find()
         .where((photo) {
-          if (_isJunkQuarantinedPhoto(photo)) return false;
+          if (JunkPhotoFilterService.hasFinalDecision(photo.aiTags)) {
+            return false;
+          }
           final kind = MediaTypeHelper.fromStorageValue(
             photo.mediaKind,
             path: photo.path,
@@ -276,12 +298,34 @@ extension PhotoServiceAiReset on PhotoService {
               (settings.faceAnalysisEnabled && !photo.isFaceAnalyzed);
         })
         .map((photo) => photo.id)
-        .toList(growable: false);
+        .toSet();
     query.close();
+
+    final analyzedQuery = _photoBox
+        .query(PhotoEntity_.isAiAnalyzed.equals(true))
+        .build();
+    final analyzedIds = analyzedQuery.findIds();
+    analyzedQuery.close();
+    const batchSize = 256;
+    for (var offset = 0; offset < analyzedIds.length; offset += batchSize) {
+      final end = math.min(offset + batchSize, analyzedIds.length);
+      final photos = _photoBox
+          .getMany(analyzedIds.sublist(offset, end))
+          .whereType<PhotoEntity>();
+      for (final photo in photos) {
+        if (JunkPhotoFilterService.hasFinalDecision(photo.aiTags)) continue;
+        final semanticTags = (photo.aiTags ?? const <String>[]).where(
+          (tag) => !JunkPhotoFilterService.isInternalJunkTag(tag),
+        );
+        if (semanticTags.isEmpty) {
+          missingIds.add(photo.id);
+        }
+      }
+    }
     if (missingIds.isEmpty) return 0;
 
     final count = await requeuePhotosForAiByIds(missingIds);
-    debugPrint('🔁 已将 $count 张缺少已启用属性分析的照片重新加入队列');
+    debugPrint('🔁 已将 $count 张缺少标签或已启用属性分析的照片重新加入队列');
     return count;
   }
 

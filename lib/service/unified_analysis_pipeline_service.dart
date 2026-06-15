@@ -15,7 +15,6 @@ import 'analysis_pipeline_queue.dart';
 import 'unified_analysis_progress.dart';
 import 'unified_analysis_progress_store.dart';
 import 'ai_background_task_service.dart';
-import 'ai_service.dart';
 import 'app_ai_settings_service.dart';
 import 'photo_service.dart';
 import 'album_selection_preference_service.dart';
@@ -184,6 +183,46 @@ class UnifiedAnalysisPipelineService {
     }
   }
 
+  Future<void> runJunkCleanupInsideForegroundService({
+    required Uint8List storeReferenceBytes,
+  }) async {
+    UnifiedAnalysisProgressStore.instance.markForegroundIsolate();
+    _isRunning = true;
+    _stopRequested = false;
+    _analysisEnabled = false;
+    _scanCompleted = 0;
+    _scanTotal = 0;
+    _aiCompleted = 0;
+    _aiTotal = 0;
+    _aiFailed = 0;
+    _startedAt = DateTime.now();
+    try {
+      await ObjectBoxService().ensureInitialized(
+        referenceBytes: storeReferenceBytes,
+        preferAttach: true,
+      );
+      await PhotoService().init();
+      _updateProgress(
+        stage: UnifiedAnalysisStage.flushing,
+        message: '正在后台分批识别低价值图片…',
+      );
+      final evaluated = await JunkPhotoCleanupService()
+          .evaluateAnalyzedPhotosForPending();
+      _updateProgress(
+        stage: UnifiedAnalysisStage.completed,
+        message: '低价值图片识别完成，已检查 $evaluated 张照片',
+      );
+    } catch (error) {
+      _updateProgress(
+        stage: UnifiedAnalysisStage.failed,
+        message: '低价值图片识别失败: $error',
+      );
+      rethrow;
+    } finally {
+      _isRunning = false;
+    }
+  }
+
   void stopPipeline() {
     _stopRequested = true;
     unawaited(_writeForegroundStopRequested(true));
@@ -237,16 +276,25 @@ class UnifiedAnalysisPipelineService {
     await startUnifiedPipeline(clearCacheFirst: false, analyzeWithAi: true);
   }
 
+  Future<void> startJunkCleanup() async {
+    if (_isRunning) {
+      throw StateError('当前已有扫描或分析任务。');
+    }
+    await UnifiedAnalysisProgressStore.instance.clear();
+    await AiBackgroundTaskService.instance.startJunkCleanupWorker();
+  }
+
   Future<void> _runIncrementalPipeline({
     required PermissionState permissionState,
   }) async {
     if (_analysisEnabled) {
       final settings = await AppAiSettingsService.instance.load();
       await PhotoService().requeuePhotosMissingEnabledAttributes(settings);
-      await Future.wait(<Future<void>>[
-        _runProducer(permissionState: permissionState),
-        _runConsumer(),
-      ]);
+      final producer = _runProducer(
+        permissionState: permissionState,
+      ).whenComplete(_queue.close);
+      final consumer = _runConsumer().whenComplete(_queue.close);
+      await Future.wait(<Future<void>>[producer, consumer]);
     } else {
       await _runProducer(permissionState: permissionState);
     }
@@ -380,6 +428,7 @@ class UnifiedAnalysisPipelineService {
                   handoffBatch,
                   enqueueForConsumer: enqueueForConsumer,
                 );
+                await _waitForQueueCapacity();
               }
             }
 
@@ -417,6 +466,12 @@ class UnifiedAnalysisPipelineService {
   }
 
   Future<void> _runConsumer() async {
+    final firstItem = await _queue.dequeue();
+    if (firstItem == null) {
+      debugPrint('[pipeline] 没有待分析媒体，消费者无需预热模型');
+      return;
+    }
+
     _updateProgress(
       stage: UnifiedAnalysisStage.warmingUp,
       message: 'AI 模型正在预热，请稍候…',
@@ -442,12 +497,9 @@ class UnifiedAnalysisPipelineService {
       message: _aiTotal > 0 ? '消费者开始打标签 $_aiTotal 个媒体' : '消费者已预热，等待生产者投递',
     );
 
-    while (!_queue.isClosed || _queue.isNotEmpty) {
+    PipelineQueueItem? item = firstItem;
+    while (item != null) {
       if (_stopRequested || await _readForegroundStopRequested()) {
-        break;
-      }
-      final item = await _queue.dequeue();
-      if (item == null) {
         break;
       }
 
@@ -470,6 +522,7 @@ class UnifiedAnalysisPipelineService {
               '消费者已完成 $_aiCompleted/$_aiTotal，失败 $_aiFailed，队列 ${_queue.size}',
         );
       }
+      item = await _queue.dequeue();
     }
 
     debugPrint('[pipeline] 消费者结束: completed=$_aiCompleted failed=$_aiFailed');
@@ -499,6 +552,13 @@ class UnifiedAnalysisPipelineService {
           : '[pipeline] 已按 $batchSize 张一组标记 AI 候选，total=$_aiTotal',
     );
     batch.clear();
+  }
+
+  Future<void> _waitForQueueCapacity() async {
+    const highWaterMark = 200;
+    while (_queue.size > highWaterMark && !_queue.isClosed && !_stopRequested) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
   }
 
   Future<PhotoEntity?> _buildAndSavePhotoEntity(AssetEntity asset) async {
@@ -693,14 +753,6 @@ class UnifiedAnalysisPipelineService {
       return;
     }
 
-    if (_analysisEnabled) {
-      _updateProgress(
-        stage: UnifiedAnalysisStage.flushing,
-        message: '标签已完成，正在批量检测低价值离群图片…',
-      );
-      await _publishPostFilterJunkReport();
-    }
-
     if (_analysisEnabled && _aiTotal > 0) {
       _updateProgress(
         stage: UnifiedAnalysisStage.flushing,
@@ -725,11 +777,6 @@ class UnifiedAnalysisPipelineService {
           ? '已完成 $_aiCompleted/$_aiTotal 张照片，失败 $_aiFailed'
           : '相册缓存已更新，没有新的待分析图片',
     );
-  }
-
-  Future<void> _publishPostFilterJunkReport() async {
-    await JunkPhotoCleanupService().evaluateAnalyzedPhotosForPending();
-    await AIService().refreshJunkCleanupReportFromDatabase();
   }
 
   Future<void> _writeForegroundStopRequested(bool value) async {

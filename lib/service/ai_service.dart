@@ -3,8 +3,6 @@ import 'package:flutter/foundation.dart';
 import 'junk_photo_filter_service.dart';
 import 'photo_service.dart';
 import 'unified_analysis_progress_store.dart';
-import '../storage/vector_index/photo_embedding_index_repository.dart';
-import '../storage/vector_index/vector_index_constants.dart';
 
 class AIService {
   AIService._internal();
@@ -14,11 +12,6 @@ class AIService {
 
   final ValueNotifier<JunkPhotoCleanupReport?> _junkCleanupReportNotifier =
       ValueNotifier<JunkPhotoCleanupReport?>(null);
-  final JunkPhotoFilterService _junkPhotoFilterService =
-      JunkPhotoFilterService();
-  final PhotoEmbeddingIndexRepository _embeddingIndex =
-      PhotoEmbeddingIndexRepository();
-
   ValueListenable<JunkPhotoCleanupReport?> get junkCleanupReportListenable =>
       _junkCleanupReportNotifier;
 
@@ -69,45 +62,17 @@ class AIService {
       return null;
     }
 
-    final allAnalyzed = await PhotoService().loadAnalyzedPhotosForJunkScoring();
-    final indexedEmbeddings = _embeddingIndex.readEmbeddingsForPhotos(
-      allAnalyzed,
-      modelVersion: buildPhotoEmbeddingModelVersion(),
-    );
-    final embeddings = <int, List<double>>{};
-    for (final photo in allAnalyzed) {
-      final embedding = photo.imageEmbedding ?? indexedEmbeddings[photo.id];
-      if (embedding != null && embedding.isNotEmpty) {
-        embeddings[photo.id] = embedding;
-      }
-    }
-    final batch = await _junkPhotoFilterService.evaluateBatch(embeddings);
-    final candidates = <JunkPhotoCleanupCandidate>[];
-    final stalePendingPhotoIds = <int>[];
-    for (final photo in photos) {
-      final reasons = batch.decisionFor(photo.id).hits;
-      if (reasons.isEmpty) {
-        stalePendingPhotoIds.add(photo.id);
-        continue;
-      }
-      candidates.add(
-        JunkPhotoCleanupCandidate(
-          photoId: photo.id,
-          assetId: photo.assetId,
-          path: photo.path,
-          timestamp: photo.timestamp,
-          reasons: reasons,
-        ),
-      );
-    }
-    for (final photoId in stalePendingPhotoIds) {
-      PhotoService().updatePhotoInTransaction(photoId, (photo) {
-        if (photo == null) return;
-        final tags = <String>{...?photo.aiTags}
-          ..remove(JunkPhotoFilterService.pendingJunkCandidateTag);
-        photo.aiTags = tags.toList(growable: false);
-      });
-    }
+    final candidates = photos
+        .map(
+          (photo) => JunkPhotoCleanupCandidate(
+            photoId: photo.id,
+            assetId: photo.assetId,
+            path: photo.path,
+            timestamp: photo.timestamp,
+            reasons: const <JunkPhotoHit>[],
+          ),
+        )
+        .toList(growable: false);
 
     final report = JunkPhotoCleanupReport.fromCandidates(candidates);
     if (!report.hasCandidates) {

@@ -216,14 +216,7 @@ class _PhotoScanCoordinator {
     final requestType = settings.includeVideos
         ? RequestType.common
         : RequestType.image;
-    final state = await PhotoManager.requestPermissionExtend(
-      requestOption: PermissionRequestOption(
-        androidPermission: AndroidPermission(
-          type: requestType,
-          mediaLocation: false,
-        ),
-      ),
-    );
+    final state = await MediaPermissionService.readPermissionState();
     if (!state.hasAccess) {
       throw const PhotoScanException(
         PhotoScanError.permissionDenied,
@@ -357,14 +350,7 @@ class _PhotoScanCoordinator {
     final requestType = settings.includeVideos
         ? RequestType.common
         : RequestType.image;
-    final state = await PhotoManager.requestPermissionExtend(
-      requestOption: PermissionRequestOption(
-        androidPermission: AndroidPermission(
-          type: requestType,
-          mediaLocation: false,
-        ),
-      ),
-    );
+    final state = await MediaPermissionService.readPermissionState();
     if (!state.hasAccess) {
       throw const PhotoScanException(
         PhotoScanError.permissionDenied,

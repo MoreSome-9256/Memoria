@@ -28,6 +28,7 @@ import 'junk_photo_filter_service.dart';
 import 'junk_photo_cleanup_service.dart';
 import 'media_analysis_image_reader.dart';
 import 'media_embedding_service.dart';
+import 'media_permission_service.dart';
 import 'photo_attribute_background_service.dart';
 import 'video_cache_service.dart';
 
@@ -267,30 +268,17 @@ class UnifiedAnalysisPipelineService {
     final settings = await AppAiSettingsService.instance.load();
     final requestType = _resolveRequestType(settings);
 
-    if (requestPermission) {
-      await PhotoManager.setIgnorePermissionCheck(false);
-      final permission = await PhotoManager.requestPermissionExtend(
-        requestOption: PermissionRequestOption(
-          androidPermission: AndroidPermission(
-            type: requestType,
-            mediaLocation: false,
-          ),
-        ),
-      );
-      debugPrint(
-        '[pipeline] 相册权限: state=$permission hasAccess=${permission.hasAccess} '
-        'limited=${permission.isLimited} requestType=${requestType.value}',
-      );
-      if (!permission.hasAccess) {
-        throw const PhotoScanException(
-          PhotoScanError.permissionDenied,
-          '没有相册权限，foreground task 无法读取系统相册。',
-        );
-      }
-    } else {
-      await PhotoManager.setIgnorePermissionCheck(true);
-      debugPrint(
-        '[pipeline] foreground task 使用 UI 已授予的相册权限 requestType=${requestType.value}',
+    await PhotoManager.setIgnorePermissionCheck(!requestPermission);
+    final permission = await MediaPermissionService.readPermissionState();
+    debugPrint(
+      '[pipeline] 相册权限只读检查: state=$permission '
+      'hasAccess=${permission.hasAccess} limited=${permission.isLimited} '
+      'requestType=${requestType.value}',
+    );
+    if (!permission.hasAccess) {
+      throw const PhotoScanException(
+        PhotoScanError.permissionDenied,
+        '没有相册权限，无法读取系统相册。请返回应用并在照片访问设置中授权。',
       );
     }
 

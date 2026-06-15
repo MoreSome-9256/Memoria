@@ -23,6 +23,7 @@ import '../utils/media_type_helper.dart';
 import 'album_selection_preference_service.dart';
 import 'app_ai_settings_service.dart';
 import 'junk_photo_filter_service.dart';
+import 'media_permission_service.dart';
 import 'media_thumbnail_cache_service.dart';
 import 'mobileclip_tag_service.dart';
 import 'semantic_matching_service.dart';

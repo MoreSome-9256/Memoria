@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 
+import '../../service/media_permission_service.dart';
 import '../../utils/media_type_helper.dart';
 
 class VlmPhotoPickerResult {
@@ -65,7 +66,7 @@ class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
     });
 
     try {
-      final permission = await PhotoManager.requestPermissionExtend();
+      final permission = await MediaPermissionService.readPermissionState();
       if (!permission.isAuth && !permission.hasAccess) {
         if (!mounted) {
           return;
@@ -108,6 +109,19 @@ class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
         _isLoading = false;
       });
     }
+  }
+
+  Future<void> _requestPermission() async {
+    final permission = await MediaPermissionService.requestPermission();
+    if (!mounted) return;
+    if (permission.hasAccess) {
+      await _loadInitialAssets();
+      return;
+    }
+    setState(() {
+      _permissionDenied = true;
+      _isLoading = false;
+    });
   }
 
   Future<void> _loadMoreAssets() async {
@@ -228,8 +242,8 @@ class _VlmPhotoPickerPageState extends State<VlmPhotoPickerPage> {
         context,
         title: '无法读取图片',
         message: '还没有拿到相册权限，请先允许应用访问媒体。',
-        actionLabel: '重新请求权限',
-        onPressed: _loadInitialAssets,
+        actionLabel: '允许访问照片',
+        onPressed: _requestPermission,
       );
     }
 

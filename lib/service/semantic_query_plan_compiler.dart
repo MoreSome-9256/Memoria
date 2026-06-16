@@ -169,8 +169,16 @@ class SemanticQueryPlanCompiler {
     String type,
     bool relaxed,
   ) {
-    final broad = type == 'country' || type == 'province' || type == 'city';
-    if (broad || relaxed) {
+    if (type == 'country' || type == 'province' || type == 'city') {
+      return <Condition<PhotoEntity>>[
+        PhotoEntity_.country.contains(term),
+        PhotoEntity_.province.contains(term),
+        PhotoEntity_.city.contains(term),
+        PhotoEntity_.district.contains(term),
+        PhotoEntity_.adcode.equals(term),
+      ];
+    }
+    if (relaxed) {
       return <Condition<PhotoEntity>>[
         PhotoEntity_.country.contains(term),
         PhotoEntity_.province.contains(term),

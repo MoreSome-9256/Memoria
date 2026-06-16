@@ -1,24 +1,31 @@
-// Cognito-authenticated client for the Memoria cloud API proxy.
-
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import 'api_proxy_config.dart';
 import 'auth_token_service.dart';
 
 class ApiProxyService {
   ApiProxyService._()
-    : _dio = Dio(
-        BaseOptions(
-          connectTimeout: const Duration(seconds: 20),
-          receiveTimeout: const Duration(seconds: 60),
-          sendTimeout: const Duration(seconds: 20),
-          contentType: 'application/json',
-        ),
-      );
+      : _dio = _createDio(),
+        _plainDio = Dio();
 
   static final ApiProxyService instance = ApiProxyService._();
 
   final Dio _dio;
+  final Dio _plainDio;
+
+  static Dio _createDio() {
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 20),
+        receiveTimeout: const Duration(seconds: 60),
+        sendTimeout: const Duration(seconds: 20),
+        contentType: 'application/json',
+      ),
+    );
+    dio.interceptors.add(_AuthInterceptor());
+    return dio;
+  }
 
   Future<Response<T>> get<T>(
     String path, {
@@ -28,7 +35,9 @@ class ApiProxyService {
     return _dio.get<T>(
       ApiProxyConfig.join(path),
       queryParameters: queryParameters,
-      options: await _options(receiveTimeout: receiveTimeout),
+      options: receiveTimeout != null
+          ? Options(receiveTimeout: receiveTimeout)
+          : null,
     );
   }
 
@@ -41,34 +50,79 @@ class ApiProxyService {
     return _dio.post<T>(
       ApiProxyConfig.join(path),
       data: data,
-      options: await _options(
-        receiveTimeout: receiveTimeout,
-        sendTimeout: sendTimeout,
-      ),
+      options: (receiveTimeout != null || sendTimeout != null)
+          ? Options(receiveTimeout: receiveTimeout, sendTimeout: sendTimeout)
+          : null,
     );
   }
 
   Future<void> download(String url, String savePath) {
-    return _dio.download(url, savePath);
+    return _plainDio.download(url, savePath);
   }
+}
 
-  Future<Map<String, String>> authHeaders() async {
-    final token = await AuthTokenService.getIdToken();
-    if (token == null || token.isEmpty) {
-      throw StateError('Cognito 登录态不可用，无法访问云端代理。');
+class _AuthInterceptor extends Interceptor {
+  @override
+  Future<void> onRequest(
+    RequestOptions options,
+    RequestInterceptorHandler handler,
+  ) async {
+    try {
+      final token = await AuthTokenService.getIdToken();
+      if (token == null || token.isEmpty) {
+        debugPrint('[AuthInterceptor] no token for ${options.path}');
+        handler.reject(
+          DioException(
+            requestOptions: options,
+            error: StateError('Cognito 登录态不可用，无法访问云端代理。'),
+            type: DioExceptionType.cancel,
+          ),
+        );
+        return;
+      }
+      debugPrint(
+        '[AuthInterceptor] ${options.path} token=${token.substring(0, token.length > 10 ? 10 : token.length)}...',
+      );
+      options.headers['Authorization'] = 'Bearer $token';
+      handler.next(options);
+    } catch (e) {
+      debugPrint('[AuthInterceptor] onRequest error: $e');
+      handler.reject(
+        DioException(
+          requestOptions: options,
+          error: e,
+          type: DioExceptionType.unknown,
+        ),
+      );
     }
-    return <String, String>{'Authorization': 'Bearer $token'};
   }
 
-  Future<Options> _options({
-    Duration? receiveTimeout,
-    Duration? sendTimeout,
-  }) async {
-    final headers = await authHeaders();
-    return Options(
-      headers: headers,
-      receiveTimeout: receiveTimeout,
-      sendTimeout: sendTimeout,
-    );
+  @override
+  Future<void> onError(
+    DioException err,
+    ErrorInterceptorHandler handler,
+  ) async {
+    if (err.response?.statusCode == 401 &&
+        err.requestOptions.extra['_authRetry'] != true) {
+      debugPrint(
+        '[AuthInterceptor] 401 on ${err.requestOptions.path}, retrying with fresh token...',
+      );
+      final options = err.requestOptions.copyWith(
+        extra: {...err.requestOptions.extra, '_authRetry': true},
+      );
+      try {
+        final token = await AuthTokenService.getIdToken();
+        if (token != null && token.isNotEmpty) {
+          options.headers['Authorization'] = 'Bearer $token';
+          final dio = Dio();
+          final response = await dio.fetch(options);
+          handler.resolve(response);
+          return;
+        }
+      } catch (e) {
+        debugPrint('[AuthInterceptor] retry failed: $e');
+      }
+    }
+    handler.next(err);
   }
 }

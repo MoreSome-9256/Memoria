@@ -284,11 +284,33 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         ),
       );
     }
+    for (final range in query.timeRanges.where(
+      (item) => item.hasAnnualDayRange,
+    )) {
+      chips.add(
+        _planChip(
+          Icons.date_range_rounded,
+          '每年 ${range.annualStartMonth}月${range.annualStartDayOfMonth}日'
+          '-${range.annualEndMonth}月${range.annualEndDayOfMonth}日',
+        ),
+      );
+    }
+    if (query.weekdays.isNotEmpty) {
+      chips.add(
+        _planChip(Icons.view_week_rounded, _formatWeekdays(query.weekdays)),
+      );
+    }
     for (final location in query.locations.take(4)) {
       chips.add(_planChip(Icons.place_rounded, location.text));
     }
     for (final semantic in query.positiveSemantics.take(3)) {
       chips.add(_planChip(Icons.auto_awesome_rounded, semantic.text));
+    }
+    for (final semantic in query.recallSemantics.take(3)) {
+      chips.add(_planChip(Icons.manage_search_rounded, semantic.text));
+    }
+    for (final semantic in query.negativeSemantics.take(3)) {
+      chips.add(_planChip(Icons.block_rounded, '-${semantic.text}'));
     }
     final attributes = query.attributes;
     if (attributes.minFaceCount != null) {
@@ -355,6 +377,32 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     final minute = value % 60;
     return '${hour.toString().padLeft(2, '0')}:'
         '${minute.toString().padLeft(2, '0')}';
+  }
+
+  static const _weekdayNames = [
+    '',
+    '周一',
+    '周二',
+    '周三',
+    '周四',
+    '周五',
+    '周六',
+    '周日',
+  ];
+
+  String _formatWeekdays(List<int> weekdays) {
+    if (weekdays.length == 7) return '每天';
+    final sorted = List<int>.from(weekdays)..sort();
+    final names = sorted.map((d) => _weekdayNames[d]).toList();
+    if (const [6, 7].every(sorted.contains) &&
+        sorted.length == 2) {
+      return '周末';
+    }
+    if (const [1, 2, 3, 4, 5].every(sorted.contains) &&
+        sorted.length == 5) {
+      return '工作日';
+    }
+    return names.join('、');
   }
 
   Widget _buildControlPanel(

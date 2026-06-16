@@ -2,7 +2,6 @@
 
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
-import 'package:photo_album/service/auth_token_service.dart';
 
 class CognitoAuthService {
   const CognitoAuthService();
@@ -36,12 +35,8 @@ class CognitoAuthService {
   }
 
   Future<void> signOut() async {
-    if (!Amplify.isConfigured) {
-      AuthTokenService.clearCachedToken();
-      return;
-    }
+    if (!Amplify.isConfigured) return;
     await Amplify.Auth.signOut();
-    AuthTokenService.clearCachedToken();
   }
 
   Future<SignInResult> signIn({

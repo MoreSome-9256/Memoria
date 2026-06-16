@@ -103,7 +103,11 @@ try {
   }
 
   $secretId = ""
-  if (-not $SkipSecretUpsert) {
+  if ($SkipSecretUpsert) {
+    if (Test-AwsCommand secretsmanager describe-secret --secret-id $SecretName) {
+      $secretId = $SecretName
+    }
+  } else {
     $secretValues = [ordered]@{}
     foreach ($key in @(
       "LLM_API_KEY",

@@ -21,7 +21,9 @@ class PlaceResolverService {
 
   Future<SemanticSearchLocation> resolve(SemanticSearchLocation input) async {
     input = _withInferredAdministrativeType(input);
-    if (input.type == 'region_concept') return input;
+    if (input.type == 'region_concept' || _isAdministrativeType(input.type)) {
+      return input;
+    }
     final box = ObjectBoxService().store.box<PlaceResolveCacheEntity>();
     final normalized = _normalize(input.text);
     final cityHint = _cityHint(input);
@@ -169,5 +171,12 @@ class PlaceResolverService {
       }
     }
     return null;
+  }
+
+  bool _isAdministrativeType(String type) {
+    return type == 'country' ||
+        type == 'province' ||
+        type == 'city' ||
+        type == 'district';
   }
 }

@@ -3,6 +3,7 @@
 // 可在主 isolate 与 foreground isolate 中通用，零 ObjectBox 依赖。
 
 import 'api_proxy_service.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 class AmapGeoResult {
@@ -116,7 +117,10 @@ class AmapGeoService {
         (pois.first as Map).cast<String, dynamic>(),
       );
     } catch (error) {
-      debugPrint('[amap] place search failed keywords=$keywords error=$error');
+      debugPrint(
+        '[amap] place search failed keywords=$keywords '
+        'error=${_describeHttpError(error)}',
+      );
       return null;
     }
   }
@@ -159,6 +163,14 @@ class AmapGeoService {
       queryParameters: queryParameters,
     );
     return response.data;
+  }
+
+  static String _describeHttpError(Object error) {
+    if (error is DioException) {
+      return 'status=${error.response?.statusCode} '
+          'body=${error.response?.data} message=${error.message}';
+    }
+    return error.toString();
   }
 
   // ── 地址字段提取 ──

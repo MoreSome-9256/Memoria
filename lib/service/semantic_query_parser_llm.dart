@@ -113,7 +113,10 @@ Rules:
    These fields must contain visual meaning only. Never repeat exact dates, years, clock times, named cities, districts, POIs, coordinates, or other precise metadata in semantic text.
    Abstract visible context such as "a coastal city", "spring scenery", "afternoon light", or "night atmosphere" is allowed.
 3. Use absolute_date_ranges for explicit years or relative dates, annual_day_ranges for recurring calendar periods, minute_of_day_ranges for local time-of-day, and weekdays for weekday constraints.
-   For recurring seasons, months, holidays, and month-day spans, output human-readable MM-DD strings such as {"start_date":"03-01","end_date":"05-31"} or {"start_date":"10-01","end_date":"10-07"}; do not calculate day-of-year in the LLM.
+   For recurring seasons, months, holidays, and month-day spans, output human-readable MM-DD strings in objectbox_filters.annual_day_ranges, such as {"start_date":"03-01","end_date":"05-31"} or {"start_date":"10-01","end_date":"10-07"}; do not calculate day-of-year in the LLM.
+   If the user mentions a month without a year, such as "10月", "十月", "5月", or "May", this is still a hard recurring annual_day_ranges constraint for every year, not a visual semantic and not an unresolved phrase.
+   If the user mentions a recurring holiday without a year, such as "国庆", "国庆节", "十一", "十一假期", "National Day", or "National Day holiday", this is a hard recurring annual_day_ranges constraint. For China National Day holiday use 10-01 through 10-07 unless the user names a specific year or a different date span.
+   If the user mentions a season without a year, such as "春天", "夏天", "秋天", or "冬天", this is a hard recurring annual_day_ranges constraint. Use 03-01..05-31, 06-01..08-31, 09-01..11-30, and 12-01..02-28 respectively unless the user provides a more precise date.
    Also extract high-confidence implicit mechanical meaning. For example, 白天/daytime/daylight implies a local daylight window, sunset/晚霞/黄昏 implies late afternoon through early evening, sunrise/朝霞 implies early morning, and a starry sky implies night. Keep the visible concept in semantic fields as well. Do not invent weak or controversial time constraints from objects that can occur all day.
 4. Keep Chinese place names in objectbox_filters.geo. Do not translate raw_name, normalized_names, or amap_query_keywords. Never invent coordinates or decide that two places are identical.
 5. Classify geo with a clear prefix discipline:
@@ -141,6 +144,7 @@ Rules:
 23. If the query contains only an administrative place such as a country, province, city, or district, or only a date/time filter, leave embedding_queries_en and soft_filters.visual_terms_en empty. For "青岛", return geo filters and no visual semantics so all mechanically matching photos remain eligible.
 24. A specific POI, scenic area, campus, business area, or landmark may use concise visible semantics based on stable, conservative place knowledge, because photo metadata may be shifted or incomplete. The place itself must still be written to objectbox_filters.geo, but semantic fields must not contain place names, translated place names, aliases, city names, district names, or POI names. For "五四广场", keep 五四广场 as a POI geo filter and use visible semantics such as "a city square" and "a square near the sea with a large red landmark sculpture". Never write "五四广场", "May Fourth Square", "青岛", or "Qingdao" in semantic fields. Do not invent unstable details such as people, events, weather, shops, or activities unless the user explicitly asks for them.
 25. Prefer precision for implicit mechanical constraints: add them only when the phrase itself strongly entails the constraint. "白天" and "daytime" must include a local daylight window; "晚霞" must include a local late-afternoon/evening window and sunset semantics so it does not retrieve morning glow; "朝霞" must include an early-morning window. Explicit user time always overrides an inferred window.
+26. Time/date self-check is strict: if raw_query contains any month word, season word, recurring holiday word, weekday word, explicit date, relative date, or time-of-day phrase, objectbox_filters must contain the corresponding annual_day_ranges, absolute_date_ranges, weekdays, or minute_of_day_ranges entry before self_check.time_constraints_complete may be true.
 
 Available local indexes:
 - absolute timestamp ranges
@@ -283,6 +287,84 @@ JSON:
   "soft_filters": {
     "visual_terms_original": ["猫"],
     "visual_terms_en": ["domestic cat", "small cat animal"],
+    "geo": []
+  },
+  "negative_filters": {"visual_terms_en": [], "geo_terms": []},
+  "fallback_policy": {"enable_possible_results": true, "show_possible_only_when_strict_empty": true},
+  "self_check": {
+    "all_user_terms_accounted_for": true,
+    "time_constraints_complete": true,
+    "geo_constraints_complete": true,
+    "visual_semantics_do_not_contain_named_places": true,
+    "mechanical_constraints_not_replaced_by_semantics": true,
+    "issues": []
+  }
+}
+
+User: 10月的照片
+JSON:
+{
+  "version": 1,
+  "raw_query": "10月的照片",
+  "analysis_steps": {
+    "time_date_extraction": {"hard_filters": ["10月 -> annual 10-01..10-31"], "implicit_filters": [], "unresolved": []},
+    "geo_extraction": {"administrative_places": [], "poi_places": [], "ambiguous_places": []},
+    "visual_content_inference": {"positive_visuals_en": [], "negative_visuals_en": [], "notes": ["month-only query is metadata-only"]}
+  },
+  "embedding_queries_en": [],
+  "objectbox_filters": {
+    "absolute_date_ranges": [],
+    "annual_day_ranges": [
+      {"start_date": "10-01", "end_date": "10-31", "reason": "October in any year"}
+    ],
+    "minute_of_day_ranges": [],
+    "weekdays": [],
+    "geo": []
+  },
+  "soft_filters": {"visual_terms_original": [], "visual_terms_en": [], "geo": []},
+  "negative_filters": {"visual_terms_en": [], "geo_terms": []},
+  "fallback_policy": {"enable_possible_results": true, "show_possible_only_when_strict_empty": true},
+  "self_check": {
+    "all_user_terms_accounted_for": true,
+    "time_constraints_complete": true,
+    "geo_constraints_complete": true,
+    "visual_semantics_do_not_contain_named_places": true,
+    "mechanical_constraints_not_replaced_by_semantics": true,
+    "issues": []
+  }
+}
+
+User: 国庆节假期的旅行照片
+JSON:
+{
+  "version": 1,
+  "raw_query": "国庆节假期的旅行照片",
+  "analysis_steps": {
+    "time_date_extraction": {"hard_filters": ["国庆节假期 -> annual 10-01..10-07"], "implicit_filters": [], "unresolved": []},
+    "geo_extraction": {"administrative_places": [], "poi_places": [], "ambiguous_places": []},
+    "visual_content_inference": {
+      "positive_visuals_en": ["travel photo", "sightseeing photo"],
+      "negative_visuals_en": [],
+      "notes": ["National Day holiday is a hard annual date range; travel remains visual semantics"]
+    }
+  },
+  "embedding_queries_en": [
+    "travel photo",
+    "sightseeing photo",
+    "holiday trip photo"
+  ],
+  "objectbox_filters": {
+    "absolute_date_ranges": [],
+    "annual_day_ranges": [
+      {"start_date": "10-01", "end_date": "10-07", "reason": "China National Day holiday in any year"}
+    ],
+    "minute_of_day_ranges": [],
+    "weekdays": [],
+    "geo": []
+  },
+  "soft_filters": {
+    "visual_terms_original": ["旅行照片"],
+    "visual_terms_en": ["vacation travel photo", "tourist sightseeing photo"],
     "geo": []
   },
   "negative_filters": {"visual_terms_en": [], "geo_terms": []},

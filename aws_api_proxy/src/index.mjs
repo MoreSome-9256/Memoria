@@ -1,4 +1,7 @@
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import dns from 'node:dns';
+
+dns.setDefaultResultOrder?.('ipv4first');
 
 const secretsClient = new SecretsManagerClient({});
 let cachedConfig;
@@ -21,20 +24,20 @@ export async function handler(event) {
     console.log(JSON.stringify({ route: rawPath, method, user }));
 
     if (rawPath === '/v1/llm/chat/completions' && method === 'POST') {
-      return proxyLlm(event, config);
+      return await proxyLlm(event, config);
     }
     if (rawPath === '/v1/amap/regeo' && method === 'GET') {
-      return proxyAmapRegeo(event, config);
+      return await proxyAmapRegeo(event, config);
     }
     if (rawPath === '/v1/amap/place/text' && method === 'GET') {
-      return proxyAmapPlaceText(event, config);
+      return await proxyAmapPlaceText(event, config);
     }
     if (rawPath === '/v1/replicate/predictions' && method === 'POST') {
-      return proxyReplicateCreate(event, config);
+      return await proxyReplicateCreate(event, config);
     }
     const replicateMatch = rawPath.match(/^\/v1\/replicate\/predictions\/([A-Za-z0-9_-]+)$/);
     if (replicateMatch && method === 'GET') {
-      return proxyReplicateGet(replicateMatch[1], config);
+      return await proxyReplicateGet(replicateMatch[1], config);
     }
 
     return respond(404, { error: 'route_not_found' });
@@ -43,7 +46,7 @@ export async function handler(event) {
     const status = Number.isInteger(error.statusCode) ? error.statusCode : 500;
     return respond(status, {
       error: status >= 500 ? 'upstream_proxy_error' : 'bad_request',
-      message: status >= 500 ? undefined : error.message,
+      message: error.message,
     });
   }
 }
@@ -79,7 +82,7 @@ async function proxyAmapRegeo(event, config) {
   uri.searchParams.set('extensions', query.extensions ?? 'base');
   uri.searchParams.set('coordsys', query.coordsys ?? 'gps');
 
-  const response = await fetch(uri);
+  const response = await fetchWithRetry(uri, { label: 'amap_regeo' });
   return forwardJsonResponse(response);
 }
 
@@ -98,8 +101,47 @@ async function proxyAmapPlaceText(event, config) {
   uri.searchParams.set('page', query.page ?? '1');
   uri.searchParams.set('extensions', query.extensions ?? 'base');
 
-  const response = await fetch(uri);
-  return forwardJsonResponse(response);
+  try {
+    const response = await fetchWithRetry(uri, { label: 'amap_place_text' });
+    return forwardJsonResponse(response);
+  } catch (error) {
+    console.warn('amap_place_text_fallback_to_geocode', sanitizeError(error));
+    return proxyAmapGeocodeAsPlace({ keywords, city: query.city }, config);
+  }
+}
+
+async function proxyAmapGeocodeAsPlace({ keywords, city }, config) {
+  const uri = new URL('https://restapi.amap.com/v3/geocode/geo');
+  uri.searchParams.set('key', config.AMAP_WEB_KEY);
+  uri.searchParams.set('address', keywords);
+  if (city) {
+    uri.searchParams.set('city', city);
+  }
+  const response = await fetchWithRetry(uri, { label: 'amap_geocode_geo' });
+  const text = await response.text();
+  if (!response.ok) {
+    return respond(response.status, safeJson(text, { status: '0', info: text }));
+  }
+  const payload = safeJson(text, null);
+  if (!payload || payload.status !== '1' || !Array.isArray(payload.geocodes)) {
+    return respond(200, payload ?? { status: '0', info: 'invalid geocode response', pois: [] });
+  }
+  return respond(200, {
+    status: payload.status,
+    info: payload.info,
+    infocode: payload.infocode,
+    count: String(payload.geocodes.length),
+    pois: payload.geocodes.map((item) => ({
+      id: '',
+      name: item.formatted_address || keywords,
+      pname: item.province,
+      cityname: item.city,
+      adname: item.district,
+      adcode: item.adcode,
+      location: item.location,
+      type: 'geocode',
+    })),
+  });
 }
 
 async function proxyReplicateCreate(event, config) {
@@ -190,12 +232,49 @@ async function forwardJsonResponse(response, statusOverride) {
   };
 }
 
+async function fetchWithRetry(url, { label, attempts = 2, timeoutMs = 4500, init = {} } = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          'user-agent': 'MemoriaApiProxy/1.0',
+          ...(init.headers ?? {}),
+        },
+      });
+    } catch (error) {
+      lastError = error;
+      console.warn('upstream_fetch_failed', sanitizeError(error), {
+        label,
+        attempt,
+        host: new URL(url).host,
+        path: new URL(url).pathname,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw httpError(502, `${label ?? 'upstream'} fetch failed: ${lastError?.message ?? 'unknown error'}`);
+}
+
 function respond(statusCode, body) {
   return {
     statusCode,
     headers: corsHeaders(body == null ? {} : jsonHeaders),
     body: body == null ? '' : JSON.stringify(body),
   };
+}
+
+function safeJson(text, fallback) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return fallback;
+  }
 }
 
 function corsHeaders(headers) {

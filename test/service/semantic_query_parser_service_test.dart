@@ -129,6 +129,58 @@ void main() {
     expect(query.timeRanges.single.annualEndDayOfMonth, 31);
   });
 
+  test(
+    'QueryPlan month-only annual day range is parsed from objectbox filters',
+    () {
+      final query = SemanticQueryParserService().buildQueryFromStructuredJson(
+        rawQuery: '10月的照片',
+        jsonObject: <String, dynamic>{
+          'version': 1,
+          'raw_query': '10月的照片',
+          'analysis_steps': const <String, Object>{},
+          'embedding_queries_en': const <Object>[],
+          'objectbox_filters': const <String, Object>{
+            'absolute_date_ranges': <Object>[],
+            'annual_day_ranges': <Map<String, Object>>[
+              <String, Object>{
+                'start_date': '10-01',
+                'end_date': '10-31',
+                'reason': 'October in any year',
+              },
+            ],
+            'minute_of_day_ranges': <Object>[],
+            'weekdays': <Object>[],
+            'geo': <Object>[],
+          },
+          'soft_filters': const <String, Object>{
+            'visual_terms_original': <Object>[],
+            'visual_terms_en': <Object>[],
+            'geo': <Object>[],
+          },
+          'negative_filters': const <String, Object>{
+            'visual_terms_en': <Object>[],
+            'geo_terms': <Object>[],
+          },
+          'self_check': const <String, Object>{
+            'all_user_terms_accounted_for': true,
+            'time_constraints_complete': true,
+            'geo_constraints_complete': true,
+            'visual_semantics_do_not_contain_named_places': true,
+            'mechanical_constraints_not_replaced_by_semantics': true,
+            'issues': <Object>[],
+          },
+        },
+      );
+
+      expect(query.queryType, SemanticSearchQueryType.metadata);
+      expect(query.positiveSemantics, isEmpty);
+      expect(query.timeRanges.single.annualStartMonth, 10);
+      expect(query.timeRanges.single.annualStartDayOfMonth, 1);
+      expect(query.timeRanges.single.annualEndMonth, 10);
+      expect(query.timeRanges.single.annualEndDayOfMonth, 31);
+    },
+  );
+
   test('structured visual semantics must be English MobileCLIP prompts', () {
     expect(
       () => SemanticQueryParserService().buildQueryFromStructuredJson(

@@ -408,5 +408,47 @@ void main() {
         expect(summary.clusters.first.size, 4);
       },
     );
+
+    test('ambiguous face is not attached to either similar cluster', () async {
+      final faces = <FaceEntity>[
+        _face(id: 1, photoId: 71, embedding: const [1.0, 0.0]),
+        _face(id: 2, photoId: 72, embedding: const [0.99, 0.01]),
+        _face(id: 3, photoId: 73, embedding: const [0.0, 1.0]),
+        _face(id: 4, photoId: 74, embedding: const [0.01, 0.99]),
+        _face(
+          id: 5,
+          photoId: 75,
+          embedding: const [0.7071068, 0.7071068],
+          qualityScore: 0.09,
+          isPrimaryFace: false,
+        ),
+      ];
+
+      final summary =
+          await FaceClusterService.forTest(
+            facesLoader: () async => faces,
+            photosLoader: () async => faces
+                .map(
+                  (face) =>
+                      _photo(id: face.photoId, aiTags: const <String>['人物自拍']),
+                )
+                .toList(growable: false),
+          ).reclusterAllFaces(
+            minQualityScore: 0.03,
+            seedQualityScore: 0.10,
+            minClusterSize: 2,
+            seedToCentroidThreshold: 0.95,
+            seedToCoverThreshold: 0.95,
+            attachToClusterThreshold: 0.50,
+            attachToCoverThreshold: 0.50,
+            attachToMemberThreshold: 0.50,
+            ambiguousClusterMargin: 0.05,
+          );
+
+      expect(summary.clusterCount, 2);
+      expect(summary.clusteredFaceCount, 4);
+      expect(summary.leftoverFaceCount, 1);
+      expect(summary.clusters.map((cluster) => cluster.size), <int>[2, 2]);
+    });
   });
 }

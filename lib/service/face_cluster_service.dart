@@ -1,4 +1,4 @@
-/// 人脸聚类服务，计算人脸向量分组并输出聚类结果。
+// 人脸聚类服务，计算人脸向量分组并输出聚类结果。
 
 import 'dart:math' as math;
 
@@ -44,18 +44,19 @@ class FaceClusterService {
   static const int defaultMinClusterSize = 2;
   static const double defaultSeedToCentroidThreshold = 0.88;
   static const double defaultSeedToCoverThreshold = 0.90;
-  static const double defaultSeedToMemberThreshold = 0.84;
-  static const double defaultSmallClusterCentroidMergeThreshold = 0.86;
-  static const double defaultSmallClusterCoverMergeThreshold = 0.88;
-  static const double defaultSmallClusterPairMergeThreshold = 0.84;
+  static const double defaultSeedToMemberThreshold = 0.88;
+  static const double defaultSmallClusterCentroidMergeThreshold = 0.90;
+  static const double defaultSmallClusterCoverMergeThreshold = 0.92;
+  static const double defaultSmallClusterPairMergeThreshold = 0.88;
   static const int defaultSmallClusterMergeMaxSize = 4;
-  static const double defaultMergeSmallClusterThreshold = 0.86;
-  static const double defaultAttachToClusterThreshold = 0.82;
-  static const double defaultAttachToCoverThreshold = 0.84;
-  static const double defaultAttachToMemberThreshold = 0.80;
+  static const double defaultMergeSmallClusterThreshold = 0.90;
+  static const double defaultAttachToClusterThreshold = 0.86;
+  static const double defaultAttachToCoverThreshold = 0.88;
+  static const double defaultAttachToMemberThreshold = 0.86;
   static const double defaultClusterCentroidMergeThreshold = 0.90;
   static const double defaultClusterCoverMergeThreshold = 0.92;
-  static const double defaultClusterMemberMergeThreshold = 0.86;
+  static const double defaultClusterMemberMergeThreshold = 0.90;
+  static const double defaultAmbiguousClusterMargin = 0.025;
   static const int defaultMaxClusterSize = 200;
 
   static const Set<String> _nonHumanPhotoTags = <String>{
@@ -115,6 +116,7 @@ class FaceClusterService {
     double clusterCentroidMergeThreshold = defaultClusterCentroidMergeThreshold,
     double clusterCoverMergeThreshold = defaultClusterCoverMergeThreshold,
     double clusterMemberMergeThreshold = defaultClusterMemberMergeThreshold,
+    double ambiguousClusterMargin = defaultAmbiguousClusterMargin,
     int maxClusterSize = defaultMaxClusterSize,
   }) async {
     final allFaces = await _loadAllFaces();
@@ -223,6 +225,7 @@ class FaceClusterService {
           stableClusters,
           minSimilarity: mergeSmallClusterThreshold,
           memberThreshold: smallClusterPairMergeThreshold,
+          ambiguousMargin: ambiguousClusterMargin,
         );
         if (bestIndex >= 0) {
           stableClusters[bestIndex].addAll(smallCluster);
@@ -264,6 +267,7 @@ class FaceClusterService {
           minSimilarity: attachToClusterThreshold,
           coverThreshold: attachToCoverThreshold,
           memberThreshold: attachToMemberThreshold,
+          ambiguousMargin: ambiguousClusterMargin,
         );
         if (bestIndex >= 0 &&
             stableClusters[bestIndex].length < maxClusterSize) {
@@ -547,6 +551,7 @@ class FaceClusterService {
     required double minSimilarity,
     double? coverThreshold,
     double? memberThreshold,
+    double ambiguousMargin = 0.0,
   }) {
     if (stableClusters.isEmpty) {
       return -1;
@@ -559,6 +564,7 @@ class FaceClusterService {
 
     var bestIndex = -1;
     var bestSimilarity = -double.infinity;
+    var secondBestSimilarity = -double.infinity;
     for (var index = 0; index < stableClusters.length; index++) {
       final stableCluster = stableClusters[index];
       final stableCentroid = _centroid(stableCluster);
@@ -586,12 +592,20 @@ class FaceClusterService {
         continue;
       }
       if (similarity > bestSimilarity) {
+        secondBestSimilarity = bestSimilarity;
         bestSimilarity = similarity;
         bestIndex = index;
+      } else if (similarity > secondBestSimilarity) {
+        secondBestSimilarity = similarity;
       }
     }
 
     if (bestSimilarity < minSimilarity) {
+      return -1;
+    }
+    if (ambiguousMargin > 0 &&
+        secondBestSimilarity.isFinite &&
+        bestSimilarity - secondBestSimilarity < ambiguousMargin) {
       return -1;
     }
     return bestIndex;

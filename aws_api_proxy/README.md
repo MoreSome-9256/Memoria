@@ -46,8 +46,12 @@ validated to avoid turning the Lambda into an open relay.
 
 ```powershell
 cd aws_api_proxy
-.\scripts\deploy.ps1 -ConfigProfilePath ..\config\profiles\dev.json
+.\scripts\deploy.ps1 -ConfigProfilePath <private-server-secret-profile.json>
 ```
+
+The deployment profile is server-side only and must not be committed. It should
+contain provider credentials for Secrets Manager. The app profile must contain
+only `API_PROXY_BASE_URL`, Cognito ids, and non-secret runtime flags.
 
 Or deploy with SAM if you already have it installed:
 
@@ -100,7 +104,8 @@ without changing code.
 ## Flutter migration
 
 Migration should be done by adding a proxy-aware cloud client in the app, then
-moving each service onto it. Do not rely on provider API keys in `dev.json`.
+moving each service onto it. Do not rely on provider API keys in app profile
+files.
 
 - `API_PROXY_BASE_URL=https://<api-id>.execute-api.<region>.amazonaws.com`
 - `LLM_BASE_URL=https://<api-id>.execute-api.<region>.amazonaws.com/v1/llm`
@@ -109,9 +114,9 @@ moving each service onto it. Do not rely on provider API keys in `dev.json`.
 
 Then update the app HTTP client to attach a Cognito ID token for requests to
 the proxy. A starter client is provided at `flutter/api_proxy_client.dart`.
-The current Flutter LLM path still treats `LLM_API_KEY` as the provider-token
-configuration flag, so the app migration must add an explicit proxy auth mode
-instead of setting the key to an empty string and hoping the old path works.
+The Flutter app now uses `LLM_AUTH_MODE=cognito_proxy` and sends Cognito ID
+tokens to the proxy. Provider keys must stay only in Lambda configuration or
+Secrets Manager.
 
 For Amap and Replicate, prefer replacing direct calls with the proxy client:
 

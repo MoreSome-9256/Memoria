@@ -274,24 +274,13 @@ Seamless loop, video game background loop, upbeat acoustic pop, sunny travel vlo
     String prompt, {
     int duration = 12,
   }) async {
-    if (_replicateApiToken.isEmpty) {
-      print("⚠️ 警告：未配置 REPLICATE_API_TOKEN，已跳过 AI 音乐生成！");
-      return null;
-    }
-
     try {
       print("☁️ [MusicGen] 开始生成 ${duration}s 的专属配乐...");
 
       // 1. 退回最稳妥的 v1/predictions 经典路由，使用绝对不会 404 的固定版本号
       // 1. 发起生成任务请求 (使用你截图里发现的最新版本)
-      final response = await _dio.post(
-        'https://api.replicate.com/v1/predictions',
-        options: Options(
-          headers: {
-            'Authorization': 'Bearer $_replicateApiToken',
-            'Content-Type': 'application/json',
-          },
-        ),
+      final response = await ApiProxyService.instance.post<Map<String, dynamic>>(
+        '/v1/replicate/predictions',
         data: {
           // 🌟 从你截图里提取出的完整最新版本号！
           "version":
@@ -313,21 +302,23 @@ Seamless loop, video game background loop, upbeat acoustic pop, sunny travel vlo
       }
 
       // 2. 轮询等待生成完成
-      final predictionUrl = response.data['urls']['get'];
+      final predictionId = response.data?['id']?.toString();
+      if (predictionId == null || predictionId.isEmpty) {
+        print('❌ MusicGen 返回缺少 prediction id: ${response.data}');
+        return null;
+      }
       String? audioUrl;
 
       print("⏳ [MusicGen] 音乐生成中，正在轮询等待结果...");
       while (true) {
         await Future.delayed(const Duration(seconds: 4));
 
-        final pollResponse = await _dio.get(
-          predictionUrl,
-          options: Options(
-            headers: {'Authorization': 'Bearer $_replicateApiToken'},
-          ),
-        );
+        final pollResponse = await ApiProxyService.instance
+            .get<Map<String, dynamic>>(
+              '/v1/replicate/predictions/$predictionId',
+            );
 
-        final pollData = pollResponse.data;
+        final pollData = pollResponse.data ?? const <String, dynamic>{};
         final status = pollData['status'];
 
         if (status == 'succeeded') {
@@ -346,15 +337,11 @@ Seamless loop, video game background loop, upbeat acoustic pop, sunny travel vlo
         final filePath =
             '${dir.path}/ai_bgm_${DateTime.now().millisecondsSinceEpoch}.mp3';
 
-        await _dio.download(audioUrl, filePath);
+        await ApiProxyService.instance.download(audioUrl, filePath);
 
         print("✅ [MusicGen] 专属 BGM 下载成功，路径: $filePath");
         return filePath;
       }
-    } on DioException catch (e) {
-      print("❌ [MusicGen] 网络请求被拒！");
-      // 🌟 核心排雷雷达：如果再报 422，这里会精准打印出到底哪个参数写错了！
-      print("😡 服务器详细原话: ${e.response?.data}");
     } catch (e) {
       print("❌ [MusicGen] 代码运行崩溃: $e");
     }

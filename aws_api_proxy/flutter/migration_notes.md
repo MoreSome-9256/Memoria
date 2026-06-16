@@ -14,17 +14,15 @@ Use the proxy for LLM requests without storing provider tokens:
 }
 ```
 
-The existing `LLMService` still treats `LLM_API_KEY` as the provider-token
-configuration flag. Do not set `LLM_API_KEY` to an empty string and expect the
-old path to work. The minimal safe migration is:
+The current app path uses the Cognito proxy mode. The minimal safe migration
+for any remaining caller is:
 
-1. Add `LLM_AUTH_MODE=cognito_proxy` support to `LLMService.isConfigured`.
-2. Attach Cognito ID token only when request host equals `API_PROXY_BASE_URL`.
-3. Route `LLMService` to `/v1/llm/chat/completions`.
-4. Replace `AmapGeoService` direct URLs with:
+1. Attach Cognito ID token only when request host equals `API_PROXY_BASE_URL`.
+2. Route LLM calls to `/v1/llm/chat/completions`.
+3. Replace any remaining Amap direct URLs with:
    - `/v1/amap/regeo`
    - `/v1/amap/place/text`
-5. Replace `MusicGenService` direct Replicate calls with:
+4. Replace any remaining Replicate calls with:
    - `/v1/replicate/predictions`
    - `/v1/replicate/predictions/{id}`
 

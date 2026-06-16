@@ -1,4 +1,4 @@
-/// 语义查询解析主服务。
+// 语义查询解析主服务。
 
 import 'dart:convert';
 
@@ -42,7 +42,7 @@ class SemanticQueryParserService {
     }
 
     if (!_llmService.isApiKeyConfigured) {
-      throw StateError('LLM 未配置，无法执行自然语言检索。请先配置 LLM_API_KEY。');
+      throw StateError('LLM 未配置，无法执行自然语言检索。请先配置云端代理或 LLM 服务。');
     }
 
     try {

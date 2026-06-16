@@ -123,3 +123,4 @@ run_output.txt
 # Runtime profile files (local secrets)
 /config/profiles/*.json
 !/config/profiles/*.example.json
+!/config/profiles/proxy.json

@@ -1,17 +1,8 @@
-/// 高德逆地理编码共享工具。
-///
-/// 可在主 isolate 与 foreground isolate 中通用，零 ObjectBox 依赖。
-///
-/// 用法：
-/// ```dart
-/// final addr = await AmapGeoService.reverseGeocode(lat, lng);
-/// if (addr != null) {
-///   print(addr.city); // "青岛市"
-/// }
-/// ```
+// 高德逆地理编码共享工具。
+//
+// 可在主 isolate 与 foreground isolate 中通用，零 ObjectBox 依赖。
 
-import 'dart:convert';
-import 'dart:io';
+import 'api_proxy_service.dart';
 
 class AmapGeoResult {
   final String? country;
@@ -74,11 +65,6 @@ class AmapGeoResult {
 class AmapGeoService {
   AmapGeoService._();
 
-  static const String _amapWebKey = String.fromEnvironment(
-    'AMAP_WEB_KEY',
-    defaultValue: '7fe01f8a449b2aac28068feac9177316',
-  );
-
   /// 调用高德逆地理编码，返回解析后的地址字段。
   ///
   /// 失败时返回 null，不会抛异常。
@@ -87,7 +73,6 @@ class AmapGeoService {
     required double longitude,
     String extensions = 'base',
   }) async {
-    if (_amapWebKey.trim().isEmpty) return null;
     if (latitude == 0 && longitude == 0) return null;
 
     try {
@@ -106,21 +91,19 @@ class AmapGeoService {
     required String keywords,
     String? city,
   }) async {
-    if (_amapWebKey.trim().isEmpty || keywords.trim().isEmpty) return null;
-    final client = HttpClient();
+    if (keywords.trim().isEmpty) return null;
     try {
-      final uri = Uri.https('restapi.amap.com', '/v3/place/text', {
-        'key': _amapWebKey,
-        'keywords': keywords.trim(),
-        if (city?.trim().isNotEmpty == true) 'city': city!.trim(),
-        'citylimit': city?.trim().isNotEmpty == true ? 'true' : 'false',
-        'offset': '5',
-        'page': '1',
-        'extensions': 'base',
-      });
-      final response = await (await client.getUrl(uri)).close();
-      final body = await response.transform(utf8.decoder).join();
-      final json = jsonDecode(body);
+      final json = await _getJson(
+        '/v1/amap/place/text',
+        queryParameters: <String, String>{
+          'keywords': keywords.trim(),
+          if (city?.trim().isNotEmpty == true) 'city': city!.trim(),
+          'citylimit': city?.trim().isNotEmpty == true ? 'true' : 'false',
+          'offset': '5',
+          'page': '1',
+          'extensions': 'base',
+        },
+      );
       if (json is! Map || json['status'] != '1') return null;
       final pois = json['pois'];
       if (pois is! List || pois.isEmpty || pois.first is! Map) return null;
@@ -129,8 +112,6 @@ class AmapGeoService {
       );
     } catch (_) {
       return null;
-    } finally {
-      client.close();
     }
   }
 
@@ -141,32 +122,37 @@ class AmapGeoService {
     required double longitude,
     String extensions = 'base',
   }) async {
-    final client = HttpClient();
-    try {
-      final uri =
-          Uri.https('restapi.amap.com', '/v3/geocode/regeo', <String, String>{
-            'key': _amapWebKey,
-            'location': '$longitude,$latitude',
-            'extensions': extensions,
-            'coordsys': 'gps',
-          });
-      final request = await client.getUrl(uri);
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
-      final json = jsonDecode(body) as Map<String, dynamic>;
+    final json =
+        await _getJson(
+              '/v1/amap/regeo',
+              queryParameters: <String, String>{
+                'location': '$longitude,$latitude',
+                'extensions': extensions,
+                'coordsys': 'gps',
+              },
+            )
+            as Map<String, dynamic>;
 
-      if (json['status'] != '1') {
-        throw Exception('高德返回失败: ${json['info'] ?? '未知错误'}');
-      }
-
-      final regeocode = json['regeocode'];
-      if (regeocode is! Map<String, dynamic>) {
-        throw Exception('高德返回缺少regeocode');
-      }
-      return regeocode;
-    } finally {
-      client.close();
+    if (json['status'] != '1') {
+      throw Exception('高德返回失败: ${json['info'] ?? '未知错误'}');
     }
+
+    final regeocode = json['regeocode'];
+    if (regeocode is! Map<String, dynamic>) {
+      throw Exception('高德返回缺少regeocode');
+    }
+    return regeocode;
+  }
+
+  static Future<dynamic> _getJson(
+    String path, {
+    Map<String, dynamic>? queryParameters,
+  }) async {
+    final response = await ApiProxyService.instance.get<dynamic>(
+      path,
+      queryParameters: queryParameters,
+    );
+    return response.data;
   }
 
   // ── 地址字段提取 ──
@@ -421,7 +407,8 @@ class AmapPlaceResult {
   });
 
   factory AmapPlaceResult.fromJson(Map<String, dynamic> json) {
-    final location = json['location']?.toString().split(',') ?? const <String>[];
+    final location =
+        json['location']?.toString().split(',') ?? const <String>[];
     return AmapPlaceResult(
       name: json['name']?.toString().trim() ?? '',
       poiId: json['id']?.toString().trim(),

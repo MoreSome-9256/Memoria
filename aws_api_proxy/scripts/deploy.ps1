@@ -1,6 +1,6 @@
 param(
   [string]$StackName = "memoria-api-proxy-dev",
-  [string]$ConfigProfilePath = "..\config\profiles\dev.json",
+  [Parameter(Mandatory = $true)][string]$ConfigProfilePath,
   [string]$Region = "",
   [string]$Profile = "",
   [string]$ArtifactBucket = "",

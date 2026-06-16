@@ -7,7 +7,7 @@ import '../../utils/media_type_helper.dart';
 class MediaThumbnail extends StatefulWidget {
   const MediaThumbnail({
     super.key,
-    required this.path,
+    this.path = '',
     this.assetId,
     this.kind,
     this.thumbnailBytes,

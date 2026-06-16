@@ -56,7 +56,7 @@ class StoryGenerationOrchestrator {
       String id, {
       String? detail,
       List<String>? bullets,
-      List<String>? previewImagePaths,
+      List<String>? previewAssetIds,
     }) {
       final index = steps.indexWhere((step) => step.id == id);
       if (index < 0) {
@@ -66,7 +66,7 @@ class StoryGenerationOrchestrator {
         status: StoryGenerationProgressStatus.inProgress,
         detail: detail,
         bullets: bullets,
-        previewImagePaths: previewImagePaths,
+        previewAssetIds: previewAssetIds,
       );
       emit(headline: detail ?? steps[index].title);
     }
@@ -75,7 +75,7 @@ class StoryGenerationOrchestrator {
       String id, {
       String? detail,
       List<String>? bullets,
-      List<String>? previewImagePaths,
+      List<String>? previewAssetIds,
     }) {
       final index = steps.indexWhere((step) => step.id == id);
       if (index < 0) {
@@ -85,7 +85,7 @@ class StoryGenerationOrchestrator {
         status: StoryGenerationProgressStatus.completed,
         detail: detail,
         bullets: bullets,
-        previewImagePaths: previewImagePaths,
+        previewAssetIds: previewAssetIds,
       );
       emit(headline: detail ?? steps[index].title);
     }
@@ -122,40 +122,28 @@ class StoryGenerationOrchestrator {
       completeStep(
         'sort',
         detail: '已整理 ${sortedPhotos.length} 张图片',
-        previewImagePaths: sortedPhotos
-            .take(3)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(3)),
       );
       await _pauseForFlow();
 
       activateStep(
         'meta',
         detail: '正在解析图片时间与地点',
-        previewImagePaths: sortedPhotos
-            .take(2)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(2)),
       );
       final metadataBullets = _buildMetadataBullets(sortedPhotos);
       completeStep(
         'meta',
         detail: '时间与地点整理完成',
         bullets: metadataBullets,
-        previewImagePaths: sortedPhotos
-            .take(2)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(2)),
       );
       await _pauseForFlow();
 
       activateStep(
         'clues',
         detail: '正在提取标签、OCR 和已有 caption',
-        previewImagePaths: sortedPhotos
-            .take(3)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(3)),
       );
       final requestPhotoByAssetId = <String, Photo>{
         for (final photo in request.selectedPhotos) photo.id: photo,
@@ -172,10 +160,7 @@ class StoryGenerationOrchestrator {
         'clues',
         detail: '素材线索提取完成',
         bullets: _buildClueBullets(materials),
-        previewImagePaths: sortedPhotos
-            .take(3)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(3)),
       );
       await _pauseForFlow();
 
@@ -186,10 +171,7 @@ class StoryGenerationOrchestrator {
       activateStep(
         'semantic',
         detail: _semanticStepDetail(request.mode),
-        previewImagePaths: sortedPhotos
-            .take(3)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(3)),
       );
       if (request.mode == StoryGenerationMode.localCaptionThenDeepseek) {
         final sampledPhotos = _samplePhotosForLocalVlm(
@@ -208,12 +190,12 @@ class StoryGenerationOrchestrator {
                 'semantic',
                 detail: '正在使用本地 VLM 为图片生成 caption（共$total张，已完成$completed张）',
                 bullets: bullets,
-                previewImagePaths: <String>[
-                  currentPhoto.path,
+                previewAssetIds: <String>[
+                  _previewKey(currentPhoto),
                   ...sampledPhotos
                       .where((photo) => photo.id != currentPhoto.id)
                       .take(2)
-                      .map((photo) => photo.path),
+                      .map(_previewKey),
                 ],
               );
             },
@@ -245,10 +227,7 @@ class StoryGenerationOrchestrator {
                   })
                   .take(4),
             ],
-            previewImagePaths: sampledPhotos
-                .take(3)
-                .map((photo) => photo.path)
-                .toList(growable: false),
+            previewAssetIds: _previewKeys(sampledPhotos.take(3)),
           );
         } catch (error) {
           completeStep(
@@ -273,10 +252,7 @@ class StoryGenerationOrchestrator {
             bullets: localDirectStory.highlights
                 .take(4)
                 .toList(growable: false),
-            previewImagePaths: sampledPhotos
-                .take(3)
-                .map((photo) => photo.path)
-                .toList(growable: false),
+            previewAssetIds: _previewKeys(sampledPhotos.take(3)),
           );
         } catch (error) {
           forceDeepSeekFallback = true;
@@ -293,10 +269,7 @@ class StoryGenerationOrchestrator {
       activateStep(
         'highlights',
         detail: '正在提炼精彩片段与故事线索',
-        previewImagePaths: sortedPhotos
-            .take(3)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(3)),
       );
       Map<String, dynamic>? musicWorkflowAnalysis;
       final highlights = <String>[
@@ -313,10 +286,7 @@ class StoryGenerationOrchestrator {
           'highlights',
           detail: '正在本地分析音乐节拍与情绪变化',
           bullets: highlights,
-          previewImagePaths: sortedPhotos
-              .take(3)
-              .map((photo) => photo.path)
-              .toList(growable: false),
+          previewAssetIds: _previewKeys(sortedPhotos.take(3)),
         );
         musicWorkflowAnalysis = await MusicService.analyzeAudio(musicPath);
         final workflow = musicWorkflowAnalysis?['llm_workflow'];
@@ -331,30 +301,21 @@ class StoryGenerationOrchestrator {
         'highlights',
         detail: '已提炼出故事亮点',
         bullets: highlights,
-        previewImagePaths: sortedPhotos
-            .take(3)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(3)),
       );
       await _pauseForFlow();
 
       activateStep(
         'outline',
         detail: '正在组织故事结构',
-        previewImagePaths: sortedPhotos
-            .take(3)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(3)),
       );
       final outlineBullets = _buildOutlineBullets(sortedPhotos, highlights);
       completeStep(
         'outline',
         detail: '故事结构组织完成',
         bullets: outlineBullets,
-        previewImagePaths: sortedPhotos
-            .take(3)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(3)),
       );
       await _pauseForFlow();
 
@@ -365,10 +326,7 @@ class StoryGenerationOrchestrator {
                 !forceDeepSeekFallback
             ? '正在整理本地 VLM 生成的故事正文'
             : '正在调用 DeepSeek 撰写故事',
-        previewImagePaths: sortedPhotos
-            .take(3)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(3)),
       );
       final structuredStory =
           request.mode == StoryGenerationMode.localDirectVlm &&
@@ -391,20 +349,14 @@ class StoryGenerationOrchestrator {
         'write',
         detail: '故事正文生成完成',
         bullets: structuredStory.highlights.take(4).toList(growable: false),
-        previewImagePaths: sortedPhotos
-            .take(3)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(3)),
       );
       await _pauseForFlow();
 
       activateStep(
         'save',
         detail: '正在保存故事并整理展示',
-        previewImagePaths: sortedPhotos
-            .take(3)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(3)),
       );
       final story = await _saveStory(
         request: request,
@@ -414,10 +366,7 @@ class StoryGenerationOrchestrator {
       completeStep(
         'save',
         detail: '故事已保存，正在打开结果页',
-        previewImagePaths: sortedPhotos
-            .take(3)
-            .map((photo) => photo.path)
-            .toList(growable: false),
+        previewAssetIds: _previewKeys(sortedPhotos.take(3)),
       );
       emit(headline: '故事生成完成', isCompleted: true);
       return StoryGenerationOutput(story: story, photos: sortedPhotos);

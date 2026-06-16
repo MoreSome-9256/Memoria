@@ -1,4 +1,4 @@
-/// 故事生成进度页面，展示故事任务的实时执行状态。
+// 故事生成进度页面，展示故事任务的实时执行状态。
 
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
@@ -10,28 +10,50 @@ import '../../service/story_video_preparation_service.dart';
 import '../../service/story_generation_orchestrator.dart';
 import '../../utils/media_type_helper.dart';
 import '../widgets/media_thumbnail.dart';
-import '../widgets/asset_backed_image.dart';
 import 'story_result_page.dart';
 
 @visibleForTesting
 Widget buildStoryGenerationPreviewImage({
   required List<Photo> selectedPhotos,
-  required String path,
+  required String previewAssetRef,
 }) {
-  for (final photo in selectedPhotos) {
-    if (photo.path != path) {
-      continue;
+  final assetId = _StoryGenerationPreviewRef.parseAssetId(previewAssetRef);
+  if (assetId != null) {
+    for (final photo in selectedPhotos) {
+      if (photo.id != assetId) {
+        continue;
+      }
+      return MediaThumbnail(
+        assetId: photo.id,
+        kind: MediaTypeHelper.fromStorageValue(photo.mediaKind),
+        thumbnailBytes: photo.thumbnailBytes,
+        fit: BoxFit.cover,
+        showBadge: false,
+      );
     }
-    return MediaThumbnail(
-      path: photo.path,
-      assetId: photo.id,
-      kind: MediaTypeHelper.fromStorageValue(photo.mediaKind, path: photo.path),
-      thumbnailBytes: photo.thumbnailBytes,
-      fit: BoxFit.cover,
-      showBadge: false,
-    );
   }
-  return AssetBackedImage(path: path, assetId: null, fit: BoxFit.cover);
+  return const ColoredBox(
+    color: Color(0xFFE9E3EA),
+    child: Center(
+      child: Icon(Icons.image_not_supported_outlined, color: Color(0xFF8A7D86)),
+    ),
+  );
+}
+
+class _StoryGenerationPreviewRef {
+  const _StoryGenerationPreviewRef._();
+
+  static String? parseAssetId(String value) {
+    const assetPrefix = 'asset:';
+    if (!value.startsWith(assetPrefix)) {
+      return null;
+    }
+    final encodedAssetId = value.substring(assetPrefix.length);
+    if (encodedAssetId.trim().isEmpty) {
+      return null;
+    }
+    return Uri.decodeComponent(encodedAssetId);
+  }
 }
 
 class StoryGenerationProgressPage extends StatefulWidget {
@@ -303,10 +325,10 @@ class _StoryGenerationProgressPageState
     return steps.take(visibleCount).toList(growable: false);
   }
 
-  Widget _buildPreviewImage(String path) {
+  Widget _buildPreviewImage(String previewAssetRef) {
     return buildStoryGenerationPreviewImage(
       selectedPhotos: widget.request.selectedPhotos,
-      path: path,
+      previewAssetRef: previewAssetRef,
     );
   }
 }
@@ -320,7 +342,7 @@ class _ProgressStepCard extends StatefulWidget {
 
   final StoryGenerationProgressStep step;
   final bool isLast;
-  final Widget Function(String path) previewBuilder;
+  final Widget Function(String previewAssetRef) previewBuilder;
 
   @override
   State<_ProgressStepCard> createState() => _ProgressStepCardState();
@@ -416,13 +438,13 @@ class _ProgressStepCardState extends State<_ProgressStepCard>
                     ),
                   ),
                 ],
-                if (widget.step.previewImagePaths.isNotEmpty) ...[
+                if (widget.step.previewAssetIds.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   SizedBox(
                     height: 84,
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
-                      itemCount: widget.step.previewImagePaths.length,
+                      itemCount: widget.step.previewAssetIds.length,
                       separatorBuilder: (_, _) => const SizedBox(width: 10),
                       itemBuilder: (context, index) {
                         return ClipRRect(
@@ -430,7 +452,7 @@ class _ProgressStepCardState extends State<_ProgressStepCard>
                           child: SizedBox(
                             width: 120,
                             child: widget.previewBuilder(
-                              widget.step.previewImagePaths[index],
+                              widget.step.previewAssetIds[index],
                             ),
                           ),
                         );
@@ -460,18 +482,18 @@ class _ProgressStepCardState extends State<_ProgressStepCard>
   }
 
   Widget _buildLeadingVisual(Color color) {
-    final previewPath = widget.step.previewImagePaths.isNotEmpty
-        ? widget.step.previewImagePaths.first
+    final previewAssetId = widget.step.previewAssetIds.isNotEmpty
+        ? widget.step.previewAssetIds.first
         : null;
     final shouldSpin =
         widget.step.status == StoryGenerationProgressStatus.inProgress;
 
-    if (previewPath != null) {
+    if (previewAssetId != null) {
       final image = ClipOval(
         child: SizedBox(
           width: 34,
           height: 34,
-          child: widget.previewBuilder(previewPath),
+          child: widget.previewBuilder(previewAssetId),
         ),
       );
 

@@ -1,10 +1,10 @@
 import 'dart:typed_data';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_album/models/vo/photo.dart';
 import 'package:photo_album/utils/media_type_helper.dart';
 import 'package:photo_album/view/pages/story_generation_progress_page.dart';
-import 'package:photo_album/view/widgets/asset_backed_image.dart';
 import 'package:photo_album/view/widgets/media_thumbnail.dart';
 
 void main() {
@@ -16,13 +16,12 @@ void main() {
         selectedPhotos: <Photo>[
           Photo(
             id: 'asset-42',
-            path: '/inaccessible/system/path.jpg',
             dateTaken: DateTime(2026),
             mediaKind: 'dynamicImage',
             thumbnailBytes: thumbnailBytes,
           ),
         ],
-        path: '/inaccessible/system/path.jpg',
+        previewAssetRef: 'asset:${Uri.encodeComponent('asset-42')}',
       );
 
       expect(preview, isA<MediaThumbnail>());
@@ -34,12 +33,40 @@ void main() {
     },
   );
 
-  test('story progress preview keeps path fallback for non-album images', () {
+  test(
+    'story progress preview shows placeholder for invalid asset reference',
+    () {
+      final preview = buildStoryGenerationPreviewImage(
+        selectedPhotos: const <Photo>[],
+        previewAssetRef: 'invalid-reference',
+      );
+
+      expect(preview, isA<ColoredBox>());
+    },
+  );
+
+  test('story progress preview uses encoded asset id as the only identity', () {
+    final firstBytes = Uint8List.fromList(<int>[1]);
+    final secondBytes = Uint8List.fromList(<int>[2]);
     final preview = buildStoryGenerationPreviewImage(
-      selectedPhotos: const <Photo>[],
-      path: '/temporary/generated-cover.jpg',
+      selectedPhotos: <Photo>[
+        Photo(
+          id: 'asset-first',
+          dateTaken: DateTime(2026),
+          thumbnailBytes: firstBytes,
+        ),
+        Photo(
+          id: 'asset-second',
+          dateTaken: DateTime(2026),
+          thumbnailBytes: secondBytes,
+        ),
+      ],
+      previewAssetRef: 'asset:${Uri.encodeComponent('asset-second')}',
     );
 
-    expect(preview, isA<AssetBackedImage>());
+    expect(preview, isA<MediaThumbnail>());
+    final thumbnail = preview as MediaThumbnail;
+    expect(thumbnail.assetId, 'asset-second');
+    expect(thumbnail.thumbnailBytes, same(secondBytes));
   });
 }

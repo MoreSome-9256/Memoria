@@ -1,4 +1,4 @@
-/// 故事视频准备服务，负责生成视频前的素材整理与时间线构建。
+// 故事视频准备服务，负责生成视频前的素材整理与时间线构建。
 
 import 'dart:io';
 
@@ -150,22 +150,26 @@ class StoryVideoPreparationService {
   }
 
   String _describePhoto(PhotoEntity photo) {
-    var desc = photo.aiCaption?.trim();
-    if (desc == null || desc.isEmpty) {
-      final tags = photo.aiTags ?? const <String>[];
-      desc = tags.isNotEmpty ? tags.take(4).join('、') : '未知画面元素';
+    final parts = <String>[];
+    final caption = photo.aiCaption?.trim();
+    if (caption != null && caption.isNotEmpty) {
+      parts.add('画面描述：$caption');
+    }
+    final tags = photo.aiTags ?? const <String>[];
+    if (tags.isNotEmpty) {
+      parts.add('视觉标签：${tags.take(6).join('、')}');
     }
     final ocrTags = OcrPolicy.effectiveTags(
       photo.ocrTags ?? const <String>[],
       maxTags: 3,
     );
-    final ocrText = OcrPolicy.effectiveText(photo.ocrText);
+    final ocrText = OcrPolicy.effectiveText(photo.ocrText, maxLength: 48);
     if (ocrTags.isNotEmpty) {
-      desc += '（画面文字：${ocrTags.join('、')}）';
+      parts.add('OCR标签：${ocrTags.join('、')}');
     } else if (ocrText.isNotEmpty) {
-      desc += '（画面文字：$ocrText）';
+      parts.add('OCR文字：$ocrText');
     }
-    return desc;
+    return parts.isEmpty ? '未知画面元素' : parts.join('；');
   }
 
   Future<String> _servePremadeMusic(String prompt) async {

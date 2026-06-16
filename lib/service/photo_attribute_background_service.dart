@@ -509,6 +509,7 @@ class PhotoAttributeBackgroundService {
   void resetForTesting() {
     _queue.clear();
     _pendingByPhotoId.clear();
+    _failedTasks.clear();
     _isRunning = false;
     _processed = 0;
     _idleCompleter = null;

@@ -1,4 +1,4 @@
-/// 语义检索相关类型集合，定义查询严格度和路由模式等枚举。
+// 语义检索相关类型集合，定义查询严格度和路由模式等枚举。
 
 import '../entity/photo_entity.dart';
 
@@ -27,8 +27,10 @@ class SemanticSearchTimeRange {
     this.localEndMinute,
     this.recurringStartMonth,
     this.recurringEndMonth,
-    this.annualStartDay,
-    this.annualEndDay,
+    this.annualStartMonth,
+    this.annualStartDayOfMonth,
+    this.annualEndMonth,
+    this.annualEndDayOfMonth,
   });
 
   final int? startTimeMs;
@@ -42,15 +44,22 @@ class SemanticSearchTimeRange {
   final int? localEndMinute;
   final int? recurringStartMonth;
   final int? recurringEndMonth;
-  final int? annualStartDay;
-  final int? annualEndDay;
+  final int? annualStartMonth;
+  final int? annualStartDayOfMonth;
+  final int? annualEndMonth;
+  final int? annualEndDayOfMonth;
 
   bool get hasDateBoundary => startTimeMs != null || endTimeMs != null;
   bool get hasLocalTimeWindow =>
       localStartMinute != null && localEndMinute != null;
   bool get hasRecurringMonthRange =>
       recurringStartMonth != null && recurringEndMonth != null;
-  bool get hasAnnualDayRange => annualStartDay != null && annualEndDay != null;
+  bool get hasAnnualMonthDayRange =>
+      annualStartMonth != null &&
+      annualStartDayOfMonth != null &&
+      annualEndMonth != null &&
+      annualEndDayOfMonth != null;
+  bool get hasAnnualDayRange => hasAnnualMonthDayRange;
   bool get hasConstraint =>
       hasDateBoundary ||
       hasLocalTimeWindow ||
@@ -69,8 +78,10 @@ class SemanticSearchTimeRange {
       'local_end_minute': localEndMinute,
       'recurring_start_month': recurringStartMonth,
       'recurring_end_month': recurringEndMonth,
-      'annual_start_day': annualStartDay,
-      'annual_end_day': annualEndDay,
+      'annual_start_month': annualStartMonth,
+      'annual_start_day_of_month': annualStartDayOfMonth,
+      'annual_end_month': annualEndMonth,
+      'annual_end_day_of_month': annualEndDayOfMonth,
       'reason': reason,
     };
   }

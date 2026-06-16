@@ -70,17 +70,14 @@ class SemanticQueryPlanCompiler {
     for (final range in query.timeRanges.where(
       (range) => range.hasAnnualDayRange,
     )) {
-      final start = range.annualStartDay!;
-      final end = range.annualEndDay!;
-      final padding = relaxed ? 7 : 0;
-      final paddedStart = (start - padding).clamp(1, 366);
-      final paddedEnd = (end + padding).clamp(1, 366);
+      final start = range.annualStartMonth!;
+      final end = range.annualEndMonth!;
       annualConditions.add(
-        paddedStart <= paddedEnd
-            ? PhotoEntity_.capturedDayOfYear.between(paddedStart, paddedEnd)
-            : PhotoEntity_.capturedDayOfYear
-                  .between(paddedStart, 366)
-                  .or(PhotoEntity_.capturedDayOfYear.between(1, paddedEnd)),
+        start <= end
+            ? PhotoEntity_.capturedMonth.between(start, end)
+            : PhotoEntity_.capturedMonth
+                  .between(start, 12)
+                  .or(PhotoEntity_.capturedMonth.between(1, end)),
       );
     }
     final annualGroup = _orAll(annualConditions);

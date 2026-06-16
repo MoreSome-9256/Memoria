@@ -13,7 +13,6 @@ void main() {
     expect(photo.capturedYear, 2026);
     expect(photo.capturedMonth, 6);
     expect(photo.capturedDay, 15);
-    expect(photo.capturedDayOfYear, 166);
     expect(photo.capturedMinuteOfDay, 19 * 60 + 42);
     expect(photo.capturedWeekday, DateTime.monday);
     expect(photo.searchIndexVersion, PhotoSearchIndexService.currentVersion);

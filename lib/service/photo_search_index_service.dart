@@ -17,13 +17,11 @@ class PhotoSearchIndexService {
       return true;
     }
     final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
-    final dayOfYear = date.difference(DateTime(date.year)).inDays + 1;
     final changed =
         photo.capturedAtMillis != timestamp ||
         photo.capturedYear != date.year ||
         photo.capturedMonth != date.month ||
         photo.capturedDay != date.day ||
-        photo.capturedDayOfYear != dayOfYear ||
         photo.capturedMinuteOfDay != date.hour * 60 + date.minute ||
         photo.capturedWeekday != date.weekday ||
         photo.searchIndexVersion != currentVersion;
@@ -34,7 +32,6 @@ class PhotoSearchIndexService {
       ..capturedYear = date.year
       ..capturedMonth = date.month
       ..capturedDay = date.day
-      ..capturedDayOfYear = dayOfYear
       ..capturedMinuteOfDay = date.hour * 60 + date.minute
       ..capturedWeekday = date.weekday
       ..searchIndexVersion = currentVersion;

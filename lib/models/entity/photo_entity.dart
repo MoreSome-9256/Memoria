@@ -1,4 +1,4 @@
-/// 照片元数据的核心 ObjectBox 实体，保存尺寸、位置、标签和向量信息。
+// 照片元数据的核心 ObjectBox 实体，保存尺寸、位置、标签和向量信息。
 
 import 'dart:typed_data';
 
@@ -25,8 +25,6 @@ class PhotoEntity {
   int capturedMonth = 0;
   @Index()
   int capturedDay = 0;
-  @Index()
-  int capturedDayOfYear = 0;
   @Index()
   int capturedMinuteOfDay = 0;
   @Index()

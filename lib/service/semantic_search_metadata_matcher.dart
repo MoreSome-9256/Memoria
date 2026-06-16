@@ -58,16 +58,19 @@ class SemanticSearchMetadataMatcher {
   }
 
   bool matchesAnnualDay(PhotoEntity photo, SemanticSearchTimeRange range) {
-    final start = range.annualStartDay;
-    final end = range.annualEndDay;
-    if (start == null || end == null) return true;
     final date = DateTime.fromMillisecondsSinceEpoch(
       normalizeTimestampMs(photo.timestamp),
     );
-    final day = date.difference(DateTime(date.year)).inDays + 1;
+    return _matchesAnnualMonthDay(date, range);
+  }
+
+  bool _matchesAnnualMonthDay(DateTime date, SemanticSearchTimeRange range) {
+    final current = date.month * 100 + date.day;
+    final start = range.annualStartMonth! * 100 + range.annualStartDayOfMonth!;
+    final end = range.annualEndMonth! * 100 + range.annualEndDayOfMonth!;
     return start <= end
-        ? day >= start && day <= end
-        : day >= start || day <= end;
+        ? current >= start && current <= end
+        : current >= start || current <= end;
   }
 
   bool matchesRecurringMonth(PhotoEntity photo, SemanticSearchTimeRange range) {

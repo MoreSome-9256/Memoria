@@ -93,7 +93,8 @@ Rules:
 1. Every text value in embedding_queries_en, soft_filters.visual_terms_en, and negative_filters.visual_terms_en must be English. MobileCLIP text alignment is English-first.
    These fields must contain visual meaning only. Never repeat exact dates, years, clock times, named cities, districts, POIs, coordinates, or other precise metadata in semantic text.
    Abstract visible context such as "a coastal city", "spring scenery", "afternoon light", or "night atmosphere" is allowed.
-2. Use absolute_date_ranges for explicit years or relative dates, annual_day_ranges for recurring dates or seasons, minute_of_day_ranges for local time-of-day, and weekdays for weekday constraints.
+2. Use absolute_date_ranges for explicit years or relative dates, annual_day_ranges for recurring calendar periods, minute_of_day_ranges for local time-of-day, and weekdays for weekday constraints.
+   For recurring seasons, months, holidays, and month-day spans, output human-readable MM-DD strings such as {"start_date":"03-01","end_date":"05-31"} or {"start_date":"10-01","end_date":"10-07"}; do not calculate day-of-year in the LLM.
    Also extract high-confidence implicit mechanical meaning. For example, sunset/晚霞/黄昏 implies late afternoon through early evening, sunrise/朝霞 implies early morning, and a starry sky implies night. Keep the visible concept in semantic fields as well. Do not invent weak or controversial time constraints from objects that can occur all day.
 3. Keep Chinese place names in objectbox_filters.geo. Do not translate raw_name, normalized_names, or amap_query_keywords. Never invent coordinates or decide that two places are identical.
 4. For exact POIs use strictness="exact". For countries, provinces, cities, and districts use strictness="broad". Set allow_nearby_siblings=true only when the user explicitly says nearby, around, 周边, 附近, or 旁边.
@@ -115,11 +116,20 @@ Rules:
 20. Prefer precision for implicit mechanical constraints: add them only when the phrase itself strongly entails the constraint. "晚霞" must include a local late-afternoon/evening window and sunset semantics so it does not retrieve morning glow; "朝霞" must include an early-morning window. Explicit user time always overrides an inferred window.
 
 Available local indexes:
-- timestamp and recurring month filters
-- province, city, district, POI, and formatted address metadata
+- absolute timestamp ranges
+- annual MM-DD ranges for recurring calendar periods:
+  - seasons, such as 春天 / spring = every year from 03-01 through 05-31 unless the user names a specific year
+  - single months, such as 5月 / May = every year from 05-01 through 05-31 unless the user names a specific year
+  - holidays, such as National Day / 国庆节 / 十一假期 = every year from 10-01 through 10-07 unless the user names a specific year
+- recurring month filters are supported, but prefer annual MM-DD ranges because they are precise and human-readable
+- local minute-of-day windows for phrases such as night, evening, sunset, sunrise, morning, noon, afternoon, golden hour, blue hour, and late night
+- weekday filters
+- province, city, district, POI, AOI, business area, formatted address, and resolved coordinate metadata
 - coarse visual tags from the catalog
 - MobileCLIP image/video embeddings
 - limited face count, smile, and joy attributes
+
+When the user gives multiple requirements, treat them as AND constraints. For example, "夜晚的大明湖" means place = 大明湖 AND local night window AND visible night/lake scenery. Do not allow a high semantic score for "night" to replace the place constraint. If a requirement can be represented by a local index, put it in objectbox_filters first; semantics may describe the visible part but must not be the only representation.
 
 Few-shot examples:
 The examples below illustrate intent separation. Always emit the QueryPlan v1 schema above, not the legacy field names shown in examples.
@@ -184,6 +194,75 @@ JSON:
   ],
   "estimated_result_count": {"min": 1, "max": 40, "confidence": 0.62},
   "notes": "Uses Hawaii local night instead of device local night."
+}
+
+User: 国庆节假期的旅行照片
+JSON:
+{
+  "query_type": "collection",
+  "time_ranges": [
+    {"annual_start_date": "10-01", "annual_end_date": "10-07", "reason": "National Day holiday recurs every year from October 1 to October 7"}
+  ],
+  "local_time_windows": [],
+  "locations": [],
+  "coarse_tags": [
+    {"id": "travel_landmark", "label_en": "travel landmark", "confidence": 0.75},
+    {"id": "festival_celebration", "label_en": "festival celebration", "confidence": 0.65}
+  ],
+  "tag_strictness": "prefer",
+  "positive_semantics": [
+    {"text": "a travel photo during a holiday trip", "weight": 0.55},
+    {"text": "a sightseeing photo from a public holiday vacation", "weight": 0.45}
+  ],
+  "recall_semantics": [
+    {"text": "holiday travel sightseeing and vacation memories", "weight": 1.0}
+  ],
+  "negative_semantics": [],
+  "estimated_result_count": {"min": 1, "max": 160, "confidence": 0.72},
+  "notes": "Unqualified National Day is an annual holiday window, not one specific year."
+}
+
+User: 春天的花
+JSON:
+{
+  "query_type": "collection",
+  "time_ranges": [
+    {"annual_start_date": "03-01", "annual_end_date": "05-31", "reason": "spring recurs every year from March through May"}
+  ],
+  "local_time_windows": [],
+  "locations": [],
+  "coarse_tags": [
+    {"id": "flowers_plants", "label_en": "flowers and plants", "confidence": 0.9}
+  ],
+  "tag_strictness": "prefer",
+  "positive_semantics": [
+    {"text": "spring flowers and blossoms", "weight": 0.7},
+    {"text": "plants blooming in spring", "weight": 0.3}
+  ],
+  "recall_semantics": [
+    {"text": "flower blossoms and fresh spring plants", "weight": 1.0}
+  ],
+  "negative_semantics": [],
+  "estimated_result_count": {"min": 1, "max": 160, "confidence": 0.75},
+  "notes": "Unqualified spring is an annual MM-DD range plus visual flower semantics."
+}
+
+User: 5月的照片
+JSON:
+{
+  "query_type": "metadata",
+  "time_ranges": [
+    {"annual_start_date": "05-01", "annual_end_date": "05-31", "reason": "May in any year"}
+  ],
+  "local_time_windows": [],
+  "locations": [],
+  "coarse_tags": [],
+  "tag_strictness": "optional",
+  "positive_semantics": [],
+  "recall_semantics": [],
+  "negative_semantics": [],
+  "estimated_result_count": {"min": 1, "max": 240, "confidence": 0.8},
+  "notes": "A month-only query is purely mechanical and needs no visual semantics."
 }
 
 User: 南京夫子庙
@@ -286,10 +365,7 @@ $rawQuery
       plan['time_ranges'],
       localTimeWindows: plan['local_time_windows'],
     );
-    final normalizedTimeRanges = _normalizeRecurringSeason(
-      rawQuery,
-      timeRanges,
-    );
+    final normalizedTimeRanges = timeRanges;
     final locations = _readLocations(plan['locations']);
     final coarseTags = _readCoarseTags(plan['coarse_tags']);
     final pureMechanicalQuery = _isPureMechanicalQuery(
@@ -458,8 +534,12 @@ $rawQuery
         .whereType<Map>()
         .map(
           (item) => <String, dynamic>{
-            'annual_start_day': item['start_day_of_year'] ?? item['start_day'],
-            'annual_end_day': item['end_day_of_year'] ?? item['end_day'],
+            'annual_start_date': item['start_date'],
+            'annual_end_date': item['end_date'],
+            'annual_start_month': item['start_month'],
+            'annual_start_day_of_month': item['start_day_of_month'],
+            'annual_end_month': item['end_month'],
+            'annual_end_day_of_month': item['end_day_of_month'],
             'reason': 'annual day range',
           },
         )
@@ -598,11 +678,23 @@ $rawQuery
     final endRaw = item['end'] ?? item['end_iso'] ?? item['end_time_ms'];
     final startTimeMs = _toTimestampMs(startRaw);
     final endTimeMs = _toTimestampMs(endRaw);
-    final annualStartDay = _readDayOfYear(item['annual_start_day']);
-    final annualEndDay = _readDayOfYear(item['annual_end_day']);
+    final startMonthDay = _readMonthDay(item['annual_start_date']);
+    final endMonthDay = _readMonthDay(item['annual_end_date']);
+    final annualStartMonth =
+        startMonthDay?.month ?? _readMonth(item['annual_start_month']);
+    final annualStartDayOfMonth =
+        startMonthDay?.day ??
+        _readDayOfMonth(item['annual_start_day_of_month']);
+    final annualEndMonth =
+        endMonthDay?.month ?? _readMonth(item['annual_end_month']);
+    final annualEndDayOfMonth =
+        endMonthDay?.day ?? _readDayOfMonth(item['annual_end_day_of_month']);
     if (startTimeMs == null &&
         endTimeMs == null &&
-        (annualStartDay == null || annualEndDay == null) &&
+        (annualStartMonth == null ||
+            annualStartDayOfMonth == null ||
+            annualEndMonth == null ||
+            annualEndDayOfMonth == null) &&
         (recurringStartMonth == null || recurringEndMonth == null)) {
       return null;
     }
@@ -615,43 +707,11 @@ $rawQuery
       timezone: _readOptionalString(item['timezone']),
       recurringStartMonth: recurringStartMonth,
       recurringEndMonth: recurringEndMonth,
-      annualStartDay: annualStartDay,
-      annualEndDay: annualEndDay,
+      annualStartMonth: annualStartMonth,
+      annualStartDayOfMonth: annualStartDayOfMonth,
+      annualEndMonth: annualEndMonth,
+      annualEndDayOfMonth: annualEndDayOfMonth,
     );
-  }
-
-  List<SemanticSearchTimeRange> _normalizeRecurringSeason(
-    String rawQuery,
-    List<SemanticSearchTimeRange> ranges,
-  ) {
-    if (ranges.any((range) => range.hasAnnualDayRange)) {
-      return ranges;
-    }
-    if (RegExp(r'(今年|当年|去年|前年|明年|\d{4}\s*年)').hasMatch(rawQuery)) {
-      return ranges;
-    }
-    List<int>? season;
-    if (rawQuery.contains('春天') || rawQuery.contains('春季')) {
-      season = const <int>[3, 5];
-    } else if (rawQuery.contains('夏天') || rawQuery.contains('夏季')) {
-      season = const <int>[6, 10];
-    } else if (rawQuery.contains('秋天') || rawQuery.contains('秋季')) {
-      season = const <int>[9, 11];
-    } else if (rawQuery.contains('冬天') || rawQuery.contains('冬季')) {
-      season = const <int>[12, 2];
-    }
-    if (season == null) {
-      return ranges;
-    }
-    return <SemanticSearchTimeRange>[
-      SemanticSearchTimeRange(
-        startTimeMs: null,
-        endTimeMs: null,
-        reason: 'recurring season in any year',
-        recurringStartMonth: season[0],
-        recurringEndMonth: season[1],
-      ),
-    ];
   }
 
   SemanticSearchTimeRange? _readLocalTimeWindow(Map item) {
@@ -1081,9 +1141,24 @@ $rawQuery
     return month != null && month >= 1 && month <= 12 ? month : null;
   }
 
-  int? _readDayOfYear(dynamic value) {
+  int? _readDayOfMonth(dynamic value) {
     final day = _toInt(value);
-    return day != null && day >= 1 && day <= 366 ? day : null;
+    return day != null && day >= 1 && day <= 31 ? day : null;
+  }
+
+  ({int month, int day})? _readMonthDay(dynamic value) {
+    final text = value?.toString().trim() ?? '';
+    final match = RegExp(r'^(\d{1,2})[-/](\d{1,2})$').firstMatch(text);
+    if (match == null) return null;
+    final month = _readMonth(match.group(1));
+    final day = _readDayOfMonth(match.group(2));
+    if (month == null || day == null) return null;
+    final maxDay = month == 2
+        ? 29
+        : const <int>{4, 6, 9, 11}.contains(month)
+        ? 30
+        : 31;
+    return day <= maxDay ? (month: month, day: day) : null;
   }
 
   int? _toMinuteOfDay(dynamic value) {

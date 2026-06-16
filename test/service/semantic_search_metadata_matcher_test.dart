@@ -176,7 +176,7 @@ void main() {
       );
     });
 
-    test('matches annual day ranges and weekday filters', () {
+    test('matches annual month-day ranges and weekday filters', () {
       final monday = _photo(
         id: 15,
         timestamp: DateTime(2026, 6, 15, 12).millisecondsSinceEpoch,
@@ -185,8 +185,10 @@ void main() {
         startTimeMs: null,
         endTimeMs: null,
         reason: 'summer days',
-        annualStartDay: 150,
-        annualEndDay: 250,
+        annualStartMonth: 6,
+        annualStartDayOfMonth: 1,
+        annualEndMonth: 8,
+        annualEndDayOfMonth: 31,
       );
 
       expect(
@@ -200,6 +202,39 @@ void main() {
         matcher.matchesTime(
           monday,
           _query(ranges: const [range], weekdays: const <int>[6, 7]),
+        ),
+        isFalse,
+      );
+    });
+
+    test('matches annual month-day ranges without leap-year drift', () {
+      const range = SemanticSearchTimeRange(
+        startTimeMs: null,
+        endTimeMs: null,
+        reason: 'National Day holiday',
+        annualStartMonth: 10,
+        annualStartDayOfMonth: 1,
+        annualEndMonth: 10,
+        annualEndDayOfMonth: 7,
+      );
+
+      expect(
+        matcher.matchesTime(
+          _photo(
+            id: 16,
+            timestamp: DateTime(2024, 10, 1, 12).millisecondsSinceEpoch,
+          ),
+          _query(ranges: const [range]),
+        ),
+        isTrue,
+      );
+      expect(
+        matcher.matchesTime(
+          _photo(
+            id: 17,
+            timestamp: DateTime(2024, 9, 30, 12).millisecondsSinceEpoch,
+          ),
+          _query(ranges: const [range]),
         ),
         isFalse,
       );

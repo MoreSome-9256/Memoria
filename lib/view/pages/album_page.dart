@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'dart:collection';
 import 'package:photo_manager/photo_manager.dart';
 import '../../data/tag_taxonomy_v2.dart';
@@ -1480,7 +1481,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
         }
 
         return CustomScrollView(
-          cacheExtent: 700,
+          scrollCacheExtent: const ScrollCacheExtent.pixels(700),
           slivers: [
             SliverPadding(
               padding: EdgeInsets.fromLTRB(

@@ -986,13 +986,6 @@ final _entities = <obx_int.ModelEntity>[
         indexId: const obx_int.IdUid(45, 1258017000721032011),
       ),
       obx_int.ModelProperty(
-        id: const obx_int.IdUid(39, 8222413609669803542),
-        name: 'capturedDayOfYear',
-        type: 6,
-        flags: 8,
-        indexId: const obx_int.IdUid(46, 1180385124245042355),
-      ),
-      obx_int.ModelProperty(
         id: const obx_int.IdUid(40, 236572881219088200),
         name: 'capturedMinuteOfDay',
         type: 6,
@@ -1817,6 +1810,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
       6288581292023907335,
       1872945558077952164,
       6827518044726972568,
+      1180385124245042355,
     ],
     retiredPropertyUids: const [
       3945062749267567143,
@@ -1834,6 +1828,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
       1514215392286596427,
       4584622389087554935,
       6330921796923913428,
+      8222413609669803542,
     ],
     retiredRelationUids: const [],
     modelVersion: 5,
@@ -2774,7 +2769,6 @@ obx_int.ModelDefinition getObjectBoxModel() {
         fbb.addInt64(35, object.capturedYear);
         fbb.addInt64(36, object.capturedMonth);
         fbb.addInt64(37, object.capturedDay);
-        fbb.addInt64(38, object.capturedDayOfYear);
         fbb.addInt64(39, object.capturedMinuteOfDay);
         fbb.addInt64(40, object.capturedWeekday);
         fbb.addInt64(41, object.searchIndexVersion);
@@ -2959,12 +2953,6 @@ obx_int.ModelDefinition getObjectBoxModel() {
             buffer,
             rootOffset,
             78,
-            0,
-          )
-          ..capturedDayOfYear = const fb.Int64Reader().vTableGet(
-            buffer,
-            rootOffset,
-            80,
             0,
           )
           ..capturedMinuteOfDay = const fb.Int64Reader().vTableGet(
@@ -4564,99 +4552,94 @@ class PhotoEntity_ {
     _entities[7].properties[36],
   );
 
-  /// See [PhotoEntity.capturedDayOfYear].
-  static final capturedDayOfYear = obx.QueryIntegerProperty<PhotoEntity>(
-    _entities[7].properties[37],
-  );
-
   /// See [PhotoEntity.capturedMinuteOfDay].
   static final capturedMinuteOfDay = obx.QueryIntegerProperty<PhotoEntity>(
-    _entities[7].properties[38],
+    _entities[7].properties[37],
   );
 
   /// See [PhotoEntity.capturedWeekday].
   static final capturedWeekday = obx.QueryIntegerProperty<PhotoEntity>(
-    _entities[7].properties[39],
+    _entities[7].properties[38],
   );
 
   /// See [PhotoEntity.searchIndexVersion].
   static final searchIndexVersion = obx.QueryIntegerProperty<PhotoEntity>(
-    _entities[7].properties[40],
+    _entities[7].properties[39],
   );
 
   /// See [PhotoEntity.country].
   static final country = obx.QueryStringProperty<PhotoEntity>(
-    _entities[7].properties[41],
+    _entities[7].properties[40],
   );
 
   /// See [PhotoEntity.township].
   static final township = obx.QueryStringProperty<PhotoEntity>(
-    _entities[7].properties[42],
+    _entities[7].properties[41],
   );
 
   /// See [PhotoEntity.geoTextTokens].
   static final geoTextTokens = obx.QueryStringProperty<PhotoEntity>(
-    _entities[7].properties[43],
+    _entities[7].properties[42],
   );
 
   /// See [PhotoEntity.geoIndexedAt].
   static final geoIndexedAt = obx.QueryIntegerProperty<PhotoEntity>(
-    _entities[7].properties[44],
+    _entities[7].properties[43],
   );
 
   /// See [PhotoEntity.geoIndexVersion].
   static final geoIndexVersion = obx.QueryIntegerProperty<PhotoEntity>(
-    _entities[7].properties[45],
+    _entities[7].properties[44],
   );
 
   /// See [PhotoEntity.businessAreaText].
   static final businessAreaText = obx.QueryStringProperty<PhotoEntity>(
-    _entities[7].properties[46],
+    _entities[7].properties[45],
   );
 
   /// See [PhotoEntity.aoiNameText].
   static final aoiNameText = obx.QueryStringProperty<PhotoEntity>(
-    _entities[7].properties[47],
+    _entities[7].properties[46],
   );
 
   /// See [PhotoEntity.poiNameText].
   static final poiNameText = obx.QueryStringProperty<PhotoEntity>(
-    _entities[7].properties[48],
+    _entities[7].properties[47],
   );
 
   /// See [PhotoEntity.latAmapE6].
   static final latAmapE6 = obx.QueryIntegerProperty<PhotoEntity>(
-    _entities[7].properties[49],
+    _entities[7].properties[48],
   );
 
   /// See [PhotoEntity.lonAmapE6].
   static final lonAmapE6 = obx.QueryIntegerProperty<PhotoEntity>(
-    _entities[7].properties[50],
+    _entities[7].properties[49],
   );
 
   /// See [PhotoEntity.geoCellFine].
   static final geoCellFine = obx.QueryStringProperty<PhotoEntity>(
-    _entities[7].properties[51],
+    _entities[7].properties[50],
   );
 
   /// See [PhotoEntity.geoCellMid].
   static final geoCellMid = obx.QueryStringProperty<PhotoEntity>(
-    _entities[7].properties[52],
+    _entities[7].properties[51],
   );
 
   /// See [PhotoEntity.geoCellCoarse].
   static final geoCellCoarse = obx.QueryStringProperty<PhotoEntity>(
-    _entities[7].properties[53],
+    _entities[7].properties[52],
   );
 
   /// See [PhotoEntity.aoiIdText].
   static final aoiIdText = obx.QueryStringProperty<PhotoEntity>(
-    _entities[7].properties[54],
+    _entities[7].properties[53],
   );
 
   /// See [PhotoEntity.poiIdText].
   static final poiIdText = obx.QueryStringProperty<PhotoEntity>(
-    _entities[7].properties[55],
+    _entities[7].properties[54],
   );
 }
 

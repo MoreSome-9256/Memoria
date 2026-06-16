@@ -44,6 +44,7 @@ class SemanticPhotoSearchService {
   static const double _minimumFinalScore = 0.15;
   static const double _minimumRelatedFinalScore = 0.10;
   static const int _maxResultsPerBucket = 240;
+  static const int _minimumRelatedBeforeRelaxing = 12;
 
   static const String _messageNoExactRelated = '没有找到完全匹配的照片，下面是可能相关的结果。';
 
@@ -161,23 +162,9 @@ class SemanticPhotoSearchService {
     );
 
     final relatedHits = <int, SemanticSearchHit>{};
-    var possibleCandidates = await _loadCandidatePhotos(query, relaxed: true);
-    if (_shouldUseGlobalPoiSemanticRecall(query, possibleCandidates)) {
-      final globalSemanticCandidates = await _loadCandidatePhotos(
-        query.copyWith(locations: const <SemanticSearchLocation>[]),
-        relaxed: true,
-      );
-      final existingIds = possibleCandidates.map((photo) => photo.id).toSet();
-      possibleCandidates = <PhotoEntity>[
-        ...possibleCandidates,
-        ...globalSemanticCandidates.where((photo) => existingIds.add(photo.id)),
-      ];
-      debugPrint(
-        '[semantic-search] global POI semantic recall '
-        'candidates=${globalSemanticCandidates.length}',
-      );
-    }
-    final possibleScores = _scoreCandidates(
+    var possibleCandidates = <PhotoEntity>[...primaryMetadataCandidates];
+    final possibleIds = possibleCandidates.map((photo) => photo.id).toSet();
+    final strictRelatedScores = _scoreCandidates(
       _applyTagStrategy(possibleCandidates, query),
       activeModelVersion: activeModelVersion,
       vectors: vectors,
@@ -187,9 +174,69 @@ class SemanticPhotoSearchService {
       semanticThreshold: 0.10,
       forceRelated: true,
     );
-    relatedHits.addAll(possibleScores.hits);
+    relatedHits.addAll(strictRelatedScores.hits);
     final exactIds = exactPhotos.map((photo) => photo.id).toSet();
     relatedHits.removeWhere((photoId, _) => exactIds.contains(photoId));
+
+    if (relatedHits.length < _minimumRelatedBeforeRelaxing) {
+      final relaxedCandidates = await _loadCandidatePhotos(
+        query,
+        relaxed: true,
+      );
+      for (final photo in relaxedCandidates) {
+        if (possibleIds.add(photo.id)) {
+          possibleCandidates.add(photo);
+        }
+      }
+      final relaxedScores = _scoreCandidates(
+        _applyTagStrategy(relaxedCandidates, query),
+        activeModelVersion: activeModelVersion,
+        vectors: vectors,
+        coarseTags: query.coarseTags,
+        tagStrictness: query.tagStrictness,
+        locations: query.locations,
+        semanticThreshold: 0.12,
+        forceRelated: true,
+      );
+      for (final entry in relaxedScores.hits.entries) {
+        if (!exactIds.contains(entry.key)) {
+          relatedHits.putIfAbsent(entry.key, () => entry.value);
+        }
+      }
+    }
+
+    if (relatedHits.length < _minimumRelatedBeforeRelaxing &&
+        _shouldUseGlobalPoiSemanticRecall(query, possibleCandidates)) {
+      final globalSemanticCandidates = await _loadCandidatePhotos(
+        query.copyWith(locations: const <SemanticSearchLocation>[]),
+        relaxed: true,
+      );
+      for (final photo in globalSemanticCandidates) {
+        if (possibleIds.add(photo.id)) {
+          possibleCandidates.add(photo);
+        }
+      }
+      debugPrint(
+        '[semantic-search] global POI semantic recall '
+        'candidates=${globalSemanticCandidates.length}',
+      );
+      final globalScores = _scoreCandidates(
+        _applyTagStrategy(globalSemanticCandidates, query),
+        activeModelVersion: activeModelVersion,
+        vectors: vectors,
+        coarseTags: query.coarseTags,
+        tagStrictness: query.tagStrictness,
+        locations: query.locations,
+        semanticThreshold: 0.14,
+        forceRelated: true,
+      );
+      for (final entry in globalScores.hits.entries) {
+        if (!exactIds.contains(entry.key)) {
+          relatedHits.putIfAbsent(entry.key, () => entry.value);
+        }
+      }
+    }
+
     final metadataFallbackHits = _metadataFallbackHitsIfNeeded(
       query: query,
       strictMetadataCandidates: strictMetadataCandidates
@@ -198,11 +245,11 @@ class SemanticPhotoSearchService {
       existingRelatedHits: relatedHits,
     );
     if (metadataFallbackHits.isNotEmpty) {
-      final possibleIds = possibleCandidates.map((photo) => photo.id).toSet();
-      possibleCandidates = <PhotoEntity>[
-        ...possibleCandidates,
-        ...strictMetadataCandidates.where((photo) => possibleIds.add(photo.id)),
-      ];
+      for (final photo in strictMetadataCandidates) {
+        if (possibleIds.add(photo.id)) {
+          possibleCandidates.add(photo);
+        }
+      }
       relatedHits.addAll(metadataFallbackHits);
       debugPrint(
         '[semantic-search] semantic fallback used '

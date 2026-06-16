@@ -19,22 +19,36 @@ Future<void> warmAssetBackedImages(Iterable<Photo> photos) async {
     if (assetId.isEmpty || _assetPreviewMemoryCache.containsKey(assetId)) {
       continue;
     }
-    try {
-      final asset = await AssetEntity.fromId(assetId);
-      final bytes = await asset?.thumbnailDataWithOption(
-        const ThumbnailOption(
-          size: ThumbnailSize.square(2048),
-          format: ThumbnailFormat.jpeg,
-          quality: 92,
-        ),
-      );
-      if (bytes != null && bytes.isNotEmpty) {
-        _rememberAssetPreview(assetId, bytes);
-      }
-    } catch (_) {
-      // The widget still has indexed-thumbnail and path fallbacks.
-    }
+    await resolveAssetBackedImageBytes(photo);
   }
+}
+
+Future<Uint8List?> resolveAssetBackedImageBytes(Photo photo) async {
+  final assetId = photo.id.trim();
+  if (assetId.isEmpty) {
+    return null;
+  }
+  final cached = _assetPreviewMemoryCache[assetId];
+  if (cached != null && cached.isNotEmpty) {
+    return cached;
+  }
+  try {
+    final asset = await AssetEntity.fromId(assetId);
+    final bytes = await asset?.thumbnailDataWithOption(
+      const ThumbnailOption(
+        size: ThumbnailSize.square(2048),
+        format: ThumbnailFormat.jpeg,
+        quality: 92,
+      ),
+    );
+    if (bytes != null && bytes.isNotEmpty) {
+      _rememberAssetPreview(assetId, bytes);
+      return bytes;
+    }
+  } catch (_) {
+    // Widget callers can still decide how to render a missing asset preview.
+  }
+  return null;
 }
 
 Uint8List? peekCachedAssetBytes(String assetId) {

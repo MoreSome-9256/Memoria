@@ -114,6 +114,44 @@ _CreateLaunchResult _buildCreateLaunchResult(_CreateLaunchRequest request) {
   );
 }
 
+class _CreateSearchPhotoRecord {
+  const _CreateSearchPhotoRecord({required this.id});
+
+  factory _CreateSearchPhotoRecord.fromEntity(PhotoEntity photo) {
+    return _CreateSearchPhotoRecord(id: photo.id);
+  }
+
+  final int id;
+}
+
+class _CreateSearchMergeRequest {
+  const _CreateSearchMergeRequest({
+    required this.exactRecords,
+    required this.relatedRecords,
+    required this.maxResults,
+  });
+
+  final List<_CreateSearchPhotoRecord> exactRecords;
+  final List<_CreateSearchPhotoRecord> relatedRecords;
+  final int maxResults;
+}
+
+List<int> _mergeCreateSearchPhotoIds(_CreateSearchMergeRequest request) {
+  final mergedIds = <int>[];
+  final seen = <int>{};
+
+  for (final record in [...request.exactRecords, ...request.relatedRecords]) {
+    if (seen.add(record.id)) {
+      mergedIds.add(record.id);
+    }
+    if (mergedIds.length >= request.maxResults) {
+      break;
+    }
+  }
+
+  return mergedIds;
+}
+
 @visibleForTesting
 List<PhotoEntity> mergeCreateSearchPhotosForTesting({
   required Iterable<PhotoEntity> exactPhotos,
@@ -124,6 +162,25 @@ List<PhotoEntity> mergeCreateSearchPhotosForTesting({
     exactPhotos: exactPhotos,
     relatedPhotos: relatedPhotos,
     maxResults: maxResults,
+  );
+}
+
+@visibleForTesting
+List<int> mergeCreateSearchPhotoIdsForTesting({
+  required Iterable<PhotoEntity> exactPhotos,
+  required Iterable<PhotoEntity> relatedPhotos,
+  int maxResults = 300,
+}) {
+  return _mergeCreateSearchPhotoIds(
+    _CreateSearchMergeRequest(
+      exactRecords: exactPhotos
+          .map(_CreateSearchPhotoRecord.fromEntity)
+          .toList(growable: false),
+      relatedRecords: relatedPhotos
+          .map(_CreateSearchPhotoRecord.fromEntity)
+          .toList(growable: false),
+      maxResults: maxResults,
+    ),
   );
 }
 
@@ -233,11 +290,26 @@ class _CreatePageState extends State<CreatePage> {
     try {
       final result = await _semanticPhotoSearchService.search(query.trim());
       searchNotice = result.noExactMatchMessage;
-      matchedPhotos = _mergeCreateSearchPhotos(
-        exactPhotos: result.exactPhotos,
-        relatedPhotos: result.relatedPhotos,
-        maxResults: _maxSemanticResults,
+      final photoById = <int, PhotoEntity>{
+        for (final photo in [...result.exactPhotos, ...result.relatedPhotos])
+          photo.id: photo,
+      };
+      final mergedIds = await compute(
+        _mergeCreateSearchPhotoIds,
+        _CreateSearchMergeRequest(
+          exactRecords: result.exactPhotos
+              .map(_CreateSearchPhotoRecord.fromEntity)
+              .toList(growable: false),
+          relatedRecords: result.relatedPhotos
+              .map(_CreateSearchPhotoRecord.fromEntity)
+              .toList(growable: false),
+          maxResults: _maxSemanticResults,
+        ),
       );
+      matchedPhotos = mergedIds
+          .map((id) => photoById[id])
+          .whereType<PhotoEntity>()
+          .toList(growable: false);
       _logDebug(
         '🧠 [统一语义检索] exact=${result.exactPhotos.length} '
         'related=${result.relatedPhotos.length} '

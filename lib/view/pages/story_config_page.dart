@@ -1,6 +1,7 @@
 // 配置页面，提供应用运行参数、调试开关和环境选项。
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
@@ -17,6 +18,55 @@ enum VideoAspectRatio { vertical, horizontal }
 enum PublishingPlatform { moments, xiaohongshu, bilibili, tiktok }
 
 enum MusicSource { aiGenerated, manualImport }
+
+class _ThemePhotoSummaryRecord {
+  const _ThemePhotoSummaryRecord({
+    required this.caption,
+    required this.ocrSummary,
+    required this.tags,
+    required this.location,
+    required this.dateTakenMs,
+  });
+
+  factory _ThemePhotoSummaryRecord.fromPhoto(Photo photo) {
+    return _ThemePhotoSummaryRecord(
+      caption: photo.caption,
+      ocrSummary: photo.ocrSummary,
+      tags: photo.tags,
+      location: photo.location,
+      dateTakenMs: photo.dateTaken.millisecondsSinceEpoch,
+    );
+  }
+
+  final String? caption;
+  final String? ocrSummary;
+  final List<String> tags;
+  final String? location;
+  final int dateTakenMs;
+}
+
+List<String> _buildThemePromptSummaries(List<_ThemePhotoSummaryRecord> photos) {
+  final summaries = photos
+      .map((photo) {
+        var desc = photo.caption ?? photo.ocrSummary ?? photo.tags.join(' ');
+        if (desc.trim().isEmpty) {
+          final loc =
+              photo.location != null &&
+                  photo.location != '未知地点' &&
+                  photo.location!.trim().isNotEmpty
+              ? photo.location!
+              : '某地';
+          final date = DateTime.fromMillisecondsSinceEpoch(photo.dateTakenMs);
+          desc = '${date.year}年${date.month}月 拍摄于 $loc';
+        }
+        return desc;
+      })
+      .where((value) => value.trim().isNotEmpty)
+      .take(15)
+      .toList(growable: false);
+
+  return summaries.isEmpty ? const <String>['美好的回忆'] : summaries;
+}
 
 class ConfigPage extends StatefulWidget {
   final Event event;
@@ -90,27 +140,14 @@ class _ConfigPageState extends State<ConfigPage> {
     setState(() => _isGeneratingTheme = true);
 
     try {
-      // 🌟 2. 核心修复：即使照片没有 AI 标签，也要用时间和地点把 Prompt 喂饱！
-      List<String> topTags = widget.selectedPhotos
-          .map((p) {
-            String desc = p.caption ?? p.ocrSummary ?? p.tags.join(' ');
-
-            // 如果照片完全没被 AI 分析过（比如你刚拍的本地照片），那就提取它的物理信息
-            if (desc.trim().isEmpty) {
-              String loc = p.location != null && p.location != '未知地点'
-                  ? p.location!
-                  : '某地';
-              String date = '${p.dateTaken.year}年${p.dateTaken.month}月';
-              desc = '$date 拍摄于 $loc';
-            }
-            return desc;
-          })
-          .where((s) => s.trim().isNotEmpty)
-          .take(15)
-          .toList();
-
-      // 终极保底，理论上不可能走到这步
-      if (topTags.isEmpty) topTags = ['美好的回忆'];
+      // 即使照片没有 AI 标签，也要用时间和地点把 Prompt 喂饱；纯数据整理放到 isolate，
+      // 避免刚进入配置页时在 UI isolate 上遍历大批照片。
+      final topTags = await compute(
+        _buildThemePromptSummaries,
+        widget.selectedPhotos
+            .map(_ThemePhotoSummaryRecord.fromPhoto)
+            .toList(growable: false),
+      );
 
       final eventEntity = EventEntity()
         ..id = int.tryParse(widget.event.id) ?? -1

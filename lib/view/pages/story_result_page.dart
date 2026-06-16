@@ -1,4 +1,4 @@
-/// 故事结果页面，展示生成后的故事内容和分享入口。
+// 故事结果页面，展示生成后的故事内容和分享入口。
 
 import 'dart:async';
 import 'dart:convert';
@@ -481,7 +481,18 @@ class _StoryResultPageState extends State<StoryResultPage> {
     int styleIndex = 0;
 
     while (mounted) {
-      final posterFile = await _generateSharePosterFile(styleIndex: styleIndex);
+      late final File posterFile;
+      try {
+        posterFile = await _generateSharePosterFile(styleIndex: styleIndex);
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('分享长图生成失败，图片资源未能完整加载: $error')));
+        return;
+      }
       final storyCaption = [
         widget.title,
         if (widget.subtitle.trim().isNotEmpty) widget.subtitle.trim(),
@@ -531,17 +542,8 @@ class _StoryResultPageState extends State<StoryResultPage> {
       widget.heroImage,
       ..._sections.map((section) => section.photo),
     ];
-    await warmAssetBackedImages(photos);
-
-    final resolvedImageBytes = <String, Uint8List>{};
-    for (final photo in photos) {
-      final assetId = photo.id.trim();
-      if (assetId.isEmpty) continue;
-      final cached = peekCachedAssetBytes(assetId);
-      if (cached != null && cached.isNotEmpty) {
-        resolvedImageBytes[assetId] = cached;
-      }
-    }
+    final resolvedImageBytes = await _resolvePosterImageBytes(photos);
+    await _precachePosterImages(resolvedImageBytes.values);
 
     if (!mounted || !context.mounted) {
       throw StateError('Share poster generation was cancelled');
@@ -597,7 +599,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
       }
 
       int frameCount = 0;
-      while (frameCount < 15) {
+      while (frameCount < 8) {
         final completer = Completer<void>();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!completer.isCompleted) completer.complete();
@@ -620,6 +622,46 @@ class _StoryResultPageState extends State<StoryResultPage> {
       return posterFile;
     } finally {
       overlayEntry.remove();
+    }
+  }
+
+  Future<Map<String, Uint8List>> _resolvePosterImageBytes(
+    Iterable<Photo> photos,
+  ) async {
+    final resolved = <String, Uint8List>{};
+    final uniquePhotos = <String, Photo>{};
+    for (final photo in photos) {
+      final assetId = photo.id.trim();
+      if (assetId.isEmpty) {
+        throw StateError('照片缺少 assetId，无法生成分享长图');
+      }
+      uniquePhotos.putIfAbsent(assetId, () => photo);
+    }
+
+    for (final entry in uniquePhotos.entries) {
+      if (resolved.containsKey(entry.key)) {
+        continue;
+      }
+      final bytes = await resolveAssetBackedImageBytes(entry.value);
+      if (bytes == null || bytes.isEmpty) {
+        throw StateError('无法读取照片 ${entry.key} 的系统缩略图');
+      }
+      resolved[entry.key] = bytes;
+    }
+
+    if (resolved.length != uniquePhotos.length) {
+      throw StateError(
+        '分享长图图片加载不完整: ${resolved.length}/${uniquePhotos.length}',
+      );
+    }
+    return resolved;
+  }
+
+  Future<void> _precachePosterImages(Iterable<Uint8List> byteSets) async {
+    if (!mounted) return;
+    for (final bytes in byteSets) {
+      if (bytes.isEmpty) continue;
+      await precacheImage(MemoryImage(bytes), context);
     }
   }
 
@@ -1511,15 +1553,10 @@ class _PosterPhotoImage extends StatelessWidget {
         gaplessPlayback: true,
       );
     }
-    return DecoratedBox(
-      decoration: const BoxDecoration(color: Color(0xFFE4DDD0)),
-      child: PhotoImage(
-        photo: photo,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        alignment: alignment,
-        enableSmartCache: false,
+    return const ColoredBox(
+      color: Color(0xFFB00020),
+      child: Center(
+        child: Icon(Icons.error_outline, color: Colors.white, size: 48),
       ),
     );
   }

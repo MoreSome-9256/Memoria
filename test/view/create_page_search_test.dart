@@ -21,6 +21,14 @@ void main() {
     );
 
     expect(merged.map((photo) => photo.id), <int>[1, 2, 3]);
+    expect(
+      mergeCreateSearchPhotoIdsForTesting(
+        exactPhotos: <PhotoEntity>[screenshot, exact],
+        relatedPhotos: <PhotoEntity>[relatedDuplicate, related],
+        maxResults: 10,
+      ),
+      <int>[1, 2, 3],
+    );
   });
 
   test('create search merge respects the result cap', () {
@@ -31,6 +39,14 @@ void main() {
     );
 
     expect(merged.map((photo) => photo.id), <int>[1, 2]);
+    expect(
+      mergeCreateSearchPhotoIdsForTesting(
+        exactPhotos: <PhotoEntity>[_photo(id: 1), _photo(id: 2)],
+        relatedPhotos: <PhotoEntity>[_photo(id: 3)],
+        maxResults: 2,
+      ),
+      <int>[1, 2],
+    );
   });
 }
 

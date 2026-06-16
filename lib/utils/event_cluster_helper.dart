@@ -1,4 +1,4 @@
-/// 事件聚类辅助工具，处理时间和距离规则下的合并与配置。
+// 事件聚类辅助工具，处理时间和距离规则下的合并与配置。
 
 import 'dart:math';
 
@@ -13,6 +13,9 @@ class ClusterConfig {
   final int sameDayMergeGapHours;
   final int crossDayMergeGapHours;
   final int minPhotosPerClusterForMerge;
+  final int shortTimeLocationSplitHours;
+  final double shortTimeLocationSplitDistanceKm;
+  final double maxMergeDistanceKm;
   final bool enableSameDayTravelMerge;
   final bool enableCrossDayTravelMerge;
 
@@ -20,11 +23,14 @@ class ClusterConfig {
     this.initialTimeThresholdHours = 3,
     this.baseDistanceThresholdKm = 8,
     this.sameCityTimeThresholdHours = 6,
-    this.sameCityDistanceThresholdKm = 20,
+    this.sameCityDistanceThresholdKm = 12,
     this.fallbackSameCityDistanceKm = 45,
     this.sameDayMergeGapHours = 8,
     this.crossDayMergeGapHours = 18,
     this.minPhotosPerClusterForMerge = 3,
+    this.shortTimeLocationSplitHours = 2,
+    this.shortTimeLocationSplitDistanceKm = 12,
+    this.maxMergeDistanceKm = 12,
     this.enableSameDayTravelMerge = true,
     this.enableCrossDayTravelMerge = true,
   });
@@ -154,6 +160,12 @@ class EventClusterHelper {
       return false;
     }
 
+    final boundaryDistance = _distanceBetween(leftEnd, rightStart);
+    if (boundaryDistance != null &&
+        boundaryDistance > config.maxMergeDistanceKm) {
+      return false;
+    }
+
     if (!isSameDay && !config.enableCrossDayTravelMerge) {
       return false;
     }
@@ -178,6 +190,18 @@ class EventClusterHelper {
 
     final hasBothGps = _hasGps(prev) && _hasGps(curr);
     final sameCity = _isSameCity(prev, curr, config: config);
+
+    if (hasBothGps &&
+        timeDiffHours <= config.shortTimeLocationSplitHours &&
+        _calculateDistance(
+              prev.latitude!,
+              prev.longitude!,
+              curr.latitude!,
+              curr.longitude!,
+            ) >
+            config.shortTimeLocationSplitDistanceKm) {
+      return true;
+    }
 
     final timeThreshold = sameCity
         ? config.sameCityTimeThresholdHours
@@ -206,6 +230,18 @@ class EventClusterHelper {
     return photo.latitude != null && photo.longitude != null;
   }
 
+  static double? _distanceBetween(PhotoEntity a, PhotoEntity b) {
+    if (!_hasGps(a) || !_hasGps(b)) {
+      return null;
+    }
+    return _calculateDistance(
+      a.latitude!,
+      a.longitude!,
+      b.latitude!,
+      b.longitude!,
+    );
+  }
+
   static bool _isSameLocalDay(int ts1, int ts2) {
     final d1 = DateTime.fromMillisecondsSinceEpoch(ts1);
     final d2 = DateTime.fromMillisecondsSinceEpoch(ts2);
@@ -217,8 +253,8 @@ class EventClusterHelper {
     PhotoEntity b, {
     required ClusterConfig config,
   }) {
-    final aCityKey = _cityKey(a);
-    final bCityKey = _cityKey(b);
+    final aCityKey = _travelAreaKey(a);
+    final bCityKey = _travelAreaKey(b);
     if (aCityKey != null && bCityKey != null) {
       return aCityKey != bCityKey;
     }
@@ -241,8 +277,8 @@ class EventClusterHelper {
     PhotoEntity b, {
     required ClusterConfig config,
   }) {
-    final aCityKey = _cityKey(a);
-    final bCityKey = _cityKey(b);
+    final aCityKey = _travelAreaKey(a);
+    final bCityKey = _travelAreaKey(b);
     if (aCityKey != null && bCityKey != null) {
       return aCityKey == bCityKey;
     }
@@ -260,19 +296,10 @@ class EventClusterHelper {
     return false;
   }
 
-  static String? _cityKey(PhotoEntity photo) {
-    final locationName = photo.locationName?.trim();
+  static String? _travelAreaKey(PhotoEntity photo) {
     final district = photo.district?.trim();
     final city = photo.city?.trim();
     final province = photo.province?.trim();
-
-    if (locationName != null && locationName.isNotEmpty) {
-      return 'place:${province ?? ''}/${city ?? ''}/${district ?? ''}/$locationName';
-    }
-
-    if (photo.adcode != null && photo.adcode!.trim().isNotEmpty) {
-      return 'adcode:${photo.adcode!.trim()}';
-    }
 
     if (city != null && city.isNotEmpty) {
       return 'city:${province ?? ''}/$city';
@@ -280,6 +307,11 @@ class EventClusterHelper {
 
     if (district != null && district.isNotEmpty) {
       return 'district:${province ?? ''}/${city ?? ''}/$district';
+    }
+
+    final adcode = photo.adcode?.trim();
+    if (adcode != null && adcode.length >= 4) {
+      return 'adcode:${adcode.substring(0, 4)}';
     }
 
     return null;

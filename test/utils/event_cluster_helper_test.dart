@@ -9,6 +9,8 @@ PhotoEntity _photo({
   double? lon,
   String? city,
   String? province,
+  String? district,
+  String? locationName,
   String? adcode,
 }) {
   return PhotoEntity()
@@ -22,6 +24,8 @@ PhotoEntity _photo({
     ..longitude = lon
     ..city = city
     ..province = province
+    ..district = district
+    ..locationName = locationName
     ..adcode = adcode;
 }
 
@@ -42,7 +46,7 @@ void main() {
       expect(result.clusters.last.length, 1);
     });
 
-    test('same-day same-city travel clusters are merged', () {
+    test('same-day nearby same-city clusters are merged', () {
       final day = DateTime(2026, 2, 20);
       final photos = <PhotoEntity>[
         _photo(
@@ -75,8 +79,8 @@ void main() {
         _photo(
           id: 4,
           time: day.add(const Duration(hours: 14)),
-          lat: 30.70,
-          lon: 120.60,
+          lat: 30.28,
+          lon: 120.19,
           city: '杭州市',
           province: '浙江省',
           adcode: '330100',
@@ -84,8 +88,8 @@ void main() {
         _photo(
           id: 5,
           time: day.add(const Duration(hours: 14, minutes: 10)),
-          lat: 30.71,
-          lon: 120.61,
+          lat: 30.281,
+          lon: 120.191,
           city: '杭州市',
           province: '浙江省',
           adcode: '330100',
@@ -93,8 +97,8 @@ void main() {
         _photo(
           id: 6,
           time: day.add(const Duration(hours: 14, minutes: 20)),
-          lat: 30.72,
-          lon: 120.62,
+          lat: 30.282,
+          lon: 120.192,
           city: '杭州市',
           province: '浙江省',
           adcode: '330100',
@@ -105,6 +109,7 @@ void main() {
         photos: photos,
         config: const ClusterConfig(
           initialTimeThresholdHours: 3,
+          sameCityTimeThresholdHours: 3,
           sameDayMergeGapHours: 8,
           minPhotosPerClusterForMerge: 3,
           enableSameDayTravelMerge: true,
@@ -115,6 +120,64 @@ void main() {
       expect(result.mergedCount, 1);
       expect(result.clusters.length, 1);
       expect(result.clusters.first.length, 6);
+    });
+
+    test('short-time far movement splits moments even in same city', () {
+      final day = DateTime(2026, 2, 20);
+      final photos = <PhotoEntity>[
+        _photo(
+          id: 1,
+          time: day.add(const Duration(hours: 9)),
+          lat: 30.24,
+          lon: 120.15,
+          city: '杭州市',
+          province: '浙江省',
+          adcode: '330100',
+        ),
+        _photo(
+          id: 2,
+          time: day.add(const Duration(hours: 9, minutes: 30)),
+          lat: 30.245,
+          lon: 120.155,
+          city: '杭州市',
+          province: '浙江省',
+          adcode: '330100',
+        ),
+        _photo(
+          id: 3,
+          time: day.add(const Duration(hours: 10, minutes: 45)),
+          lat: 30.55,
+          lon: 120.45,
+          city: '杭州市',
+          province: '浙江省',
+          adcode: '330100',
+        ),
+        _photo(
+          id: 4,
+          time: day.add(const Duration(hours: 11)),
+          lat: 30.555,
+          lon: 120.455,
+          city: '杭州市',
+          province: '浙江省',
+          adcode: '330100',
+        ),
+      ];
+
+      final result = EventClusterHelper.clusterPhotos(
+        photos: photos,
+        config: const ClusterConfig(
+          initialTimeThresholdHours: 4,
+          sameCityTimeThresholdHours: 6,
+          sameCityDistanceThresholdKm: 12,
+          shortTimeLocationSplitHours: 2,
+          shortTimeLocationSplitDistanceKm: 12,
+          maxMergeDistanceKm: 12,
+          minPhotosPerClusterForMerge: 1,
+        ),
+      );
+
+      expect(result.clusters.length, 2);
+      expect(result.clusters.map((cluster) => cluster.length), <int>[2, 2]);
     });
 
     test('cross-city clusters are not merged on same day', () {
@@ -171,20 +234,56 @@ void main() {
       expect(result.clusters.length, 2);
     });
 
-    test('fallback same-city by GPS allows city threshold when city fields missing', () {
-      final day = DateTime(2026, 2, 20);
+    test('same-city different POIs remain one travel segment', () {
+      final day = DateTime(2026, 5, 2);
       final photos = <PhotoEntity>[
         _photo(
           id: 1,
           time: day.add(const Duration(hours: 9)),
-          lat: 22.5431,
-          lon: 114.0579,
+          city: '金华市',
+          province: '浙江省',
+          district: '婺城区',
+          locationName: '古子城',
         ),
         _photo(
           id: 2,
-          time: day.add(const Duration(hours: 13, minutes: 30)),
-          lat: 22.6019,
-          lon: 114.3162,
+          time: day.add(const Duration(hours: 9, minutes: 15)),
+          city: '金华市',
+          province: '浙江省',
+          district: '婺城区',
+          locationName: '古子城',
+        ),
+        _photo(
+          id: 3,
+          time: day.add(const Duration(hours: 9, minutes: 30)),
+          city: '金华市',
+          province: '浙江省',
+          district: '婺城区',
+          locationName: '古子城',
+        ),
+        _photo(
+          id: 4,
+          time: day.add(const Duration(hours: 14)),
+          city: '金华市',
+          province: '浙江省',
+          district: '婺城区',
+          locationName: '八咏楼',
+        ),
+        _photo(
+          id: 5,
+          time: day.add(const Duration(hours: 14, minutes: 15)),
+          city: '金华市',
+          province: '浙江省',
+          district: '婺城区',
+          locationName: '八咏楼',
+        ),
+        _photo(
+          id: 6,
+          time: day.add(const Duration(hours: 14, minutes: 30)),
+          city: '金华市',
+          province: '浙江省',
+          district: '婺城区',
+          locationName: '八咏楼',
         ),
       ];
 
@@ -192,77 +291,114 @@ void main() {
         photos: photos,
         config: const ClusterConfig(
           initialTimeThresholdHours: 3,
-          sameCityTimeThresholdHours: 6,
-          sameCityDistanceThresholdKm: 40,
-          fallbackSameCityDistanceKm: 45,
-        ),
-      );
-
-      expect(result.clusters.length, 1);
-      expect(result.clusters.first.length, 2);
-    });
-
-    test('cross-day clusters can be merged when enabled and gap is within threshold', () {
-      final day1 = DateTime(2026, 2, 20);
-      final day2 = DateTime(2026, 2, 21);
-      final photos = <PhotoEntity>[
-        _photo(
-          id: 1,
-          time: day1.add(const Duration(hours: 19)),
-          lat: 22.5431,
-          lon: 114.0579,
-        ),
-        _photo(
-          id: 2,
-          time: day1.add(const Duration(hours: 19, minutes: 10)),
-          lat: 22.5435,
-          lon: 114.0583,
-        ),
-        _photo(
-          id: 3,
-          time: day1.add(const Duration(hours: 19, minutes: 20)),
-          lat: 22.5440,
-          lon: 114.0588,
-        ),
-        _photo(
-          id: 4,
-          time: day2.add(const Duration(hours: 8)),
-          lat: 22.5460,
-          lon: 114.0540,
-        ),
-        _photo(
-          id: 5,
-          time: day2.add(const Duration(hours: 8, minutes: 10)),
-          lat: 22.5465,
-          lon: 114.0546,
-        ),
-        _photo(
-          id: 6,
-          time: day2.add(const Duration(hours: 8, minutes: 20)),
-          lat: 22.5470,
-          lon: 114.0552,
-        ),
-      ];
-
-      final result = EventClusterHelper.clusterPhotos(
-        photos: photos,
-        config: const ClusterConfig(
-          initialTimeThresholdHours: 4,
-          sameCityTimeThresholdHours: 6,
-          sameCityDistanceThresholdKm: 20,
-          fallbackSameCityDistanceKm: 45,
-          sameDayMergeGapHours: 10,
-          crossDayMergeGapHours: 18,
+          sameDayMergeGapHours: 8,
           minPhotosPerClusterForMerge: 3,
-          enableSameDayTravelMerge: true,
-          enableCrossDayTravelMerge: true,
         ),
       );
 
-      expect(result.initialClusterCount, 2);
-      expect(result.mergedCount, 1);
-      expect(result.clusters.length, 1);
-      expect(result.clusters.first.length, 6);
+      expect(result.initialClusterCount, 1);
+      expect(result.mergedCount, 0);
+      expect(result.clusters.single.length, 6);
     });
+
+    test(
+      'fallback same-city by GPS allows city threshold when city fields missing',
+      () {
+        final day = DateTime(2026, 2, 20);
+        final photos = <PhotoEntity>[
+          _photo(
+            id: 1,
+            time: day.add(const Duration(hours: 9)),
+            lat: 22.5431,
+            lon: 114.0579,
+          ),
+          _photo(
+            id: 2,
+            time: day.add(const Duration(hours: 13, minutes: 30)),
+            lat: 22.6019,
+            lon: 114.3162,
+          ),
+        ];
+
+        final result = EventClusterHelper.clusterPhotos(
+          photos: photos,
+          config: const ClusterConfig(
+            initialTimeThresholdHours: 3,
+            sameCityTimeThresholdHours: 6,
+            sameCityDistanceThresholdKm: 40,
+            fallbackSameCityDistanceKm: 45,
+          ),
+        );
+
+        expect(result.clusters.length, 1);
+        expect(result.clusters.first.length, 2);
+      },
+    );
+
+    test(
+      'cross-day clusters can be merged when enabled and gap is within threshold',
+      () {
+        final day1 = DateTime(2026, 2, 20);
+        final day2 = DateTime(2026, 2, 21);
+        final photos = <PhotoEntity>[
+          _photo(
+            id: 1,
+            time: day1.add(const Duration(hours: 19)),
+            lat: 22.5431,
+            lon: 114.0579,
+          ),
+          _photo(
+            id: 2,
+            time: day1.add(const Duration(hours: 19, minutes: 10)),
+            lat: 22.5435,
+            lon: 114.0583,
+          ),
+          _photo(
+            id: 3,
+            time: day1.add(const Duration(hours: 19, minutes: 20)),
+            lat: 22.5440,
+            lon: 114.0588,
+          ),
+          _photo(
+            id: 4,
+            time: day2.add(const Duration(hours: 8)),
+            lat: 22.5460,
+            lon: 114.0540,
+          ),
+          _photo(
+            id: 5,
+            time: day2.add(const Duration(hours: 8, minutes: 10)),
+            lat: 22.5465,
+            lon: 114.0546,
+          ),
+          _photo(
+            id: 6,
+            time: day2.add(const Duration(hours: 8, minutes: 20)),
+            lat: 22.5470,
+            lon: 114.0552,
+          ),
+        ];
+
+        final result = EventClusterHelper.clusterPhotos(
+          photos: photos,
+          config: const ClusterConfig(
+            initialTimeThresholdHours: 4,
+            sameCityTimeThresholdHours: 6,
+            sameCityDistanceThresholdKm: 20,
+            fallbackSameCityDistanceKm: 45,
+            sameDayMergeGapHours: 10,
+            crossDayMergeGapHours: 18,
+            minPhotosPerClusterForMerge: 3,
+            enableSameDayTravelMerge: true,
+            enableCrossDayTravelMerge: true,
+          ),
+        );
+
+        expect(result.initialClusterCount, 2);
+        expect(result.mergedCount, 1);
+        expect(result.clusters.length, 1);
+        expect(result.clusters.first.length, 6);
+      },
+    );
   });
 }

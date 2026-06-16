@@ -52,11 +52,14 @@ class EventService {
     initialTimeThresholdHours: 4,
     baseDistanceThresholdKm: 12,
     sameCityTimeThresholdHours: 6,
-    sameCityDistanceThresholdKm: 20,
+    sameCityDistanceThresholdKm: 12,
     fallbackSameCityDistanceKm: 45,
     sameDayMergeGapHours: 10,
     crossDayMergeGapHours: 18,
     minPhotosPerClusterForMerge: 1,
+    shortTimeLocationSplitHours: 2,
+    shortTimeLocationSplitDistanceKm: 12,
+    maxMergeDistanceKm: 12,
     enableSameDayTravelMerge: true,
     enableCrossDayTravelMerge: true,
   );
@@ -89,7 +92,7 @@ class EventService {
     if (maxPhotos != null) query.limit = maxPhotos;
     final recentPhotos = query
         .find()
-        .where((photo) => !JunkPhotoFilterService.isQuarantined(photo.aiTags))
+        .where((photo) => !JunkPhotoFilterService.isConfirmedJunk(photo.aiTags))
         .toList(growable: false);
     query.close();
 
@@ -428,7 +431,12 @@ class EventService {
                   .and(PhotoEntity_.isAiAnalyzed.equals(true)),
             )
             .build();
-        final analyzedPhotos = analyzedQ.find();
+        final analyzedPhotos = analyzedQ
+            .find()
+            .where(
+              (photo) => !JunkPhotoFilterService.isConfirmedJunk(photo.aiTags),
+            )
+            .toList(growable: false);
         analyzedQ.close();
 
         if (analyzedPhotos.isEmpty) {

@@ -105,9 +105,12 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   String? _momentsFastScrollerLabel;
 
   // UI streams for moments and tag browser data.
-  late Stream<Map<String, List<Event>>> _uiEventsStream;
   late Stream<_AlbumTagBrowserData> _albumTagBrowserStream;
+  StreamSubscription<List<EventEntity>>? _momentsSubscription;
   StreamSubscription<void>? _pendingAnalysisSubscription;
+  Map<String, List<Event>>? _groupedMoments;
+  Object? _momentsError;
+  bool _momentsLoading = true;
 
   void _startRefresh({
     bool clearCacheFirst = false,
@@ -770,13 +773,25 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
         unawaited(AIService().refreshJunkCleanupReportFromDatabase());
       }
     });
-    final uiEventsSource = _debounceStream<List<EventEntity>>(
-      EventService().watchEvents(),
-      const Duration(milliseconds: 420),
-    );
-    _uiEventsStream = uiEventsSource
-        .asyncMap((eventEntities) => _groupEvents(eventEntities))
-        .asBroadcastStream();
+    _momentsSubscription =
+        _debounceStream<List<EventEntity>>(
+          EventService().watchEvents(),
+          const Duration(milliseconds: 420),
+        ).listen(
+          (eventEntities) {
+            unawaited(_refreshGroupedMoments(eventEntities));
+          },
+          onError: (error, stackTrace) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _momentsError = error;
+              _momentsLoading = false;
+            });
+          },
+          cancelOnError: false,
+        );
 
     _albumTagBrowserStream =
         _debounceStream<void>(
@@ -805,6 +820,28 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
         ).listen((_) {
           unawaited(_refreshPendingAnalysisPrompt());
         });
+  }
+
+  Future<void> _refreshGroupedMoments(List<EventEntity> eventEntities) async {
+    try {
+      final grouped = await _groupEvents(eventEntities);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _groupedMoments = grouped;
+        _momentsError = null;
+        _momentsLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _momentsError = error;
+        _momentsLoading = false;
+      });
+    }
   }
 
   Future<_AlbumTagBrowserData> _buildAlbumTagBrowserData(
@@ -850,6 +887,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
     UnifiedAnalysisProgressStore.instance.progress.removeListener(
       _onForegroundProgressForCardChanged,
     );
+    _momentsSubscription?.cancel();
     _pendingAnalysisSubscription?.cancel();
     _momentsFastScrollerHideTimer?.cancel();
     _foregroundCardElapsedTimer?.cancel();
@@ -1514,77 +1552,70 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   }
 
   Widget _buildMomentsView() {
-    return StreamBuilder<Map<String, List<Event>>>(
-      stream: _uiEventsStream,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
-          return _buildTopIndeterminateLoading();
-        }
+    if (_momentsLoading && _groupedMoments == null) {
+      return _buildTopIndeterminateLoading();
+    }
 
-        if (snapshot.hasError) {
-          return _buildErrorState(snapshot.error.toString());
-        }
+    final error = _momentsError;
+    if (error != null) {
+      return _buildErrorState(error.toString());
+    }
 
-        final groupedEvents = snapshot.data ?? {};
-        if (groupedEvents.isEmpty) {
-          return _buildEmptyState();
-        }
+    final groupedEvents = _groupedMoments ?? const <String, List<Event>>{};
+    if (groupedEvents.isEmpty) {
+      return _buildEmptyState();
+    }
 
-        final items = <Object>[];
-        final sectionKeys = <String, GlobalKey>{};
-        for (final entry in groupedEvents.entries) {
-          items.add(entry.key);
-          items.addAll(entry.value);
-          sectionKeys[entry.key] = _momentSectionKeys[entry.key] ?? GlobalKey();
-        }
-        _momentSectionKeys
-          ..clear()
-          ..addAll(sectionKeys);
+    final items = <Object>[];
+    final sectionKeys = <String, GlobalKey>{};
+    for (final entry in groupedEvents.entries) {
+      items.add(entry.key);
+      items.addAll(entry.value);
+      sectionKeys[entry.key] = _momentSectionKeys[entry.key] ?? GlobalKey();
+    }
+    _momentSectionKeys
+      ..clear()
+      ..addAll(sectionKeys);
 
-        return Stack(
-          children: [
-            NotificationListener<ScrollNotification>(
-              onNotification: (notification) {
-                if (notification is ScrollUpdateNotification ||
-                    notification is UserScrollNotification) {
-                  _handleMomentsScrollActivity();
-                }
-                return false;
-              },
-              child: ListView.builder(
-                controller: _momentsScrollController,
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  16,
-                  16,
-                  _contentBottomInset + MediaQuery.of(context).padding.bottom,
-                ),
-                itemCount: items.length,
-                itemBuilder: (context, index) {
-                  final item = items[index];
-                  if (item is String) {
-                    return Padding(
-                      key: _momentSectionKeys[item],
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      child: Text(
-                        item,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    );
-                  }
-                  return EventCard(event: item as Event);
-                },
-              ),
+    return Stack(
+      children: [
+        NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            if (notification is ScrollUpdateNotification ||
+                notification is UserScrollNotification) {
+              _handleMomentsScrollActivity();
+            }
+            return false;
+          },
+          child: ListView.builder(
+            controller: _momentsScrollController,
+            padding: EdgeInsets.fromLTRB(
+              16,
+              16,
+              16,
+              _contentBottomInset + MediaQuery.of(context).padding.bottom,
             ),
-            _buildMomentsFastScroller(
-              groupedEvents.keys.toList(growable: false),
-            ),
-          ],
-        );
-      },
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final item = items[index];
+              if (item is String) {
+                return Padding(
+                  key: _momentSectionKeys[item],
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: Text(
+                    item,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                );
+              }
+              return EventCard(event: item as Event);
+            },
+          ),
+        ),
+        _buildMomentsFastScroller(groupedEvents.keys.toList(growable: false)),
+      ],
     );
   }
 
@@ -1841,17 +1872,18 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   ) async {
     final grouped = <String, List<Event>>{};
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final coverIds = eventEntities
-        .expand((event) => event.photoIds.take(3))
+    final eventPhotoIds = eventEntities
+        .expand((event) => event.photoIds)
         .toSet()
         .toList(growable: false);
-    final coverEntities = photoBox
-        .getMany(coverIds)
+    final eventPhotoEntities = photoBox
+        .getMany(eventPhotoIds)
         .whereType<PhotoEntity>()
+        .where((photo) => !JunkPhotoFilterService.isConfirmedJunk(photo.aiTags))
         .toList(growable: false);
-    final coverById = {for (final photo in coverEntities) photo.id: photo};
+    final photoById = {for (final photo in eventPhotoEntities) photo.id: photo};
     Future<List<PhotoEntity>> loadPhotos(List<int> ids) async => ids
-        .map((id) => coverById[id])
+        .map((id) => photoById[id])
         .whereType<PhotoEntity>()
         .toList(growable: false);
 
@@ -1861,6 +1893,9 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
       final event = await eventEntities[i].toPreviewModel(
         loadPhotoEntities: loadPhotos,
       );
+      if (event.photoCount <= 0) {
+        continue;
+      }
       allEvents.add(event);
       if (i % 8 == 0) {
         await Future<void>.delayed(Duration.zero);

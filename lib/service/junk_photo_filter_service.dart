@@ -374,6 +374,11 @@ class JunkPhotoFilterService {
         tags.contains(pendingJunkCandidateTag);
   }
 
+  static bool isConfirmedJunk(Iterable<String>? tags) {
+    if (tags == null) return false;
+    return tags.contains(junkCandidateTag);
+  }
+
   static bool hasFinalDecision(Iterable<String>? tags) {
     if (tags == null) return false;
     return tags.contains(junkCandidateTag) ||

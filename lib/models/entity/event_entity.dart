@@ -1,4 +1,4 @@
-/// 事件聚合的 ObjectBox 实体，保存时间、地点和分析后的事件信息。
+// 事件聚合的 ObjectBox 实体，保存时间、地点和分析后的事件信息。
 
 import 'dart:io';
 
@@ -91,12 +91,14 @@ class EventEntity {
     required Future<List<PhotoEntity>> Function(List<int> ids)
     loadPhotoEntities,
   }) async {
-    final photoEntities = await loadPhotoEntities(photoIds);
+    final photoEntities = (await loadPhotoEntities(
+      photoIds,
+    )).where((photo) => !_isConfirmedJunk(photo)).toList(growable: false);
     final photos = await _mapEntitiesToPhotos(photoEntities, resolvePath: true);
     return _buildEvent(
       photos: photos,
       coverPhotos: photos.take(3).toList(growable: false),
-      photoCountOverride: photoCount > 0 ? photoCount : photos.length,
+      photoCountOverride: photos.length,
     );
   }
 
@@ -104,8 +106,10 @@ class EventEntity {
     required Future<List<PhotoEntity>> Function(List<int> ids)
     loadPhotoEntities,
   }) async {
-    final coverIds = photoIds.take(3).toList(growable: false);
-    final coverEntities = await loadPhotoEntities(coverIds);
+    final visibleEntities = (await loadPhotoEntities(
+      photoIds,
+    )).where((photo) => !_isConfirmedJunk(photo)).toList(growable: false);
+    final coverEntities = visibleEntities.take(3).toList(growable: false);
     final coverPhotos = await _mapEntitiesToPhotos(
       coverEntities,
       resolvePath: false,
@@ -113,7 +117,7 @@ class EventEntity {
     return _buildEvent(
       photos: const <Photo>[],
       coverPhotos: coverPhotos,
-      photoCountOverride: photoCount > 0 ? photoCount : photoIds.length,
+      photoCountOverride: visibleEntities.length,
     );
   }
 
@@ -186,6 +190,10 @@ class EventEntity {
       tags: entity.ocrTags ?? const <String>[],
       text: entity.ocrText,
     );
+  }
+
+  bool _isConfirmedJunk(PhotoEntity entity) {
+    return entity.aiTags?.contains('__junk_candidate__') ?? false;
   }
 
   List<AITheme> _buildAiThemes() {

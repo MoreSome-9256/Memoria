@@ -13,9 +13,5 @@
   "FACE_EMBEDDING_INPUT_LAYOUT": "nhwc",
   "FACE_EMBEDDING_MEAN": "127.5",
   "FACE_EMBEDDING_STD": "128.0",
-  "LOCAL_QWEN35_08B_GGUF_ASSET": "assets/local_vlm/Qwen3.5-0.8B-Q4_K_M.gguf",
-  "LOCAL_QWEN35_08B_MMPROJ_ASSET": "assets/local_vlm/mmproj-F32.gguf",
-  "LOCAL_QWEN35_08B_GGUF_PATH": "",
-  "LOCAL_QWEN35_08B_MMPROJ_PATH": "",
   "ENABLE_ML_KIT_OCR": "true"
 }

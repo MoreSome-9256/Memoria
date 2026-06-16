@@ -8,12 +8,10 @@
 
 import 'dart:async';
 
-import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
-import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:photo_album/service/amplify_cognito_config.dart';
 import 'package:photo_album/service/album_refresh_service.dart';
+import 'package:photo_album/service/amplify_auth_bootstrap_service.dart';
 import 'package:photo_album/service/app_ai_settings_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
 import 'package:photo_album/service/media_permission_service.dart';
@@ -32,20 +30,6 @@ void main() async {
   PaintingBinding.instance.imageCache.maximumSizeBytes = 200 * 1024 * 1024;
   PaintingBinding.instance.imageCache.maximumSize = 800;
   runApp(const MyApp());
-}
-
-Future<void> _configureAmplifyAuth() async {
-  try {
-    if (Amplify.isConfigured) {
-      return;
-    }
-    await Amplify.addPlugin(AmplifyAuthCognito());
-    await Amplify.configure(AmplifyCognitoConfig.build());
-  } on FormatException catch (e) {
-    debugPrint('Amplify auth skipped: ${e.message}');
-  } catch (e) {
-    debugPrint('Amplify auth configure failed: $e');
-  }
 }
 
 class MyApp extends StatelessWidget {
@@ -109,9 +93,13 @@ class _StartupGateState extends State<_StartupGate> {
 
 class _AppStartupCoordinator {
   Future<void>? _startupFuture;
+  bool _authConfigured = false;
 
   Future<_LaunchTarget> resolveLaunchTarget() async {
     await _ensureStartupComplete();
+    if (!_authConfigured) {
+      return _LaunchTarget.welcome;
+    }
     final signedIn = await const CognitoAuthService().tryIsSignedIn();
     return signedIn == false ? _LaunchTarget.welcome : _LaunchTarget.signedIn;
   }
@@ -122,7 +110,7 @@ class _AppStartupCoordinator {
     }
     _startupFuture = Future<void>(() async {
       await AIProgressNotificationService().initialize();
-      await _configureAmplifyAuth();
+      _authConfigured = await AmplifyAuthBootstrapService.ensureConfigured();
       try {
         await ObjectBoxService().init();
       } catch (error) {

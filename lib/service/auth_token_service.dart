@@ -28,6 +28,11 @@ class AuthTokenService {
     required String Function(CognitoUserPoolTokens tokens) readToken,
   }) async {
     try {
+      if (!Amplify.isConfigured) {
+        debugPrint('AuthTokenService skipped: Amplify Auth is not configured.');
+        return null;
+      }
+
       final cachedToken = useIdToken ? _cachedIdToken : _cachedAccessToken;
       if (cachedToken != null && _tokenExpiryTime != null) {
         final refreshAt = _tokenExpiryTime!.subtract(

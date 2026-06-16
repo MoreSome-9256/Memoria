@@ -3,6 +3,7 @@
 // 可在主 isolate 与 foreground isolate 中通用，零 ObjectBox 依赖。
 
 import 'api_proxy_service.dart';
+import 'package:flutter/foundation.dart';
 
 class AmapGeoResult {
   final String? country;
@@ -82,7 +83,11 @@ class AmapGeoService {
         extensions: extensions,
       );
       return _parseRegeocode(raw);
-    } catch (_) {
+    } catch (error) {
+      debugPrint(
+        '[amap] reverse geocode failed lat=${latitude.toStringAsFixed(5)} '
+        'lon=${longitude.toStringAsFixed(5)} error=$error',
+      );
       return null;
     }
   }
@@ -110,7 +115,8 @@ class AmapGeoService {
       return AmapPlaceResult.fromJson(
         (pois.first as Map).cast<String, dynamic>(),
       );
-    } catch (_) {
+    } catch (error) {
+      debugPrint('[amap] place search failed keywords=$keywords error=$error');
       return null;
     }
   }

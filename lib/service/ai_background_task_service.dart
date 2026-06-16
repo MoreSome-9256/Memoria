@@ -10,6 +10,7 @@ import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../storage/objectbox/objectbox_service.dart';
+import 'amplify_auth_bootstrap_service.dart';
 import 'media_permission_service.dart';
 import 'unified_analysis_pipeline_service.dart';
 
@@ -55,6 +56,11 @@ class _AlbumCacheTaskHandler extends TaskHandler {
       }
       _runId = request.runId;
       debugPrint('[foreground-pipeline] 启动 runId=$_runId');
+      final authConfigured =
+          await AmplifyAuthBootstrapService.ensureConfigured();
+      if (!authConfigured) {
+        throw StateError('前台服务无法配置 Cognito Auth，云端代理不可用。');
+      }
       if (request.junkCleanupOnly) {
         await UnifiedAnalysisPipelineService()
             .runJunkCleanupInsideForegroundService(

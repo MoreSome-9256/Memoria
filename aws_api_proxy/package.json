@@ -1,0 +1,16 @@
+{
+  "name": "memoria-api-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cognito-protected API proxy for Memoria.",
+  "scripts": {
+    "check": "node --check src/index.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.731.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

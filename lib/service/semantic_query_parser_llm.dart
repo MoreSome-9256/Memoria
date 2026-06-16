@@ -113,10 +113,14 @@ Rules:
    These fields must contain visual meaning only. Never repeat exact dates, years, clock times, named cities, districts, POIs, coordinates, or other precise metadata in semantic text.
    Abstract visible context such as "a coastal city", "spring scenery", "afternoon light", or "night atmosphere" is allowed.
 3. Use absolute_date_ranges for explicit years or relative dates, annual_day_ranges for recurring calendar periods, minute_of_day_ranges for local time-of-day, and weekdays for weekday constraints.
-   For recurring seasons, months, holidays, and month-day spans, output human-readable MM-DD strings in objectbox_filters.annual_day_ranges, such as {"start_date":"03-01","end_date":"05-31"} or {"start_date":"10-01","end_date":"10-07"}; do not calculate day-of-year in the LLM.
+   CRITICAL: When the user specifies a year (e.g. "2023年", "23年春天", "去年", "今年", "2023年10月"), you MUST use absolute_date_ranges with start_date/end_date as ISO date strings (YYYY-MM-DD), NOT annual_day_ranges. annual_day_ranges is ONLY for periods WITHOUT a year (recurring every year).
+   For recurring seasons, months, holidays, and month-day spans WITHOUT a year, output human-readable MM-DD strings in objectbox_filters.annual_day_ranges, such as {"start_date":"03-01","end_date":"05-31"} or {"start_date":"10-01","end_date":"10-07"}; do not calculate day-of-year in the LLM.
    If the user mentions a month without a year, such as "10月", "十月", "5月", or "May", this is still a hard recurring annual_day_ranges constraint for every year, not a visual semantic and not an unresolved phrase.
    If the user mentions a recurring holiday without a year, such as "国庆", "国庆节", "十一", "十一假期", "National Day", or "National Day holiday", this is a hard recurring annual_day_ranges constraint. For China National Day holiday use 10-01 through 10-07 unless the user names a specific year or a different date span.
    If the user mentions a season without a year, such as "春天", "夏天", "秋天", or "冬天", this is a hard recurring annual_day_ranges constraint. Use 03-01..05-31, 06-01..08-31, 09-01..11-30, and 12-01..02-28 respectively unless the user provides a more precise date.
+   Season-to-month mapping: 春天/spring=03-01..05-31, 夏天/summer=06-01..08-31, 秋天/autumn=09-01..11-30, 冬天/winter=12-01..02-28.
+   Year abbreviation: "23年" means 2023, "24年" means 2024. Two-digit years less than 50 are 2000+, 50+ are 1900+.
+   absolute_date_ranges format: {"start_date":"2023-03-01","end_date":"2023-05-31"} — ISO date strings, the parser converts to timestamps automatically. Do NOT use start_millis/end_millis.
    Also extract high-confidence implicit mechanical meaning. For example, 白天/daytime/daylight implies a local daylight window, sunset/晚霞/黄昏 implies late afternoon through early evening, sunrise/朝霞 implies early morning, and a starry sky implies night. Keep the visible concept in semantic fields as well. Do not invent weak or controversial time constraints from objects that can occur all day.
 4. Keep Chinese place names in objectbox_filters.geo. Do not translate raw_name, normalized_names, or amap_query_keywords. Never invent coordinates or decide that two places are identical.
 5. Classify geo with a clear prefix discipline:
@@ -367,6 +371,39 @@ JSON:
     "visual_terms_en": ["vacation travel photo", "tourist sightseeing photo"],
     "geo": []
   },
+  "negative_filters": {"visual_terms_en": [], "geo_terms": []},
+  "fallback_policy": {"enable_possible_results": true, "show_possible_only_when_strict_empty": true},
+  "self_check": {
+    "all_user_terms_accounted_for": true,
+    "time_constraints_complete": true,
+    "geo_constraints_complete": true,
+    "visual_semantics_do_not_contain_named_places": true,
+    "mechanical_constraints_not_replaced_by_semantics": true,
+    "issues": []
+  }
+}
+
+User: 23年春天
+JSON:
+{
+  "version": 1,
+  "raw_query": "23年春天",
+  "analysis_steps": {
+    "time_date_extraction": {"hard_filters": ["23年春天 -> absolute 2023-03-01..2023-05-31"], "implicit_filters": [], "unresolved": []},
+    "geo_extraction": {"administrative_places": [], "poi_places": [], "ambiguous_places": []},
+    "visual_content_inference": {"positive_visuals_en": [], "negative_visuals_en": [], "notes": ["year+season is metadata-only, use absolute_date_ranges with ISO date strings"]}
+  },
+  "embedding_queries_en": [],
+  "objectbox_filters": {
+    "absolute_date_ranges": [
+      {"start_date": "2023-03-01", "end_date": "2023-05-31", "reason": "spring 2023"}
+    ],
+    "annual_day_ranges": [],
+    "minute_of_day_ranges": [],
+    "weekdays": [],
+    "geo": []
+  },
+  "soft_filters": {"visual_terms_original": [], "visual_terms_en": [], "geo": []},
   "negative_filters": {"visual_terms_en": [], "geo_terms": []},
   "fallback_policy": {"enable_possible_results": true, "show_possible_only_when_strict_empty": true},
   "self_check": {
@@ -797,12 +834,31 @@ $rawQuery
         .whereType<Map>()
         .map(
           (item) => <String, dynamic>{
-            'start_time_ms': item['start_millis'],
-            'end_time_ms': item['end_millis'],
+            'start_time_ms': _parseDateToMs(item['start_date']) ??
+                item['start_millis'],
+            'end_time_ms': _parseDateToMs(item['end_date']) ??
+                item['end_millis'],
             'reason': 'absolute date range',
           },
         )
+        .where((item) => item['start_time_ms'] != null ||
+            item['end_time_ms'] != null)
         .toList(growable: false);
+  }
+
+  int? _parseDateToMs(dynamic value) {
+    if (value == null) return null;
+    final str = value.toString().trim();
+    if (str.isEmpty) return null;
+    try {
+      final date = DateTime.parse(str);
+      if (str.length <= 10) {
+        return date.millisecondsSinceEpoch;
+      }
+      return date.millisecondsSinceEpoch;
+    } catch (_) {
+      return null;
+    }
   }
 
   List<Map<String, dynamic>> _mapAnnualDayRanges(dynamic value) {

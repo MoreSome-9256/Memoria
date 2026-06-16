@@ -16,6 +16,7 @@ import 'photo_search_index_service.dart';
 import 'place_resolver_service.dart';
 import 'searchable_photo_policy.dart';
 import 'semantic_query_plan_compiler.dart';
+import '../utils/ocr_policy.dart';
 
 class SemanticPhotoSearchService {
   SemanticPhotoSearchService._internal();
@@ -41,6 +42,8 @@ class SemanticPhotoSearchService {
   static const double _relatedSemanticThreshold = 0.17;
   static const double _negativePenaltyAlpha = 0.72;
   static const double _coarseTagBonus = 0.055;
+  static const double _textFeatureMaxBonus = 0.22;
+  static const double _textFeatureFallbackThreshold = 0.18;
   static const double _minimumFinalScore = 0.15;
   static const double _minimumRelatedFinalScore = 0.10;
   static const int _maxResultsPerBucket = 240;
@@ -93,6 +96,7 @@ class SemanticPhotoSearchService {
       '[semantic-search] query="$rawQuery" analyzed=$totalAnalyzedPhotos '
       'loaded=${photos.length} strictMetadata=$metadataCandidateCount '
       'locations=${query.locations.map((item) => '${item.text}:${item.type}').join('|')} '
+      'time=${_debugTimeConstraints(query)} '
       'positive=${query.positiveSemantics.length} recall=${query.recallSemantics.length}',
     );
 
@@ -151,6 +155,7 @@ class SemanticPhotoSearchService {
       coarseTags: query.coarseTags,
       tagStrictness: query.tagStrictness,
       locations: query.locations,
+      rawQuery: rawQuery,
     );
 
     final exactPhotos = _orderedPhotosForHits(
@@ -171,6 +176,7 @@ class SemanticPhotoSearchService {
       coarseTags: query.coarseTags,
       tagStrictness: query.tagStrictness,
       locations: query.locations,
+      rawQuery: rawQuery,
       semanticThreshold: 0.10,
       forceRelated: true,
     );
@@ -195,42 +201,11 @@ class SemanticPhotoSearchService {
         coarseTags: query.coarseTags,
         tagStrictness: query.tagStrictness,
         locations: query.locations,
+        rawQuery: rawQuery,
         semanticThreshold: 0.12,
         forceRelated: true,
       );
       for (final entry in relaxedScores.hits.entries) {
-        if (!exactIds.contains(entry.key)) {
-          relatedHits.putIfAbsent(entry.key, () => entry.value);
-        }
-      }
-    }
-
-    if (relatedHits.length < _minimumRelatedBeforeRelaxing &&
-        _shouldUseGlobalPoiSemanticRecall(query, possibleCandidates)) {
-      final globalSemanticCandidates = await _loadCandidatePhotos(
-        query.copyWith(locations: const <SemanticSearchLocation>[]),
-        relaxed: true,
-      );
-      for (final photo in globalSemanticCandidates) {
-        if (possibleIds.add(photo.id)) {
-          possibleCandidates.add(photo);
-        }
-      }
-      debugPrint(
-        '[semantic-search] global POI semantic recall '
-        'candidates=${globalSemanticCandidates.length}',
-      );
-      final globalScores = _scoreCandidates(
-        _applyTagStrategy(globalSemanticCandidates, query),
-        activeModelVersion: activeModelVersion,
-        vectors: vectors,
-        coarseTags: query.coarseTags,
-        tagStrictness: query.tagStrictness,
-        locations: query.locations,
-        semanticThreshold: 0.14,
-        forceRelated: true,
-      );
-      for (final entry in globalScores.hits.entries) {
         if (!exactIds.contains(entry.key)) {
           relatedHits.putIfAbsent(entry.key, () => entry.value);
         }
@@ -254,6 +229,31 @@ class SemanticPhotoSearchService {
       debugPrint(
         '[semantic-search] semantic fallback used '
         'metadataMatches=${metadataFallbackHits.length}',
+      );
+    }
+
+    final textFallbackCandidates =
+        (query.hasTimeConstraints ||
+            query.hasLocationConstraints ||
+            query.hasAttributeConstraints)
+        ? strictMetadataCandidates
+        : possibleCandidates;
+    final textFallbackHits = _textFeatureFallbackHits(
+      rawQuery: rawQuery,
+      candidates: textFallbackCandidates,
+      exactIds: exactIds,
+      existingRelatedHits: relatedHits,
+    );
+    if (textFallbackHits.isNotEmpty) {
+      for (final photo in textFallbackCandidates) {
+        if (possibleIds.add(photo.id)) {
+          possibleCandidates.add(photo);
+        }
+      }
+      relatedHits.addAll(textFallbackHits);
+      debugPrint(
+        '[semantic-search] text fallback used '
+        'textMatches=${textFallbackHits.length}',
       );
     }
 
@@ -417,6 +417,30 @@ class SemanticPhotoSearchService {
     return _metadataMatcher.matchesTime(photo, query);
   }
 
+  String _debugTimeConstraints(SemanticSearchQuery query) {
+    final parts = <String>[];
+    for (final range in query.timeRanges) {
+      if (range.hasLocalTimeWindow) {
+        parts.add('minute:${range.localStartMinute}-${range.localEndMinute}');
+      } else if (range.hasAnnualDayRange) {
+        parts.add(
+          'annual:${range.annualStartMonth}-${range.annualStartDayOfMonth}'
+          '..${range.annualEndMonth}-${range.annualEndDayOfMonth}',
+        );
+      } else if (range.hasRecurringMonthRange) {
+        parts.add(
+          'month:${range.recurringStartMonth}-${range.recurringEndMonth}',
+        );
+      } else if (range.hasDateBoundary) {
+        parts.add('absolute');
+      }
+    }
+    if (query.weekdays.isNotEmpty) {
+      parts.add('weekday:${query.weekdays.join(',')}');
+    }
+    return parts.isEmpty ? '-' : parts.join('|');
+  }
+
   bool _matchesAnyLocation(
     PhotoEntity photo,
     List<SemanticSearchLocation> locations,
@@ -529,6 +553,7 @@ class SemanticPhotoSearchService {
     required List<SemanticSearchCoarseTag> coarseTags,
     required SemanticSearchTagStrictness tagStrictness,
     required List<SemanticSearchLocation> locations,
+    required String rawQuery,
     double semanticThreshold = _relatedSemanticThreshold,
     bool forceRelated = false,
   }) {
@@ -541,6 +566,7 @@ class SemanticPhotoSearchService {
         coarseTags: coarseTags,
         tagStrictness: tagStrictness,
         locations: locations,
+        rawQuery: rawQuery,
         semanticThreshold: semanticThreshold,
         forceRelated: forceRelated,
       );
@@ -559,6 +585,7 @@ class SemanticPhotoSearchService {
     required List<SemanticSearchCoarseTag> coarseTags,
     required SemanticSearchTagStrictness tagStrictness,
     required List<SemanticSearchLocation> locations,
+    required String rawQuery,
     required double semanticThreshold,
     required bool forceRelated,
   }) {
@@ -594,6 +621,7 @@ class SemanticPhotoSearchService {
     );
     final coarseTagMatch = _metadataMatcher.matchCoarseTags(photo, coarseTags);
     final locationMatch = _metadataMatcher.matchLocation(photo, locations);
+    final textFeatureMatch = _textFeatureMatch(photo, rawQuery);
     final tagBonus = coarseTagMatch.matchedLabels.isEmpty
         ? 0.0
         : _coarseTagBonus;
@@ -604,7 +632,8 @@ class SemanticPhotoSearchService {
     final finalScore =
         rankingSemanticScore +
         tagBonus -
-        (_negativePenaltyAlpha * negative.negativeScore);
+        (_negativePenaltyAlpha * negative.negativeScore) +
+        textFeatureMatch.score;
     final coarseTagRequiredForExact =
         coarseTags.isNotEmpty &&
         tagStrictness == SemanticSearchTagStrictness.strict &&
@@ -646,6 +675,11 @@ class SemanticPhotoSearchService {
     if (matchedLocations.isNotEmpty) {
       explanation.add('location: ${matchedLocations.join(' / ')}');
     }
+    if (textFeatureMatch.score > 0) {
+      explanation.add(
+        'text features: ${textFeatureMatch.matchedTerms.join(' / ')}',
+      );
+    }
     if (negative.bestNegativeSemantic != null &&
         negative.negativeScore >= 0.18) {
       explanation.add('negative: ${negative.bestNegativeSemantic}');
@@ -682,6 +716,12 @@ class SemanticPhotoSearchService {
           return locationCompare;
         }
       }
+      final rightText = _textFeatureMatch(right, query.rawQuery).score;
+      final leftText = _textFeatureMatch(left, query.rawQuery).score;
+      final textCompare = rightText.compareTo(leftText);
+      if (textCompare != 0) {
+        return textCompare;
+      }
       return right.timestamp.compareTo(left.timestamp);
     });
     return sorted;
@@ -703,33 +743,28 @@ class SemanticPhotoSearchService {
     required List<PhotoEntity> strictMetadataCandidates,
     required Map<int, SemanticSearchHit> existingRelatedHits,
   }) {
-    if (existingRelatedHits.isNotEmpty ||
-        strictMetadataCandidates.isEmpty ||
+    if (strictMetadataCandidates.isEmpty ||
         (!query.hasTimeConstraints &&
             !query.hasLocationConstraints &&
             !query.hasAttributeConstraints)) {
       return const <int, SemanticSearchHit>{};
     }
-    return _metadataOnlyHits(strictMetadataCandidates, query, isExact: false);
+    final hits = _metadataOnlyHits(
+      strictMetadataCandidates,
+      query,
+      isExact: false,
+    );
+    return <int, SemanticSearchHit>{
+      for (final entry in hits.entries)
+        if (!existingRelatedHits.containsKey(entry.key)) entry.key: entry.value,
+    };
   }
 
   bool _shouldUseGlobalPoiSemanticRecall(
     SemanticSearchQuery query,
     List<PhotoEntity> relaxedCandidates,
   ) {
-    if (!query.hasPositiveSemantics || query.locations.isEmpty) {
-      return false;
-    }
-    final hasSpecificPoi = query.locations.any(
-      (location) => const <String>{
-        'poi',
-        'scenic_area',
-        'campus',
-        'business_area',
-        'neighborhood',
-      }.contains(location.type),
-    );
-    return hasSpecificPoi && relaxedCandidates.length < 12;
+    return false;
   }
 
   @visibleForTesting
@@ -760,17 +795,21 @@ class SemanticPhotoSearchService {
     required bool isExact,
   }) {
     final location = _metadataMatcher.matchLocation(photo, query.locations);
+    final textFeatureMatch = _textFeatureMatch(photo, query.rawQuery);
     final explanation = <String>[
       if (query.hasTimeConstraints) 'time filters matched',
       if (location.matchedLocations.isNotEmpty)
         'location: ${location.matchedLocations.join(' / ')}',
       if (query.hasAttributeConstraints) 'photo attributes matched',
+      if (textFeatureMatch.score > 0)
+        'text features: ${textFeatureMatch.matchedTerms.join(' / ')}',
       if (!isExact) 'relaxed metadata match',
     ];
     final locationScore = query.locations.isEmpty ? 1.0 : location.score;
+    final score = locationScore + textFeatureMatch.score;
     return SemanticSearchHit(
       photoId: photo.id,
-      score: isExact ? locationScore : locationScore * 0.8,
+      score: isExact ? score : score * 0.8,
       semanticScore: 0,
       qualifiedPositiveScore: 0,
       negativeScore: 0,
@@ -782,6 +821,143 @@ class SemanticPhotoSearchService {
       explanation: explanation,
       isExactMatch: isExact,
     );
+  }
+
+  Map<int, SemanticSearchHit> _textFeatureFallbackHits({
+    required String rawQuery,
+    required List<PhotoEntity> candidates,
+    required Set<int> exactIds,
+    required Map<int, SemanticSearchHit> existingRelatedHits,
+  }) {
+    final hits = <int, SemanticSearchHit>{};
+    for (final photo in candidates) {
+      if (exactIds.contains(photo.id) ||
+          existingRelatedHits.containsKey(photo.id)) {
+        continue;
+      }
+      final match = _textFeatureMatch(photo, rawQuery);
+      if (match.score < _textFeatureFallbackThreshold) {
+        continue;
+      }
+      hits[photo.id] = SemanticSearchHit(
+        photoId: photo.id,
+        score: match.score,
+        semanticScore: 0,
+        qualifiedPositiveScore: 0,
+        negativeScore: 0,
+        coarseTagBonus: 0,
+        matchedCoarseTags: const <String>[],
+        matchedLocations: const <String>[],
+        bestPositiveSemantic: null,
+        bestNegativeSemantic: null,
+        explanation: <String>[
+          'text fallback: ${match.matchedTerms.join(' / ')}',
+        ],
+        isExactMatch: false,
+      );
+    }
+    return hits;
+  }
+
+  @visibleForTesting
+  double textFeatureScoreForTesting(PhotoEntity photo, String rawQuery) {
+    return _textFeatureMatch(photo, rawQuery).score;
+  }
+
+  _TextFeatureMatch _textFeatureMatch(PhotoEntity photo, String rawQuery) {
+    final normalizedQuery = _normalizeTextForSearch(rawQuery);
+    if (normalizedQuery.length < 2) {
+      return const _TextFeatureMatch.empty();
+    }
+    final terms = _textSearchTerms(rawQuery);
+    if (terms.isEmpty) {
+      return const _TextFeatureMatch.empty();
+    }
+
+    final caption = _normalizeTextForSearch(photo.aiCaption ?? '');
+    final ocrText = _normalizeTextForSearch(
+      OcrPolicy.effectiveText(photo.ocrText),
+    );
+    final ocrTags = OcrPolicy.effectiveTags(photo.ocrTags ?? const <String>[])
+        .map(_normalizeTextForSearch)
+        .where((item) => item.length >= 2)
+        .toList(growable: false);
+    final sources = <({String label, String text})>[
+      if (caption.isNotEmpty) (label: 'caption', text: caption),
+      if (ocrText.isNotEmpty) (label: 'ocr', text: ocrText),
+      if (ocrTags.isNotEmpty) (label: 'ocr_tags', text: ocrTags.join(' ')),
+    ];
+    if (sources.isEmpty) {
+      return const _TextFeatureMatch.empty();
+    }
+
+    var score = 0.0;
+    final matchedTerms = <String>{};
+    for (final source in sources) {
+      if (source.text.contains(normalizedQuery)) {
+        score += source.label == 'caption' ? 0.18 : 0.26;
+        matchedTerms.add(source.label);
+      }
+      for (final term in terms) {
+        if (source.text.contains(term)) {
+          score += source.label == 'caption' ? 0.035 : 0.055;
+          matchedTerms.add(term);
+        }
+      }
+    }
+    if (matchedTerms.isEmpty) {
+      return const _TextFeatureMatch.empty();
+    }
+    return _TextFeatureMatch(
+      score: score.clamp(0.0, _textFeatureMaxBonus),
+      matchedTerms: matchedTerms.take(8).toList(growable: false),
+    );
+  }
+
+  List<String> _textSearchTerms(String rawQuery) {
+    final normalized = _normalizeTextForSearch(rawQuery);
+    final terms = <String>{};
+    final cjkPattern = RegExp(r'[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+');
+    for (final match in cjkPattern.allMatches(normalized)) {
+      final text = match.group(0) ?? '';
+      if (text.length >= 2) {
+        terms.add(text);
+      }
+      if (text.length > 4) {
+        for (var i = 0; i <= text.length - 2; i++) {
+          terms.add(text.substring(i, i + 2));
+        }
+      }
+    }
+    final asciiPattern = RegExp(r'[a-z0-9][a-z0-9._-]*');
+    for (final match in asciiPattern.allMatches(normalized)) {
+      final text = match.group(0) ?? '';
+      if (text.length >= 2) {
+        terms.add(text);
+      }
+    }
+    const stopWords = <String>{
+      '照片',
+      '图片',
+      '相册',
+      '搜索',
+      '查找',
+      '里面',
+      '附近',
+      '一些',
+      '全部',
+      '白天',
+      '晚上',
+    };
+    terms.removeWhere(stopWords.contains);
+    return terms.toList(growable: false);
+  }
+
+  String _normalizeTextForSearch(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'\s+'), '')
+        .replaceAll(RegExp(r'''[，。！？、；：,.!?;:"'“”‘’（）()\[\]{}<>《》]'''), '');
   }
 
   double _bestLocationScore(
@@ -949,6 +1125,15 @@ class _NegativeSemanticAggregate {
 
   final double negativeScore;
   final String? bestNegativeSemantic;
+}
+
+class _TextFeatureMatch {
+  const _TextFeatureMatch({required this.score, required this.matchedTerms});
+
+  const _TextFeatureMatch.empty() : score = 0, matchedTerms = const <String>[];
+
+  final double score;
+  final List<String> matchedTerms;
 }
 
 class _SearchEmbeddingChoice {

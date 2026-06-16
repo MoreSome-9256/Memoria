@@ -127,6 +127,27 @@ class SemanticSearchLocation {
   bool get hasResolvedCenter =>
       centerLatAmapE6 != null && centerLonAmapE6 != null;
 
+  SemanticSearchLocation copyWithType(String nextType) {
+    return SemanticSearchLocation(
+      text: text,
+      type: nextType,
+      aliases: aliases,
+      timezone: timezone,
+      utcOffsetMinutes: utcOffsetMinutes,
+      strictness: strictness,
+      allowDescendants: allowDescendants,
+      allowNearbySiblings: allowNearbySiblings,
+      countryCandidates: countryCandidates,
+      amapPoiId: amapPoiId,
+      amapAoiId: amapAoiId,
+      adcode: adcode,
+      centerLatAmapE6: centerLatAmapE6,
+      centerLonAmapE6: centerLonAmapE6,
+      coreRadiusMeters: coreRadiusMeters,
+      softRadiusMeters: softRadiusMeters,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'text': text,

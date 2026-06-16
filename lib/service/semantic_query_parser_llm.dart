@@ -32,6 +32,7 @@ extension _SemanticQueryParserLlm on SemanticQueryParserService {
 
       try {
         final jsonObject = _decodeJsonObject(response);
+        _validateLlmSelfCheck(jsonObject);
         return _buildStructuredQueryFromJsonObject(
           rawQuery: rawQuery,
           jsonObject: jsonObject,
@@ -75,6 +76,11 @@ Required top-level schema:
 {
   "version": 1,
   "raw_query": "$rawQuery",
+  "analysis_steps": {
+    "time_date_extraction": {"hard_filters": [], "implicit_filters": [], "unresolved": []},
+    "geo_extraction": {"administrative_places": [], "poi_places": [], "ambiguous_places": []},
+    "visual_content_inference": {"positive_visuals_en": [], "negative_visuals_en": [], "notes": []}
+  },
   "embedding_queries_en": [],
   "objectbox_filters": {
     "absolute_date_ranges": [],
@@ -85,35 +91,56 @@ Required top-level schema:
   },
   "soft_filters": {"visual_terms_original": [], "visual_terms_en": [], "geo": []},
   "negative_filters": {"visual_terms_en": [], "geo_terms": []},
-  "fallback_policy": {"enable_possible_results": true, "show_possible_only_when_strict_empty": true}
+  "fallback_policy": {"enable_possible_results": true, "show_possible_only_when_strict_empty": true},
+  "self_check": {
+    "all_user_terms_accounted_for": true,
+    "time_constraints_complete": true,
+    "geo_constraints_complete": true,
+    "visual_semantics_do_not_contain_named_places": true,
+    "mechanical_constraints_not_replaced_by_semantics": true,
+    "issues": []
+  }
 }
 
 Rules:
-0. Build a complete one-pass QueryPlan. Put every mechanically filterable condition in objectbox_filters.
-1. Every text value in embedding_queries_en, soft_filters.visual_terms_en, and negative_filters.visual_terms_en must be English. MobileCLIP text alignment is English-first.
+0. Build the plan in three internal steps, then self-check before returning:
+   Step A time/date: extract explicit dates, recurring calendar periods, weekdays, and high-confidence implicit local time windows.
+   Step B geo: extract administrative places separately from POIs, scenic areas, campuses, business areas, and landmarks.
+   Step C visual content: infer only visible English semantics that are not directly searchable by local indexes.
+   Finally fill self_check. If any checklist item is false, revise the JSON before returning. Do not return an unchecked draft.
+1. Put every mechanically filterable condition in objectbox_filters.
+2. Every text value in embedding_queries_en, soft_filters.visual_terms_en, and negative_filters.visual_terms_en must be English. MobileCLIP text alignment is English-first.
    These fields must contain visual meaning only. Never repeat exact dates, years, clock times, named cities, districts, POIs, coordinates, or other precise metadata in semantic text.
    Abstract visible context such as "a coastal city", "spring scenery", "afternoon light", or "night atmosphere" is allowed.
-2. Use absolute_date_ranges for explicit years or relative dates, annual_day_ranges for recurring calendar periods, minute_of_day_ranges for local time-of-day, and weekdays for weekday constraints.
+3. Use absolute_date_ranges for explicit years or relative dates, annual_day_ranges for recurring calendar periods, minute_of_day_ranges for local time-of-day, and weekdays for weekday constraints.
    For recurring seasons, months, holidays, and month-day spans, output human-readable MM-DD strings such as {"start_date":"03-01","end_date":"05-31"} or {"start_date":"10-01","end_date":"10-07"}; do not calculate day-of-year in the LLM.
-   Also extract high-confidence implicit mechanical meaning. For example, sunset/晚霞/黄昏 implies late afternoon through early evening, sunrise/朝霞 implies early morning, and a starry sky implies night. Keep the visible concept in semantic fields as well. Do not invent weak or controversial time constraints from objects that can occur all day.
-3. Keep Chinese place names in objectbox_filters.geo. Do not translate raw_name, normalized_names, or amap_query_keywords. Never invent coordinates or decide that two places are identical.
-4. For exact POIs use strictness="exact". For countries, provinces, cities, and districts use strictness="broad". Set allow_nearby_siblings=true only when the user explicitly says nearby, around, 周边, 附近, or 旁边.
-5. Do not put scene words such as beach, park, night view, grassland, or starry sky into objectbox_filters.geo unless they are part of an official place name.
-6. A phrase such as "威海海边" contains a hard city constraint (威海) plus seaside visual semantics. Never replace it with another coastal city, and distinguish sea/coast from lakes and rivers with negative_filters.visual_terms_en when needed.
-7. Preserve specificity. "青岛西海岸" is more specific than "青岛"; "南京夫子庙" is more specific than "南京".
-8. embedding_queries_en is the precision layer. Return 2 to 5 independent, concrete, visually observable English descriptions that jointly cover the required subject, scene, action, atmosphere, and distinguishing details.
-9. soft_filters.visual_terms_en is the controlled recall layer. Return 2 to 4 alternative visible formulations for the same intent. They must never change explicit place, time, subject, medium, or scene type.
-10. negative_filters.visual_terms_en contains contrastive exclusions and likely near-misses, such as sea versus lake or wedding versus an ordinary group photo.
-11. Keep exact facts hard. Do not silently move explicit dates, weekdays, times, or named places into soft_filters.
-12. Geo strictness and descendant flags describe user intent only. The app, local cache, and Amap resolve actual place facts.
-13. If no visual matching is needed, embedding_queries_en may be empty. Never add a generic visual query merely to fill the field.
-14. Do not use named places as a substitute for visible semantics. Put named places in objectbox_filters.geo and separately describe visible content.
-15. If the query is ambiguous, choose the most literal interpretation and encode alternatives only in soft_filters. Never invent a different city, event, or season.
-16. Before returning, verify that every noun and modifier in the user query is represented by objectbox_filters, embedding_queries_en, soft_filters, or negative_filters.
-17. Remove all mechanically searchable place and time meaning from visual semantics. For "青岛的海边", geo must contain 青岛 and visual semantics should describe only beach, sea, coast, and waves. Do not mention Qingdao or a coastal city in visual semantics.
-18. If the query contains only an administrative place such as a country, province, city, or district, or only a date/time filter, leave embedding_queries_en and soft_filters.visual_terms_en empty. For "青岛", return geo filters and no visual semantics so all mechanically matching photos remain eligible.
-19. A specific POI, scenic area, campus, business area, or landmark may use concise visible semantics based on stable place knowledge, because photo metadata may be shifted or incomplete. The place itself must still be written to objectbox_filters.geo, but semantic fields must contain no place names, translated place names, aliases, city names, district names, or POI names. For "五四广场", keep 五四广场 as a POI geo filter and use only visible semantics such as "a city square" and "a square near the sea with a large red landmark sculpture". Never write "五四广场", "May Fourth Square", "青岛", or "Qingdao" in semantic fields.
-20. Prefer precision for implicit mechanical constraints: add them only when the phrase itself strongly entails the constraint. "晚霞" must include a local late-afternoon/evening window and sunset semantics so it does not retrieve morning glow; "朝霞" must include an early-morning window. Explicit user time always overrides an inferred window.
+   Also extract high-confidence implicit mechanical meaning. For example, 白天/daytime/daylight implies a local daylight window, sunset/晚霞/黄昏 implies late afternoon through early evening, sunrise/朝霞 implies early morning, and a starry sky implies night. Keep the visible concept in semantic fields as well. Do not invent weak or controversial time constraints from objects that can occur all day.
+4. Keep Chinese place names in objectbox_filters.geo. Do not translate raw_name, normalized_names, or amap_query_keywords. Never invent coordinates or decide that two places are identical.
+5. Classify geo with a clear prefix discipline:
+   - country/province/city/district are administrative places. A standalone Chinese name ending with 省, 市, 县, 自治州, or 自治区 is usually administrative unless the full phrase is an official POI name. Be careful: names ending with 景区, 风景区, 园区, 校区, 厂区, 街区, or 商区 are not automatically districts.
+   - POI/scenic_area/campus/business_area/neighborhood are named venues, scenic spots, campuses, business areas, or landmarks.
+   - If a query combines an administrative place and a POI-like description, emit both only when both are explicit; otherwise keep the administrative place hard and put generic visible intent into English semantics.
+   - Do not label a city or county as poi just because an Amap POI search might return a similarly named record.
+6. For exact POIs use strictness="exact". For countries, provinces, cities, and districts use strictness="broad". Set allow_descendants=true for administrative places unless the user explicitly asks for the administrative office/building itself. Set allow_nearby_siblings=true only when the user explicitly says nearby, around, 周边, 附近, or 旁边.
+7. Do not put scene words such as beach, park, night view, grassland, ancient town, old street, or starry sky into objectbox_filters.geo unless they are part of an official place name.
+8. A phrase such as "威海海边" contains a hard city constraint (威海) plus seaside visual semantics. Never replace it with another coastal city, and distinguish sea/coast from lakes and rivers with negative_filters.visual_terms_en when needed.
+9. Preserve specificity. "青岛西海岸" is more specific than "青岛"; "南京夫子庙" is more specific than "南京".
+10. embedding_queries_en is the precision layer. First identify the primary visual subject: the simplest visible noun or noun phrase that the user most wants to find, such as "cat", "flower", "meal", "beach", "old building", "graduation ceremony", or "sunset sky". At least one embedding query must be this minimal direct subject phrase, and the other phrases must stay centered on the same subject. Do not let background, venue, atmosphere, or inferred context become more important than the subject.
+11. Return 2 to 5 independent, concrete, visually observable English descriptions that jointly cover the required subject, scene, action, atmosphere, and distinguishing details. Start from the minimal direct phrase, then add controlled variants around the same subject. Prefer hit rate and literal matching over clever or over-specific scene guessing.
+12. For place + subject queries, put the place name itself in objectbox_filters.geo and keep the visual semantics focused on the subject. You may add stable, conservative, visually observable place characteristics as secondary context only when they help recognition, but they must not replace or outrank the subject. Example: "某某学校的猫" means geo = 某某学校 with type campus, and visual subject = cat. Good embedding queries include "cat", "a cat", "a cat outdoors". A secondary phrase like "a cat in an outdoor campus-like setting" is acceptable only after the direct cat phrases. Bad embedding queries include "campus life with animals", "students and cats", or making "campus" the main phrase, because those may match campus more than cat or invent extra subjects.
+13. If the user gives only a subject, use the subject as the primary visual phrase. If the user gives subject + modifiers, preserve the subject and add modifiers only as secondary variants. Do not replace a concrete subject with a broad scene phrase. "猫" should not become "campus", "animal scene", or "daily life"; "学校的猫" should not become "campus life".
+14. soft_filters.visual_terms_en is the controlled recall layer. Return 2 to 4 alternative visible formulations for the same intent. They must never change explicit place, time, subject, medium, or scene type, and they must remain subject-centered.
+15. negative_filters.visual_terms_en contains contrastive exclusions and likely near-misses, such as sea versus lake or wedding versus an ordinary group photo.
+16. Keep exact facts hard. Do not silently move explicit dates, weekdays, times, or named places into soft_filters.
+17. Geo strictness and descendant flags describe user intent only. The app, local cache, and Amap resolve actual place facts.
+18. If no visual matching is needed, embedding_queries_en may be empty. Never add a generic visual query merely to fill the field.
+19. Do not use named places as a substitute for visible semantics. Put named places in objectbox_filters.geo and separately describe visible content.
+20. If the query is ambiguous, choose the most literal interpretation and encode alternatives only in soft_filters. Never invent a different city, event, season, person, animal, object, or activity.
+21. Before returning, verify that every noun and modifier in the user query is represented by objectbox_filters, embedding_queries_en, soft_filters, or negative_filters, and verify that the primary visual subject remains the highest-priority semantic concept.
+22. Remove all mechanically searchable place and time meaning from visual semantics. For "青岛的海边", geo must contain 青岛 and visual semantics should describe only beach, sea, coast, and waves. Do not mention Qingdao or a coastal city in visual semantics.
+23. If the query contains only an administrative place such as a country, province, city, or district, or only a date/time filter, leave embedding_queries_en and soft_filters.visual_terms_en empty. For "青岛", return geo filters and no visual semantics so all mechanically matching photos remain eligible.
+24. A specific POI, scenic area, campus, business area, or landmark may use concise visible semantics based on stable, conservative place knowledge, because photo metadata may be shifted or incomplete. The place itself must still be written to objectbox_filters.geo, but semantic fields must not contain place names, translated place names, aliases, city names, district names, or POI names. For "五四广场", keep 五四广场 as a POI geo filter and use visible semantics such as "a city square" and "a square near the sea with a large red landmark sculpture". Never write "五四广场", "May Fourth Square", "青岛", or "Qingdao" in semantic fields. Do not invent unstable details such as people, events, weather, shops, or activities unless the user explicitly asks for them.
+25. Prefer precision for implicit mechanical constraints: add them only when the phrase itself strongly entails the constraint. "白天" and "daytime" must include a local daylight window; "晚霞" must include a local late-afternoon/evening window and sunset semantics so it does not retrieve morning glow; "朝霞" must include an early-morning window. Explicit user time always overrides an inferred window.
 
 Available local indexes:
 - absolute timestamp ranges
@@ -122,17 +149,153 @@ Available local indexes:
   - single months, such as 5月 / May = every year from 05-01 through 05-31 unless the user names a specific year
   - holidays, such as National Day / 国庆节 / 十一假期 = every year from 10-01 through 10-07 unless the user names a specific year
 - recurring month filters are supported, but prefer annual MM-DD ranges because they are precise and human-readable
-- local minute-of-day windows for phrases such as night, evening, sunset, sunrise, morning, noon, afternoon, golden hour, blue hour, and late night
+- local minute-of-day windows for phrases such as daytime, daylight, 白天, 日间, night, evening, sunset, sunrise, morning, noon, afternoon, golden hour, blue hour, and late night
 - weekday filters
 - province, city, district, POI, AOI, business area, formatted address, and resolved coordinate metadata
 - coarse visual tags from the catalog
 - MobileCLIP image/video embeddings
 - limited face count, smile, and joy attributes
 
-When the user gives multiple requirements, treat them as AND constraints. For example, "夜晚的大明湖" means place = 大明湖 AND local night window AND visible night/lake scenery. Do not allow a high semantic score for "night" to replace the place constraint. If a requirement can be represented by a local index, put it in objectbox_filters first; semantics may describe the visible part but must not be the only representation.
+When the user gives multiple requirements, treat them as AND constraints. For example, "夜晚的大明湖" means place = 大明湖 AND local night window AND visible night/lake scenery. "白天的古建筑街区" means local daylight window AND visible old architecture or old street. Do not allow a high semantic score for a time word to replace a time index, and do not allow a high semantic score to replace the place constraint. If a requirement can be represented by a local index, put it in objectbox_filters first; semantics may describe the visible part but must not be the only representation.
 
 Few-shot examples:
 The examples below illustrate intent separation. Always emit the QueryPlan v1 schema above, not the legacy field names shown in examples.
+
+Preferred QueryPlan v1 examples:
+User: 某某市
+JSON:
+{
+  "version": 1,
+  "raw_query": "某某市",
+  "analysis_steps": {
+    "time_date_extraction": {"hard_filters": [], "implicit_filters": [], "unresolved": []},
+    "geo_extraction": {"administrative_places": ["某某市"], "poi_places": [], "ambiguous_places": []},
+    "visual_content_inference": {"positive_visuals_en": [], "negative_visuals_en": [], "notes": ["administrative-only query"]}
+  },
+  "embedding_queries_en": [],
+  "objectbox_filters": {
+    "absolute_date_ranges": [],
+    "annual_day_ranges": [],
+    "minute_of_day_ranges": [],
+    "weekdays": [],
+    "geo": [
+      {
+        "raw_name": "某某市",
+        "kind_hint": "city",
+        "normalized_names": ["某某市", "某某"],
+        "amap_query_keywords": ["某某市"],
+        "strictness": "broad",
+        "allow_descendants": true,
+        "allow_nearby_siblings": false
+      }
+    ]
+  },
+  "soft_filters": {"visual_terms_original": [], "visual_terms_en": [], "geo": []},
+  "negative_filters": {"visual_terms_en": [], "geo_terms": []},
+  "fallback_policy": {"enable_possible_results": true, "show_possible_only_when_strict_empty": true},
+  "self_check": {
+    "all_user_terms_accounted_for": true,
+    "time_constraints_complete": true,
+    "geo_constraints_complete": true,
+    "visual_semantics_do_not_contain_named_places": true,
+    "mechanical_constraints_not_replaced_by_semantics": true,
+    "issues": []
+  }
+}
+
+User: 白天 古城
+JSON:
+{
+  "version": 1,
+  "raw_query": "白天 古城",
+  "analysis_steps": {
+    "time_date_extraction": {"hard_filters": [], "implicit_filters": ["白天 -> local daylight window"], "unresolved": []},
+    "geo_extraction": {"administrative_places": [], "poi_places": [], "ambiguous_places": []},
+    "visual_content_inference": {"positive_visuals_en": ["old town street", "historic buildings"], "negative_visuals_en": ["night street scene"], "notes": []}
+  },
+  "embedding_queries_en": [
+    "an old town street in daylight",
+    "historic buildings and traditional streets under bright daytime light"
+  ],
+  "objectbox_filters": {
+    "absolute_date_ranges": [],
+    "annual_day_ranges": [],
+    "minute_of_day_ranges": [
+      {"start_minute": 420, "end_minute": 1110, "reason": "daytime means local daylight hours"}
+    ],
+    "weekdays": [],
+    "geo": []
+  },
+  "soft_filters": {
+    "visual_terms_original": ["白天", "古城"],
+    "visual_terms_en": ["old town scenery in daylight", "historic street scene during the day"],
+    "geo": []
+  },
+  "negative_filters": {"visual_terms_en": ["night street scene"], "geo_terms": []},
+  "fallback_policy": {"enable_possible_results": true, "show_possible_only_when_strict_empty": true},
+  "self_check": {
+    "all_user_terms_accounted_for": true,
+    "time_constraints_complete": true,
+    "geo_constraints_complete": true,
+    "visual_semantics_do_not_contain_named_places": true,
+    "mechanical_constraints_not_replaced_by_semantics": true,
+    "issues": []
+  }
+}
+
+User: 某某学校的猫
+JSON:
+{
+  "version": 1,
+  "raw_query": "某某学校的猫",
+  "analysis_steps": {
+    "time_date_extraction": {"hard_filters": [], "implicit_filters": [], "unresolved": []},
+    "geo_extraction": {"administrative_places": [], "poi_places": ["某某学校"], "ambiguous_places": []},
+    "visual_content_inference": {
+      "positive_visuals_en": ["cat"],
+      "negative_visuals_en": [],
+      "notes": ["primary visual subject is cat; campus is a hard geo filter and only optional secondary visual context"]
+    }
+  },
+  "embedding_queries_en": [
+    "cat",
+    "a cat",
+    "a cat outdoors",
+    "a cat in an outdoor campus-like setting"
+  ],
+  "objectbox_filters": {
+    "absolute_date_ranges": [],
+    "annual_day_ranges": [],
+    "minute_of_day_ranges": [],
+    "weekdays": [],
+    "geo": [
+      {
+        "raw_name": "某某学校",
+        "kind_hint": "campus",
+        "normalized_names": ["某某学校"],
+        "amap_query_keywords": ["某某学校"],
+        "strictness": "exact",
+        "allow_descendants": true,
+        "allow_nearby_siblings": false
+      }
+    ]
+  },
+  "soft_filters": {
+    "visual_terms_original": ["猫"],
+    "visual_terms_en": ["domestic cat", "small cat animal"],
+    "geo": []
+  },
+  "negative_filters": {"visual_terms_en": [], "geo_terms": []},
+  "fallback_policy": {"enable_possible_results": true, "show_possible_only_when_strict_empty": true},
+  "self_check": {
+    "all_user_terms_accounted_for": true,
+    "time_constraints_complete": true,
+    "geo_constraints_complete": true,
+    "visual_semantics_do_not_contain_named_places": true,
+    "mechanical_constraints_not_replaced_by_semantics": true,
+    "issues": []
+  }
+}
 
 User: 去年夏天青岛海边的记忆
 JSON:
@@ -476,7 +639,17 @@ $rawQuery
             final rawName = (item['raw_name'] ?? '').toString().trim();
             return <String, dynamic>{
               'text': rawName,
-              'type': _normalizeGeoKind(item['kind_hint']),
+              'type': _normalizeGeoKind(
+                item['kind_hint'],
+                rawName: rawName,
+                aliases: <String>{
+                  ..._readFlexibleStringList(item['normalized_names']),
+                  ..._readFlexibleStringList(item['amap_query_keywords']),
+                  (item['province_hint'] ?? '').toString().trim(),
+                  (item['city_hint'] ?? '').toString().trim(),
+                  (item['district_hint'] ?? '').toString().trim(),
+                },
+              ),
               'aliases': <String>{
                 rawName,
                 ..._readFlexibleStringList(item['normalized_names']),
@@ -512,6 +685,28 @@ $rawQuery
       'notes': 'QueryPlan v${jsonObject['version'] ?? 1}',
       'raw_query': jsonObject['raw_query'] ?? rawQuery,
     };
+  }
+
+  void _validateLlmSelfCheck(Map<String, dynamic> jsonObject) {
+    final selfCheck = jsonObject['self_check'];
+    if (selfCheck is! Map) {
+      throw const FormatException('search plan is missing self_check');
+    }
+    for (final key in const <String>[
+      'all_user_terms_accounted_for',
+      'time_constraints_complete',
+      'geo_constraints_complete',
+      'visual_semantics_do_not_contain_named_places',
+      'mechanical_constraints_not_replaced_by_semantics',
+    ]) {
+      if (selfCheck[key] != true) {
+        throw FormatException('search plan self_check failed: $key');
+      }
+    }
+    final issues = selfCheck['issues'];
+    if (issues is List && issues.isNotEmpty) {
+      throw FormatException('search plan self_check issues: $issues');
+    }
   }
 
   List<Map<String, dynamic>> _mapAbsoluteRanges(dynamic value) {
@@ -578,8 +773,19 @@ $rawQuery
         .toList(growable: false);
   }
 
-  String _normalizeGeoKind(dynamic value) {
+  String _normalizeGeoKind(
+    dynamic value, {
+    required String rawName,
+    required Iterable<String> aliases,
+  }) {
     final kind = value?.toString().trim().toLowerCase() ?? '';
+    final adminKind = _inferAdministrativeGeoKind(<String>{
+      rawName,
+      ...aliases,
+    });
+    if (adminKind != null && (kind.isEmpty || kind == 'poi')) {
+      return adminKind;
+    }
     if (const <String>{
       'country',
       'province',
@@ -588,7 +794,7 @@ $rawQuery
     }.contains(kind)) {
       return kind;
     }
-    if (kind == 'scenic') return 'scenic_area';
+    if (kind == 'scenic' || kind == 'scenic_area') return 'scenic_area';
     if (kind == 'region_concept') return 'region_concept';
     if (const <String>{
       'development_zone',
@@ -600,6 +806,25 @@ $rawQuery
       return kind;
     }
     return 'poi';
+  }
+
+  String? _inferAdministrativeGeoKind(Iterable<String> names) {
+    for (final value in names) {
+      final normalized = value.trim();
+      if (normalized.isEmpty) {
+        continue;
+      }
+      if (RegExp(r'^[\u4e00-\u9fff]{2,}(省|自治区|特别行政区)$').hasMatch(normalized)) {
+        return 'province';
+      }
+      if (RegExp(r'^[\u4e00-\u9fff]{2,}(市|自治州)$').hasMatch(normalized)) {
+        return 'city';
+      }
+      if (RegExp(r'^[\u4e00-\u9fff]{2,}(县|旗|自治县)$').hasMatch(normalized)) {
+        return 'district';
+      }
+    }
+    return null;
   }
 
   void _validateSearchPlan({
@@ -1236,6 +1461,10 @@ Invalid response:
 ${invalidResponse ?? ''}
 
 Repair task:
-Return exactly one corrected JSON object following the same schema. Keep all semantic phrases in English. Do not include Markdown or explanation.
+Return exactly one corrected JSON object following the same schema, including analysis_steps and self_check.
+Redo the three steps: time/date extraction, geo extraction, and visual content inference.
+If a user term implies a local index such as date, weekday, time of day, or place, put it in objectbox_filters and set the corresponding self_check field to true only after verifying it.
+Keep all semantic phrases in English and free of named places. Do not include Markdown or explanation.
+Keep the primary visual subject as the highest-priority semantic concept. Place-related visible characteristics may be secondary context, but place names and broad venue context must not replace the requested subject.
 ''';
 }

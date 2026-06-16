@@ -20,6 +20,7 @@ class PlaceResolverService {
   }
 
   Future<SemanticSearchLocation> resolve(SemanticSearchLocation input) async {
+    input = _withInferredAdministrativeType(input);
     if (input.type == 'region_concept') return input;
     final box = ObjectBoxService().store.box<PlaceResolveCacheEntity>();
     final normalized = _normalize(input.text);
@@ -42,13 +43,20 @@ class PlaceResolverService {
       if (resolved != null) break;
     }
     if (resolved == null) return input;
-    final radius = PlaceSearchPolicy.radiusFor(input.type);
+    final resolvedType =
+        _inferAdministrativeType(<String?>{
+          resolved.name,
+          input.text,
+          ...input.aliases,
+        }) ??
+        input.type;
+    final radius = PlaceSearchPolicy.radiusFor(resolvedType);
     final cache = PlaceResolveCacheEntity()
       ..lookupKey = lookup
       ..normalizedText = normalized
       ..queryText = input.text
       ..cityHint = cityHint
-      ..resolvedKind = input.type
+      ..resolvedKind = resolvedType
       ..canonicalName = resolved.name
       ..amapPoiId = resolved.poiId
       ..province = resolved.province
@@ -74,9 +82,18 @@ class PlaceResolverService {
     SemanticSearchLocation input,
     PlaceResolveCacheEntity cache,
   ) {
-    final radius = PlaceSearchPolicy.radiusFor(input.type);
+    final resolvedType =
+        _inferAdministrativeType(<String?>{
+          cache.canonicalName,
+          input.text,
+          ...input.aliases,
+        }) ??
+        (cache.resolvedKind.trim().isNotEmpty
+            ? cache.resolvedKind
+            : input.type);
+    final radius = PlaceSearchPolicy.radiusFor(resolvedType);
     final aliases = PlaceSearchPolicy.searchAliases(
-      type: input.type,
+      type: resolvedType,
       primary: input.text,
       aliases: input.aliases,
       canonicalName: cache.canonicalName,
@@ -85,7 +102,7 @@ class PlaceResolverService {
       text: cache.canonicalName?.trim().isNotEmpty == true
           ? cache.canonicalName!
           : input.text,
-      type: input.type,
+      type: resolvedType,
       aliases: aliases,
       timezone: input.timezone,
       utcOffsetMinutes: input.utcOffsetMinutes,
@@ -118,4 +135,39 @@ class PlaceResolverService {
     RegExp(r'[\s,，.。;；:：\-_/\\()（）]+'),
     '',
   );
+
+  SemanticSearchLocation _withInferredAdministrativeType(
+    SemanticSearchLocation input,
+  ) {
+    final inferred = _inferAdministrativeType(<String?>{
+      input.text,
+      ...input.aliases,
+    });
+    if (inferred == null || inferred == input.type) {
+      return input;
+    }
+    if (input.type != 'poi') {
+      return input;
+    }
+    return input.copyWithType(inferred);
+  }
+
+  String? _inferAdministrativeType(Iterable<String?> values) {
+    for (final value in values) {
+      final trimmed = value?.trim() ?? '';
+      if (trimmed.isEmpty) {
+        continue;
+      }
+      if (RegExp(r'^[\u4e00-\u9fff]{2,}(省|自治区|特别行政区)$').hasMatch(trimmed)) {
+        return 'province';
+      }
+      if (RegExp(r'^[\u4e00-\u9fff]{2,}(市|自治州)$').hasMatch(trimmed)) {
+        return 'city';
+      }
+      if (RegExp(r'^[\u4e00-\u9fff]{2,}(县|旗|自治县)$').hasMatch(trimmed)) {
+        return 'district';
+      }
+    }
+    return null;
+  }
 }

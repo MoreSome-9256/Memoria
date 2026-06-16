@@ -252,6 +252,69 @@ void main() {
     },
   );
 
+  test('client corrects obvious city suffix when LLM marks it as poi', () {
+    final query = SemanticQueryParserService().buildQueryFromStructuredJson(
+      rawQuery: '某某市',
+      jsonObject: <String, dynamic>{
+        'version': 1,
+        'raw_query': '某某市',
+        'embedding_queries_en': const <String>[],
+        'objectbox_filters': const <String, dynamic>{
+          'absolute_date_ranges': <Object>[],
+          'annual_day_ranges': <Object>[],
+          'minute_of_day_ranges': <Object>[],
+          'weekdays': <int>[],
+          'geo': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'raw_name': '某某市',
+              'normalized_names': <String>['某某市', '某某'],
+              'kind_hint': 'poi',
+            },
+          ],
+        },
+        'soft_filters': const <String, dynamic>{'visual_terms_en': <String>[]},
+        'negative_filters': const <String, dynamic>{
+          'visual_terms_en': <String>[],
+        },
+      },
+    );
+
+    expect(query.locations.single.type, 'city');
+    expect(query.queryType, SemanticSearchQueryType.metadata);
+  });
+
+  test('client does not treat scenic-area suffix as a district rule', () {
+    final query = SemanticQueryParserService().buildQueryFromStructuredJson(
+      rawQuery: '某某景区',
+      jsonObject: <String, dynamic>{
+        'version': 1,
+        'raw_query': '某某景区',
+        'embedding_queries_en': const <String>['a scenic tourist area'],
+        'objectbox_filters': const <String, dynamic>{
+          'absolute_date_ranges': <Object>[],
+          'annual_day_ranges': <Object>[],
+          'minute_of_day_ranges': <Object>[],
+          'weekdays': <int>[],
+          'geo': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'raw_name': '某某景区',
+              'normalized_names': <String>['某某景区'],
+              'kind_hint': 'scenic_area',
+            },
+          ],
+        },
+        'soft_filters': const <String, dynamic>{
+          'visual_terms_en': <String>['tourist scenery'],
+        },
+        'negative_filters': const <String, dynamic>{
+          'visual_terms_en': <String>[],
+        },
+      },
+    );
+
+    expect(query.locations.single.type, 'scenic_area');
+  });
+
   test('specific POI query keeps stable visible semantics', () {
     final query = SemanticQueryParserService().buildQueryFromStructuredJson(
       rawQuery: '五四广场',

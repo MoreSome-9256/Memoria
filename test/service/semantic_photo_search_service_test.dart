@@ -5,6 +5,7 @@ import 'package:photo_album/service/junk_photo_filter_service.dart';
 import 'package:photo_album/service/app_ai_settings_service.dart';
 import 'package:photo_album/service/semantic_photo_search_service.dart';
 import 'package:photo_album/service/searchable_photo_policy.dart';
+import 'package:photo_album/utils/ocr_policy.dart';
 
 PhotoEntity _photo({
   required int id,
@@ -138,26 +139,40 @@ void main() {
     expect(hits[photo.id]!.isExactMatch, isFalse);
   });
 
-  test(
-    'specific POI can use global semantic recall when geo recall is sparse',
-    () {
-      final query = SemanticSearchQuery.empty('五四广场').copyWith(
-        queryType: SemanticSearchQueryType.concrete,
-        locations: const <SemanticSearchLocation>[
-          SemanticSearchLocation(text: '五四广场', type: 'poi'),
-        ],
-        positiveSemantics: const <SemanticSearchSemanticItem>[
-          SemanticSearchSemanticItem(text: 'a city square', weight: 1),
-        ],
-      );
+  test('specific POI does not drop geo filters for global semantic recall', () {
+    final query = SemanticSearchQuery.empty('五四广场').copyWith(
+      queryType: SemanticSearchQueryType.concrete,
+      locations: const <SemanticSearchLocation>[
+        SemanticSearchLocation(text: '五四广场', type: 'poi'),
+      ],
+      positiveSemantics: const <SemanticSearchSemanticItem>[
+        SemanticSearchSemanticItem(text: 'a city square', weight: 1),
+      ],
+    );
 
-      expect(
-        SemanticPhotoSearchService().shouldUseGlobalPoiSemanticRecallForTesting(
-          query,
-          const <PhotoEntity>[],
-        ),
-        isTrue,
-      );
-    },
-  );
+    expect(
+      SemanticPhotoSearchService().shouldUseGlobalPoiSemanticRecallForTesting(
+        query,
+        const <PhotoEntity>[],
+      ),
+      isFalse,
+    );
+  });
+
+  test('OCR text contributes searchable text feature score when enabled', () {
+    final service = SemanticPhotoSearchService();
+    final photo = _photo(id: 1, timestamp: 1)
+      ..isCaptionAnalyzed = true
+      ..isOcrAnalyzed = true
+      ..ocrText = '南京东路餐厅发票 合计 128 元'
+      ..ocrTags = const <String>['餐厅发票', '南京东路'];
+
+    OcrPolicy.setRuntimeEnabled(false);
+    expect(service.textFeatureScoreForTesting(photo, '餐厅发票'), 0);
+
+    OcrPolicy.setRuntimeEnabled(true);
+    expect(service.textFeatureScoreForTesting(photo, '餐厅发票'), greaterThan(0));
+
+    OcrPolicy.setRuntimeEnabled(false);
+  });
 }

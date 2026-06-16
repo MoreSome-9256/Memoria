@@ -139,6 +139,31 @@ void main() {
     expect(hits[photo.id]!.isExactMatch, isFalse);
   });
 
+  test('metadata fallback does not replace explicit visual subject', () {
+    final service = SemanticPhotoSearchService();
+    final query = SemanticSearchQuery.empty('济南的猫').copyWith(
+      queryType: SemanticSearchQueryType.concrete,
+      locations: const <SemanticSearchLocation>[
+        SemanticSearchLocation(text: '济南', type: 'city'),
+      ],
+      positiveSemantics: const <SemanticSearchSemanticItem>[
+        SemanticSearchSemanticItem(text: 'cat', weight: 1),
+      ],
+    );
+    final photo = _photo(id: 1, timestamp: 1)..city = '济南';
+
+    final candidates = service.metadataCandidatesForTesting(<PhotoEntity>[
+      photo,
+    ], query);
+    final hits = service.metadataFallbackHitsForTesting(
+      query: query,
+      strictMetadataCandidates: candidates,
+    );
+
+    expect(candidates, <PhotoEntity>[photo]);
+    expect(hits, isEmpty);
+  });
+
   test('specific POI does not drop geo filters for global semantic recall', () {
     final query = SemanticSearchQuery.empty('五四广场').copyWith(
       queryType: SemanticSearchQueryType.concrete,

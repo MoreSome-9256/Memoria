@@ -744,6 +744,8 @@ class SemanticPhotoSearchService {
     required Map<int, SemanticSearchHit> existingRelatedHits,
   }) {
     if (strictMetadataCandidates.isEmpty ||
+        query.hasPositiveSemantics ||
+        query.hasNegativeSemantics ||
         (!query.hasTimeConstraints &&
             !query.hasLocationConstraints &&
             !query.hasAttributeConstraints)) {

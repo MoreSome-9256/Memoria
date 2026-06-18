@@ -27,6 +27,9 @@ class StoryVideoPreparationResult {
 }
 
 class StoryVideoPreparationService {
+  static const int introSeconds = 3;
+  static const int secondsPerPhoto = 3;
+
   Future<StoryVideoPreparationResult> prepare({
     required StoryGenerationRequest request,
     required StoryEntity story,
@@ -38,9 +41,11 @@ class StoryVideoPreparationService {
 
     if (request.enableAiMusic) {
       onStatus?.call('正在构思 AI 配乐');
+      final expectedVideoSeconds = _estimateVideoDurationSeconds(photos.length);
       final promptTags = <String>[
         request.title,
         request.subtitle.isEmpty ? '美好时光' : request.subtitle,
+        'target video duration about ${expectedVideoSeconds}s',
       ];
       if (photos.isNotEmpty &&
           (photos.first.aiCaption?.trim().isNotEmpty ?? false)) {
@@ -55,7 +60,7 @@ class StoryVideoPreparationService {
       onStatus?.call('正在生成专属配乐');
       preparedMusicPath = await LLMService().generateAndDownloadMusic(
         musicPrompt,
-        duration: 12,
+        duration: expectedVideoSeconds,
       );
       preparedMusicPath ??= await _servePremadeMusic(musicPrompt);
     }
@@ -82,6 +87,11 @@ class StoryVideoPreparationService {
       dynamicBeatData: dynamicBeatData,
       captions: captions,
     );
+  }
+
+  int _estimateVideoDurationSeconds(int photoCount) {
+    // StoryResultPage 会额外插入片头；单轮总长严格按「短片头 + 每张图固定秒数」计算。
+    return introSeconds + (photoCount * secondsPerPhoto);
   }
 
   Future<List<String>> _generateAutoCaptions({

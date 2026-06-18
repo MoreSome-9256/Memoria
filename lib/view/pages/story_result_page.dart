@@ -175,7 +175,6 @@ class StoryResultPage extends StatefulWidget {
           photoEntity.city ??
           photoEntity.province ??
           '未知地点',
-      path: photoEntity.path,
       dateTaken: DateTime.fromMillisecondsSinceEpoch(photoEntity.timestamp),
       tags: photoEntity.aiTags ?? const <String>[],
       caption: photoEntity.aiCaption?.trim(),
@@ -233,9 +232,6 @@ class StoryResultPage extends StatefulWidget {
     final overrideVlmCaption = overridePhoto.vlmCaption?.trim();
 
     return basePhoto.copyWith(
-      path: overridePhoto.path.trim().isNotEmpty
-          ? overridePhoto.path
-          : basePhoto.path,
       location: (overrideLocation?.isNotEmpty ?? false)
           ? overridePhoto.location
           : basePhoto.location,
@@ -317,7 +313,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
         ..createdAt = DateTime.now().millisecondsSinceEpoch
         ..updatedAt = DateTime.now().millisecondsSinceEpoch
         ..eventId = 0
-        ..photoIds = []
+        ..photoIds = _photoEntityIdsForSections(_sections)
         ..photoCount = _sections.length
         ..isManuallySaved = false;
 
@@ -334,6 +330,88 @@ class _StoryResultPageState extends State<StoryResultPage> {
     } catch (_) {
       return null;
     }
+  }
+
+  List<int> _photoEntityIdsForSections(Iterable<StorySection> sections) {
+    final ids = <int>[];
+    try {
+      final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+      for (final section in sections) {
+        final assetId = section.photo.id.trim();
+        if (assetId.isEmpty) {
+          continue;
+        }
+        final query = photoBox
+            .query(PhotoEntity_.assetId.equals(assetId))
+            .build();
+        query.limit = 1;
+        final photo = query.findFirst();
+        query.close();
+        if (photo != null && photo.id != 0) {
+          ids.add(photo.id);
+        }
+      }
+    } catch (_) {}
+    return ids;
+  }
+
+  List<StorySection> _sectionsWithResolvedPhotos(
+    Iterable<StorySection> sections,
+  ) {
+    final resolved = <StorySection>[];
+    try {
+      final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+      for (final section in sections) {
+        final assetId = section.photo.id.trim();
+        PhotoEntity? entity;
+        if (assetId.isNotEmpty) {
+          final query = photoBox
+              .query(PhotoEntity_.assetId.equals(assetId))
+              .build();
+          query.limit = 1;
+          entity = query.findFirst();
+          query.close();
+        }
+        final photo = entity == null
+            ? section.photo
+            : StoryResultPage._mergePhotoEntityData(section.photo, entity);
+        resolved.add(section.copyWith(photo: photo));
+      }
+    } catch (_) {
+      return _sections.toList(growable: false);
+    }
+    return resolved;
+  }
+
+  Future<void> _syncUnsavedStoryDraft(
+    int storyEntityId,
+    List<StorySection> sections,
+  ) async {
+    try {
+      final store = ObjectBoxService().store;
+      final storyBox = store.box<StoryEntity>();
+      final story = storyBox.get(storyEntityId);
+      if (story == null || story.isManuallySaved) {
+        return;
+      }
+
+      final sectionMaps = sections
+          .map(
+            (section) => <String, dynamic>{
+              'text': section.text,
+              'photo': section.photo,
+            },
+          )
+          .toList(growable: false);
+      story
+        ..title = widget.title
+        ..subtitle = widget.subtitle
+        ..content = StoryEntity.sectionsToMarkdown(sectionMaps)
+        ..updatedAt = DateTime.now().millisecondsSinceEpoch
+        ..photoIds = _photoEntityIdsForSections(sections)
+        ..photoCount = sections.length;
+      storyBox.put(story);
+    } catch (_) {}
   }
 
   void _editText(int index) {
@@ -669,12 +747,18 @@ class _StoryResultPageState extends State<StoryResultPage> {
     final storyEntityId = _effectiveStoryEntityId ?? await _ensureStoryEntity();
     if (!mounted) return;
 
+    final albumSections = _sectionsWithResolvedPhotos(_sections);
+    if (storyEntityId != null) {
+      await _syncUnsavedStoryDraft(storyEntityId, albumSections);
+    }
+    if (!mounted) return;
+
     final result = await Navigator.of(context).push<DigitalAlbumBookResult>(
       MaterialPageRoute<DigitalAlbumBookResult>(
         builder: (context) => DigitalAlbumBookPage(
           title: widget.title,
           subtitle: widget.subtitle,
-          sections: _sections,
+          sections: albumSections,
           storyTemplateId: widget.storyTemplateId,
           storyEntityId: storyEntityId,
         ),

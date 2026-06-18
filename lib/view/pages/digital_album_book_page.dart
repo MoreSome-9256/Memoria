@@ -223,16 +223,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
 
   AlbumBookDocument _sanitize(AlbumBookDocument document) {
     final allowedPhotoIds = _collectAllowedPhotoIds(document);
-    final photoPathById = <String, String>{
-      for (final section in _workingSections)
-        if (section.photo.id.trim().isNotEmpty &&
-            section.photo.path.trim().isNotEmpty)
-          section.photo.id: section.photo.path,
-    };
     return _validator.sanitize(
       document,
       allowedPhotoIds: allowedPhotoIds,
-      photoPathById: photoPathById,
       fallbackTitle: widget.title,
       fallbackSubtitle: widget.subtitle,
     );
@@ -339,7 +332,6 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       text: '',
       photo: Photo(
         id: element.payload['photo_id']?.toString() ?? element.id,
-        path: element.payload['path']?.toString() ?? '',
         dateTaken: parsedDate ?? DateTime.now(),
         tags: const <String>[],
         ocrTags: const <String>[],
@@ -1557,7 +1549,6 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     _updateSelectedElement((current) {
       final payload = Map<String, dynamic>.from(current.payload);
       payload['photo_id'] = replacement.assetId;
-      payload['path'] = replacement.path;
       payload['date_taken'] = replacement.createdAt.toIso8601String();
       return current.copyWith(payload: payload);
     });
@@ -3447,7 +3438,7 @@ class _ImageElementView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final path = element.payload['path']?.toString() ?? '';
+    final assetId = element.payload['photo_id']?.toString() ?? '';
     final radius = (element.style.borderRadius * 100).clamp(8, 24).toDouble();
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -3462,11 +3453,11 @@ class _ImageElementView extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
-        child: path.isEmpty
+        child: assetId.isEmpty
             ? Container(color: const Color(0xFFEFE3D5))
             : AssetBackedImage(
-                path: path,
-                assetId: element.payload['photo_id']?.toString(),
+                path: '',
+                assetId: assetId,
                 width: double.infinity,
                 fit: BoxFit.cover,
               ),

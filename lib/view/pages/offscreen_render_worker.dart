@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -24,7 +25,6 @@ import '../../service/video_cache_service.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 import '../../models/entity/story_entity.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
-import 'package:gal/gal.dart';
 import '../widgets/asset_backed_image.dart';
 import '../widgets/photo_image.dart';
 
@@ -120,6 +120,8 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   bool _isExporting = false; // 🌟 控制是否处于导出模式
 
   List<dynamic> _beatData = []; // 存完整的 JSON 数据（包含 ms 和 energy）
+  late final Future<void> _beatLoadFuture;
+  int? _audioDurationMs;
 
   // 💥 震动与闪光控制器
   late AnimationController _vfxController;
@@ -127,6 +129,15 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   @override
   void initState() {
     super.initState();
+    _shakeIntensity = widget.shakeIntensity;
+    _shakeFrequency = widget.shakeFrequency;
+    _glitchIntensity = widget.glitchIntensity;
+    _enableFlash = widget.enableFlash;
+    _textBlurIntensity = widget.textBlurIntensity;
+    _currentTextStyle = widget.currentTextStyle;
+    _textYPosition = widget.textYPosition;
+    _textSize = widget.textSize;
+
     _vfxController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
@@ -148,7 +159,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     // 我们强制让它处于导出模式
     _isExporting = true;
 
-    unawaited(_loadBeatDataFromLocalAnalyzer());
+    _beatLoadFuture = _loadBeatDataFromLocalAnalyzer();
 
     if (widget.sections.isNotEmpty) {
       _currentLyricText = widget.sections[0].text;
@@ -172,6 +183,10 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     setState(() {
       _beatData = data;
       _beatIntervalMs = (60000 / bpmRaw.toDouble()).round();
+      final durationRaw = beatResponse['duration_ms'];
+      _audioDurationMs = durationRaw is num && durationRaw > 0
+          ? durationRaw.toInt()
+          : null;
     });
 
     debugPrint(
@@ -404,6 +419,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     if (_beatData.isEmpty) return;
 
     double currentTimeMs = (frameIndex / 24.0) * 1000.0;
+    final storyDurationMs = _storyTimelineDurationMs();
 
     int targetBeatIndex = 0;
     for (int j = 0; j < _beatData.length; j++) {
@@ -432,10 +448,10 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       // _enableFlash = false;
     }
 
-    int targetImageIndex = targetBeatIndex ~/ 8;
-    if (targetImageIndex >= widget.sections.length) {
-      targetImageIndex = widget.sections.length - 1;
-    }
+    final targetImageIndex = _targetSectionIndexForTime(
+      currentTimeMs,
+      storyDurationMs,
+    );
     // 🌟 核心补偿：在离线导出时，手动驱动 Glitch 的时间轴！
     // 假设它是 2000 毫秒一循环，我们算出当前进度
     if (_isExporting) {
@@ -447,6 +463,44 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       // 🌟 替换掉之前的 _lyricQueue 逻辑
       _currentLyricText = widget.sections[_currentIndex].text;
     });
+  }
+
+  int _storyTimelineDurationMs() {
+    if (_audioDurationMs != null && _audioDurationMs! > 0) {
+      return _audioDurationMs!;
+    }
+
+    final durationRaw = widget.dynamicBeatData?['duration_ms'];
+    if (durationRaw is num && durationRaw > 0) {
+      return durationRaw.toInt();
+    }
+
+    final data = widget.dynamicBeatData?['data'];
+    if (data is List && data.isNotEmpty) {
+      final lastMs = (data.last as Map?)?['ms'];
+      if (lastMs is num && lastMs > 0) {
+        return lastMs.toInt() + _beatIntervalMs;
+      }
+    }
+
+    if (_beatData.isNotEmpty) {
+      final lastMs = (_beatData.last as Map?)?['ms'];
+      if (lastMs is num && lastMs > 0) {
+        return lastMs.toInt() + _beatIntervalMs;
+      }
+    }
+
+    final totalBeatsNeeded = widget.sections.length * 8;
+    return math.max(_beatIntervalMs, totalBeatsNeeded * _beatIntervalMs);
+  }
+
+  int _targetSectionIndexForTime(double currentTimeMs, int storyDurationMs) {
+    if (widget.sections.length <= 1 || storyDurationMs <= 0) return 0;
+    final progress = (currentTimeMs / storyDurationMs).clamp(0.0, 0.999999);
+    return (progress * widget.sections.length)
+        .floor()
+        .clamp(0, widget.sections.length - 1)
+        .toInt();
   }
 
   // 📸 全新：直接抓取 RGBA 原始像素，并强制裁剪为偶数分辨率
@@ -493,6 +547,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   }
 
   Future<void> _startExport() async {
+    await _beatLoadFuture;
     await warmAssetBackedImages(
       widget.sections.map((section) => section.photo),
     );
@@ -510,12 +565,9 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     );
 
     final sectionsData = widget.sections
-        .map((section) {
-          return {
-            'photo': {'path': section.photo.path},
-            'text': section.text,
-          };
-        })
+        .asMap()
+        .entries
+        .map((entry) => _sectionCacheData(entry.value, entry.key))
         .toList(growable: false);
 
     _exportCacheKey = VideoCacheService.instance.buildVideoCacheKey(
@@ -526,14 +578,14 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       dynamicBeatData: widget.dynamicBeatData,
       targetPlatform: widget.targetPlatform,
       isHorizontal: widget.isHorizontal,
-      currentTextStyle: _currentTextStyle,
-      textYPosition: _textYPosition,
-      textSize: _textSize,
-      textBlurIntensity: _textBlurIntensity,
-      shakeIntensity: _shakeIntensity,
-      shakeFrequency: _shakeFrequency,
-      glitchIntensity: _glitchIntensity,
-      enableFlash: _enableFlash,
+      currentTextStyle: widget.currentTextStyle,
+      textYPosition: widget.textYPosition,
+      textSize: widget.textSize,
+      textBlurIntensity: widget.textBlurIntensity,
+      shakeIntensity: widget.shakeIntensity,
+      shakeFrequency: widget.shakeFrequency,
+      glitchIntensity: widget.glitchIntensity,
+      enableFlash: widget.enableFlash,
       useVignette: widget.useVignette,
       useGrain: widget.useGrain,
       useCameraFrame: widget.useCameraFrame,
@@ -567,36 +619,15 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     if (cachedVideoPath != null) {
       debugPrint('✅ 使用缓存视频: $cachedVideoPath');
       widget.onProgress?.call(1.0);
-      // 将缓存视频移动到导出目录（如果已经在这个目录则跳过）
-      final destDir = await VideoCacheService.instance.getExportsDirectory();
-      if (File(cachedVideoPath).parent.path == destDir.path) {
-        _handleExportSuccess(cachedVideoPath);
-      } else {
-        final finalPath = await VideoCacheService.instance.moveToExportsDirectory(
-          cachedVideoPath,
-          customName:
-              'Story_${_exportCacheKey ?? DateTime.now().millisecondsSinceEpoch.toString()}.mp4',
-        );
-        _handleExportSuccess(finalPath);
-      }
+      _handleExportSuccess(cachedVideoPath);
       return;
     }
 
     // 🌟 第二步：没有缓存，开始生成新视频
     debugPrint('🔄 未找到缓存，开始生成新视频...');
 
-    // 计算最终毫秒数
-    int totalBeatsNeeded = widget.sections.length * 8;
-    int finalExportDurationMs = totalBeatsNeeded * _beatIntervalMs;
-    if (_beatData.length > totalBeatsNeeded) {
-      finalExportDurationMs = (_beatData[totalBeatsNeeded]['ms'] as num)
-          .toInt();
-    } else if (_beatData.isNotEmpty) {
-      int missingBeats = totalBeatsNeeded - _beatData.length;
-      finalExportDurationMs =
-          (_beatData.last['ms'] as num).toInt() +
-          (missingBeats * _beatIntervalMs);
-    }
+    // 计算最终毫秒数：优先使用真实音频时长，保证一轮动画与音乐恰好同时结束。
+    final int finalExportDurationMs = _storyTimelineDurationMs();
     double exactExportSeconds = finalExportDurationMs / 1000.0;
 
     // 🎬 1. 抓取第0帧，主要是为了获取屏幕真正的硬件像素分辨率
@@ -736,10 +767,10 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       audioPath = tempAudioFile.path;
     }
 
-    // 生成缓存视频路径（在缓存目录）
-    final cacheDir = await VideoCacheService.instance.getCacheDirectory();
+    // 生成 FFmpeg 合成临时视频路径。
+    // 最终缓存由 VideoCacheService.cacheVideo() 从这里复制到 App 内部视频缓存。
     final cacheVideoPath =
-        "${cacheDir.path}/temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
+        "${tempDir.path}/mux_temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
 
     try {
       // 使用 FFmpeg 合并音频和视频
@@ -823,7 +854,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       // -c:v copy: 直接复制视频流，不重新编码
       // -c:a aac: 使用 AAC 编码音频
       final command =
-          '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+          '-y -i "$videoPath" -i "$audioPath" '
           '-map 0:v:0 -map 1:a:0 '
           '-t $duration -c:v copy -c:a aac -b:a 128k -shortest "$outputPath"';
 
@@ -873,7 +904,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       // -b:v: 视频比特率
       // -preset: 编码速度预设（仅软件编码）
       final command =
-          '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+          '-y -i "$videoPath" -i "$audioPath" '
           '-map 0:v:0 -map 1:a:0 '
           '-t $duration -c:v $videoCodec -b:v 2500k -c:a aac -b:a 128k '
           '-shortest "$outputPath"';
@@ -894,7 +925,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         if (videoCodec != 'libx264') {
           debugPrint('⚠️ 硬件加速失败，尝试软件编码...');
           final softwareCommand =
-              '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
+              '-y -i "$videoPath" -i "$audioPath" '
               '-map 0:v:0 -map 1:a:0 '
               '-t $duration -c:v libx264 -preset ultrafast -b:v 2500k '
               '-c:a aac -b:a 128k -shortest "$outputPath"';
@@ -931,12 +962,11 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       debugPrint('✅ 视频生成完成，缓存路径: $cacheVideoPath');
 
       // 🌟 第一步：缓存视频（只基于图片和文本）
-      final sectionsData = widget.sections.map((section) {
-        return {
-          'photo': {'path': section.photo.path},
-          'text': section.text,
-        };
-      }).toList();
+      final sectionsData = widget.sections
+          .asMap()
+          .entries
+          .map((entry) => _sectionCacheData(entry.value, entry.key))
+          .toList();
 
       final cachedPath = await VideoCacheService.instance.cacheVideo(
         sections: sectionsData,
@@ -945,35 +975,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       );
 
       debugPrint('✅ 视频已缓存: $cachedPath');
-
-      // 🌟 第二步：将视频移动到导出目录（用户可见）
-      final finalPath = await VideoCacheService.instance.moveToExportsDirectory(
-        cachedPath,
-        customName:
-            'Story_${_exportCacheKey ?? DateTime.now().millisecondsSinceEpoch.toString()}.mp4',
-      );
-
-      debugPrint('✅ 视频已移动到导出目录: $finalPath');
-      debugPrint('📱 用户可在发布页面选择分享或手动保存到相册');
-
-      // ==========================================
-      // 🌟 终极修复：打通沙盒，强制将视频硬写入系统公共相册
-      // ==========================================
-      try {
-        bool hasAccess = await Gal.hasAccess(toAlbum: true);
-        if (!hasAccess) {
-          hasAccess = await Gal.requestAccess(toAlbum: true);
-        }
-        if (hasAccess) {
-          await Gal.putVideo(finalPath);
-          debugPrint('🖼️ 视频已成功自动保存到系统本地相册！');
-        } else {
-          debugPrint('⚠️ 用户拒绝了相册权限，无法自动保存');
-        }
-      } catch (e) {
-        debugPrint('❌ 自动保存相册失败: $e');
-      }
-      // ==========================================
+      debugPrint('📱 视频保留在 App 内部缓存；只有用户手动保存时才写入外部位置');
 
       // 🌟 第三步：保存视频路径、音乐和渲染参数到故事实体
       if (widget.storyEntityId != null) {
@@ -982,7 +984,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
           final storyBox = store.box<StoryEntity>();
           final story = storyBox.get(widget.storyEntityId!);
           if (story != null) {
-            story.cachedVideoPath = finalPath;
+            story.cachedVideoPath = cachedPath;
             story.cachedVideoKey = _exportCacheKey;
             story.customMusicPath = widget.customMusicPath;
             story.dynamicBeatDataJson = widget.dynamicBeatData != null
@@ -1017,10 +1019,39 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       await VideoCacheService.instance.cleanupExportTempFiles();
 
       // 🌟 核心：触发回调，通知 ExportManager 任务完成！
-      widget.onComplete(finalPath, _aiCopyFuture);
+      widget.onComplete(cachedPath, _aiCopyFuture);
     } catch (e) {
       debugPrint("❌ 导出处理失败: $e");
     }
+  }
+
+  Map<String, dynamic> _sectionCacheData(StorySection section, int index) {
+    final photo = section.photo;
+    return <String, dynamic>{
+      'photo': <String, dynamic>{
+        'fingerprint': _mediaCacheFingerprint(photo, index),
+        'mediaKind': photo.mediaKind,
+        'dateTaken': photo.dateTaken.millisecondsSinceEpoch,
+        'width': photo.width,
+        'height': photo.height,
+      },
+      'text': section.text,
+    };
+  }
+
+  String _mediaCacheFingerprint(Photo photo, int index) {
+    final bytes = photo.thumbnailBytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      return 'thumb:${sha256.convert(bytes)}';
+    }
+    return [
+      'meta',
+      index,
+      photo.dateTaken.millisecondsSinceEpoch,
+      photo.mediaKind,
+      photo.width,
+      photo.height,
+    ].join(':');
   }
 
   // 🎬 专门给取景器提供纯净画面的层（无黑边）
@@ -1040,7 +1071,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
                 fit: BoxFit.cover,
                 width: double.infinity,
                 height: double.infinity,
-                enableSmartCache: false,
+                enableSmartCache: true,
               ),
             );
           },

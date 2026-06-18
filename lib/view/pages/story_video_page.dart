@@ -2,9 +2,12 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/services.dart';
+import 'package:photo_manager/photo_manager.dart';
+import 'package:video_player/video_player.dart';
 import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:math' as math;
@@ -18,7 +21,9 @@ import 'export_manager.dart';
 import 'publish_page.dart';
 import '../../service/music_service.dart';
 import '../../service/video_cache_service.dart';
+import '../../utils/media_type_helper.dart';
 import '../widgets/photo_image.dart';
+import '../widgets/asset_backed_image.dart';
 import '../../models/entity/face_entity.dart';
 import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
@@ -109,12 +114,15 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
   int _currentIndex = 0;
   bool _isPlaying = false;
+  bool _isStartingPlayback = false;
+  bool _hasInitializedPlayback = false;
   StreamSubscription? _positionSubscription;
+  Future<void>? _mediaWarmupFuture;
+  final Map<String, VideoPlayerController> _videoControllers = {};
+  final Map<String, File?> _resolvedMediaFiles = {};
 
-  // 🌟 核心新增：记录音频循环播放的状态
-  int _audioLoopCount = 0; // 记圈器：已经循环了几遍？
-  double _lastAudioPositionMs = 0; // 上一次拿到的播放进度
   int _singleLoopMs = 15000; // 单首音乐的真实长度
+  double _lastTimelinePositionMs = 0;
 
   // 🌟 1. 声明一个本地的可变切片列表
   late List<StorySection> _localSections;
@@ -202,9 +210,82 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       _currentLyricText = "";
     }
 
-    // 🌟 修复 1：挂上离合，踩下油门！
-    _initAudioAndListener(); // 启动音频实时监听
-    _togglePlay(); // 自动开始播放
+    _mediaWarmupFuture = _warmPlaybackMedia();
+    unawaited(_startPlaybackFromBeginning()); // 等资源就绪后自动从头播放
+  }
+
+  Future<void> _warmPlaybackMedia() async {
+    await warmAssetBackedImages(_localSections.map((section) => section.photo));
+    final futures = <Future<void>>[];
+    for (final section in _localSections) {
+      final photo = section.photo;
+      final kind = MediaTypeHelper.fromStorageValue(
+        photo.mediaKind,
+        path: photo.path,
+      );
+      if (kind == MemoriaMediaKind.video ||
+          kind == MemoriaMediaKind.dynamicImage) {
+        futures.add(
+          _resolveMediaFile(photo).then((file) {
+            _resolvedMediaFiles[_mediaControllerKey(photo)] = file;
+          }),
+        );
+      }
+      if (kind == MemoriaMediaKind.video) {
+        futures.add(_prepareVideoController(photo));
+      }
+    }
+    await Future.wait(futures);
+    if (mounted) setState(() {});
+  }
+
+  String _mediaControllerKey(dynamic photo) {
+    final id = (photo.id as String?)?.trim() ?? '';
+    if (id.isNotEmpty) return id;
+    return (photo.path as String?)?.trim() ?? '';
+  }
+
+  Future<File?> _resolveMediaFile(dynamic photo) async {
+    final assetId = (photo.id as String?)?.trim();
+    if (assetId != null && assetId.isNotEmpty) {
+      try {
+        final asset = await AssetEntity.fromId(assetId);
+        final file = await asset?.file;
+        if (file != null && await file.exists()) {
+          return file;
+        }
+      } catch (_) {}
+    }
+
+    final rawPath = (photo.path as String?)?.trim();
+    if (rawPath == null || rawPath.isEmpty) return null;
+    final uri = Uri.tryParse(rawPath);
+    final file = uri?.scheme == 'file' ? File.fromUri(uri!) : File(rawPath);
+    return await file.exists() ? file : null;
+  }
+
+  Future<void> _prepareVideoController(dynamic photo) async {
+    final key = _mediaControllerKey(photo);
+    if (key.isEmpty || _videoControllers.containsKey(key)) return;
+
+    final file = _resolvedMediaFiles[key] ?? await _resolveMediaFile(photo);
+    if (file == null) return;
+
+    VideoPlayerController? controller;
+    try {
+      controller = VideoPlayerController.file(
+        file,
+        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+      );
+      await controller.initialize();
+      await controller.setVolume(0);
+      await controller.setLooping(true);
+      await controller.pause();
+      _videoControllers[key] = controller;
+    } catch (error, stackTrace) {
+      await controller?.dispose();
+      debugPrint('故事视频素材预加载失败: media=${file.path} error=$error\n$stackTrace');
+    }
   }
 
   void _applyBeatData(Map<String, dynamic> beatResponse) {
@@ -240,6 +321,32 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       return 0;
     }
     return index.clamp(0, widget.sections.length - 1).toInt();
+  }
+
+  int _storyTimelineDurationMs() {
+    if (_singleLoopMs > 0) return _singleLoopMs;
+    final sectionCount = _localSections.isEmpty
+        ? widget.sections.length
+        : _localSections.length;
+    if (sectionCount <= 0) return _beatIntervalMs * 8;
+
+    final totalBeatsNeeded = sectionCount * 8;
+    if (_beatData.length > totalBeatsNeeded) {
+      final value = (_beatData[totalBeatsNeeded]['ms'] as num?)?.toInt();
+      if (value != null && value > 0) return value;
+    }
+    return math.max(_beatIntervalMs, totalBeatsNeeded * _beatIntervalMs);
+  }
+
+  int _targetSectionIndexForTime(double currentTimeMs) {
+    final sectionCount = _localSections.isEmpty
+        ? widget.sections.length
+        : _localSections.length;
+    if (sectionCount <= 1) return 0;
+    final durationMs = _storyTimelineDurationMs();
+    if (durationMs <= 0) return 0;
+    final progress = (currentTimeMs / durationMs).clamp(0.0, 0.999999);
+    return _clampSectionIndex((progress * sectionCount).floor());
   }
 
   // ==========================================
@@ -357,46 +464,26 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       debugPrint("⚠️ 已触发本地动态兜底：根据音频时长生成 ${_beatData.length} 个密集节拍");
     }
 
-    // 🌟 2. 核心补丁：无限繁衍节拍数据！
-    // 假设我们粗暴地把它复制 20 遍（足以应付 5 分钟的视频）
-    if (_beatData.isNotEmpty && _beatData.last['ms'] < singleLoopMs * 1.5) {
-      List<Map<String, dynamic>> extendedBeats = [];
-      List<dynamic> originalBeats = List.from(_beatData); // 拷贝原版 15 秒的节拍
-
-      for (int loopIndex = 0; loopIndex < 20; loopIndex++) {
-        // 每循环一次，时间戳就要加上单曲的总时长
-        int timeOffset = loopIndex * singleLoopMs;
-
-        for (var beat in originalBeats) {
-          extendedBeats.add({
-            'ms': (beat['ms'] as int) + timeOffset,
-            'energy': beat['energy'],
-          });
-        }
-      }
-      _beatData = extendedBeats; // 替换成拥有几百个节拍的“超级节拍本”！
-      debugPrint("🔄 已将节拍数据无缝循环扩充至 ${_beatData.length} 个节拍！");
-    }
-
-    // 🌟 3. 设置播放器为无限循环模式
-    await _audioPlayer.setReleaseMode(ReleaseMode.loop);
-    _positionSubscription = _audioPlayer.onPositionChanged.listen((Duration p) {
+    // 音乐本身只播放一遍；完整回忆播完后由 timeline 统一重启画面与音乐。
+    await _audioPlayer.setReleaseMode(ReleaseMode.stop);
+    _positionSubscription = _audioPlayer.onPositionChanged.listen((
+      Duration p,
+    ) async {
       if (_beatData.isEmpty || _isExporting) return; // 导出时不要干扰
 
       double currentPosMs = p.inMilliseconds.toDouble();
 
-      // ==========================================
-      // 🌟 核心补丁：精准捕获“循环重置”瞬间！
-      // ==========================================
-      // 如果当前时间突然比上一次的时间小了超过 1 秒，说明它肯定是从头开始循环了！
-      if (currentPosMs < _lastAudioPositionMs - 1000) {
-        _audioLoopCount++;
-        debugPrint("🔄 音乐第 $_audioLoopCount 次循环，当前真实总时长已延长！");
+      final timelineDurationMs = _storyTimelineDurationMs().toDouble();
+      if (timelineDurationMs > 0 && currentPosMs >= timelineDurationMs) {
+        await _startPlaybackFromBeginning();
+        return;
       }
-      _lastAudioPositionMs = currentPosMs;
 
-      // 🌟 真实的连续时间 = 当前播放条位置 + (已经循环的圈数 * 一圈的总时长)
-      double currentTimeMs = currentPosMs + (_audioLoopCount * _singleLoopMs);
+      final currentTimeMs = currentPosMs;
+      if (currentTimeMs < _lastTimelinePositionMs - 250) {
+        _currentBeatIndexForPreview = -1;
+      }
+      _lastTimelinePositionMs = currentTimeMs;
 
       // 1. 找当前是第几拍
       int targetBeatIndex = 0;
@@ -428,37 +515,86 @@ class _StoryVideoPageState extends State<StoryVideoPage>
           // _enableFlash = false;
         }
 
-        // 🖼️ 决定切图 (每 8 拍切一张)
-        int beatsPerImage = 8;
-        int targetImageIndex = _clampSectionIndex(
-          targetBeatIndex ~/ beatsPerImage,
-        );
+        final targetImageIndex = _targetSectionIndexForTime(currentTimeMs);
 
-        if (mounted) {
+        if (mounted && targetImageIndex != _currentIndex) {
+          final previousPhoto =
+              _localSections[_clampSectionIndex(_currentIndex)].photo;
+          final nextPhoto = _localSections[targetImageIndex].photo;
+          await _restartSectionMedia(previousPhoto, nextPhoto);
           setState(() {
             _currentIndex = targetImageIndex;
-            // 🌟 替换掉之前的 _lyricQueue 逻辑
-            _currentLyricText = widget.sections[_currentIndex].text;
+            _currentLyricText = _localSections[_currentIndex].text;
           });
         }
       }
     });
 
     _audioPlayer.onPlayerComplete.listen((event) {
-      if (mounted) {
-        setState(() {
-          _isPlaying = false;
-          _currentIndex = 0;
-          _currentBeatIndexForPreview = -1;
-          // 🌟 记得在这里把循环记录清零
-          _audioLoopCount = 0;
-          _lastAudioPositionMs = 0;
-          if (widget.sections.isNotEmpty) {
-            _currentLyricText = widget.sections[0].text;
-          }
-        });
-      }
+      if (mounted) unawaited(_startPlaybackFromBeginning());
     });
+
+    _hasInitializedPlayback = true;
+  }
+
+  Future<void> _restartSectionMedia(
+    dynamic previousPhoto,
+    dynamic nextPhoto,
+  ) async {
+    final previous = _videoControllers[_mediaControllerKey(previousPhoto)];
+    if (previous != null) {
+      unawaited(previous.pause());
+    }
+
+    final next = _videoControllers[_mediaControllerKey(nextPhoto)];
+    if (next != null && next.value.isInitialized) {
+      await next.seekTo(Duration.zero);
+      await next.play();
+    }
+  }
+
+  Future<void> _startPlaybackFromBeginning() async {
+    if (_isStartingPlayback) return;
+    _isStartingPlayback = true;
+    try {
+      await _mediaWarmupFuture;
+      if (!_hasInitializedPlayback) {
+        await _initAudioAndListener();
+      }
+      if (!mounted) return;
+
+      _lastTimelinePositionMs = 0;
+      _currentBeatIndexForPreview = -1;
+      final firstIndex = _clampSectionIndex(0);
+      _currentIndex = firstIndex;
+      _currentLyricText = _localSections[firstIndex].text;
+
+      for (final controller in _videoControllers.values) {
+        await controller.pause();
+        await controller.seekTo(Duration.zero);
+      }
+      final firstController =
+          _videoControllers[_mediaControllerKey(
+            _localSections[firstIndex].photo,
+          )];
+      if (firstController != null && firstController.value.isInitialized) {
+        await firstController.play();
+      }
+
+      final playableAudioPath = _resolvePlayableAudioPath();
+      if (playableAudioPath != null) {
+        await _audioPlayer.play(DeviceFileSource(playableAudioPath));
+      } else {
+        await _audioPlayer.play(AssetSource('audio/sandal_leap.mp3'));
+      }
+      if (mounted) {
+        setState(() => _isPlaying = true);
+      }
+    } catch (error, stackTrace) {
+      debugPrint('自动播放启动失败: $error\n$stackTrace');
+    } finally {
+      _isStartingPlayback = false;
+    }
   }
 
   @override
@@ -467,22 +603,27 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     _continuousTimeController.dispose();
     _positionSubscription?.cancel();
     _audioPlayer.dispose();
+    for (final controller in _videoControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
   Future<void> _togglePlay() async {
     if (_isPlaying) {
       await _audioPlayer.pause();
+      final controller =
+          _videoControllers[_mediaControllerKey(
+            _localSections[_clampSectionIndex(_currentIndex)].photo,
+          )];
+      await controller?.pause();
     } else {
-      // 🌟 核心改动：判断音乐来源
-      final playableAudioPath = _resolvePlayableAudioPath();
-      if (playableAudioPath != null) {
-        // 如果是用户手动导入的音乐，使用 DeviceFileSource
-        await _audioPlayer.play(DeviceFileSource(playableAudioPath));
-      } else {
-        // 否则播放 assets 里的默认测试音乐
-        await _audioPlayer.play(AssetSource('audio/sandal_leap.mp3'));
-      }
+      await _audioPlayer.resume();
+      final controller =
+          _videoControllers[_mediaControllerKey(
+            _localSections[_clampSectionIndex(_currentIndex)].photo,
+          )];
+      await controller?.play();
     }
     if (mounted) {
       setState(() {
@@ -696,7 +837,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       return const Scaffold(body: Center(child: Text('无内容')));
     }
 
-    final currentSection = widget.sections[_clampSectionIndex(_currentIndex)];
+    final currentSection = _localSections[_clampSectionIndex(_currentIndex)];
     final mediaQuery = MediaQuery.of(context);
 
     // 🌟 核心判断：当前是不是第 0 帧（片头帧）
@@ -874,7 +1015,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         screenBody = Stack(
           fit: StackFit.expand,
           children: [
-            PhotoImage(photo: currentSection.photo, fit: BoxFit.cover),
+            _buildPlaybackMedia(currentSection.photo, fit: BoxFit.cover),
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
               child: Container(color: Colors.black.withValues(alpha: 0.6)),
@@ -988,12 +1129,11 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   // 🎬 视频按钮：检查缓存 → 分享，否则导出 → 分享
   Future<void> _onVideoButtonPressed() async {
     // 1. 计算当前参数对应的缓存 key
-    final sectionsData = widget.sections.map((s) {
-      return {
-        'photo': {'path': s.photo.path},
-        'text': s.text,
-      };
-    }).toList();
+    final sectionsData = widget.sections
+        .asMap()
+        .entries
+        .map((entry) => _sectionCacheData(entry.value, entry.key))
+        .toList();
     final dynamicBeatData = _beatData.isNotEmpty
         ? {'data': _beatData, 'bpm': 60000 / _beatIntervalMs}
         : null;
@@ -1085,6 +1225,35 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       imageFilterType: _imageFilterType,
     );
     Navigator.pop(context);
+  }
+
+  Map<String, dynamic> _sectionCacheData(StorySection section, int index) {
+    final photo = section.photo;
+    return <String, dynamic>{
+      'photo': <String, dynamic>{
+        'fingerprint': _mediaCacheFingerprint(photo, index),
+        'mediaKind': photo.mediaKind,
+        'dateTaken': photo.dateTaken.millisecondsSinceEpoch,
+        'width': photo.width,
+        'height': photo.height,
+      },
+      'text': section.text,
+    };
+  }
+
+  String _mediaCacheFingerprint(dynamic photo, int index) {
+    final bytes = photo.thumbnailBytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      return 'thumb:${sha256.convert(bytes)}';
+    }
+    return [
+      'meta',
+      index,
+      photo.dateTaken.millisecondsSinceEpoch,
+      photo.mediaKind,
+      photo.width,
+      photo.height,
+    ].join(':');
   }
 
   // 🎛️ 导演控制台面板
@@ -1660,19 +1829,71 @@ class _StoryVideoPageState extends State<StoryVideoPage>
           builder: (context, scale, child) {
             return Transform.scale(
               scale: scale,
-              child: PhotoImage(
-                photo: photo,
+              child: _buildPlaybackMedia(
+                photo,
                 fit: BoxFit.cover,
                 alignment: smartAlignment,
-                width: double.infinity,
-                height: double.infinity,
-                enableSmartCache: false,
               ),
             );
           },
         ),
         subtitle,
       ],
+    );
+  }
+
+  Widget _buildPlaybackMedia(
+    dynamic photo, {
+    BoxFit fit = BoxFit.cover,
+    AlignmentGeometry alignment = Alignment.center,
+  }) {
+    final kind = MediaTypeHelper.fromStorageValue(
+      photo.mediaKind,
+      path: photo.path,
+    );
+    if (kind == MemoriaMediaKind.video) {
+      final controller = _videoControllers[_mediaControllerKey(photo)];
+      if (controller != null && controller.value.isInitialized) {
+        return FittedBox(
+          fit: fit,
+          alignment: alignment,
+          clipBehavior: Clip.hardEdge,
+          child: SizedBox(
+            width: controller.value.size.width,
+            height: controller.value.size.height,
+            child: VideoPlayer(controller),
+          ),
+        );
+      }
+    }
+    if (kind == MemoriaMediaKind.dynamicImage) {
+      final key = _mediaControllerKey(photo);
+      final file = _resolvedMediaFiles[key];
+      if (file != null && file.existsSync()) {
+        return Image.file(
+          file,
+          fit: fit,
+          alignment: alignment,
+          width: double.infinity,
+          height: double.infinity,
+          gaplessPlayback: true,
+          errorBuilder: (_, _, _) => PhotoImage(
+            photo: photo,
+            fit: fit,
+            alignment: alignment,
+            width: double.infinity,
+            height: double.infinity,
+          ),
+        );
+      }
+    }
+
+    return PhotoImage(
+      photo: photo,
+      fit: fit,
+      alignment: alignment,
+      width: double.infinity,
+      height: double.infinity,
     );
   }
 

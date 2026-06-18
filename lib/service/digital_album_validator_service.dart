@@ -12,7 +12,6 @@ class DigitalAlbumValidatorService {
   AlbumBookDocument sanitize(
     AlbumBookDocument document, {
     required Set<String> allowedPhotoIds,
-    required Map<String, String> photoPathById,
     required String fallbackTitle,
     required String fallbackSubtitle,
   }) {
@@ -24,7 +23,6 @@ class DigitalAlbumValidatorService {
             entry.key,
             entry.value,
             allowedPhotoIds,
-            photoPathById: photoPathById,
             pageWidth: document.pageWidth,
             pageHeight: document.pageHeight,
           ),
@@ -45,7 +43,6 @@ class DigitalAlbumValidatorService {
     int spreadIndex,
     AlbumSpreadModel spread,
     Set<String> allowedPhotoIds, {
-    required Map<String, String> photoPathById,
     required double pageWidth,
     required double pageHeight,
   }) {
@@ -54,14 +51,12 @@ class DigitalAlbumValidatorService {
       leftPage: _sanitizePage(
         spread.leftPage.copyWith(pageIndex: spreadIndex * 2),
         allowedPhotoIds,
-        photoPathById: photoPathById,
         pageWidth: pageWidth,
         pageHeight: pageHeight,
       ),
       rightPage: _sanitizePage(
         spread.rightPage.copyWith(pageIndex: spreadIndex * 2 + 1),
         allowedPhotoIds,
-        photoPathById: photoPathById,
         pageWidth: pageWidth,
         pageHeight: pageHeight,
       ),
@@ -71,7 +66,6 @@ class DigitalAlbumValidatorService {
   AlbumPageModel _sanitizePage(
     AlbumPageModel page,
     Set<String> allowedPhotoIds, {
-    required Map<String, String> photoPathById,
     required double pageWidth,
     required double pageHeight,
   }) {
@@ -83,7 +77,6 @@ class DigitalAlbumValidatorService {
           (element) => _sanitizeElement(
             element,
             allowedPhotoIds,
-            photoPathById: photoPathById,
             pageWidth: pageWidth,
             pageHeight: pageHeight,
             pageSide: page.side,
@@ -107,7 +100,6 @@ class DigitalAlbumValidatorService {
   AlbumElementModel? _sanitizeElement(
     AlbumElementModel element,
     Set<String> allowedPhotoIds, {
-    required Map<String, String> photoPathById,
     required double pageWidth,
     required double pageHeight,
     required AlbumPageSide pageSide,
@@ -138,14 +130,6 @@ class DigitalAlbumValidatorService {
     final height = _clamp(element.h, 0.03, safeRect.height);
     final left = _clamp(element.x, safeRect.left, safeRect.right - width);
     final top = _clamp(element.y, safeRect.top, safeRect.bottom - height);
-    if (element.type == AlbumElementType.image) {
-      final photoId = payload['photo_id']?.toString() ?? '';
-      final currentPath = payload['path']?.toString().trim() ?? '';
-      final fallbackPath = photoPathById[photoId]?.trim() ?? '';
-      if (currentPath.isEmpty && fallbackPath.isNotEmpty) {
-        payload['path'] = fallbackPath;
-      }
-    }
 
     final normalizedX = element.type == AlbumElementType.image
         ? _snap(_alignedImageX(left, width, safeRect))

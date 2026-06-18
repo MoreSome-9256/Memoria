@@ -11,6 +11,8 @@ import 'package:open_file_manager/open_file_manager.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:open_file/open_file.dart';
 import '../../service/llm_service.dart';
+import '../../service/video_cache_service.dart';
+
 class PublishPage extends StatefulWidget {
   final String title;
   final String subtitle;
@@ -255,12 +257,17 @@ class _PublishPageState extends State<PublishPage> {
     );
   }
 
-  /// iOS: 打开"文件"APP 展示 StoryExports 文件夹
+  /// iOS: 先把缓存视频复制/补齐到 Documents/StoryExports，再打开"文件"APP。
   Future<void> _saveVideoOnIOS(File videoFile) async {
+    await VideoCacheService.instance.ensureExportedVideoAvailable(
+      videoFile.path,
+    );
+
     await openFileManager(
       androidConfig: AndroidConfig(
         folderType: AndroidFolderType.other,
-        folderPath: path.dirname(widget.exportedVideoPath),
+        folderPath:
+            (await VideoCacheService.instance.getExportsDirectory()).path,
       ),
       iosConfig: IosConfig(folderPath: 'StoryExports'),
     );

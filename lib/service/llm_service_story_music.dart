@@ -250,10 +250,10 @@ $framesInfo
 3. 包含情绪关键词（如 Upbeat, Melancholy, Chill）。
 4. 包含核心乐器（如 Bright Piano, Heavy Bass, Acoustic Guitar）。
 5. 包含大致的 BPM（如 90 bpm, 120 bpm）。
-6. 【极其重要】必须在提示词的开头加上 "Seamless loop, video game background loop"，确保生成的音乐没有明显的开头淡入和结尾淡出，首尾可以完美无缝衔接。
+6. 【极其重要】这段音乐是单次播放的短视频配乐，不要写 seamless loop / video game loop；要求有自然开头和自然收束，适合恰好播放完整一轮回忆动画。
 
 示例输出：
-Seamless loop, video game background loop, upbeat acoustic pop, sunny travel vlog vibe, 120 bpm.
+Upbeat acoustic pop, sunny travel vlog vibe, bright piano and acoustic guitar, natural ending, 120 bpm.
 ''';
 
     try {

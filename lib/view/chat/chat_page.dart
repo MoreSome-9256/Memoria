@@ -33,6 +33,14 @@ class _ChatPageState extends State<ChatPage> {
     _loadHistory();
   }
 
+  ChatMessage _createWelcomeMessage() {
+    return ChatMessage.create(
+      text: "你好！我是 Memoria 助手。我可以帮你找照片，或者聊聊你的美好回忆。你想看哪方面的瞬间？",
+      sender: MessageSender.ai,
+      timestamp: DateTime.now(),
+    );
+  }
+
   // 🌟 1. 从数据库读取历史记录
   Future<void> _loadHistory() async {
     final store = ObjectBoxService().store;
@@ -43,13 +51,7 @@ class _ChatPageState extends State<ChatPage> {
     query.close();
 
     if (history.isEmpty) {
-      await _addAndSaveMessage(
-        ChatMessage.create(
-          text: "你好！我是 Memoria 助手。我可以帮你找照片，或者聊聊你的美好回忆。你想看哪方面的瞬间？",
-          sender: MessageSender.ai,
-          timestamp: DateTime.now(),
-        ),
-      );
+      await _addAndSaveMessage(_createWelcomeMessage());
       return;
     }
 
@@ -77,6 +79,56 @@ class _ChatPageState extends State<ChatPage> {
     }
 
     _scrollToBottom();
+  }
+
+  Future<void> _clearContext() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清空上下文？'),
+        content: const Text('这会删除当前聊天记录，并让记忆助理从新的会话开始。相册和照片数据不会被删除。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    if (!mounted) return;
+
+    try {
+      final store = ObjectBoxService().store;
+      final chatBox = store.box<ChatMessage>();
+      final welcomeMessage = _createWelcomeMessage();
+
+      store.runInTransaction(TxMode.write, () {
+        chatBox.removeAll();
+        chatBox.put(welcomeMessage);
+      });
+
+      if (!mounted) return;
+      setState(() {
+        _messages = [welcomeMessage];
+      });
+      _controller.clear();
+      _scrollToBottom();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已清空聊天上下文')),
+      );
+    } catch (e) {
+      debugPrint('❌ 清空聊天上下文失败: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('清空上下文失败: $e')),
+      );
+    }
   }
 
   Future<List<PhotoEntity>?> _executeLocalSearch(
@@ -192,6 +244,13 @@ class _ChatPageState extends State<ChatPage> {
         backgroundColor: Colors.white.withOpacity(0.5),
         elevation: 0,
         centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: '清空上下文',
+            onPressed: _isLoading ? null : _clearContext,
+            icon: const Icon(Icons.cleaning_services_outlined),
+          ),
+        ],
         flexibleSpace: ClipRect(
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),

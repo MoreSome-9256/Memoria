@@ -596,9 +596,6 @@ class UnifiedAnalysisPipelineService {
       photo.mediaKind,
       path: photo.path,
     );
-    final isVideoLike =
-        mediaKind == MemoriaMediaKind.video ||
-        mediaKind == MemoriaMediaKind.dynamicImage;
     final embeddingService = MobileClipEmbeddingService();
     late final List<double> embedding;
     late final String embeddingModelVersion;
@@ -640,7 +637,7 @@ class UnifiedAnalysisPipelineService {
       embedding = mediaEmbedding.embedding;
       embeddingModelVersion = mediaEmbedding.modelVersion;
       embeddingRecord = mediaEmbedding.toRecord();
-      tagEmbedding = const <double>[];
+      tagEmbedding = embedding;
       _logMediaEmbeddingDiagnostics(photo, embeddingRecord);
     }
     if (embedding.isEmpty) {
@@ -648,10 +645,7 @@ class UnifiedAnalysisPipelineService {
     }
 
     final tagService = MobileClipTagService();
-    final rawTags = tagEmbedding.isEmpty
-        ? <String>['视频']
-        : await tagService.retrieveTags(tagEmbedding);
-    final tags = isVideoLike ? const <String>['视频'] : rawTags;
+    final tags = await tagService.retrieveTags(tagEmbedding);
 
     final settings = await AppAiSettingsService.instance.load();
     PhotoService().updatePhotoInTransaction(photo.id, (p) {

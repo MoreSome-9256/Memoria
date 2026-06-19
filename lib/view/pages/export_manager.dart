@@ -94,7 +94,8 @@ class ExportManager {
                        storyEntityId: storyEntityId,
                        onProgress: (p) => progressNotifier.value = p,
                        onComplete: (String finalPath, Future<String>? aiCopy) {
-                        overlayEntry.remove();
+                        if (overlayEntry.mounted) overlayEntry.remove();
+                        progressNotifier.dispose();
                         isExporting = false;
 
                         if (onShareReady != null) {
@@ -110,6 +111,17 @@ class ExportManager {
                             sections,
                           );
                         }
+                      },
+                      onError: (error, stackTrace) {
+                        if (overlayEntry.mounted) overlayEntry.remove();
+                        progressNotifier.dispose();
+                        isExporting = false;
+                        ScaffoldMessenger.of(rootNavigator.context).showSnackBar(
+                          SnackBar(
+                            behavior: SnackBarBehavior.floating,
+                            content: Text('视频导出失败：$error'),
+                          ),
+                        );
                       },
                     ),
                   ),

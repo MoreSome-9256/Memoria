@@ -66,15 +66,25 @@ class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
       future: _mediaFuture,
       builder: (context, snapshot) {
         final media = snapshot.data;
-        if (media != null && !media.available) {
+        if (media == null) {
+          if (snapshot.hasError) {
+            return const _FullscreenMediaScaffold(
+              child: _UnavailableMediaMessage(message: '媒体加载失败。'),
+            );
+          }
+          return const _FullscreenMediaScaffold(
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (!media.available) {
           _cleanupUnavailableMedia();
           return const _FullscreenMediaScaffold(
             child: _UnavailableMediaMessage(message: '原始文件已不可访问，正在移除本地记录…'),
           );
         }
-        final resolvedPath = media?.path ?? widget.path;
-        final kind = media?.kind ?? MediaTypeHelper.fromPath(widget.path);
-        if (media?.isLivePhoto == true) {
+        final resolvedPath = media.path;
+        final kind = media.kind;
+        if (media.isLivePhoto) {
           return _FullscreenMediaScaffold(
             child: _FullscreenLivePhotoPlayer(
               assetId: widget.assetId!,
@@ -383,6 +393,7 @@ class _FullscreenAndroidMotionPhotoState
     extends State<_FullscreenAndroidMotionPhoto> {
   VideoPlayerController? _controller;
   Uint8List? _stillBytes;
+  bool _isLoading = true;
   bool _isMuted = true;
 
   @override
@@ -394,13 +405,16 @@ class _FullscreenAndroidMotionPhotoState
   Future<void> _initialize() async {
     try {
       final asset = await AssetEntity.fromId(widget.assetId);
-      _stillBytes = await asset?.thumbnailDataWithOption(
+      final stillBytes = await asset?.thumbnailDataWithOption(
         const ThumbnailOption(
           size: ThumbnailSize.square(2048),
           format: ThumbnailFormat.jpeg,
           quality: 95,
         ),
       );
+      if (!mounted) return;
+      setState(() => _stillBytes = stillBytes);
+
       final motionFile = await MotionPhotoService.extractByAssetId(
         widget.assetId,
       );
@@ -423,7 +437,7 @@ class _FullscreenAndroidMotionPhotoState
         'error=$error\n$stackTrace',
       );
     }
-    if (mounted) setState(() {});
+    if (mounted) setState(() => _isLoading = false);
   }
 
   @override
@@ -455,14 +469,18 @@ class _FullscreenAndroidMotionPhotoState
       );
     }
     final bytes = _stillBytes;
-    return bytes != null && bytes.isNotEmpty
-        ? Image.memory(bytes, fit: BoxFit.contain)
-        : AssetBackedImage(
-            path: widget.fallbackPath,
-            assetId: widget.assetId,
-            fit: BoxFit.contain,
-            enableSmartCache: false,
-          );
+    if (bytes != null && bytes.isNotEmpty) {
+      return Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true);
+    }
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return AssetBackedImage(
+      path: widget.fallbackPath,
+      assetId: widget.assetId,
+      fit: BoxFit.contain,
+      enableSmartCache: false,
+    );
   }
 }
 

@@ -780,17 +780,12 @@ class _StoryResultPageState extends State<StoryResultPage> {
     }
 
     final playbackSections = <StorySection>[];
-    for (var index = 0; index < _sections.length; index++) {
-      final section = _sections[index];
-      final indexedCaption =
-          widget.videoCaptions != null && index < widget.videoCaptions!.length
-          ? widget.videoCaptions![index].trim()
-          : '';
+    for (final section in _sections) {
       final mappedCaption =
           widget.videoCaptionByPhotoId[section.photo.id]?.trim() ?? '';
-      final preferredCaption = indexedCaption.isNotEmpty
-          ? indexedCaption
-          : (mappedCaption.isNotEmpty ? mappedCaption : section.text);
+      final preferredCaption = mappedCaption.isNotEmpty
+          ? mappedCaption
+          : section.text;
       playbackSections.add(section.copyWith(text: preferredCaption));
     }
 

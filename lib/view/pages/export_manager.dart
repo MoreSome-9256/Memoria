@@ -118,7 +118,7 @@ class ExportManager {
                         isExporting = false;
                         ScaffoldMessenger.of(rootNavigator.context).showSnackBar(
                           SnackBar(
-                            behavior: SnackBarBehavior.floating,
+                            behavior: SnackBarBehavior.fixed,
                             content: Text('视频导出失败：$error'),
                           ),
                         );

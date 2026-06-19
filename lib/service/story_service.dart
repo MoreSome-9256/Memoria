@@ -467,8 +467,14 @@ class StoryService {
 
   Future<List<PhotoEntity>> loadPhotos(List<int> photoIds) async {
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final photos = photoBox.getMany(photoIds).whereType<PhotoEntity>().toList()
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final loadedById = <int, PhotoEntity>{
+      for (final photo in photoBox.getMany(photoIds).whereType<PhotoEntity>())
+        photo.id: photo,
+    };
+    final photos = photoIds
+        .map((id) => loadedById[id])
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
 
     for (
       var start = 0;

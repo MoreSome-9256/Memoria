@@ -20,13 +20,14 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
-import '../../service/media_thumbnail_cache_service.dart';
+import '../../service/motion_photo_service.dart';
 import '../../service/story_service.dart';
 import '../../service/video_cache_service.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 import '../../utils/media_type_helper.dart';
 import '../../models/entity/story_entity.dart';
 import 'package:flutter_quick_video_encoder/flutter_quick_video_encoder.dart';
+import 'package:photo_manager/photo_manager.dart';
 import '../widgets/asset_backed_image.dart';
 
 class OffscreenRenderWorker extends StatefulWidget {
@@ -98,6 +99,11 @@ class OffscreenRenderWorker extends StatefulWidget {
 
 class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     with TickerProviderStateMixin {
+  // Keep raw RGBA frames and MediaCodec buffer allocation within the range
+  // broadly supported by Android hardware AVC encoders.
+  static const int _maxEncoderLongEdge = 1280;
+  static const int _maxVideoBitrate = 8000000;
+
   int _currentIndex = 0;
 
   String _currentLyricText = "";
@@ -248,6 +254,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   void dispose() {
     _vfxController.dispose(); // 别忘了释放内存
     _continuousTimeController.dispose();
+    unawaited(_clearExportMediaFrames());
     super.dispose();
   }
 
@@ -419,10 +426,22 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
   // 🎬 核心特效：根据长宽比自适应的视觉层（已支持字幕嵌入）
   void _updateStateForFrame(int frameIndex) {
-    if (_beatData.isEmpty) return;
+    _exportFrameIndex = frameIndex;
 
     double currentTimeMs = (frameIndex / 24.0) * 1000.0;
     final storyDurationMs = _storyTimelineDurationMs();
+    final targetImageIndex = _targetSectionIndexForTime(
+      currentTimeMs,
+      storyDurationMs,
+    );
+
+    if (_beatData.isEmpty) {
+      setState(() {
+        _currentIndex = targetImageIndex;
+        _currentLyricText = widget.sections[_currentIndex].text;
+      });
+      return;
+    }
 
     int targetBeatIndex = 0;
     for (int j = 0; j < _beatData.length; j++) {
@@ -451,10 +470,6 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       // _enableFlash = false;
     }
 
-    final targetImageIndex = _targetSectionIndexForTime(
-      currentTimeMs,
-      storyDurationMs,
-    );
     // 🌟 核心补偿：在离线导出时，手动驱动 Glitch 的时间轴！
     // 假设它是 2000 毫秒一循环，我们算出当前进度
     if (_isExporting) {
@@ -506,15 +521,21 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         .toInt();
   }
 
-  // 📸 全新：直接抓取 RGBA 原始像素，并强制裁剪为偶数分辨率
+  // 📸 直接抓取 RGBA 原始像素，并强制裁剪为偶数分辨率。
+  // 导出画布是 720x1280；此前以 2.0 倍抓取，实际配置成了 1440x2560，
+  // 会让部分 Android AVC 硬件编码器在 configure 阶段耗尽缓冲区。
   Future<(Uint8List?, int, int)> _captureFrameRgba() async {
     try {
       RenderRepaintBoundary boundary =
           _renderKey.currentContext!.findRenderObject()
               as RenderRepaintBoundary;
 
-      // 这里的 pixelRatio 控制清晰度，2.0 大约等于 1080p。如果想要更快，可以改成 1.5。
-      ui.Image rawImage = await boundary.toImage(pixelRatio: 2.0);
+      final logicalSize = boundary.size;
+      final longEdge = math.max(logicalSize.width, logicalSize.height);
+      final pixelRatio = longEdge <= _maxEncoderLongEdge
+          ? 1.0
+          : _maxEncoderLongEdge / longEdge;
+      ui.Image rawImage = await boundary.toImage(pixelRatio: pixelRatio);
 
       int width = rawImage.width;
       int height = rawImage.height;
@@ -558,15 +579,22 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         setState(() => _isExporting = false);
       }
       widget.onError?.call(error, stackTrace);
+    } finally {
+      await _clearExportMediaFrames();
     }
   }
 
   Future<void> _runExport() async {
     await _beatLoadFuture;
-    await _prepareExportMediaFrames();
-    await warmAssetBackedImages(
-      widget.sections.map((section) => section.photo),
+    final int finalExportDurationMs = _storyTimelineDurationMs();
+    const int fps = 24;
+    final int totalFrames = math.max(
+      1,
+      (finalExportDurationMs / 1000 * fps).floor(),
     );
+    _exportTotalFrames = totalFrames;
+    await _prepareExportMediaFrames();
+    await _prepareExportStillImages();
     if (!mounted) return;
     setState(() {});
     await WidgetsBinding.instance.endOfFrame;
@@ -642,13 +670,10 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     // 🌟 第二步：没有缓存，开始生成新视频
     debugPrint('🔄 未找到缓存，开始生成新视频...');
 
-    // 计算最终毫秒数：优先使用真实音频时长，保证一轮动画与音乐恰好同时结束。
-    final int finalExportDurationMs = _storyTimelineDurationMs();
-    double exactExportSeconds = finalExportDurationMs / 1000.0;
+    final exactExportSeconds = finalExportDurationMs / 1000.0;
 
     // 🎬 1. 抓取第0帧，主要是为了获取屏幕真正的硬件像素分辨率
-    _updateStateForFrame(0);
-    await Future.delayed(const Duration(milliseconds: 50)); // 给UI一点时间渲染第一帧
+    await _renderExportFrame(0);
     var firstFrame = await _captureFrameRgba();
     if (firstFrame.$1 == null) {
       throw StateError('无法获取初始渲染帧');
@@ -656,15 +681,20 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
     int videoWidth = firstFrame.$2;
     int videoHeight = firstFrame.$3;
-    final int videoBitrate = (videoWidth * videoHeight * 12)
-        .clamp(16000000, 80000000)
+    final int videoBitrate = (videoWidth * videoHeight * 6)
+        .clamp(4000000, _maxVideoBitrate)
         .toInt();
+
+    debugPrint(
+      '🎬 启动 AVC 编码器: ${videoWidth}x$videoHeight @ ${fps}fps, '
+      '${(videoBitrate / 1000000).toStringAsFixed(1)} Mbps',
+    );
 
     final tempDir = await getTemporaryDirectory();
     final String silentVideoPath =
         "${tempDir.path}/silent_temp_${DateTime.now().millisecondsSinceEpoch}.mp4";
 
-    // 🎬 2. 轰鸣启动硬件编码器引擎！确保启用 GPU 硬件加速
+    // 🎬 2. 启动硬件编码器。
     try {
       FlutterQuickVideoEncoder.setLogLevel(LogLevel.none); // 保持控制台清爽
       // 🌟 硬件编码配置：使用 main profile 以获得更好的硬件编码支持
@@ -672,7 +702,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         width: videoWidth,
         height: videoHeight,
         fps: 24,
-        videoBitrate: videoBitrate, // 按实际分辨率动态提高码率，尽量保留细节
+        videoBitrate: videoBitrate,
         profileLevel: ProfileLevel
             .any, // ✅ 插件自动选择最优硬件编码配置（iOS: H.264/HEVC, Android: H.264）
         filepath: silentVideoPath,
@@ -681,13 +711,10 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         audioChannels: 2, // 双声道立体声
         sampleRate: 44100, // 标准的 44.1kHz 采样率
       );
-      debugPrint('🚀 硬件视频编码器已启动（自动检测最优硬件编码方案：iOS/Android 均优先 H.264/HEVC 硬件路径）');
+      debugPrint('🚀 硬件视频编码器已启动');
     } catch (e) {
       throw StateError('硬件视频编码器启动失败: $e');
     }
-
-    int fps = 24;
-    int totalFrames = (finalExportDurationMs / 1000 * fps).floor();
 
     // 🌟 新增：计算每一帧视频对应的音频字节数
     // 公式：采样率(44100) * 通道数(2) * 每个采样点的字节数(16-bit = 2字节) / 帧率(24)
@@ -700,14 +727,11 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
     // 🎬 3. 流水线作业：渲染UI -> 抓像素 -> 塞进芯片
     for (int i = 0; i < totalFrames; i++) {
-      _updateStateForFrame(i);
+      await _renderExportFrame(i);
       // 🌟 新增：每隔 5 帧向外广播一次进度，绝不调用 setState！
       if (i % 5 == 0 || i == totalFrames - 1) {
         widget.onProgress?.call((i / totalFrames) * 0.85);
       }
-
-      // 等待 Flutter 把这帧画面画出来
-      await WidgetsBinding.instance.endOfFrame;
 
       final frameData = await _captureFrameRgba();
 
@@ -968,7 +992,12 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   // 🌟 新增一个变量，用来装这个“未来的文案”
   Future<String>? _aiCopyFuture;
   String? _exportCacheKey;
-  final Map<String, Uint8List> _exportMediaFrames = <String, Uint8List>{};
+  final Map<int, List<File>> _exportMediaFrames = <int, List<File>>{};
+  final Map<int, Uint8List> _exportStillImages = <int, Uint8List>{};
+  final Set<Directory> _exportFrameDirectories = <Directory>{};
+  File? _preparedMediaFrame;
+  int _exportFrameIndex = 0;
+  int _exportTotalFrames = 0;
 
   Future<void> _handleExportSuccess(String cacheVideoPath) async {
     debugPrint('✅ 视频生成完成，缓存路径: $cacheVideoPath');
@@ -1066,10 +1095,25 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   // 🎬 专门给取景器提供纯净画面的层（无黑边）
   Widget _buildPureImageLayer(Photo photo, Widget subtitle) {
     final mediaKind = MediaTypeHelper.fromStorageValue(photo.mediaKind);
-    final posterFrame = _exportMediaFrames[_exportMediaFrameKey(photo)];
-    final mediaLayer = posterFrame != null
+    final mediaFrames = _exportMediaFrames[_currentIndex];
+    final localFrame = _exportFrameIndex - _sectionStartFrame(_currentIndex);
+    final mediaFrame = mediaFrames != null && mediaFrames.isNotEmpty
+        ? mediaFrames[localFrame.clamp(0, mediaFrames.length - 1).toInt()]
+        : null;
+    final stillImage = _exportStillImages[_currentIndex];
+    final mediaLayer = mediaFrame != null
+        ? Image.file(
+            mediaFrame,
+            key: ValueKey<String>('$_currentIndex-$_exportFrameIndex'),
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+            gaplessPlayback: true,
+          )
+        : stillImage != null
         ? Image.memory(
-            posterFrame,
+            stillImage,
+            key: ValueKey<String>('still-$_currentIndex'),
             fit: BoxFit.cover,
             width: double.infinity,
             height: double.infinity,
@@ -1104,39 +1148,166 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   }
 
   Future<void> _prepareExportMediaFrames() async {
-    for (final section in widget.sections) {
+    for (final entry in widget.sections.asMap().entries) {
+      final sectionIndex = entry.key;
+      final section = entry.value;
       final photo = section.photo;
       final kind = await MediaTypeHelper.resolve(path: '', assetId: photo.id);
       if (kind == MemoriaMediaKind.image) continue;
 
-      final frame = await _resolveExportMediaFrame(photo);
-      if (frame == null || frame.isEmpty) {
+      final frames = await _extractExportMediaFrames(
+        photo,
+        sectionIndex: sectionIndex,
+        frameCount: _sectionFrameCount(sectionIndex),
+      );
+      if (frames.isEmpty) {
         throw StateError('无法通过系统相册读取媒体帧: ${photo.id}');
       }
-      _exportMediaFrames[_exportMediaFrameKey(photo)] = frame;
+      _exportMediaFrames[sectionIndex] = frames;
     }
   }
 
-  String _exportMediaFrameKey(Photo photo) => photo.id;
-
-  Future<Uint8List?> _resolveExportMediaFrame(Photo photo) async {
-    try {
-      final cached = await MediaThumbnailCacheService.instance.decompressBytes(
-        photo.thumbnailBytes,
+  Future<void> _prepareExportStillImages() async {
+    for (final entry in widget.sections.asMap().entries) {
+      final kind = await MediaTypeHelper.resolve(
+        path: '',
+        assetId: entry.value.photo.id,
       );
-      if (cached != null && cached.isNotEmpty) return cached;
+      if (kind != MemoriaMediaKind.image) continue;
 
-      final assetThumbnail = await MediaThumbnailCacheService.instance
-          .loadAssetThumbnailById(photo.id);
-      final bytes = assetThumbnail?.bytes;
-      if (bytes != null && bytes.isNotEmpty) return bytes;
-      return null;
+      final bytes = await resolveAssetBackedImageBytes(entry.value.photo);
+      if (bytes == null || bytes.isEmpty) {
+        throw StateError('无法通过系统相册读取图片: ${entry.value.photo.id}');
+      }
+      await precacheImage(MemoryImage(bytes), context);
+      _exportStillImages[entry.key] = bytes;
+    }
+  }
+
+  Future<void> _renderExportFrame(int frameIndex) async {
+    final currentTimeMs = (frameIndex / 24.0) * 1000.0;
+    final sectionIndex = _targetSectionIndexForTime(
+      currentTimeMs,
+      _storyTimelineDurationMs(),
+    );
+    final mediaFrames = _exportMediaFrames[sectionIndex];
+    if (mediaFrames != null && mediaFrames.isNotEmpty) {
+      final localFrame = frameIndex - _sectionStartFrame(sectionIndex);
+      final frameFile = mediaFrames[
+          localFrame.clamp(0, mediaFrames.length - 1).toInt()];
+      if (_preparedMediaFrame?.path != frameFile.path) {
+        final previousFrame = _preparedMediaFrame;
+        _preparedMediaFrame = frameFile;
+        if (previousFrame != null) {
+          await FileImage(previousFrame).evict();
+        }
+        await precacheImage(FileImage(frameFile), context);
+      }
+    }
+
+    _updateStateForFrame(frameIndex);
+    await WidgetsBinding.instance.endOfFrame;
+  }
+
+  int _sectionStartFrame(int sectionIndex) {
+    if (widget.sections.isEmpty || _exportTotalFrames <= 0) return 0;
+    return (sectionIndex * _exportTotalFrames / widget.sections.length).floor();
+  }
+
+  int _sectionFrameCount(int sectionIndex) {
+    if (widget.sections.isEmpty || _exportTotalFrames <= 0) return 1;
+    final end = ((sectionIndex + 1) * _exportTotalFrames / widget.sections.length)
+        .ceil();
+    return math.max(1, end - _sectionStartFrame(sectionIndex));
+  }
+
+  Future<List<File>> _extractExportMediaFrames(
+    Photo photo, {
+    required int sectionIndex,
+    required int frameCount,
+  }) async {
+    try {
+      final asset = await AssetEntity.fromId(photo.id);
+      if (asset == null) {
+        throw StateError('系统相册媒体不存在');
+      }
+      final mimeType = (asset.mimeType ?? await asset.mimeTypeAsync)
+          ?.toLowerCase();
+      final isAnimatedImage =
+          mimeType == 'image/gif' || mimeType == 'image/webp';
+      File? source;
+      if (asset.type == AssetType.video || isAnimatedImage) {
+        source = await asset.file;
+      } else if (asset.isLivePhoto) {
+        source = await asset.fileWithSubtype;
+      }
+      source ??= await MotionPhotoService.extractByAssetId(photo.id);
+      source ??= await asset.file;
+      if (source == null || !await source.exists()) {
+        throw StateError('系统相册媒体不可访问');
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final key = sha256
+          .convert(utf8.encode('${photo.id}:$sectionIndex'))
+          .toString()
+          .substring(0, 16);
+      final sourceCopy = File('${tempDir.path}/story_export_source_$key.media');
+      final framesDir = Directory('${tempDir.path}/story_export_frames_$key');
+      if (await framesDir.exists()) {
+        await framesDir.delete(recursive: true);
+      }
+      await framesDir.create(recursive: true);
+      _exportFrameDirectories.add(framesDir);
+      await source.copy(sourceCopy.path);
+
+      try {
+        final inputPath = sourceCopy.path.replaceAll('"', '\\"');
+        final pattern = '${framesDir.path}/frame_%05d.jpg'.replaceAll('"', '\\"');
+        final session = await FFmpegKit.execute(
+          '-y -stream_loop -1 -i "$inputPath" '
+          '-vf "fps=24,scale=1920:-2" -frames:v $frameCount -q:v 2 "$pattern"',
+        );
+        if (!ReturnCode.isSuccess(await session.getReturnCode())) {
+          throw StateError('FFmpeg 无法提取视频帧');
+        }
+        final files = (await framesDir.list().toList())
+            .whereType<File>()
+            .where((file) => file.path.toLowerCase().endsWith('.jpg'))
+            .toList(growable: false)
+          ..sort((a, b) => a.path.compareTo(b.path));
+        if (files.isEmpty) {
+          throw StateError('视频未产生可用帧');
+        }
+        return files;
+      } finally {
+        if (await sourceCopy.exists()) await sourceCopy.delete();
+      }
     } catch (error, stackTrace) {
       debugPrint(
-        '⚠️ 解析导出媒体帧失败: ${photo.id} '
+        '⚠️ 提取导出媒体帧失败: ${photo.id} '
         'error=$error\n$stackTrace',
       );
-      return null;
+      return const <File>[];
+    }
+  }
+
+  Future<void> _clearExportMediaFrames() async {
+    final directories = _exportFrameDirectories.toList(growable: false);
+    _exportFrameDirectories.clear();
+    _exportMediaFrames.clear();
+    _exportStillImages.clear();
+    final prepared = _preparedMediaFrame;
+    _preparedMediaFrame = null;
+    if (prepared != null) {
+      await FileImage(prepared).evict();
+    }
+    for (final directory in directories) {
+      try {
+        if (await directory.exists()) {
+          await directory.delete(recursive: true);
+        }
+      } catch (_) {}
     }
   }
 

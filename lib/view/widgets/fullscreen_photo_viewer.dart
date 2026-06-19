@@ -274,6 +274,7 @@ class _FullscreenVideoPlayer extends StatefulWidget {
 class _FullscreenVideoPlayerState extends State<_FullscreenVideoPlayer> {
   VideoPlayerController? _controller;
   Object? _error;
+  bool _isMuted = true;
 
   @override
   void initState() {
@@ -314,6 +315,14 @@ class _FullscreenVideoPlayerState extends State<_FullscreenVideoPlayer> {
     super.dispose();
   }
 
+  Future<void> _toggleMute() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final isMuted = !_isMuted;
+    await controller.setVolume(isMuted ? 0 : 1);
+    if (mounted) setState(() => _isMuted = isMuted);
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
@@ -331,7 +340,12 @@ class _FullscreenVideoPlayerState extends State<_FullscreenVideoPlayer> {
     return Center(
       child: AspectRatio(
         aspectRatio: controller.value.aspectRatio,
-        child: VideoPlayer(controller),
+        child: Stack(
+          children: [
+            Positioned.fill(child: VideoPlayer(controller)),
+            _MuteToggleButton(isMuted: _isMuted, onPressed: _toggleMute),
+          ],
+        ),
       ),
     );
   }
@@ -369,6 +383,7 @@ class _FullscreenAndroidMotionPhotoState
     extends State<_FullscreenAndroidMotionPhoto> {
   VideoPlayerController? _controller;
   Uint8List? _stillBytes;
+  bool _isMuted = true;
 
   @override
   void initState() {
@@ -417,13 +432,26 @@ class _FullscreenAndroidMotionPhotoState
     super.dispose();
   }
 
+  Future<void> _toggleMute() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final isMuted = !_isMuted;
+    await controller.setVolume(isMuted ? 0 : 1);
+    if (mounted) setState(() => _isMuted = isMuted);
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
     if (controller != null && controller.value.isInitialized) {
       return AspectRatio(
         aspectRatio: controller.value.aspectRatio,
-        child: VideoPlayer(controller),
+        child: Stack(
+          children: [
+            Positioned.fill(child: VideoPlayer(controller)),
+            _MuteToggleButton(isMuted: _isMuted, onPressed: _toggleMute),
+          ],
+        ),
       );
     }
     final bytes = _stillBytes;
@@ -443,6 +471,7 @@ class _FullscreenLivePhotoPlayerState
   VideoPlayerController? _controller;
   Uint8List? _stillBytes;
   Object? _error;
+  bool _isMuted = true;
 
   @override
   void initState() {
@@ -505,6 +534,14 @@ class _FullscreenLivePhotoPlayerState
     super.dispose();
   }
 
+  Future<void> _toggleMute() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final isMuted = !_isMuted;
+    await controller.setVolume(isMuted ? 0 : 1);
+    if (mounted) setState(() => _isMuted = isMuted);
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
@@ -512,7 +549,12 @@ class _FullscreenLivePhotoPlayerState
       return Center(
         child: AspectRatio(
           aspectRatio: controller.value.aspectRatio,
-          child: VideoPlayer(controller),
+          child: Stack(
+            children: [
+              Positioned.fill(child: VideoPlayer(controller)),
+              _MuteToggleButton(isMuted: _isMuted, onPressed: _toggleMute),
+            ],
+          ),
         ),
       );
     }
@@ -541,6 +583,28 @@ class _FullscreenLivePhotoPlayerState
             ),
           ),
       ],
+    );
+  }
+}
+
+class _MuteToggleButton extends StatelessWidget {
+  const _MuteToggleButton({required this.isMuted, required this.onPressed});
+
+  final bool isMuted;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      right: 8,
+      bottom: 8,
+      child: Tooltip(
+        message: isMuted ? '开启声音' : '静音',
+        child: IconButton.filledTonal(
+          onPressed: onPressed,
+          icon: Icon(isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded),
+        ),
+      ),
     );
   }
 }

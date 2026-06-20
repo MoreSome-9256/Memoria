@@ -2,15 +2,15 @@
 set -euo pipefail
 
 # Usage:
-#   ./launch.sh dev
+#   ./launch.sh proxy
 #   ./launch.sh prod emulator-5554
-PROFILE="${1:-dev}"
+PROFILE="${1:-proxy}"
 DEVICE="${2:-}"
 PROFILE_FILE="config/profiles/${PROFILE}.json"
 
 if [[ ! -f "${PROFILE_FILE}" ]]; then
 	echo "Profile file not found: ${PROFILE_FILE}"
-	echo "Create it from template: config/profiles/dev.example.json"
+	echo "Use config/profiles/proxy.json or create a private profile."
 	exit 1
 fi
 

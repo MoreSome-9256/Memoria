@@ -10,7 +10,7 @@ import 'package:video_player/video_player.dart';
 import '../../service/photo_service.dart';
 import '../../service/motion_photo_service.dart';
 import '../../utils/media_type_helper.dart';
-import 'path_image.dart';
+import 'asset_backed_image.dart';
 
 Future<void> showFullscreenPhotoViewer(
   BuildContext context, {
@@ -66,15 +66,25 @@ class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
       future: _mediaFuture,
       builder: (context, snapshot) {
         final media = snapshot.data;
-        if (media != null && !media.available) {
+        if (media == null) {
+          if (snapshot.hasError) {
+            return const _FullscreenMediaScaffold(
+              child: _UnavailableMediaMessage(message: '媒体加载失败。'),
+            );
+          }
+          return const _FullscreenMediaScaffold(
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (!media.available) {
           _cleanupUnavailableMedia();
           return const _FullscreenMediaScaffold(
             child: _UnavailableMediaMessage(message: '原始文件已不可访问，正在移除本地记录…'),
           );
         }
-        final resolvedPath = media?.path ?? widget.path;
-        final kind = media?.kind ?? MediaTypeHelper.fromPath(widget.path);
-        if (media?.isLivePhoto == true) {
+        final resolvedPath = media.path;
+        final kind = media.kind;
+        if (media.isLivePhoto) {
           return _FullscreenMediaScaffold(
             child: _FullscreenLivePhotoPlayer(
               assetId: widget.assetId!,
@@ -99,8 +109,9 @@ class _FullscreenPhotoViewerState extends State<_FullscreenPhotoViewer> {
                 assetId: widget.assetId!,
                 fallbackPath: resolvedPath,
               )
-            : PathImage(
+            : AssetBackedImage(
                 path: resolvedPath,
+                assetId: widget.assetId,
                 fit: BoxFit.contain,
                 enableSmartCache: false,
               );
@@ -273,6 +284,7 @@ class _FullscreenVideoPlayer extends StatefulWidget {
 class _FullscreenVideoPlayerState extends State<_FullscreenVideoPlayer> {
   VideoPlayerController? _controller;
   Object? _error;
+  bool _isMuted = true;
 
   @override
   void initState() {
@@ -313,6 +325,14 @@ class _FullscreenVideoPlayerState extends State<_FullscreenVideoPlayer> {
     super.dispose();
   }
 
+  Future<void> _toggleMute() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final isMuted = !_isMuted;
+    await controller.setVolume(isMuted ? 0 : 1);
+    if (mounted) setState(() => _isMuted = isMuted);
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
@@ -330,7 +350,12 @@ class _FullscreenVideoPlayerState extends State<_FullscreenVideoPlayer> {
     return Center(
       child: AspectRatio(
         aspectRatio: controller.value.aspectRatio,
-        child: VideoPlayer(controller),
+        child: Stack(
+          children: [
+            Positioned.fill(child: VideoPlayer(controller)),
+            _MuteToggleButton(isMuted: _isMuted, onPressed: _toggleMute),
+          ],
+        ),
       ),
     );
   }
@@ -368,6 +393,8 @@ class _FullscreenAndroidMotionPhotoState
     extends State<_FullscreenAndroidMotionPhoto> {
   VideoPlayerController? _controller;
   Uint8List? _stillBytes;
+  bool _isLoading = true;
+  bool _isMuted = true;
 
   @override
   void initState() {
@@ -378,13 +405,16 @@ class _FullscreenAndroidMotionPhotoState
   Future<void> _initialize() async {
     try {
       final asset = await AssetEntity.fromId(widget.assetId);
-      _stillBytes = await asset?.thumbnailDataWithOption(
+      final stillBytes = await asset?.thumbnailDataWithOption(
         const ThumbnailOption(
           size: ThumbnailSize.square(2048),
           format: ThumbnailFormat.jpeg,
           quality: 95,
         ),
       );
+      if (!mounted) return;
+      setState(() => _stillBytes = stillBytes);
+
       final motionFile = await MotionPhotoService.extractByAssetId(
         widget.assetId,
       );
@@ -407,7 +437,7 @@ class _FullscreenAndroidMotionPhotoState
         'error=$error\n$stackTrace',
       );
     }
-    if (mounted) setState(() {});
+    if (mounted) setState(() => _isLoading = false);
   }
 
   @override
@@ -416,23 +446,41 @@ class _FullscreenAndroidMotionPhotoState
     super.dispose();
   }
 
+  Future<void> _toggleMute() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final isMuted = !_isMuted;
+    await controller.setVolume(isMuted ? 0 : 1);
+    if (mounted) setState(() => _isMuted = isMuted);
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
     if (controller != null && controller.value.isInitialized) {
       return AspectRatio(
         aspectRatio: controller.value.aspectRatio,
-        child: VideoPlayer(controller),
+        child: Stack(
+          children: [
+            Positioned.fill(child: VideoPlayer(controller)),
+            _MuteToggleButton(isMuted: _isMuted, onPressed: _toggleMute),
+          ],
+        ),
       );
     }
     final bytes = _stillBytes;
-    return bytes != null && bytes.isNotEmpty
-        ? Image.memory(bytes, fit: BoxFit.contain)
-        : PathImage(
-            path: widget.fallbackPath,
-            fit: BoxFit.contain,
-            enableSmartCache: false,
-          );
+    if (bytes != null && bytes.isNotEmpty) {
+      return Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true);
+    }
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return AssetBackedImage(
+      path: widget.fallbackPath,
+      assetId: widget.assetId,
+      fit: BoxFit.contain,
+      enableSmartCache: false,
+    );
   }
 }
 
@@ -441,6 +489,7 @@ class _FullscreenLivePhotoPlayerState
   VideoPlayerController? _controller;
   Uint8List? _stillBytes;
   Object? _error;
+  bool _isMuted = true;
 
   @override
   void initState() {
@@ -503,6 +552,14 @@ class _FullscreenLivePhotoPlayerState
     super.dispose();
   }
 
+  Future<void> _toggleMute() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final isMuted = !_isMuted;
+    await controller.setVolume(isMuted ? 0 : 1);
+    if (mounted) setState(() => _isMuted = isMuted);
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
@@ -510,15 +567,21 @@ class _FullscreenLivePhotoPlayerState
       return Center(
         child: AspectRatio(
           aspectRatio: controller.value.aspectRatio,
-          child: VideoPlayer(controller),
+          child: Stack(
+            children: [
+              Positioned.fill(child: VideoPlayer(controller)),
+              _MuteToggleButton(isMuted: _isMuted, onPressed: _toggleMute),
+            ],
+          ),
         ),
       );
     }
     final stillBytes = _stillBytes;
     final still = stillBytes != null && stillBytes.isNotEmpty
         ? Image.memory(stillBytes, fit: BoxFit.contain)
-        : PathImage(
+        : AssetBackedImage(
             path: widget.stillPath,
+            assetId: widget.assetId,
             fit: BoxFit.contain,
             enableSmartCache: false,
           );
@@ -538,6 +601,28 @@ class _FullscreenLivePhotoPlayerState
             ),
           ),
       ],
+    );
+  }
+}
+
+class _MuteToggleButton extends StatelessWidget {
+  const _MuteToggleButton({required this.isMuted, required this.onPressed});
+
+  final bool isMuted;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      right: 8,
+      bottom: 8,
+      child: Tooltip(
+        message: isMuted ? '开启声音' : '静音',
+        child: IconButton.filledTonal(
+          onPressed: onPressed,
+          icon: Icon(isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded),
+        ),
+      ),
     );
   }
 }

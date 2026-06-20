@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:photo_album/models/entity/photo_entity.dart';
 import 'package:photo_album/models/vo/semantic_search_models.dart';
+import 'package:photo_album/service/place_search_policy.dart';
 import 'package:photo_album/service/semantic_search_metadata_matcher.dart';
 
 PhotoEntity _photo({
@@ -31,10 +32,11 @@ PhotoEntity _photo({
 SemanticSearchQuery _query({
   List<SemanticSearchTimeRange> ranges = const <SemanticSearchTimeRange>[],
   List<SemanticSearchLocation> locations = const <SemanticSearchLocation>[],
+  List<int> weekdays = const <int>[],
 }) {
   return SemanticSearchQuery.empty(
     'test',
-  ).copyWith(timeRanges: ranges, locations: locations);
+  ).copyWith(timeRanges: ranges, locations: locations, weekdays: weekdays);
 }
 
 void main() {
@@ -173,6 +175,70 @@ void main() {
         isTrue,
       );
     });
+
+    test('matches annual month-day ranges and weekday filters', () {
+      final monday = _photo(
+        id: 15,
+        timestamp: DateTime(2026, 6, 15, 12).millisecondsSinceEpoch,
+      );
+      const range = SemanticSearchTimeRange(
+        startTimeMs: null,
+        endTimeMs: null,
+        reason: 'summer days',
+        annualStartMonth: 6,
+        annualStartDayOfMonth: 1,
+        annualEndMonth: 8,
+        annualEndDayOfMonth: 31,
+      );
+
+      expect(
+        matcher.matchesTime(
+          monday,
+          _query(ranges: const [range], weekdays: const <int>[1]),
+        ),
+        isTrue,
+      );
+      expect(
+        matcher.matchesTime(
+          monday,
+          _query(ranges: const [range], weekdays: const <int>[6, 7]),
+        ),
+        isFalse,
+      );
+    });
+
+    test('matches annual month-day ranges without leap-year drift', () {
+      const range = SemanticSearchTimeRange(
+        startTimeMs: null,
+        endTimeMs: null,
+        reason: 'National Day holiday',
+        annualStartMonth: 10,
+        annualStartDayOfMonth: 1,
+        annualEndMonth: 10,
+        annualEndDayOfMonth: 7,
+      );
+
+      expect(
+        matcher.matchesTime(
+          _photo(
+            id: 16,
+            timestamp: DateTime(2024, 10, 1, 12).millisecondsSinceEpoch,
+          ),
+          _query(ranges: const [range]),
+        ),
+        isTrue,
+      );
+      expect(
+        matcher.matchesTime(
+          _photo(
+            id: 17,
+            timestamp: DateTime(2024, 9, 30, 12).millisecondsSinceEpoch,
+          ),
+          _query(ranges: const [range]),
+        ),
+        isFalse,
+      );
+    });
   });
 
   group('SemanticSearchMetadataMatcher location', () {
@@ -252,6 +318,108 @@ void main() {
       expect(matcher.matchesLocation(exactPoi, query), isTrue);
       expect(matcher.matchesLocation(scenicContext, query), isFalse);
       expect(matcher.matchesLocation(villageContext, query), isFalse);
+    });
+
+    test('matches a child POI when address confirms target containment', () {
+      final childPoi = _photo(
+        id: 10,
+        timestamp: 1,
+        city: '南京市',
+        locationName: '青年旅舍',
+        formattedAddress: '江苏省南京市秦淮区夫子庙青年旅舍',
+      );
+
+      expect(
+        matcher.matchesLocation(childPoi, const <SemanticSearchLocation>[
+          SemanticSearchLocation(text: '夫子庙', type: 'poi', strictness: 'exact'),
+        ]),
+        isTrue,
+      );
+    });
+
+    test('matches a nearby sibling inside the resolved core radius', () {
+      final sibling =
+          _photo(
+              id: 10,
+              timestamp: 1,
+              city: '南京市',
+              locationName: '青年旅舍',
+              formattedAddress: '江苏省南京市秦淮区贡院街青年旅舍',
+            )
+            ..latAmapE6 = 32020000
+            ..lonAmapE6 = 118790000;
+
+      expect(
+        matcher.matchesLocation(sibling, const <SemanticSearchLocation>[
+          SemanticSearchLocation(
+            text: '夫子庙',
+            type: 'poi',
+            strictness: 'exact',
+            centerLatAmapE6: 32020100,
+            centerLonAmapE6: 118790000,
+            coreRadiusMeters: 350,
+          ),
+        ]),
+        isTrue,
+      );
+    });
+
+    test('uses core radius for exact and nearby place queries', () {
+      final photo = _photo(id: 11, timestamp: 1)
+        ..latAmapE6 = 39908700
+        ..lonAmapE6 = 116397500;
+      const exact = SemanticSearchLocation(
+        text: '目标地点',
+        type: 'poi',
+        centerLatAmapE6: 39908750,
+        centerLonAmapE6: 116397500,
+        coreRadiusMeters: 300,
+      );
+      const nearby = SemanticSearchLocation(
+        text: '目标地点附近',
+        type: 'poi',
+        strictness: 'nearby',
+        allowNearbySiblings: true,
+        centerLatAmapE6: 39908750,
+        centerLonAmapE6: 116397500,
+        coreRadiusMeters: 300,
+      );
+
+      expect(
+        matcher.matchesLocation(photo, const <SemanticSearchLocation>[exact]),
+        isTrue,
+      );
+      expect(
+        matcher.matchesLocation(photo, const <SemanticSearchLocation>[nearby]),
+        isTrue,
+      );
+    });
+
+    test('accepts plausible GPS drift but rejects cross-city distance', () {
+      final radius = PlaceSearchPolicy.radiusFor('poi');
+      final nearPhoto = _photo(id: 13, timestamp: 1)
+        ..latAmapE6 = 32000000
+        ..lonAmapE6 = 118820000;
+      final farPhoto = _photo(id: 14, timestamp: 1)
+        ..latAmapE6 = 32400000
+        ..lonAmapE6 = 118820000;
+      final location = SemanticSearchLocation(
+        text: '目标地点',
+        type: 'poi',
+        centerLatAmapE6: 32018000,
+        centerLonAmapE6: 118820000,
+        coreRadiusMeters: radius.coreMeters,
+        softRadiusMeters: radius.softMeters,
+      );
+
+      expect(
+        matcher.matchesLocation(nearPhoto, <SemanticSearchLocation>[location]),
+        isTrue,
+      );
+      expect(
+        matcher.matchesLocation(farPhoto, <SemanticSearchLocation>[location]),
+        isFalse,
+      );
     });
   });
 

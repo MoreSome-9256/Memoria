@@ -5,7 +5,11 @@ import time
 import requests
 
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+API_PROXY_BASE_URL = os.getenv(
+    "MEMORIA_API_PROXY_BASE_URL",
+    "https://t55ki90eu6.execute-api.ap-northeast-2.amazonaws.com",
+).rstrip("/")
+API_PROXY_ID_TOKEN = os.getenv("MEMORIA_API_PROXY_ID_TOKEN", "")
 
 MODEL_NAME = "deepseek-chat"
 TAGS_FILE = "ai_tools/expanded_tags_vectors.json"
@@ -109,9 +113,9 @@ def build_system_prompt():
 
 
 def classify_batch(batch):
-    url = "https://api.deepseek.com/chat/completions"
+    url = f"{API_PROXY_BASE_URL}/v1/llm/chat/completions"
     headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Authorization": f"Bearer {API_PROXY_ID_TOKEN}",
         "Content-Type": "application/json",
     }
 
@@ -160,8 +164,8 @@ def normalize_category_map(raw_category_map, batch):
 
 
 def classify_all_tags(records):
-    if not DEEPSEEK_API_KEY:
-        raise RuntimeError("请先设置环境变量 DEEPSEEK_API_KEY")
+    if not API_PROXY_ID_TOKEN:
+        raise RuntimeError("请先设置环境变量 MEMORIA_API_PROXY_ID_TOKEN")
 
     category_map = load_checkpoint()
     remaining_records = [record for record in records if record["tag"] not in category_map]

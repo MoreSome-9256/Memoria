@@ -253,12 +253,8 @@ class StoryService {
         addTag(tag);
       }
 
-      if (photo.isProbablyScreenshot) {
-        addTag('截图');
-      }
-
       if (result.isEmpty) {
-        addTag(photo.isProbablyScreenshot ? '屏幕' : '文字');
+        addTag('文字');
       }
 
       return result.take(5).toList(growable: false);
@@ -280,8 +276,7 @@ class StoryService {
         .where(_textSceneTags.contains)
         .length;
 
-    return photo.isProbablyScreenshot ||
-        effectiveOcrTags.length >= 2 ||
+    return effectiveOcrTags.length >= 2 ||
         ocrText.length >= 12 ||
         textLikeAiCount >= 2;
   }
@@ -472,8 +467,14 @@ class StoryService {
 
   Future<List<PhotoEntity>> loadPhotos(List<int> photoIds) async {
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final photos = photoBox.getMany(photoIds).whereType<PhotoEntity>().toList()
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final loadedById = <int, PhotoEntity>{
+      for (final photo in photoBox.getMany(photoIds).whereType<PhotoEntity>())
+        photo.id: photo,
+    };
+    final photos = photoIds
+        .map((id) => loadedById[id])
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
 
     for (
       var start = 0;

@@ -17,7 +17,7 @@ extension _StoryGenerationOrchestratorLocalRuntime
     final captions = <int, _CaptionResult>{};
     for (var index = 0; index < photos.length; index++) {
       final photo = photos[index];
-      final payload = OnDeviceInternvlImagePayload(
+      final payload = _LocalVlmImagePayload(
         path: photo.path,
         capturedAtIso: DateTime.fromMillisecondsSinceEpoch(
           photo.timestamp,
@@ -67,7 +67,7 @@ extension _StoryGenerationOrchestratorLocalRuntime
 
   Future<List<String>> _generateLocalCaptionCandidates({
     required PhotoEntity photo,
-    required OnDeviceInternvlImagePayload payload,
+    required _LocalVlmImagePayload payload,
   }) async {
     final results = <String>[];
     final mediaKind = MediaTypeHelper.fromStorageValue(
@@ -103,10 +103,9 @@ extension _StoryGenerationOrchestratorLocalRuntime
     required StoryGenerationRequest request,
     required List<PhotoEntity> photos,
   }) async {
-    final runtime = await _prepareLocalRuntime();
     final payloads = photos
         .map(
-          (photo) => OnDeviceInternvlImagePayload(
+          (photo) => _LocalVlmImagePayload(
             path: photo.path,
             capturedAtIso: DateTime.fromMillisecondsSinceEpoch(
               photo.timestamp,
@@ -119,18 +118,26 @@ extension _StoryGenerationOrchestratorLocalRuntime
         .toList(growable: false);
 
     final prompt = _buildLocalStoryPrompt(request, payloads);
-    final structured = await _runLocalStructuredTask(
-      prompt: prompt,
-      payloads: payloads,
-      maxTokens: 480,
-      temperature: 0.35,
-      cliTimeoutMs: 240000,
-      requestTimeout: const Duration(minutes: 4),
-      preparedRuntime: runtime,
-      allowCliFallback: true,
-    );
+    final rawContent = await LocalVlmDescriptionService.instance
+        .generateAssetsDescription(
+          assets: photos
+              .map(
+                (photo) => LocalVlmAssetInput(
+                  assetId: photo.assetId,
+                  treatAsVideo:
+                      MediaTypeHelper.fromStorageValue(
+                        photo.mediaKind,
+                        path: photo.path,
+                      ) !=
+                      MemoriaMediaKind.image,
+                ),
+              )
+              .toList(growable: false),
+          prompt: prompt,
+          maxTokens: 480,
+        );
 
-    final parsed = _tryParseJsonObject(structured.rawContent);
+    final parsed = _tryParseJsonObject(rawContent);
     if (parsed != null) {
       final payload = _StructuredStoryPayload.fromParsedJson(
         parsed,
@@ -143,9 +150,9 @@ extension _StoryGenerationOrchestratorLocalRuntime
       }
     }
 
-    final storyText = structured.narrative.trim().isEmpty
+    final storyText = rawContent.trim().isEmpty
         ? _buildFallbackStoryParagraph(request, photos)
-        : structured.narrative.trim();
+        : rawContent.trim();
     return _StructuredStoryPayload(
       title: request.title,
       subtitle: request.subtitle,
@@ -308,7 +315,7 @@ ${jsonEncode(photoPayload)}
   }
 
   String _buildSmolVlmCaptionPrompt(
-    OnDeviceInternvlImagePayload payload, {
+    _LocalVlmImagePayload payload, {
     int attempt = 1,
   }) {
     final focus = switch (attempt) {
@@ -332,7 +339,7 @@ ${jsonEncode(photoPayload)}
 
   String _buildLocalStoryPrompt(
     StoryGenerationRequest request,
-    List<OnDeviceInternvlImagePayload> payloads,
+    List<_LocalVlmImagePayload> payloads,
   ) {
     final metadataLines = <String>[
       '图片元数据：',
@@ -358,176 +365,6 @@ ${jsonEncode(photoPayload)}
       'story 必须是一整段中文，长度 180-360 个中文字符。',
       '故事要体现时间推进、地点变化和画面细节。',
     ].join('\n');
-  }
-
-  Future<InternvlStructuredResponse> _runLocalStructuredTask({
-    required String prompt,
-    required List<OnDeviceInternvlImagePayload> payloads,
-    required int maxTokens,
-    required double temperature,
-    required int cliTimeoutMs,
-    required Duration requestTimeout,
-    _LocalRuntime? preparedRuntime,
-    required bool allowCliFallback,
-  }) async {
-    final runtime = preparedRuntime ?? await _prepareLocalRuntime();
-    final profile = runtime.profile;
-    final server = runtime.server;
-    if (server == null || !server.ready) {
-      throw StateError(
-        server?.error.isNotEmpty == true
-            ? server!.error
-            : server?.summary ?? '本地 VLM 服务尚未就绪',
-      );
-    }
-
-    try {
-      return await _internvlExperimentService
-          .analyzeImagesStructured(
-            serverUrl: server.chatCompletionsUrl,
-            model: server.modelAlias,
-            prompt: prompt,
-            imagePaths: payloads
-                .map((item) => item.path)
-                .toList(growable: false),
-            maxTokens: maxTokens,
-            temperature: temperature,
-          )
-          .timeout(requestTimeout);
-    } catch (error) {
-      if (allowCliFallback &&
-          (_looksLikeEmptyServerText(error) ||
-              _looksLikeServerUnavailable(error))) {
-        return _invokeLocalCliFallback(
-          server: server,
-          prompt: prompt,
-          payloads: payloads,
-          profileThreads: 1,
-          profileContextSize: profile?.recommendedContextSize ?? 2048,
-          maxTokens: maxTokens,
-          cliTimeoutMs: cliTimeoutMs,
-        );
-      }
-      if (_looksLikeServerPipeFailure(error)) {
-        await OnDeviceInternvlService().stopServer();
-        final restarted = await OnDeviceInternvlService().ensureServerStarted(
-          threads: 1,
-          contextSize: profile?.recommendedContextSize ?? 2048,
-        );
-        if (restarted == null || !restarted.ready) {
-          throw StateError(
-            '本地服务在接收图片时断开，且重启失败：${restarted?.error.isNotEmpty == true ? restarted!.error : restarted?.summary ?? '未知错误'}',
-          );
-        }
-        try {
-          return await _internvlExperimentService
-              .analyzeImagesStructured(
-                serverUrl: restarted.chatCompletionsUrl,
-                model: restarted.modelAlias,
-                prompt: prompt,
-                imagePaths: payloads
-                    .map((item) => item.path)
-                    .toList(growable: false),
-                maxTokens: maxTokens,
-                temperature: temperature,
-              )
-              .timeout(requestTimeout);
-        } catch (retryError) {
-          if (allowCliFallback &&
-              (_looksLikeEmptyServerText(retryError) ||
-                  _looksLikeServerUnavailable(retryError) ||
-                  _looksLikeServerPipeFailure(retryError))) {
-            return _invokeLocalCliFallback(
-              server: restarted,
-              prompt: prompt,
-              payloads: payloads,
-              profileThreads: 1,
-              profileContextSize: profile?.recommendedContextSize ?? 2048,
-              maxTokens: maxTokens,
-              cliTimeoutMs: cliTimeoutMs,
-            );
-          }
-          rethrow;
-        }
-      }
-      rethrow;
-    }
-  }
-
-  Future<_LocalRuntime> _prepareLocalRuntime() async {
-    final profile = await OnDeviceInternvlService().probeDeviceProfile();
-    final server = await OnDeviceInternvlService().ensureServerStarted(
-      threads: 1,
-      contextSize: profile?.recommendedContextSize ?? 2048,
-    );
-    return _LocalRuntime(profile: profile, server: server);
-  }
-
-  Future<InternvlStructuredResponse> _invokeLocalCliFallback({
-    required OnDeviceInternvlServerStatus server,
-    required String prompt,
-    required List<OnDeviceInternvlImagePayload> payloads,
-    required int profileThreads,
-    required int profileContextSize,
-    required int maxTokens,
-    required int cliTimeoutMs,
-  }) async {
-    final cliResult = await OnDeviceInternvlService().runCliExperiment(
-      images: payloads,
-      prompt: prompt,
-      threads: profileThreads,
-      contextSize: profileContextSize,
-      maxTokens: maxTokens,
-      timeoutMs: cliTimeoutMs,
-    );
-    if (cliResult == null) {
-      throw StateError('本地 CLI 兜底失败：未拿到执行结果');
-    }
-    if (!cliResult.success) {
-      throw StateError(
-        '本地 CLI 兜底失败: ${cliResult.error.isNotEmpty ? cliResult.error : 'exit=${cliResult.exitCode}'}',
-      );
-    }
-
-    final rawText = cliResult.answer.trim().isNotEmpty
-        ? cliResult.answer.trim()
-        : cliResult.rawOutput.trim();
-    if (rawText.isEmpty) {
-      throw StateError('本地 CLI 兜底失败：模型没有返回可用文本');
-    }
-
-    return _internvlExperimentService.normalizeRawTextToStructuredResponse(
-      rawContent: rawText,
-      model: server.modelAlias,
-      prompt: prompt,
-      imageCount: payloads.length,
-      serverUrl: server.chatCompletionsUrl,
-    );
-  }
-
-  bool _looksLikeServerPipeFailure(Object error) {
-    final text = error.toString().toLowerCase();
-    return text.contains('broken pipe') ||
-        text.contains('socketexception') ||
-        text.contains('connection reset') ||
-        text.contains('connection terminated during handshake') ||
-        text.contains('write failed');
-  }
-
-  bool _looksLikeServerUnavailable(Object error) {
-    final text = error.toString().toLowerCase();
-    return text.contains('status code of 503') ||
-        text.contains('bad response') ||
-        text.contains('server error') ||
-        text.contains('no available slot') ||
-        text.contains('loading model');
-  }
-
-  bool _looksLikeEmptyServerText(Object error) {
-    final text = error.toString().toLowerCase();
-    return text.contains('未解析出文本内容') ||
-        text.contains('did not contain parseable text') ||
-        text.contains('raw response');
   }
 
   String _normalizeCaptionCandidate(String value) {

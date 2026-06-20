@@ -79,10 +79,7 @@ dependencies:
   pool: ^1.5.1
   flutter_litert: ^2.5.8
   background_downloader: ^9.5.5
-  llama_cpp_dart:
-    git:
-      url: https://github.com/netdur/llama_cpp_dart.git
-      ref: main
+  llamadart: ^0.8.0
 dev_dependencies:
   amplify_lints: ^3.0.0
   build_runner: ^2.15.0

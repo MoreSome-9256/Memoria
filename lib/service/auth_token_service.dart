@@ -1,44 +1,38 @@
-/// 认证令牌辅助服务，负责缓存和刷新 API 调用所需的 token。
-
 import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/foundation.dart';
 
 class AuthTokenService {
-  static String? _cachedAccessToken;
-  static DateTime? _tokenExpiryTime;
+  AuthTokenService._();
 
-  static Future<String?> getAccessToken() async {
+  static Future<String?> getIdToken() => _getToken(
+    readToken: (tokens) => tokens.idToken.raw,
+  );
+
+  static Future<String?> getAccessToken() => _getToken(
+    readToken: (tokens) => tokens.accessToken.raw,
+  );
+
+  static Future<String?> _getToken({
+    required String Function(CognitoUserPoolTokens tokens) readToken,
+  }) async {
     try {
-      if (_cachedAccessToken != null && _tokenExpiryTime != null) {
-        final refreshAt = _tokenExpiryTime!.subtract(const Duration(minutes: 5));
-        if (DateTime.now().isBefore(refreshAt)) {
-          return _cachedAccessToken;
-        }
+      if (!Amplify.isConfigured) {
+        debugPrint('AuthTokenService skipped: Amplify Auth is not configured.');
+        return null;
       }
-
-      final cognitoPlugin = Amplify.Auth.getPlugin(AmplifyAuthCognito.pluginKey);
+      final cognitoPlugin = Amplify.Auth.getPlugin(
+        AmplifyAuthCognito.pluginKey,
+      );
       final session = await cognitoPlugin.fetchAuthSession();
-      if (!session.isSignedIn) {
-        return null;
-      }
-
-      final accessToken = session.userPoolTokensResult.valueOrNull?.accessToken.raw;
-      if (accessToken == null || accessToken.isEmpty) {
-        return null;
-      }
-
-      _cachedAccessToken = accessToken;
-      _tokenExpiryTime = DateTime.now().add(const Duration(minutes: 55));
-      return accessToken;
+      if (!session.isSignedIn) return null;
+      final tokens = session.userPoolTokensResult.valueOrNull;
+      if (tokens == null) return null;
+      final token = readToken(tokens);
+      return token.isEmpty ? null : token;
     } catch (e) {
-      debugPrint('AuthTokenService getAccessToken failed: $e');
+      debugPrint('AuthTokenService fetchAuthSession failed: $e');
       return null;
     }
-  }
-
-  static void clearCachedToken() {
-    _cachedAccessToken = null;
-    _tokenExpiryTime = null;
   }
 }

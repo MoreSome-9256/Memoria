@@ -1,4 +1,4 @@
-﻿/// 数字相册书页面，展示和编辑书册式相册内容。
+/// 数字相册书页面，展示和编辑书册式相册内容。
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -14,14 +14,11 @@ import '../../service/digital_album_ai_service.dart';
 import '../../service/digital_album_book_service.dart';
 import '../../service/digital_album_layout_service.dart';
 import '../../service/digital_album_validator_service.dart';
-import '../widgets/path_image.dart';
+import '../widgets/asset_backed_image.dart';
 import 'vlm_photo_picker_page.dart';
 
 class DigitalAlbumBookResult {
-  const DigitalAlbumBookResult({
-    required this.saved,
-    required this.document,
-  });
+  const DigitalAlbumBookResult({required this.saved, required this.document});
 
   final bool saved;
   final AlbumBookDocument? document;
@@ -49,12 +46,15 @@ class DigitalAlbumBookPage extends StatefulWidget {
 
 class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     with SingleTickerProviderStateMixin {
-  final DigitalAlbumLayoutService _layoutService = const DigitalAlbumLayoutService();
-  final DigitalAlbumValidatorService _validator = const DigitalAlbumValidatorService();
+  final DigitalAlbumLayoutService _layoutService =
+      const DigitalAlbumLayoutService();
+  final DigitalAlbumValidatorService _validator =
+      const DigitalAlbumValidatorService();
   final DigitalAlbumAiService _aiService = const DigitalAlbumAiService();
   final DigitalAlbumBookService _bookService = const DigitalAlbumBookService();
   final PageController _pageController = PageController();
-  final TransformationController _spreadZoomController = TransformationController();
+  final TransformationController _spreadZoomController =
+      TransformationController();
   final FocusNode _inlineTextFocusNode = FocusNode();
   final List<_EditorSnapshot> _history = <_EditorSnapshot>[];
   late final AnimationController _turnController;
@@ -88,11 +88,14 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
   double _turnDragExtent = 1;
   double _turnDragDelta = 0;
   late List<StorySection> _workingSections;
-  final AlbumBookStylePreset _currentStylePreset = AlbumBookStylePreset.editorial;
-  Set<String> _selectedTemplateIds =
-      Set<String>.from(DigitalAlbumLayoutService.defaultTemplateIds);
-  Set<String> _templateDraftIds =
-      Set<String>.from(DigitalAlbumLayoutService.defaultTemplateIds);
+  final AlbumBookStylePreset _currentStylePreset =
+      AlbumBookStylePreset.editorial;
+  Set<String> _selectedTemplateIds = Set<String>.from(
+    DigitalAlbumLayoutService.defaultTemplateIds,
+  );
+  Set<String> _templateDraftIds = Set<String>.from(
+    DigitalAlbumLayoutService.defaultTemplateIds,
+  );
 
   @override
   void initState() {
@@ -119,12 +122,10 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
   }
 
   Future<void> _lockLandscape() async {
-    await SystemChrome.setPreferredOrientations(
-      const <DeviceOrientation>[
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ],
-    );
+    await SystemChrome.setPreferredOrientations(const <DeviceOrientation>[
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
   }
 
   Future<void> _restoreOrientation() async {
@@ -166,10 +167,12 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       _isDirty = false;
       _selectedElement = null;
       _editMode = false;
-      _selectedTemplateIds =
-          Set<String>.from(DigitalAlbumLayoutService.defaultTemplateIds);
-      _templateDraftIds =
-          Set<String>.from(DigitalAlbumLayoutService.defaultTemplateIds);
+      _selectedTemplateIds = Set<String>.from(
+        DigitalAlbumLayoutService.defaultTemplateIds,
+      );
+      _templateDraftIds = Set<String>.from(
+        DigitalAlbumLayoutService.defaultTemplateIds,
+      );
     });
     _syncWorkingSectionsWithDocument(document);
   }
@@ -220,15 +223,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
 
   AlbumBookDocument _sanitize(AlbumBookDocument document) {
     final allowedPhotoIds = _collectAllowedPhotoIds(document);
-    final photoPathById = <String, String>{
-      for (final section in _workingSections)
-        if (section.photo.id.trim().isNotEmpty && section.photo.path.trim().isNotEmpty)
-          section.photo.id: section.photo.path,
-    };
     return _validator.sanitize(
       document,
       allowedPhotoIds: allowedPhotoIds,
-      photoPathById: photoPathById,
       fallbackTitle: widget.title,
       fallbackSubtitle: widget.subtitle,
     );
@@ -251,7 +248,8 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
 
   bool _isTextElement(AlbumElementModel? element) {
     return element != null &&
-        (element.type == AlbumElementType.text || element.type == AlbumElementType.subtitle);
+        (element.type == AlbumElementType.text ||
+            element.type == AlbumElementType.subtitle);
   }
 
   void _disposeInlineTextController() {
@@ -334,7 +332,6 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       text: '',
       photo: Photo(
         id: element.payload['photo_id']?.toString() ?? element.id,
-        path: element.payload['path']?.toString() ?? '',
         dateTaken: parsedDate ?? DateTime.now(),
         tags: const <String>[],
         ocrTags: const <String>[],
@@ -355,7 +352,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
             continue;
           }
           final photoId = element.payload['photo_id']?.toString();
-          if (photoId == null || photoId.isEmpty || orderedIds.contains(photoId)) {
+          if (photoId == null ||
+              photoId.isEmpty ||
+              orderedIds.contains(photoId)) {
             continue;
           }
           orderedIds.add(photoId);
@@ -428,13 +427,15 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     }
 
     final text = textElement.payload['text']?.toString() ?? '';
-    if (_inlineEditingElementId != textElement.id || _inlineTextController == null) {
+    if (_inlineEditingElementId != textElement.id ||
+        _inlineTextController == null) {
       _disposeInlineTextController();
       final controller = TextEditingController(text: text);
       controller.addListener(_handleInlineTextChanged);
       _inlineTextController = controller;
       _inlineEditingElementId = textElement.id;
-    } else if (_inlineTextController!.text != text && !_inlineTextFocusNode.hasFocus) {
+    } else if (_inlineTextController!.text != text &&
+        !_inlineTextFocusNode.hasFocus) {
       _inlineTextController!.text = text;
       _inlineTextController!.selection = TextSelection.collapsed(
         offset: _inlineTextController!.text.length,
@@ -456,7 +457,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
 
   Future<void> _runAiCopywriting() async {
     final document = _document;
-    final currentSections = document == null ? const <StorySection>[] : _sectionsForDocument(document);
+    final currentSections = document == null
+        ? const <StorySection>[]
+        : _sectionsForDocument(document);
     if (document == null || _isAiBusy || currentSections.isEmpty) {
       return;
     }
@@ -480,9 +483,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       }
 
       if (rewritten == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('AI 写文案暂不可用，已保留当前相册')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('AI 写文案暂不可用，已保留当前相册')));
         return;
       }
 
@@ -511,16 +514,16 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
         });
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('AI 已为整本相册补全文案')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('AI 已为整本相册补全文案')));
     } catch (error) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('AI 写文案失败：$error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('AI 写文案失败：$error')));
     } finally {
       if (mounted) {
         setState(() {
@@ -542,22 +545,26 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
 
   void _applyTemplateSelection(Set<String> selectedTemplateIds) {
     final currentDocument = _document;
-    final currentSections =
-        currentDocument == null ? const <StorySection>[] : _sectionsForDocument(currentDocument);
-    if (_isAiBusy || _isLoading || currentSections.isEmpty || currentDocument == null) {
+    final currentSections = currentDocument == null
+        ? const <StorySection>[]
+        : _sectionsForDocument(currentDocument);
+    if (_isAiBusy ||
+        _isLoading ||
+        currentSections.isEmpty ||
+        currentDocument == null) {
       return;
     }
     final nextSelection = Set<String>.from(selectedTemplateIds);
     if (nextSelection.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请至少选择一种排版')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请至少选择一种排版')));
       return;
     }
     if (!nextSelection.any(DigitalAlbumLayoutService.supportsSinglePhoto)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请至少保留一种可承接单图的排版')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请至少保留一种可承接单图的排版')));
       return;
     }
     _pushUndoSnapshot();
@@ -600,31 +607,33 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       final targetSpread = targetSpreads[i];
       targetSpreads[i] = targetSpread.copyWith(
         leftPage: _reusePageCopy(sourceSpread.leftPage, targetSpread.leftPage),
-        rightPage: _reusePageCopy(sourceSpread.rightPage, targetSpread.rightPage),
+        rightPage: _reusePageCopy(
+          sourceSpread.rightPage,
+          targetSpread.rightPage,
+        ),
       );
     }
     return target.copyWith(spreads: targetSpreads);
   }
 
-  AlbumPageModel _reusePageCopy(
-    AlbumPageModel source,
-    AlbumPageModel target,
-  ) {
+  AlbumPageModel _reusePageCopy(AlbumPageModel source, AlbumPageModel target) {
     final sourceTexts = _pageTextsByRole(source);
-    final nextElements = target.elements.map((element) {
-      if (element.type != AlbumElementType.text &&
-          element.type != AlbumElementType.subtitle) {
-        return element;
-      }
-      final role = element.payload['role']?.toString().trim() ?? '';
-      final replacement = sourceTexts[role];
-      if (replacement == null || replacement.trim().isEmpty) {
-        return element;
-      }
-      final payload = Map<String, dynamic>.from(element.payload);
-      payload['text'] = replacement.trim();
-      return element.copyWith(payload: payload);
-    }).toList(growable: false);
+    final nextElements = target.elements
+        .map((element) {
+          if (element.type != AlbumElementType.text &&
+              element.type != AlbumElementType.subtitle) {
+            return element;
+          }
+          final role = element.payload['role']?.toString().trim() ?? '';
+          final replacement = sourceTexts[role];
+          if (replacement == null || replacement.trim().isEmpty) {
+            return element;
+          }
+          final payload = Map<String, dynamic>.from(element.payload);
+          payload['text'] = replacement.trim();
+          return element.copyWith(payload: payload);
+        })
+        .toList(growable: false);
     return target.copyWith(elements: nextElements);
   }
 
@@ -696,9 +705,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       return false;
     }
     if (widget.storyEntityId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('当前故事缺少存储 ID，暂时无法保存数字相册')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前故事缺少存储 ID，暂时无法保存数字相册')));
       return false;
     }
 
@@ -718,17 +727,17 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
         _hasSaved = true;
         _isDirty = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('数字相册书已保存')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('数字相册书已保存')));
       return true;
     } catch (error) {
       if (!mounted) {
         return false;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('保存失败: $error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('保存失败: $error')));
       return false;
     } finally {
       if (mounted) {
@@ -771,7 +780,7 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       }
       if (shouldSave) {
         final saved = await _saveBook();
-        if (!saved) {
+        if (!saved && widget.storyEntityId != null) {
           return;
         }
       }
@@ -780,12 +789,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     if (!mounted) {
       return;
     }
-    Navigator.of(context).pop(
-      DigitalAlbumBookResult(
-        saved: _hasSaved,
-        document: _document,
-      ),
-    );
+    Navigator.of(
+      context,
+    ).pop(DigitalAlbumBookResult(saved: _hasSaved, document: _document));
   }
 
   bool get _canPerformPageTurn =>
@@ -877,11 +883,7 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     }
     _turnCommitOnComplete = commit;
     final target = commit ? 1.0 : 0.0;
-    _turnController.animateTo(
-      target,
-      duration: duration,
-      curve: curve,
-    );
+    _turnController.animateTo(target, duration: duration, curve: curve);
   }
 
   void _handleTurnDragStart(double spreadWidth) {
@@ -901,18 +903,13 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     _turnDragDelta += deltaDx;
 
     if (!_isTurnActive) {
-      if (_turnDragDelta < -8 && _currentSpread < (_document?.spreads.length ?? 0) - 1) {
-        if (!_beginTurn(
-          targetSpread: _currentSpread + 1,
-          forward: true,
-        )) {
+      if (_turnDragDelta < -8 &&
+          _currentSpread < (_document?.spreads.length ?? 0) - 1) {
+        if (!_beginTurn(targetSpread: _currentSpread + 1, forward: true)) {
           return;
         }
       } else if (_turnDragDelta > 8 && _currentSpread > 0) {
-        if (!_beginTurn(
-          targetSpread: _currentSpread - 1,
-          forward: false,
-        )) {
+        if (!_beginTurn(targetSpread: _currentSpread - 1, forward: false)) {
           return;
         }
       } else {
@@ -921,7 +918,10 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     }
 
     final signedProgress = _turnForward ? -_turnDragDelta : _turnDragDelta;
-    final progress = (signedProgress / (_turnDragExtent * 0.84)).clamp(0.0, 1.0);
+    final progress = (signedProgress / (_turnDragExtent * 0.84)).clamp(
+      0.0,
+      1.0,
+    );
     _turnController.value = progress;
   }
 
@@ -931,7 +931,8 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       return;
     }
     final progress = _turnController.value;
-    final shouldCommit = progress > 0.34 ||
+    final shouldCommit =
+        progress > 0.34 ||
         (_turnForward ? primaryVelocity < -420 : primaryVelocity > 420);
     _animateTurnTo(
       commit: shouldCommit,
@@ -977,10 +978,7 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       });
       return;
     }
-    _beginTurn(
-      targetSpread: index,
-      forward: delta > 0,
-    );
+    _beginTurn(targetSpread: index, forward: delta > 0);
     _animateTurnTo(
       commit: true,
       duration: const Duration(milliseconds: 860),
@@ -988,17 +986,17 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     );
   }
 
-  void _selectElement(
-    int spreadIndex,
-    AlbumPageSide side,
-    String elementId,
-  ) {
+  void _selectElement(int spreadIndex, AlbumPageSide side, String elementId) {
     _commitInlineTextIfNeeded();
     final document = _document;
     AlbumElementModel? tappedElement;
-    if (document != null && spreadIndex >= 0 && spreadIndex < document.spreads.length) {
+    if (document != null &&
+        spreadIndex >= 0 &&
+        spreadIndex < document.spreads.length) {
       final spread = document.spreads[spreadIndex];
-      final page = side == AlbumPageSide.left ? spread.leftPage : spread.rightPage;
+      final page = side == AlbumPageSide.left
+          ? spread.leftPage
+          : spread.rightPage;
       for (final element in page.elements) {
         if (element.id == elementId) {
           tappedElement = element;
@@ -1061,7 +1059,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       return null;
     }
     final spread = document.spreads[ref.spreadIndex];
-    final page = ref.side == AlbumPageSide.left ? spread.leftPage : spread.rightPage;
+    final page = ref.side == AlbumPageSide.left
+        ? spread.leftPage
+        : spread.rightPage;
     for (final element in page.elements) {
       if (element.id == ref.elementId) {
         return element;
@@ -1070,7 +1070,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     return null;
   }
 
-  void _updateSelectedElement(AlbumElementModel Function(AlbumElementModel current) transform) {
+  void _updateSelectedElement(
+    AlbumElementModel Function(AlbumElementModel current) transform,
+  ) {
     final document = _document;
     final ref = _selectedElement;
     if (document == null || ref == null) {
@@ -1079,9 +1081,14 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
 
     final spreads = List<AlbumSpreadModel>.from(document.spreads);
     final spread = spreads[ref.spreadIndex];
-    final sourcePage = ref.side == AlbumPageSide.left ? spread.leftPage : spread.rightPage;
+    final sourcePage = ref.side == AlbumPageSide.left
+        ? spread.leftPage
+        : spread.rightPage;
     final updatedElements = sourcePage.elements
-        .map((element) => element.id == ref.elementId ? transform(element) : element)
+        .map(
+          (element) =>
+              element.id == ref.elementId ? transform(element) : element,
+        )
         .toList(growable: false);
     final updatedPage = sourcePage.copyWith(elements: updatedElements);
 
@@ -1129,8 +1136,11 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
 
     final spreads = List<AlbumSpreadModel>.from(document.spreads);
     final spread = spreads[spreadIndex];
-    final page = side == AlbumPageSide.left ? spread.leftPage : spread.rightPage;
-    final nextElements = List<AlbumElementModel>.from(page.elements)..add(element);
+    final page = side == AlbumPageSide.left
+        ? spread.leftPage
+        : spread.rightPage;
+    final nextElements = List<AlbumElementModel>.from(page.elements)
+      ..add(element);
     final updatedPage = page.copyWith(elements: nextElements);
 
     spreads[spreadIndex] = side == AlbumPageSide.left
@@ -1181,12 +1191,16 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
 
     final spreads = List<AlbumSpreadModel>.from(document.spreads);
     final spread = spreads[ref.spreadIndex];
-    final sourcePage = ref.side == AlbumPageSide.left ? spread.leftPage : spread.rightPage;
+    final sourcePage = ref.side == AlbumPageSide.left
+        ? spread.leftPage
+        : spread.rightPage;
     final movedElement = selected.copyWith(x: localX, y: localY);
 
     if (nextSide == ref.side) {
       final updatedElements = sourcePage.elements
-          .map((element) => element.id == ref.elementId ? movedElement : element)
+          .map(
+            (element) => element.id == ref.elementId ? movedElement : element,
+          )
           .toList(growable: false);
       final updatedPage = sourcePage.copyWith(elements: updatedElements);
       spreads[ref.spreadIndex] = ref.side == AlbumPageSide.left
@@ -1196,8 +1210,11 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       final sourceElements = sourcePage.elements
           .where((element) => element.id != ref.elementId)
           .toList(growable: false);
-      final targetPage = nextSide == AlbumPageSide.left ? spread.leftPage : spread.rightPage;
-      final targetElements = List<AlbumElementModel>.from(targetPage.elements)..add(movedElement);
+      final targetPage = nextSide == AlbumPageSide.left
+          ? spread.leftPage
+          : spread.rightPage;
+      final targetElements = List<AlbumElementModel>.from(targetPage.elements)
+        ..add(movedElement);
       spreads[ref.spreadIndex] = nextSide == AlbumPageSide.left
           ? spread.copyWith(
               leftPage: targetPage.copyWith(elements: targetElements),
@@ -1228,7 +1245,8 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     required double localX,
     required double localY,
   }) {
-    final isSamePending = _crossPagePendingElementId == ref.elementId &&
+    final isSamePending =
+        _crossPagePendingElementId == ref.elementId &&
         _crossPagePendingSpreadIndex == ref.spreadIndex &&
         _crossPagePendingTargetSide == targetSide;
     _crossPagePendingElementId = ref.elementId;
@@ -1271,7 +1289,10 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
   void _moveSelectedElement(Offset delta, Size pageSize) {
     final document = _document;
     final ref = _selectedElement;
-    if (document == null || ref == null || pageSize.width <= 0 || pageSize.height <= 0) {
+    if (document == null ||
+        ref == null ||
+        pageSize.width <= 0 ||
+        pageSize.height <= 0) {
       return;
     }
     final selected = _selectedElementModel;
@@ -1293,29 +1314,42 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     final elementWidth = selected.w * pageWidth;
     final elementHeight = selected.h * pageSize.height;
 
-    final nextLeftInSpread =
-        (currentLeftInSpread + delta.dx).clamp(0.0, spreadWidth - elementWidth).toDouble();
-    final nextTop =
-        (currentTop + delta.dy).clamp(0.0, pageSize.height - elementHeight).toDouble();
+    final nextLeftInSpread = (currentLeftInSpread + delta.dx)
+        .clamp(0.0, spreadWidth - elementWidth)
+        .toDouble();
+    final nextTop = (currentTop + delta.dy)
+        .clamp(0.0, pageSize.height - elementHeight)
+        .toDouble();
     final rightEdge = nextLeftInSpread + elementWidth;
     final rightPageOrigin = pageWidth + gutterWidth;
     const seamHoldThreshold = 4.0;
     final wantsSwitchToRight =
-        ref.side == AlbumPageSide.left && delta.dx > 0 && rightEdge >= (pageWidth - seamHoldThreshold);
-    final wantsSwitchToLeft = ref.side == AlbumPageSide.right &&
+        ref.side == AlbumPageSide.left &&
+        delta.dx > 0 &&
+        rightEdge >= (pageWidth - seamHoldThreshold);
+    final wantsSwitchToLeft =
+        ref.side == AlbumPageSide.right &&
         delta.dx < 0 &&
         nextLeftInSpread <= (rightPageOrigin + seamHoldThreshold);
 
     if (wantsSwitchToRight || wantsSwitchToLeft) {
-      final targetSide = wantsSwitchToRight ? AlbumPageSide.right : AlbumPageSide.left;
+      final targetSide = wantsSwitchToRight
+          ? AlbumPageSide.right
+          : AlbumPageSide.left;
       final heldLeftInSpread = wantsSwitchToRight
           ? pageWidth - elementWidth
           : rightPageOrigin;
-      final heldPageOriginX = ref.side == AlbumPageSide.left ? 0.0 : rightPageOrigin;
+      final heldPageOriginX = ref.side == AlbumPageSide.left
+          ? 0.0
+          : rightPageOrigin;
       final heldLocalX =
-          ((heldLeftInSpread - heldPageOriginX) / pageWidth).clamp(0.0, 0.98 - selected.w)
+          ((heldLeftInSpread - heldPageOriginX) / pageWidth).clamp(
+                0.0,
+                0.98 - selected.w,
+              )
               as num;
-      final heldLocalY = (nextTop / pageSize.height).clamp(0.0, 0.98 - selected.h) as num;
+      final heldLocalY =
+          (nextTop / pageSize.height).clamp(0.0, 0.98 - selected.h) as num;
       _commitSelectedElementMove(
         ref: ref,
         selected: selected,
@@ -1324,12 +1358,15 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
         localY: heldLocalY.toDouble(),
       );
 
-      final targetLocalY = (nextTop / pageSize.height).clamp(0.0, 0.98 - selected.h) as num;
+      final targetLocalY =
+          (nextTop / pageSize.height).clamp(0.0, 0.98 - selected.h) as num;
       _scheduleCrossPageSwitch(
         ref: ref,
         selected: selected,
         targetSide: targetSide,
-        localX: wantsSwitchToRight ? 0.0 : (0.98 - selected.w).clamp(0.0, 0.98).toDouble(),
+        localX: wantsSwitchToRight
+            ? 0.0
+            : (0.98 - selected.w).clamp(0.0, 0.98).toDouble(),
         localY: targetLocalY.toDouble(),
       );
       return;
@@ -1337,9 +1374,14 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
 
     _cancelPendingCrossPageSwitch();
     final pageOriginX = ref.side == AlbumPageSide.left ? 0.0 : rightPageOrigin;
-    final localX = ((nextLeftInSpread - pageOriginX) / pageWidth).clamp(0.0, 0.98 - selected.w)
-        as num;
-    final localY = (nextTop / pageSize.height).clamp(0.0, 0.98 - selected.h) as num;
+    final localX =
+        ((nextLeftInSpread - pageOriginX) / pageWidth).clamp(
+              0.0,
+              0.98 - selected.w,
+            )
+            as num;
+    final localY =
+        (nextTop / pageSize.height).clamp(0.0, 0.98 - selected.h) as num;
     _commitSelectedElementMove(
       ref: ref,
       selected: selected,
@@ -1359,12 +1401,20 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       _gestureUndoSeedElementId = ref.elementId;
     }
     _updateSelectedElement((current) {
-      final nextW = ((current.w + (delta.dx / pageSize.width)).clamp(0.06, 0.98 - current.x)
-              as num)
-          .toDouble();
-      final nextH = ((current.h + (delta.dy / pageSize.height)).clamp(0.04, 0.98 - current.y)
-              as num)
-          .toDouble();
+      final nextW =
+          ((current.w + (delta.dx / pageSize.width)).clamp(
+                    0.06,
+                    0.98 - current.x,
+                  )
+                  as num)
+              .toDouble();
+      final nextH =
+          ((current.h + (delta.dy / pageSize.height)).clamp(
+                    0.04,
+                    0.98 - current.y,
+                  )
+                  as num)
+              .toDouble();
       return current.copyWith(w: nextW, h: nextH);
     });
   }
@@ -1379,8 +1429,13 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     final page = target.side == AlbumPageSide.left
         ? document.spreads[target.spreadIndex].leftPage
         : document.spreads[target.spreadIndex].rightPage;
-    final nextZ = page.elements
-            .where((item) => item.type == AlbumElementType.text || item.type == AlbumElementType.subtitle)
+    final nextZ =
+        page.elements
+            .where(
+              (item) =>
+                  item.type == AlbumElementType.text ||
+                  item.type == AlbumElementType.subtitle,
+            )
             .fold<int>(0, (maxZ, item) => math.max(maxZ, item.zIndex)) +
         1;
     final element = AlbumElementModel(
@@ -1398,9 +1453,13 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
         'text': type == AlbumElementType.subtitle ? '新的题签' : '新的文字内容',
       },
       style: AlbumElementStyle(
-        fontId: type == AlbumElementType.subtitle ? 'display_modern' : 'sans_clean',
+        fontId: type == AlbumElementType.subtitle
+            ? 'display_modern'
+            : 'sans_clean',
         fontSize: type == AlbumElementType.subtitle ? 26 : 18,
-        colorToken: type == AlbumElementType.subtitle ? 'ink_black' : 'ink_soft',
+        colorToken: type == AlbumElementType.subtitle
+            ? 'ink_black'
+            : 'ink_soft',
         weight: type == AlbumElementType.subtitle ? '700' : '400',
         shadow: type == AlbumElementType.subtitle,
       ),
@@ -1434,7 +1493,8 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     final page = target.side == AlbumPageSide.left
         ? document.spreads[target.spreadIndex].leftPage
         : document.spreads[target.spreadIndex].rightPage;
-    final nextZ = page.elements
+    final nextZ =
+        page.elements
             .where((item) => item.type == AlbumElementType.image)
             .fold<int>(0, (maxZ, item) => math.max(maxZ, item.zIndex)) +
         1;
@@ -1489,7 +1549,6 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     _updateSelectedElement((current) {
       final payload = Map<String, dynamic>.from(current.payload);
       payload['photo_id'] = replacement.assetId;
-      payload['path'] = replacement.path;
       payload['date_taken'] = replacement.createdAt.toIso8601String();
       return current.copyWith(payload: payload);
     });
@@ -1506,7 +1565,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
 
     final spreads = List<AlbumSpreadModel>.from(document.spreads);
     final spread = spreads[ref.spreadIndex];
-    final page = ref.side == AlbumPageSide.left ? spread.leftPage : spread.rightPage;
+    final page = ref.side == AlbumPageSide.left
+        ? spread.leftPage
+        : spread.rightPage;
     final nextElements = page.elements
         .where((element) => element.id != ref.elementId)
         .toList(growable: false);
@@ -1534,22 +1595,30 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     }
 
     final spread = document.spreads[ref.spreadIndex];
-    final page = ref.side == AlbumPageSide.left ? spread.leftPage : spread.rightPage;
+    final page = ref.side == AlbumPageSide.left
+        ? spread.leftPage
+        : spread.rightPage;
     if (selected.type == AlbumElementType.image) {
       final topImageZ = page.elements
           .where((item) => item.type == AlbumElementType.image)
           .fold<int>(0, (maxZ, item) => math.max(maxZ, item.zIndex));
-      _updateSelectedElement((current) => current.copyWith(zIndex: topImageZ + 1));
+      _updateSelectedElement(
+        (current) => current.copyWith(zIndex: topImageZ + 1),
+      );
       return;
     }
-    final topZ = page.elements.fold<int>(0, (maxZ, item) => math.max(maxZ, item.zIndex));
+    final topZ = page.elements.fold<int>(
+      0,
+      (maxZ, item) => math.max(maxZ, item.zIndex),
+    );
     _updateSelectedElement((current) => current.copyWith(zIndex: topZ + 1));
   }
 
   bool get _isSelectedTextElement {
     final selected = _selectedElementModel;
     return selected != null &&
-        (selected.type == AlbumElementType.text || selected.type == AlbumElementType.subtitle);
+        (selected.type == AlbumElementType.text ||
+            selected.type == AlbumElementType.subtitle);
   }
 
   void _startEditingSelectedText() {
@@ -1570,7 +1639,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     _pushUndoSnapshot();
     _updateSelectedElement((current) {
       final nextWeight = current.style.weight == '700' ? '400' : '700';
-      return current.copyWith(style: current.style.copyWith(weight: nextWeight));
+      return current.copyWith(
+        style: current.style.copyWith(weight: nextWeight),
+      );
     });
   }
 
@@ -1594,7 +1665,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     _commitInlineTextIfNeeded();
     _pushUndoSnapshot();
     _updateSelectedElement((current) {
-      return current.copyWith(style: current.style.copyWith(colorToken: colorToken));
+      return current.copyWith(
+        style: current.style.copyWith(colorToken: colorToken),
+      );
     });
   }
 
@@ -1654,8 +1727,11 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       return null;
     }
     const gutterWidth = 9.0;
-    final pageWidth = (spreadSize.width - gutterWidth).clamp(0.0, double.infinity) / 2;
-    final pageOriginX = ref.side == AlbumPageSide.left ? 0.0 : pageWidth + gutterWidth;
+    final pageWidth =
+        (spreadSize.width - gutterWidth).clamp(0.0, double.infinity) / 2;
+    final pageOriginX = ref.side == AlbumPageSide.left
+        ? 0.0
+        : pageWidth + gutterWidth;
     return Rect.fromLTWH(
       pageOriginX + selected.x * pageWidth,
       selected.y * spreadSize.height,
@@ -1680,8 +1756,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
     final rawSpreadAspect = (document.pageWidth * 2) / document.pageHeight;
     final screenAspect = viewportSize.width / viewportSize.height;
     final targetAspect = screenAspect * 0.998;
-    final spreadAspect =
-        rawSpreadAspect > targetAspect ? targetAspect : rawSpreadAspect;
+    final spreadAspect = rawSpreadAspect > targetAspect
+        ? targetAspect
+        : rawSpreadAspect;
     final horizontalPadding = safePadding.left + safePadding.right;
     final verticalPadding = safePadding.top + safePadding.bottom;
     final maxWidth = viewportSize.width - horizontalPadding;
@@ -1732,20 +1809,30 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
 
     final selected = _selectedElementModel;
     final isImage = selected?.type == AlbumElementType.image;
-    final isText = selected != null &&
-        (selected.type == AlbumElementType.text || selected.type == AlbumElementType.subtitle);
+    final isText =
+        selected != null &&
+        (selected.type == AlbumElementType.text ||
+            selected.type == AlbumElementType.subtitle);
     if (!isImage && !isText) {
       return const SizedBox.shrink();
     }
     final toolbarWidth = isText ? 372.0 : 240.0;
     final toolbarHeight = isText ? 64.0 : 112.0;
-    final spreadLeft = ((canvasSize.width - spreadSize.width) / 2).clamp(0.0, canvasSize.width);
-    final spreadTop = ((canvasSize.height - spreadSize.height) / 2).clamp(0.0, canvasSize.height);
+    final spreadLeft = ((canvasSize.width - spreadSize.width) / 2).clamp(
+      0.0,
+      canvasSize.width,
+    );
+    final spreadTop = ((canvasSize.height - spreadSize.height) / 2).clamp(
+      0.0,
+      canvasSize.height,
+    );
     final desiredLeft = spreadLeft + anchor.dx - (toolbarWidth / 2);
     final maxLeft = math.max(12.0, canvasSize.width - toolbarWidth - 12);
     final left = desiredLeft.clamp(12.0, maxLeft);
     final preferAbove = anchor.dy > 120;
-    final desiredTop = spreadTop + (preferAbove ? anchor.dy - toolbarHeight - 14 : anchor.dy + 14);
+    final desiredTop =
+        spreadTop +
+        (preferAbove ? anchor.dy - toolbarHeight - 14 : anchor.dy + 14);
     final maxTop = math.max(12.0, canvasSize.height - toolbarHeight - 12);
     final top = desiredTop.clamp(12.0, maxTop);
 
@@ -1768,18 +1855,32 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
                 child: Row(
                   children: [
                     if (isImage) ...[
-                      _buildToolbarChip(label: '更换图片', onTap: _replaceSelectedImage),
+                      _buildToolbarChip(
+                        label: '更换图片',
+                        onTap: _replaceSelectedImage,
+                      ),
                       const SizedBox(width: 8),
-                      _buildToolbarChip(label: '置于顶层', onTap: _bringSelectedToFront),
+                      _buildToolbarChip(
+                        label: '置于顶层',
+                        onTap: _bringSelectedToFront,
+                      ),
                       const SizedBox(width: 8),
-                      _buildToolbarChip(label: '删除', onTap: _deleteSelectedElement),
+                      _buildToolbarChip(
+                        label: '删除',
+                        onTap: _deleteSelectedElement,
+                      ),
                       const SizedBox(width: 8),
-                      _buildToolbarChip(label: '完成', onTap: _clearEditingSelection),
+                      _buildToolbarChip(
+                        label: '完成',
+                        onTap: _clearEditingSelection,
+                      ),
                     ],
                     if (isText) ...[
                       _buildToolbarChip(
                         label: _isInlineTextEditing ? '完成编辑' : '编辑',
-                        onTap: _isInlineTextEditing ? _clearEditingSelection : _startEditingSelectedText,
+                        onTap: _isInlineTextEditing
+                            ? _clearEditingSelection
+                            : _startEditingSelectedText,
                       ),
                       const SizedBox(width: 8),
                       _buildToolbarMenu<double>(
@@ -1801,13 +1902,25 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
                         items: const [
                           PopupMenuItem(value: 'ink_black', child: Text('墨黑')),
                           PopupMenuItem(value: 'ink_soft', child: Text('柔墨')),
-                          PopupMenuItem(value: 'rose_accent', child: Text('玫粉')),
-                          PopupMenuItem(value: 'gold_accent', child: Text('金棕')),
-                          PopupMenuItem(value: 'sage_accent', child: Text('鼠尾草')),
+                          PopupMenuItem(
+                            value: 'rose_accent',
+                            child: Text('玫粉'),
+                          ),
+                          PopupMenuItem(
+                            value: 'gold_accent',
+                            child: Text('金棕'),
+                          ),
+                          PopupMenuItem(
+                            value: 'sage_accent',
+                            child: Text('鼠尾草'),
+                          ),
                         ],
                       ),
                       const SizedBox(width: 8),
-                      _buildToolbarChip(label: '加粗', onTap: _toggleSelectedTextBold),
+                      _buildToolbarChip(
+                        label: '加粗',
+                        onTap: _toggleSelectedTextBold,
+                      ),
                       const SizedBox(width: 8),
                       _buildToolbarMenu<AlbumTextAlignValue>(
                         label: '对齐',
@@ -1828,9 +1941,15 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
                         ],
                       ),
                       const SizedBox(width: 8),
-                      _buildToolbarChip(label: '删除', onTap: _deleteSelectedElement),
+                      _buildToolbarChip(
+                        label: '删除',
+                        onTap: _deleteSelectedElement,
+                      ),
                       const SizedBox(width: 8),
-                      _buildToolbarChip(label: '完成', onTap: _clearEditingSelection),
+                      _buildToolbarChip(
+                        label: '完成',
+                        onTap: _clearEditingSelection,
+                      ),
                     ],
                   ],
                 ),
@@ -2035,20 +2154,32 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
                               child: LayoutBuilder(
                                 builder: (BuildContext context, BoxConstraints constraints) {
                                   final rawSpreadAspect =
-                                      (document.pageWidth * 2) / document.pageHeight;
+                                      (document.pageWidth * 2) /
+                                      document.pageHeight;
                                   final screenAspect =
-                                      constraints.maxWidth / constraints.maxHeight;
+                                      constraints.maxWidth /
+                                      constraints.maxHeight;
                                   final targetAspect = screenAspect * 0.998;
-                                  final spreadAspect = rawSpreadAspect > targetAspect
+                                  final spreadAspect =
+                                      rawSpreadAspect > targetAspect
                                       ? targetAspect
                                       : rawSpreadAspect;
-                                  final horizontalPadding = 0.0 + safePadding.left + safePadding.right;
-                                  final verticalPadding = 0.0 + safePadding.top + safePadding.bottom;
-                                  final maxWidth = constraints.maxWidth - horizontalPadding;
-                                  final maxHeight = constraints.maxHeight - verticalPadding;
+                                  final horizontalPadding =
+                                      0.0 +
+                                      safePadding.left +
+                                      safePadding.right;
+                                  final verticalPadding =
+                                      0.0 +
+                                      safePadding.top +
+                                      safePadding.bottom;
+                                  final maxWidth =
+                                      constraints.maxWidth - horizontalPadding;
+                                  final maxHeight =
+                                      constraints.maxHeight - verticalPadding;
 
                                   double spreadWidth = maxWidth;
-                                  double spreadHeight = spreadWidth / spreadAspect;
+                                  double spreadHeight =
+                                      spreadWidth / spreadAspect;
                                   if (spreadHeight > maxHeight) {
                                     spreadHeight = maxHeight;
                                     spreadWidth = spreadHeight * spreadAspect;
@@ -2057,17 +2188,24 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
                                   return Center(
                                     child: GestureDetector(
                                       behavior: HitTestBehavior.translucent,
-                                      onDoubleTap: _isSpreadZoomed ? _resetSpreadZoom : null,
+                                      onDoubleTap: _isSpreadZoomed
+                                          ? _resetSpreadZoom
+                                          : null,
                                       child: InteractiveViewer(
-                                        transformationController: _spreadZoomController,
+                                        transformationController:
+                                            _spreadZoomController,
                                         minScale: 1,
                                         maxScale: 3.4,
                                         panEnabled: _isSpreadZoomed,
                                         scaleEnabled: true,
-                                        boundaryMargin: const EdgeInsets.all(240),
+                                        boundaryMargin: const EdgeInsets.all(
+                                          240,
+                                        ),
                                         clipBehavior: Clip.none,
-                                        onInteractionUpdate: (_) => _syncSpreadZoomState(),
-                                        onInteractionEnd: (_) => _syncSpreadZoomState(),
+                                        onInteractionUpdate: (_) =>
+                                            _syncSpreadZoomState(),
+                                        onInteractionEnd: (_) =>
+                                            _syncSpreadZoomState(),
                                         child: SizedBox(
                                           width: spreadWidth,
                                           height: spreadHeight,
@@ -2075,24 +2213,37 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
                                             children: [
                                               PageView.builder(
                                                 controller: _pageController,
-                                                physics: const NeverScrollableScrollPhysics(),
-                                                itemCount: document.spreads.length,
+                                                physics:
+                                                    const NeverScrollableScrollPhysics(),
+                                                itemCount:
+                                                    document.spreads.length,
                                                 onPageChanged: (value) {
                                                   setState(() {
                                                     _currentSpread = value;
                                                     _selectedElement = null;
                                                   });
                                                   _disposeInlineTextController();
-                                                  _inlineTextFocusNode.unfocus();
+                                                  _inlineTextFocusNode
+                                                      .unfocus();
                                                   _resetSpreadZoom();
                                                 },
-                                                itemBuilder: (BuildContext context, int index) {
-                                                  return _buildSpreadCard(document, index);
-                                                },
+                                                itemBuilder:
+                                                    (
+                                                      BuildContext context,
+                                                      int index,
+                                                    ) {
+                                                      return _buildSpreadCard(
+                                                        document,
+                                                        index,
+                                                      );
+                                                    },
                                               ),
-                                              if (_isTurnActive) _buildTurnOverlay(document),
+                                              if (_isTurnActive)
+                                                _buildTurnOverlay(document),
                                               if (_canPerformPageTurn)
-                                                _buildTurnGestureLayer(spreadWidth),
+                                                _buildTurnGestureLayer(
+                                                  spreadWidth,
+                                                ),
                                               if (_selectedElement == null &&
                                                   !_editMode &&
                                                   !_isSpreadZoomed &&
@@ -2102,21 +2253,41 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
                                                     children: [
                                                       Expanded(
                                                         child: Align(
-                                                          alignment: Alignment.centerLeft,
+                                                          alignment: Alignment
+                                                              .centerLeft,
                                                           child: GestureDetector(
-                                                            behavior: HitTestBehavior.translucent,
-                                                            onTap: () => _goToSpread(_currentSpread - 1),
-                                                            child: const SizedBox(width: 64),
+                                                            behavior:
+                                                                HitTestBehavior
+                                                                    .translucent,
+                                                            onTap: () =>
+                                                                _goToSpread(
+                                                                  _currentSpread -
+                                                                      1,
+                                                                ),
+                                                            child:
+                                                                const SizedBox(
+                                                                  width: 64,
+                                                                ),
                                                           ),
                                                         ),
                                                       ),
                                                       Expanded(
                                                         child: Align(
-                                                          alignment: Alignment.centerRight,
+                                                          alignment: Alignment
+                                                              .centerRight,
                                                           child: GestureDetector(
-                                                            behavior: HitTestBehavior.translucent,
-                                                            onTap: () => _goToSpread(_currentSpread + 1),
-                                                            child: const SizedBox(width: 64),
+                                                            behavior:
+                                                                HitTestBehavior
+                                                                    .translucent,
+                                                            onTap: () =>
+                                                                _goToSpread(
+                                                                  _currentSpread +
+                                                                      1,
+                                                                ),
+                                                            child:
+                                                                const SizedBox(
+                                                                  width: 64,
+                                                                ),
                                                           ),
                                                         ),
                                                       ),
@@ -2137,7 +2308,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
                                 left: 0,
                                 right: 0,
                                 top: safePadding.top + 2,
-                                child: const LinearProgressIndicator(minHeight: 2),
+                                child: const LinearProgressIndicator(
+                                  minHeight: 2,
+                                ),
                               ),
                             Positioned(
                               left: 8 + safePadding.left,
@@ -2148,7 +2321,8 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
                             if (_selectedElement == null &&
                                 !_editMode &&
                                 !_isInlineTextEditing &&
-                                (_isQuickMenuVisible || _isTemplatePanelVisible))
+                                (_isQuickMenuVisible ||
+                                    _isTemplatePanelVisible))
                               Positioned.fill(
                                 child: GestureDetector(
                                   behavior: HitTestBehavior.opaque,
@@ -2156,7 +2330,9 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
                                   child: const SizedBox.expand(),
                                 ),
                               ),
-                            if (_selectedElement == null && !_editMode && !_isInlineTextEditing)
+                            if (_selectedElement == null &&
+                                !_editMode &&
+                                !_isInlineTextEditing)
                               Positioned(
                                 left: 10 + safePadding.left,
                                 bottom: 12 + safePadding.bottom,
@@ -2246,7 +2422,12 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
   }
 
   Widget _buildQuickActionTags() {
-    Widget tag(String label, VoidCallback onTap, {bool busy = false, bool active = false}) {
+    Widget tag(
+      String label,
+      VoidCallback onTap, {
+      bool busy = false,
+      bool active = false,
+    }) {
       return Material(
         color: active
             ? const Color(0xFFF7E7EA)
@@ -2289,11 +2470,7 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
               _handleAiCopyTap();
             }, busy: _isAiBusy),
             const SizedBox(width: 8),
-            tag(
-              '选择模板',
-              _toggleTemplatePanel,
-              active: _isTemplatePanelVisible,
-            ),
+            tag('选择模板', _toggleTemplatePanel, active: _isTemplatePanelVisible),
             const SizedBox(width: 8),
             tag('保存', () {
               _dismissFloatingMenus();
@@ -2326,10 +2503,7 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       elevation: 10,
       borderRadius: BorderRadius.circular(22),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: 340,
-          maxHeight: 250,
-        ),
+        constraints: const BoxConstraints(maxWidth: 340, maxHeight: 250),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
           child: SingleChildScrollView(
@@ -2350,10 +2524,13 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    for (final templateId in DigitalAlbumLayoutService.selectableTemplateIds)
+                    for (final templateId
+                        in DigitalAlbumLayoutService.selectableTemplateIds)
                       FilterChip(
                         label: Text(
-                          DigitalAlbumLayoutService.templateLabels[templateId] ?? templateId,
+                          DigitalAlbumLayoutService
+                                  .templateLabels[templateId] ??
+                              templateId,
                         ),
                         selected: _templateDraftIds.contains(templateId),
                         onSelected: (_) => _toggleTemplateDraft(templateId),
@@ -2485,7 +2662,6 @@ class _DigitalAlbumBookPageState extends State<DigitalAlbumBookPage>
       ),
     );
   }
-
 }
 
 class _BookSpreadCard extends StatelessWidget {
@@ -2520,9 +2696,14 @@ class _BookSpreadCard extends StatelessWidget {
   final String? editingTextElementId;
   final TextEditingController? inlineTextController;
   final FocusNode inlineTextFocusNode;
-  final void Function(int spreadIndex, AlbumPageSide side, String elementId) onElementSelected;
-  final void Function(int spreadIndex, AlbumPageSide side, Offset normalizedOffset)
-      onBlankLongPress;
+  final void Function(int spreadIndex, AlbumPageSide side, String elementId)
+  onElementSelected;
+  final void Function(
+    int spreadIndex,
+    AlbumPageSide side,
+    Offset normalizedOffset,
+  )
+  onBlankLongPress;
   final VoidCallback onCanvasTap;
   final void Function(Offset delta, Size pageSize) onElementMoved;
   final void Function(Offset delta, Size pageSize) onElementResized;
@@ -2583,10 +2764,7 @@ class _BookSpreadCard extends StatelessWidget {
 }
 
 class _BookSpreadShell extends StatelessWidget {
-  const _BookSpreadShell({
-    required this.child,
-    this.enableOuterShadow = true,
-  });
+  const _BookSpreadShell({required this.child, this.enableOuterShadow = true});
 
   final Widget child;
   final bool enableOuterShadow;
@@ -2622,26 +2800,20 @@ class _BookSpreadShell extends StatelessWidget {
             gradient: const LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: <Color>[
-                Color(0xFFF7EEE5),
-                Color(0xFFE9DCCB),
-              ],
-              ),
-              borderRadius: BorderRadius.circular(10),
-              boxShadow: enableOuterShadow
-                  ? const <BoxShadow>[
-                      BoxShadow(
-                        color: Color(0x33000000),
-                        blurRadius: 10,
-                        offset: Offset(0, 6),
-                      ),
-                    ]
-                  : const <BoxShadow>[],
+              colors: <Color>[Color(0xFFF7EEE5), Color(0xFFE9DCCB)],
             ),
-            child: Padding(
-              padding: const EdgeInsets.all(1),
-              child: child,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: enableOuterShadow
+                ? const <BoxShadow>[
+                    BoxShadow(
+                      color: Color(0x33000000),
+                      blurRadius: 10,
+                      offset: Offset(0, 6),
+                    ),
+                  ]
+                : const <BoxShadow>[],
           ),
+          child: Padding(padding: const EdgeInsets.all(1), child: child),
         ),
       ],
     );
@@ -2735,8 +2907,9 @@ class _BookPageTurnScene extends StatelessWidget {
                     maxWidth: pageWidth,
                     minHeight: constraints.maxHeight,
                     maxHeight: constraints.maxHeight,
-                    alignment:
-                        forward ? Alignment.centerLeft : Alignment.centerRight,
+                    alignment: forward
+                        ? Alignment.centerLeft
+                        : Alignment.centerRight,
                     child: _CurvedTurnPageSurface(
                       pageFace: turningFace,
                       forward: forward,
@@ -2796,7 +2969,9 @@ class _CurvedTurnPageSurface extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hingeAlignment = forward ? Alignment.centerLeft : Alignment.centerRight;
+    final hingeAlignment = forward
+        ? Alignment.centerLeft
+        : Alignment.centerRight;
     final globalLiftY = -pageHeight * 0.15 * foldedness;
     final globalLiftZ = -pageWidth * 0.12 * foldedness;
     final innerShade = (0.025 + foldedness * 0.07).clamp(0.0, 0.11);
@@ -2837,20 +3012,14 @@ class _CurvedTurnPageSurface extends StatelessWidget {
         ..translateByDouble(0.0, globalLiftY, globalLiftZ, 1.0)
         ..rotateY(signedAngle),
       child: ClipPath(
-        clipper: _RaisedPageClipper(
-          forward: forward,
-          foldedness: foldedness,
-        ),
+        clipper: _RaisedPageClipper(forward: forward, foldedness: foldedness),
         child: DecoratedBox(
           decoration: BoxDecoration(
             boxShadow: <BoxShadow>[
               BoxShadow(
                 color: Colors.black.withValues(alpha: pageShadow),
                 blurRadius: 18 + foldedness * 16,
-                offset: Offset(
-                  forward ? -12 : 12,
-                  14 + foldedness * 7,
-                ),
+                offset: Offset(forward ? -12 : 12, 14 + foldedness * 7),
                 spreadRadius: -12,
               ),
             ],
@@ -2865,8 +3034,12 @@ class _CurvedTurnPageSurface extends StatelessWidget {
                 DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      begin: forward ? Alignment.centerLeft : Alignment.centerRight,
-                      end: forward ? Alignment.centerRight : Alignment.centerLeft,
+                      begin: forward
+                          ? Alignment.centerLeft
+                          : Alignment.centerRight,
+                      end: forward
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
                       colors: <Color>[
                         Colors.black.withValues(alpha: innerShade),
                         Colors.transparent,
@@ -2886,10 +3059,7 @@ class _CurvedTurnPageSurface extends StatelessWidget {
 }
 
 class _RaisedPageClipper extends CustomClipper<Path> {
-  const _RaisedPageClipper({
-    required this.forward,
-    required this.foldedness,
-  });
+  const _RaisedPageClipper({required this.forward, required this.foldedness});
 
   final bool forward;
   final double foldedness;
@@ -2918,12 +3088,7 @@ class _RaisedPageClipper extends CustomClipper<Path> {
       );
     } else {
       path.moveTo(size.width, 0);
-      path.quadraticBezierTo(
-        size.width * 0.58,
-        -bellyDepth,
-        0,
-        topLift,
-      );
+      path.quadraticBezierTo(size.width * 0.58, -bellyDepth, 0, topLift);
       path.lineTo(0, size.height - bottomLift);
       path.quadraticBezierTo(
         size.width * 0.42,
@@ -2975,9 +3140,14 @@ class _AlbumCanvasPage extends StatelessWidget {
   final String? editingTextElementId;
   final TextEditingController? inlineTextController;
   final FocusNode inlineTextFocusNode;
-  final void Function(int spreadIndex, AlbumPageSide side, String elementId) onElementSelected;
-  final void Function(int spreadIndex, AlbumPageSide side, Offset normalizedOffset)
-      onBlankLongPress;
+  final void Function(int spreadIndex, AlbumPageSide side, String elementId)
+  onElementSelected;
+  final void Function(
+    int spreadIndex,
+    AlbumPageSide side,
+    Offset normalizedOffset,
+  )
+  onBlankLongPress;
   final VoidCallback onCanvasTap;
   final void Function(Offset delta, Size pageSize) onElementMoved;
   final void Function(Offset delta, Size pageSize) onElementResized;
@@ -3020,8 +3190,14 @@ class _AlbumCanvasPage extends StatelessWidget {
                       spreadIndex,
                       page.side,
                       Offset(
-                        (details.localPosition.dx / pageSize.width).clamp(0.0, 1.0),
-                        (details.localPosition.dy / pageSize.height).clamp(0.0, 1.0),
+                        (details.localPosition.dx / pageSize.width).clamp(
+                          0.0,
+                          1.0,
+                        ),
+                        (details.localPosition.dy / pageSize.height).clamp(
+                          0.0,
+                          1.0,
+                        ),
                       ),
                     ),
                     child: const SizedBox.expand(),
@@ -3044,7 +3220,8 @@ class _AlbumCanvasPage extends StatelessWidget {
                     element: element,
                     pageScale: pageScale,
                     canManipulate: !isSpreadZoomed && !isInlineTextEditing,
-                    selected: selected != null &&
+                    selected:
+                        selected != null &&
                         selected!.spreadIndex == spreadIndex &&
                         selected!.side == page.side &&
                         selected!.elementId == element.id,
@@ -3054,7 +3231,8 @@ class _AlbumCanvasPage extends StatelessWidget {
                     inlineTextController: inlineTextController,
                     inlineTextFocusNode: inlineTextFocusNode,
                     pageSize: pageSize,
-                    onSelect: () => onElementSelected(spreadIndex, page.side, element.id),
+                    onSelect: () =>
+                        onElementSelected(spreadIndex, page.side, element.id),
                     onMove: (delta) => onElementMoved(delta, pageSize),
                     onResize: (delta) => onElementResized(delta, pageSize),
                     onGestureEnd: onManipulationEnd,
@@ -3113,9 +3291,11 @@ class _ElementBox extends StatelessWidget {
         selected &&
         isInlineTextEditing &&
         editingTextElementId == element.id &&
-        (element.type == AlbumElementType.text || element.type == AlbumElementType.subtitle);
+        (element.type == AlbumElementType.text ||
+            element.type == AlbumElementType.subtitle);
     final showSelectionFrame = selected && isSelectableElement;
-    final showResizeHandle = canManipulate &&
+    final showResizeHandle =
+        canManipulate &&
         selected &&
         (element.type == AlbumElementType.image ||
             element.type == AlbumElementType.text ||
@@ -3147,14 +3327,20 @@ class _ElementBox extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onLongPress: isTextEditingElement ? null : onSelect,
-        onTap: isTextEditingElement ? null : ((selected || editMode) ? onSelect : null),
+        onTap: isTextEditingElement
+            ? null
+            : ((selected || editMode) ? onSelect : null),
         onPanUpdate: isTextEditingElement
             ? null
-            : (canManipulate && selected ? (details) => onMove(details.delta) : null),
+            : (canManipulate && selected
+                  ? (details) => onMove(details.delta)
+                  : null),
         onPanEnd: isTextEditingElement
             ? null
             : (canManipulate && selected ? (_) => onGestureEnd() : null),
-        onPanCancel: isTextEditingElement ? null : (canManipulate && selected ? onGestureEnd : null),
+        onPanCancel: isTextEditingElement
+            ? null
+            : (canManipulate && selected ? onGestureEnd : null),
         child: Stack(
           clipBehavior: Clip.none,
           children: [
@@ -3215,7 +3401,8 @@ class _ElementBox extends StatelessWidget {
         return _TextElementView(
           element: element,
           pageScale: pageScale,
-          isEditing: selected &&
+          isEditing:
+              selected &&
               isInlineTextEditing &&
               editingTextElementId == element.id &&
               inlineTextController != null,
@@ -3228,11 +3415,16 @@ class _ElementBox extends StatelessWidget {
         );
       case AlbumElementType.shape:
       case AlbumElementType.sticker:
-        final alpha = (element.payload['fill_alpha'] as num?)?.toDouble() ?? 0.18;
+        final alpha =
+            (element.payload['fill_alpha'] as num?)?.toDouble() ?? 0.18;
         return Container(
           decoration: BoxDecoration(
-            color: _colorFromToken(element.style.colorToken).withValues(alpha: alpha),
-            borderRadius: BorderRadius.circular(element.style.borderRadius * 100),
+            color: _colorFromToken(
+              element.style.colorToken,
+            ).withValues(alpha: alpha),
+            borderRadius: BorderRadius.circular(
+              element.style.borderRadius * 100,
+            ),
           ),
         );
     }
@@ -3246,7 +3438,7 @@ class _ImageElementView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final path = element.payload['path']?.toString() ?? '';
+    final assetId = element.payload['photo_id']?.toString() ?? '';
     final radius = (element.style.borderRadius * 100).clamp(8, 24).toDouble();
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -3261,10 +3453,11 @@ class _ImageElementView extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
-        child: path.isEmpty
+        child: assetId.isEmpty
             ? Container(color: const Color(0xFFEFE3D5))
-            : PathImage(
-                path: path,
+            : AssetBackedImage(
+                path: '',
+                assetId: assetId,
                 width: double.infinity,
                 fit: BoxFit.cover,
               ),
@@ -3300,7 +3493,8 @@ class _TextElementView extends StatelessWidget {
           scale: pageScale,
         );
         final payloadMaxLines = (element.payload['max_lines'] as num?)?.toInt();
-        final maxLines = payloadMaxLines ??
+        final maxLines =
+            payloadMaxLines ??
             _resolveMaxLines(
               role: role,
               boxHeight: size.height,
@@ -3316,7 +3510,10 @@ class _TextElementView extends StatelessWidget {
           textAlign: _textAlignFromValue(element.style.align),
         );
 
-        final strutStyle = StrutStyle.fromTextStyle(fittedStyle, forceStrutHeight: true);
+        final strutStyle = StrutStyle.fromTextStyle(
+          fittedStyle,
+          forceStrutHeight: true,
+        );
         return SizedBox.expand(
           child: Align(
             alignment: _alignmentFromTextAlign(element.style.align),
@@ -3367,10 +3564,7 @@ class _SelectedElementRef {
 }
 
 class _PageInsertionTarget {
-  const _PageInsertionTarget({
-    required this.spreadIndex,
-    required this.side,
-  });
+  const _PageInsertionTarget({required this.spreadIndex, required this.side});
 
   final int spreadIndex;
   final AlbumPageSide side;
@@ -3404,7 +3598,8 @@ Color _colorFromToken(String token) {
 }
 
 String? _fontFamilyFromId(String fontId) {
-  switch (AlbumBookDesignTokens.fontTokens[fontId] ?? AlbumFontPreset.sansClean) {
+  switch (AlbumBookDesignTokens.fontTokens[fontId] ??
+      AlbumFontPreset.sansClean) {
     case AlbumFontPreset.serifElegant:
       return 'serif';
     case AlbumFontPreset.sansClean:
@@ -3418,8 +3613,13 @@ String? _fontFamilyFromId(String fontId) {
   }
 }
 
-TextStyle _buildElementTextStyle(AlbumElementStyle style, {double scale = 1.0}) {
-  final preset = AlbumBookDesignTokens.fontTokens[style.fontId] ?? AlbumFontPreset.sansClean;
+TextStyle _buildElementTextStyle(
+  AlbumElementStyle style, {
+  double scale = 1.0,
+}) {
+  final preset =
+      AlbumBookDesignTokens.fontTokens[style.fontId] ??
+      AlbumFontPreset.sansClean;
   final typographyScale = scale <= 1
       ? math.sqrt(scale).clamp(0.82, 1.0).toDouble()
       : (1 + (scale - 1) * 0.35).clamp(1.0, 1.18).toDouble();
@@ -3461,7 +3661,10 @@ int _resolveMaxLines({
   required double baseFontSize,
   required double lineHeight,
 }) {
-  final estimated = (boxHeight / (baseFontSize * lineHeight)).floor().clamp(1, 8);
+  final estimated = (boxHeight / (baseFontSize * lineHeight)).floor().clamp(
+    1,
+    8,
+  );
   switch (role) {
     case 'meta':
       return 1;
@@ -3494,7 +3697,8 @@ TextStyle _fitTextStyle({
     return baseStyle;
   }
 
-  var currentSize = ((baseStyle.fontSize ?? 16).clamp(8.5, 44.0) as num).toDouble();
+  var currentSize = ((baseStyle.fontSize ?? 16).clamp(8.5, 44.0) as num)
+      .toDouble();
   final minSize = maxLines >= 4 ? 8.5 : 9.5;
   final lineHeight = baseStyle.height ?? 1.28;
   final prefersSingleLine = _prefersSingleLine(text, maxLines);
@@ -3510,7 +3714,9 @@ TextStyle _fitTextStyle({
 
     final fitsHeight = painter.height <= maxHeight + 0.5;
     final lineCount = painter.computeLineMetrics().length;
-    if (!painter.didExceedMaxLines && fitsHeight && (!prefersSingleLine || lineCount <= 1)) {
+    if (!painter.didExceedMaxLines &&
+        fitsHeight &&
+        (!prefersSingleLine || lineCount <= 1)) {
       return style;
     }
 
@@ -3566,4 +3772,3 @@ Alignment _alignmentFromTextAlign(AlbumTextAlignValue value) {
       return Alignment.centerRight;
   }
 }
-

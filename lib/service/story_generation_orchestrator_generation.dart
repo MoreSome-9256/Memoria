@@ -64,6 +64,18 @@ extension _StoryGenerationOrchestratorGeneration
     return Future<void>.delayed(duration);
   }
 
+  String _previewKey(PhotoEntity photo) {
+    final assetId = photo.assetId.trim();
+    return assetId.isEmpty ? '' : 'asset:${Uri.encodeComponent(assetId)}';
+  }
+
+  List<String> _previewKeys(Iterable<PhotoEntity> photos) {
+    return photos
+        .map(_previewKey)
+        .where((key) => key.trim().isNotEmpty)
+        .toList(growable: false);
+  }
+
   String _semanticStepDetail(StoryGenerationMode mode) {
     switch (mode) {
       case StoryGenerationMode.deepseekTags:
@@ -83,21 +95,11 @@ extension _StoryGenerationOrchestratorGeneration
         .where((id) => id.trim().isNotEmpty)
         .toList(growable: false);
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final q = photoBox.query(PhotoEntity_.assetId.oneOf(selectedAssetIds)).build();
+    final q = photoBox
+        .query(PhotoEntity_.assetId.oneOf(selectedAssetIds))
+        .build();
     final photos = q.find();
     q.close();
-
-    final latestPathByAssetId = <String, String>{
-      for (final photo in request.selectedPhotos)
-        if (photo.path.trim().isNotEmpty) photo.id: photo.path,
-    };
-
-    for (final photo in photos) {
-      final latestPath = latestPathByAssetId[photo.assetId];
-      if (latestPath != null && latestPath.isNotEmpty) {
-        photo.path = latestPath;
-      }
-    }
 
     if (request.preserveSelectionOrder) {
       final byAssetId = <String, PhotoEntity>{

@@ -56,7 +56,6 @@ class PhotoCaptionService {
     required String ocrText,
     required String? location,
     required DateTime takenAt,
-    required bool isProbablyScreenshot,
     required int faceCount,
   }) async {
     final sanitizedVisualTags = _sanitizeCaptionTags(visualTags);
@@ -74,13 +73,11 @@ class PhotoCaptionService {
           ocrText: trimmedOcrText,
           location: _normalizeLocation(location),
           takenAt: takenAt,
-          isTextHeavy:
-              isProbablyScreenshot ||
-              _looksTextHeavy(
-                sanitizedVisualTags,
-                sanitizedOcrTags,
-                trimmedOcrText,
-              ),
+          isTextHeavy: _looksTextHeavy(
+            sanitizedVisualTags,
+            sanitizedOcrTags,
+            trimmedOcrText,
+          ),
           faceCount: faceCount,
         );
         final cleaned = _cleanCaption(caption);
@@ -98,7 +95,6 @@ class PhotoCaptionService {
       ocrText: trimmedOcrText,
       location: _normalizeLocation(location),
       takenAt: takenAt,
-      isProbablyScreenshot: isProbablyScreenshot,
       faceCount: faceCount,
     );
   }
@@ -134,11 +130,9 @@ class PhotoCaptionService {
     required String ocrText,
     required String? location,
     required DateTime takenAt,
-    required bool isProbablyScreenshot,
     required int faceCount,
   }) {
-    final textHeavy =
-        isProbablyScreenshot || _looksTextHeavy(visualTags, ocrTags, ocrText);
+    final textHeavy = _looksTextHeavy(visualTags, ocrTags, ocrText);
     final timePhrase = _timePhrase(takenAt);
     final locationPhrase = location == null ? '' : '在$location';
 

@@ -1,4 +1,4 @@
-/// Amplify Cognito 配置生成器，为应用提供统一的认证配置字符串。
+// Amplify Cognito 配置生成器，为应用提供统一的认证配置字符串。
 
 import 'dart:convert';
 
@@ -13,14 +13,17 @@ import 'dart:convert';
 /// - COGNITO_IDENTITY_POOL_ID
 class AmplifyCognitoConfig {
   static String build() {
-    const region = String.fromEnvironment('AWS_REGION', defaultValue: '');
+    const region = String.fromEnvironment(
+      'AWS_REGION',
+      defaultValue: 'ap-northeast-2',
+    );
     const userPoolId = String.fromEnvironment(
       'COGNITO_USER_POOL_ID',
-      defaultValue: '',
+      defaultValue: 'ap-northeast-2_ZRjUXjhmI',
     );
     const appClientId = String.fromEnvironment(
       'COGNITO_APP_CLIENT_ID',
-      defaultValue: '',
+      defaultValue: '34ftru4193s0unvm9kgdt9u3s4',
     );
     const identityPoolId = String.fromEnvironment(
       'COGNITO_IDENTITY_POOL_ID',
@@ -36,9 +39,7 @@ class AmplifyCognitoConfig {
     final pluginConfig = <String, Object?>{
       'UserAgent': 'aws-amplify-cli/0.1.0',
       'Version': '0.1.0',
-      'IdentityManager': {
-        'Default': {},
-      },
+      'IdentityManager': {'Default': {}},
       'CognitoUserPool': {
         'Default': {
           'PoolId': userPoolId,
@@ -47,28 +48,21 @@ class AmplifyCognitoConfig {
         },
       },
       'Auth': {
-        'Default': {
-          'authenticationFlowType': 'USER_SRP_AUTH',
-        },
+        'Default': {'authenticationFlowType': 'USER_SRP_AUTH'},
       },
     };
 
     if (identityPoolId.isNotEmpty) {
       pluginConfig['CredentialsProvider'] = {
         'CognitoIdentity': {
-          'Default': {
-            'PoolId': identityPoolId,
-            'Region': region,
-          },
+          'Default': {'PoolId': identityPoolId, 'Region': region},
         },
       };
     }
 
     return jsonEncode({
       'auth': {
-        'plugins': {
-          'awsCognitoAuthPlugin': pluginConfig,
-        },
+        'plugins': {'awsCognitoAuthPlugin': pluginConfig},
       },
     });
   }

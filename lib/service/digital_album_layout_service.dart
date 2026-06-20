@@ -218,14 +218,12 @@ class DigitalAlbumLayoutService {
     Set<String>? allowedTemplateIds,
   }) {
     final cleanSections = sections
-        .where((section) => section.photo.path.trim().isNotEmpty)
+        .where((section) => section.photo.id.trim().isNotEmpty)
         .toList(growable: false);
     final uniqueSections = <StorySection>[];
     final seenPhotoKeys = <String>{};
     for (final section in cleanSections) {
-      final key = section.photo.id.trim().isNotEmpty
-          ? section.photo.id.trim()
-          : section.photo.path.trim();
+      final key = section.photo.id.trim();
       if (seenPhotoKeys.add(key)) {
         uniqueSections.add(section);
       }
@@ -361,7 +359,7 @@ class DigitalAlbumLayoutService {
     }
 
     final cleanSections = sections
-        .where((section) => section.photo.path.trim().isNotEmpty)
+        .where((section) => section.photo.id.trim().isNotEmpty)
         .toList(growable: false);
     if (cleanSections.isEmpty) {
       return buildDefaultBook(
@@ -375,9 +373,7 @@ class DigitalAlbumLayoutService {
     final uniqueSections = <StorySection>[];
     final seenPhotoKeys = <String>{};
     for (final section in cleanSections) {
-      final key = section.photo.id.trim().isNotEmpty
-          ? section.photo.id.trim()
-          : section.photo.path.trim();
+      final key = section.photo.id.trim();
       if (seenPhotoKeys.add(key)) {
         uniqueSections.add(section);
       }
@@ -1949,7 +1945,6 @@ class DigitalAlbumLayoutService {
       payload: <String, dynamic>{
         'role': 'photo',
         'photo_id': photo.id,
-        'path': photo.path,
         'crop': <String, dynamic>{
           'mode': 'cover',
           'focus_x': focus.$1,

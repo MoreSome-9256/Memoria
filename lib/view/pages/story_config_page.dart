@@ -1,25 +1,15 @@
-/// 配置页面，提供应用运行参数、调试开关和环境选项。
+// 配置页面，提供应用运行参数、调试开关和环境选项。
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
 import '../../models/entity/event_entity.dart';
-import '../../models/entity/photo_entity.dart';
-import '../../models/entity/story_entity.dart';
 import '../../models/vo/story_generation_models.dart';
 import '../../service/llm_service.dart';
-import '../../utils/ocr_policy.dart';
-import 'story_result_page.dart';
 import 'story_generation_progress_page.dart';
 import 'package:file_picker/file_picker.dart'; // 🌟 新增
-import '../../service/music_service.dart';
-import 'package:flutter/services.dart' show rootBundle;
-import 'package:path_provider/path_provider.dart';
-import 'dart:io';
-import 'dart:typed_data';
-import '../../objectbox.g.dart';
-import '../../storage/objectbox/objectbox_service.dart';
 
 // 🌟 新增：视频长宽比枚举
 enum VideoAspectRatio { vertical, horizontal }
@@ -28,6 +18,55 @@ enum VideoAspectRatio { vertical, horizontal }
 enum PublishingPlatform { moments, xiaohongshu, bilibili, tiktok }
 
 enum MusicSource { aiGenerated, manualImport }
+
+class _ThemePhotoSummaryRecord {
+  const _ThemePhotoSummaryRecord({
+    required this.caption,
+    required this.ocrSummary,
+    required this.tags,
+    required this.location,
+    required this.dateTakenMs,
+  });
+
+  factory _ThemePhotoSummaryRecord.fromPhoto(Photo photo) {
+    return _ThemePhotoSummaryRecord(
+      caption: photo.caption,
+      ocrSummary: photo.ocrSummary,
+      tags: photo.tags,
+      location: photo.location,
+      dateTakenMs: photo.dateTaken.millisecondsSinceEpoch,
+    );
+  }
+
+  final String? caption;
+  final String? ocrSummary;
+  final List<String> tags;
+  final String? location;
+  final int dateTakenMs;
+}
+
+List<String> _buildThemePromptSummaries(List<_ThemePhotoSummaryRecord> photos) {
+  final summaries = photos
+      .map((photo) {
+        var desc = photo.caption ?? photo.ocrSummary ?? photo.tags.join(' ');
+        if (desc.trim().isEmpty) {
+          final loc =
+              photo.location != null &&
+                  photo.location != '未知地点' &&
+                  photo.location!.trim().isNotEmpty
+              ? photo.location!
+              : '某地';
+          final date = DateTime.fromMillisecondsSinceEpoch(photo.dateTakenMs);
+          desc = '${date.year}年${date.month}月 拍摄于 $loc';
+        }
+        return desc;
+      })
+      .where((value) => value.trim().isNotEmpty)
+      .take(15)
+      .toList(growable: false);
+
+  return summaries.isEmpty ? const <String>['美好的回忆'] : summaries;
+}
 
 class ConfigPage extends StatefulWidget {
   final Event event;
@@ -56,17 +95,14 @@ class _ConfigPageState extends State<ConfigPage> {
   // 🌟 替换掉原来的 StoryLength，改为新的配置项并给默认值
   VideoAspectRatio _selectedAspectRatio = VideoAspectRatio.vertical;
   PublishingPlatform _selectedPlatform = PublishingPlatform.xiaohongshu;
-  StoryGenerationMode _selectedStoryMode = StoryGenerationMode.deepseekTags;
+  StoryGenerationMode _selectedStoryMode =
+      StoryGenerationMode.localCaptionThenDeepseek;
   String? _selectedStoryTemplateId;
   // 🌟 新增：音乐相关状态
   MusicSource _selectedMusicSource = MusicSource.aiGenerated;
   String? _customMusicPath;
   String? _customMusicName;
 
-  bool _isGenerating = false;
-
-  // 🌟 新增：动态加载提示文本
-  String _loadingText = '生成视频';
   // 🌟 新增：是否自动生成台词开关
   bool _enableAutoCaptions = true;
   late TextEditingController _manualCaptionsController; // 🌟 新增：手动字幕控制器
@@ -104,27 +140,14 @@ class _ConfigPageState extends State<ConfigPage> {
     setState(() => _isGeneratingTheme = true);
 
     try {
-      // 🌟 2. 核心修复：即使照片没有 AI 标签，也要用时间和地点把 Prompt 喂饱！
-      List<String> topTags = widget.selectedPhotos
-          .map((p) {
-            String desc = p.caption ?? p.ocrSummary ?? p.tags.join(' ');
-
-            // 如果照片完全没被 AI 分析过（比如你刚拍的本地照片），那就提取它的物理信息
-            if (desc.trim().isEmpty) {
-              String loc = p.location != null && p.location != '未知地点'
-                  ? p.location!
-                  : '某地';
-              String date = '${p.dateTaken.year}年${p.dateTaken.month}月';
-              desc = '$date 拍摄于 $loc';
-            }
-            return desc;
-          })
-          .where((s) => s.trim().isNotEmpty)
-          .take(15)
-          .toList();
-
-      // 终极保底，理论上不可能走到这步
-      if (topTags.isEmpty) topTags = ['美好的回忆'];
+      // 即使照片没有 AI 标签，也要用时间和地点把 Prompt 喂饱；纯数据整理放到 isolate，
+      // 避免刚进入配置页时在 UI isolate 上遍历大批照片。
+      final topTags = await compute(
+        _buildThemePromptSummaries,
+        widget.selectedPhotos
+            .map(_ThemePhotoSummaryRecord.fromPhoto)
+            .toList(growable: false),
+      );
 
       final eventEntity = EventEntity()
         ..id = int.tryParse(widget.event.id) ?? -1
@@ -325,287 +348,6 @@ class _ConfigPageState extends State<ConfigPage> {
         ),
       ),
     );
-  }
-
-  Future<void> _generateStory() async {
-    // 校验：如果选择了手动导入但没选文件
-    if (_selectedMusicSource == MusicSource.manualImport &&
-        _customMusicPath == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请先选择一段本地音乐')));
-      return;
-    }
-    if (!_validateCommonThemeInput()) {
-      return;
-    }
-
-    setState(() {
-      _isGenerating = true;
-      _loadingText = '🎵 正在分析音乐节拍...'; // 🌟 更新状态
-    });
-
-    try {
-      // 1. 获取 EventEntity（通过 Event.id 查询）
-      final store = ObjectBoxService().store;
-      EventEntity? eventEntity;
-
-      if (widget.event.id == '-1') {
-        // 🕵️‍♂️ 拦截到虚拟 Event！直接在内存中捏一个对象
-        eventEntity = EventEntity()
-          ..id = -1
-          ..title = widget.event.title
-          ..startTime = widget.event.startDate.millisecondsSinceEpoch
-          ..endTime = widget.event.endDate.millisecondsSinceEpoch
-          ..photoCount = widget.selectedPhotos.length;
-      } else {
-        // 正常走系统自动聚类的相册逻辑
-        final eventEntityId = int.parse(widget.event.id);
-        eventEntity = store.box<EventEntity>().get(eventEntityId);
-      }
-
-      if (eventEntity == null) {
-        throw Exception('未找到或创建事件档案失败');
-      }
-
-      // 2. 严格按用户选择的照片生成故事
-      final selectedAssetIds = widget.selectedPhotos
-          .map((photo) => photo.id)
-          .toList();
-      final photoBox = store.box<PhotoEntity>();
-      final _pq = photoBox
-          .query(PhotoEntity_.assetId.oneOf(selectedAssetIds))
-          .order(PhotoEntity_.timestamp)
-          .build();
-      final List<PhotoEntity> photoEntities = _pq.find();
-      _pq.close();
-
-      if (photoEntities.isEmpty) {
-        throw Exception('No photos found');
-      }
-      // ==========================================
-      // 🌟 新增核心节点 1：AI 生成专属配乐
-      // ==========================================
-      if (_selectedMusicSource == MusicSource.aiGenerated) {
-        setState(() {
-          _loadingText = '🎵 正在构思音乐配方...';
-        });
-
-        // 提取部分照片的描述或标签，给大模型写 Prompt 提供灵感
-        List<String> promptTags = [
-          _themeController.text.trim(),
-          _selectedSubtitle ?? '美好时光',
-        ];
-        if (photoEntities.isNotEmpty && photoEntities.first.aiCaption != null) {
-          promptTags.add(photoEntities.first.aiCaption!);
-        }
-
-        // 调用 LLM 写 Prompt
-        String musicPrompt = await LLMService().generateMusicPrompt(
-          photoTags: promptTags,
-          storyTheme: _themeController.text.trim(),
-        );
-
-        setState(() {
-          _loadingText = '🎹 AI 正在谱写专属配乐 (约需20秒)...';
-        });
-
-        int calculatedDuration = 12;
-
-        // 调用 MusicGen 生成并下载 MP3(此处临时注释掉以测试预制音乐效果，到时候记得恢复)
-        String? aiMusicPath = await LLMService().generateAndDownloadMusic(
-          musicPrompt,
-          duration: calculatedDuration,
-        );
-        // 🌟 强行告诉程序：AI 罢工了，快上预制菜！
-        // String? aiMusicPath = null;
-
-        // ==========================================
-        // 🌟 终极护盾：如果真 AI 没钱罢工了，预制菜立刻顶上！
-        // ==========================================
-        if (aiMusicPath == null) {
-          setState(() {
-            _loadingText = '🎹 AI 专属配乐生成中 (预制菜调取中)...';
-          });
-          // 传入刚才大模型写的 Prompt，让它挑菜
-          aiMusicPath = await _servePremadeMusic(musicPrompt);
-        }
-
-        _customMusicPath = aiMusicPath;
-        _customMusicName = 'AI 专属原声带.mp3';
-      }
-      // ==========================================
-      // 🌟 核心：端侧音乐分析接入点
-      // ==========================================
-      Map<String, dynamic>? dynamicBeatData;
-
-      // 现在不管是“手动导入”还是刚才生成的“AI配乐”，只要有路径，统统拿去分析！
-      if (_customMusicPath != null) {
-        setState(() {
-          _loadingText = '🥁 正在本地分析音乐节拍与情绪变化...';
-        });
-
-        dynamicBeatData = await MusicService.analyzeAudio(_customMusicPath!);
-
-        if (dynamicBeatData == null) {
-          throw Exception('本地音乐分析失败，请检查音频文件是否可解码');
-        }
-      } else {}
-      // ==========================================
-      // 🌟 平台名称转换 (供最终发布页文案生成使用)
-      // ==========================================
-      final platformName = _currentPlatformName();
-      // ==========================================
-      // 🌟 第一步：呼叫 VLM 接口生成剧本大纲
-      // ==========================================
-      setState(() {
-        _loadingText = '🧠 正在构思回忆剧本...';
-      });
-
-      // 3. 调用 StoryService 生成故事
-      // ⚠️ 注意：你需要去 StoryService 里把原来的 length 参数改成接收 aspectRatio 和 platform！
-      /*final story = await StoryService().generateStory(
-        event: eventEntity,
-        selectedPhotos: photoEntities,
-        title: _themeController.text.trim(),
-        subtitle: _selectedSubtitle ?? '',
-        // 🌟 传入新增的两个配置项 (传字符串给后端/AI更方便解析)
-        aspectRatio: _selectedAspectRatio.name,
-        platform: _selectedPlatform.name,
-      );*/ // 暂时注释掉！后期一定记得改回来！
-
-      // 🌟 【测试专用】手动捏一个极其逼真的假 StoryEntity
-      // 🌟 修复点：从 photoEntities (List<PhotoEntity>) 里提取 int 类型的 id
-      final databaseIds = photoEntities.map((e) => e.id).toList();
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final story = StoryEntity()
-        ..title = _themeController.text.trim().isEmpty
-            ? '测试视频生成'
-            : _themeController.text.trim()
-        ..subtitle = _selectedSubtitle ?? '沙盒测试'
-        ..createdAt = now
-        ..updatedAt = now
-        ..eventId = eventEntity
-            .id // 👈 必须传：否则存数据库时会报错
-        ..photoIds =
-            databaseIds // 👈 必须传：绑定的照片ID列表
-        ..photoCount = selectedAssetIds.length
-        ..isLlmGenerated = false
-        // ⚠️ 最最最关键的 content：必须带有 ![img](x) 占位符，否则 UI 无法切图！
-        ..targetPlatform =
-            platformName // 👈 🌟 核心新增：把平台写进数据库！
-        ..content =
-            '''
-测试
-
-![img](0)
-
-Sandal Leap
-
-![img](1)
-'''
-                .trim();
-
-      // ==========================================
-      // 🌟 第二步：根据剧本，提炼视频台词 (Captions)
-      // ==========================================
-      List<String> finalCaptions = [];
-
-      if (_enableAutoCaptions) {
-        setState(() {
-          _loadingText = '✨ 正在提炼视频台词...';
-        });
-
-        // 提取 VLM 的剧本正文（这里用 story.content 替代，实际接入时用 VLM JSON里的 narrative）
-        String scriptNarrative = story.content;
-        List<String> styleTags = [_selectedSubtitle ?? '治愈风', '小红书感'];
-
-        // ==========================================
-        // 🌟 核心提取：把打好的 Tag 揉成一句话送给 LLM
-        // ==========================================
-        List<String> photoDescriptions = photoEntities.map((p) {
-          // 提取图片描述
-          String desc = p.aiCaption?.trim() ?? "未知画面元素";
-
-          // 如果有 OCR 文本线索，也一并塞进去
-          final ocrTags = OcrPolicy.effectiveTags(
-            p.ocrTags ?? const <String>[],
-            maxTags: 3,
-          );
-          final ocrText = OcrPolicy.effectiveText(p.ocrText);
-          if (ocrTags.isNotEmpty) {
-            desc += " (画面包含文字: ${ocrTags.join('，')})";
-          } else if (ocrText.isNotEmpty) {
-            desc += " (画面包含文字: $ocrText)";
-          }
-          return desc;
-        }).toList();
-
-        // 呼叫进化版的台词生成方法
-        finalCaptions = await LLMService().generateVideoCaptionsFromScript(
-          narrative: scriptNarrative,
-          styleTags: styleTags,
-          photoDescriptions: photoDescriptions, // 👈 传过去！
-        );
-      } else {
-        // 🌟 核心修改：用户选择手动输入
-        // 1. 获取输入框的文字并根据换行符打散
-        String rawManualText = _manualCaptionsController.text.trim();
-        List<String> userLines = [];
-        if (rawManualText.isNotEmpty) {
-          userLines = rawManualText.split('\n').map((e) => e.trim()).toList();
-        }
-
-        // 2. 将输入的句子与照片数量进行“拉平”匹配
-        for (int i = 0; i < photoEntities.length; i++) {
-          if (i < userLines.length) {
-            // 如果用户写了这行的台词，就用它
-            finalCaptions.add(userLines[i]);
-          } else {
-            // 如果用户少写了，剩下的照片就给空字符串（无字纯享版）
-            finalCaptions.add("");
-          }
-        }
-        // 注意：如果 userLines.length 大于 photoEntities.length，
-        // 多出来的句子根本不会进循环，自然就被丢弃了，完美符合你的要求！
-      }
-
-      if (!mounted) return;
-
-      setState(() {
-        _isGenerating = false;
-        _loadingText = '生成视频';
-      });
-
-      // 4. 导航到 StoryResultPage.fromStoryEntity
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => StoryResultPage.fromStoryEntity(
-            storyEntity: story,
-            photos: photoEntities,
-            storyTemplateId: _selectedStoryTemplateId,
-            customMusicPath: _customMusicPath,
-            dynamicBeatData: dynamicBeatData,
-            videoCaptions: finalCaptions,
-            photoOverrides: widget.selectedPhotos,
-            isHorizontal: _selectedAspectRatio == VideoAspectRatio.horizontal,
-            targetPlatform: platformName,
-          ),
-        ),
-      );
-    } catch (e) {
-      setState(() {
-        _isGenerating = false;
-        _loadingText = '生成视频';
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('生成异常: $e')));
-      }
-    }
   }
 
   @override
@@ -883,7 +625,7 @@ Sandal Leap
           const SizedBox(height: 24),
 
           OutlinedButton.icon(
-            onPressed: _isGenerating ? null : _openStoryGenerationFlow,
+            onPressed: _openStoryGenerationFlow,
             icon: const Icon(Icons.auto_stories_rounded),
             label: Text(
               '生成故事',
@@ -999,7 +741,7 @@ Sandal Leap
         ),
         const SizedBox(height: 8),
         Text(
-          '默认使用 DeepSeek 根据标签、时间和地点生成；如果想让画面理解更贴近图片细节，可以先用本地 VLM 补充视觉描述，再交给 DeepSeek 串成故事。',
+          '默认先用本地 VLM 为图片补充可见画面描述，再结合标签、OCR、时间和地点交给 DeepSeek 串成故事；标签故事仅作为更快的轻量模式。',
           style: Theme.of(
             context,
           ).textTheme.bodySmall?.copyWith(color: Colors.grey[600], height: 1.4),
@@ -1231,126 +973,5 @@ Sandal Leap
         }),
       ],
     );
-  }
-
-  // ==========================================
-  // 🍱 预制菜核心 V2.0：权重打分匹配算法
-  // ==========================================
-  Future<String> _servePremadeMusic(String prompt) async {
-    final lowerPrompt = prompt.toLowerCase();
-
-    // 1. 定义极其严谨的风格专属词库（去掉了容易引起歧义的 piano）
-    final upbeatWords = [
-      'upbeat',
-      'happy',
-      'energetic',
-      'pop',
-      'sunny',
-      'cheerful',
-      'bright',
-      'joy',
-      'fun',
-      'dynamic',
-      'party',
-    ];
-    final cinematicWords = [
-      'cinematic',
-      'epic',
-      'majestic',
-      'orchestral',
-      'heroic',
-      'grand',
-      'brass',
-      'soaring',
-      'powerful',
-      'landscape',
-    ];
-    // 伤感风必须是明确的负面/悲伤情绪词
-    final melancholicWords = [
-      'sad',
-      'melancholic',
-      'sorrow',
-      'tear',
-      'heartbreak',
-      'grief',
-      'depressing',
-      'lonely',
-      'crying',
-      'farewell',
-    ];
-    // 治愈系 Lo-Fi 词汇（把 nostalgic 怀旧 归还给治愈系）
-    final lofiWords = [
-      'lo-fi',
-      'lofi',
-      'chill',
-      'cozy',
-      'relax',
-      'dreamy',
-      'gentle',
-      'warm',
-      'calm',
-      'peaceful',
-      'nostalgic',
-      'anime',
-    ];
-
-    // 2. 阅卷打分：看看哪种风格命中的词汇最多
-    int upbeatScore = upbeatWords.where((w) => lowerPrompt.contains(w)).length;
-    int cinematicScore = cinematicWords
-        .where((w) => lowerPrompt.contains(w))
-        .length;
-    int melancholicScore = melancholicWords
-        .where((w) => lowerPrompt.contains(w))
-        .length;
-    int lofiScore = lofiWords.where((w) => lowerPrompt.contains(w)).length;
-
-    debugPrint(
-      "📊 预制菜评分结果 -> 欢快:$upbeatScore, 史诗:$cinematicScore, 伤感:$melancholicScore, 治愈:$lofiScore",
-    );
-
-    // 3. 选出最高分（默认给 lofi 治愈系打底）
-    String assetPath = 'assets/audio/premade/Soft Save Point.mp3';
-    int maxScore = 0;
-
-    if (upbeatScore > maxScore) {
-      maxScore = upbeatScore;
-      assetPath = 'assets/audio/premade/Sunrise Checkpoint.mp3';
-    }
-    if (cinematicScore > maxScore) {
-      maxScore = cinematicScore;
-      assetPath = 'assets/audio/premade/Horizons in Motion.mp3';
-    }
-    if (melancholicScore > maxScore) {
-      maxScore = melancholicScore;
-      assetPath = 'assets/audio/premade/Faded Save File.mp3';
-    }
-    if (lofiScore > maxScore) {
-      maxScore = lofiScore;
-      assetPath = 'assets/audio/premade/Soft Save Point.mp3';
-    }
-
-    // 打印最终命中的结果
-    if (assetPath.contains('upbeat')) {
-      debugPrint("🍱 预制菜最终出锅：欢快风格 (upbeat)");
-    } else if (assetPath.contains('cinematic')) {
-      debugPrint("🍱 预制菜最终出锅：电影史诗风 (cinematic)");
-    } else if (assetPath.contains('melancholic')) {
-      debugPrint("🍱 预制菜最终出锅：怀旧伤感风 (melancholic)");
-    } else {
-      debugPrint("🍱 预制菜最终出锅：治愈放松风 (lofi)");
-    }
-
-    // 4. 将 Asset 里的文件拷贝到沙盒目录，伪装成刚下载好的样子
-    final ByteData data = await rootBundle.load(assetPath);
-    final Directory tempDir = await getTemporaryDirectory();
-    final File tempFile = File(
-      '${tempDir.path}/ai_bgm_premade_${DateTime.now().millisecondsSinceEpoch}.mp3',
-    );
-    await tempFile.writeAsBytes(data.buffer.asUint8List(), flush: true);
-
-    // 5. 逼真体验：假装 AI 正在努力思考
-    await Future.delayed(const Duration(seconds: 3));
-
-    return tempFile.path;
   }
 }

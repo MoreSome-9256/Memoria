@@ -1,17 +1,17 @@
 #!/usr/bin/env pwsh
 # Usage:
-#   ./launch.ps1 dev
+#   ./launch.ps1 proxy
 #   ./launch.ps1 prod emulator-5554
 
 param(
-    [string]$Profile = "dev",
+    [string]$Profile = "proxy",
     [string]$DeviceId = ""
 )
 
 $profileFile = "config/profiles/$Profile.json"
 if (-not (Test-Path $profileFile)) {
     Write-Host "Profile file not found: $profileFile"
-    Write-Host "Create it from template: config/profiles/dev.example.json"
+    Write-Host "Use config/profiles/proxy.json or create a private profile."
     exit 1
 }
 

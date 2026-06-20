@@ -1,4 +1,4 @@
-/// 故事生成流程使用的值对象和枚举，描述模式、模板和输出选项。
+// 故事生成流程使用的值对象和枚举，描述模式、模板和输出选项。
 
 import '../ai_theme.dart';
 import '../entity/photo_entity.dart';
@@ -12,12 +12,7 @@ enum StoryGenerationMode {
   localDirectVlm,
 }
 
-enum StoryTemplateCategory {
-  trending,
-  poetry,
-  cinematic,
-  healing,
-}
+enum StoryTemplateCategory { trending, poetry, cinematic, healing }
 
 extension StoryTemplateCategoryX on StoryTemplateCategory {
   String get title {
@@ -210,12 +205,7 @@ extension StoryGenerationModeX on StoryGenerationMode {
   }
 }
 
-enum StoryGenerationProgressStatus {
-  pending,
-  inProgress,
-  completed,
-  failed,
-}
+enum StoryGenerationProgressStatus { pending, inProgress, completed, failed }
 
 class StoryGenerationProgressStep {
   const StoryGenerationProgressStep({
@@ -224,7 +214,7 @@ class StoryGenerationProgressStep {
     required this.status,
     this.detail,
     this.bullets = const <String>[],
-    this.previewImagePaths = const <String>[],
+    this.previewAssetIds = const <String>[],
   });
 
   final String id;
@@ -232,13 +222,13 @@ class StoryGenerationProgressStep {
   final StoryGenerationProgressStatus status;
   final String? detail;
   final List<String> bullets;
-  final List<String> previewImagePaths;
+  final List<String> previewAssetIds;
 
   StoryGenerationProgressStep copyWith({
     StoryGenerationProgressStatus? status,
     String? detail,
     List<String>? bullets,
-    List<String>? previewImagePaths,
+    List<String>? previewAssetIds,
   }) {
     return StoryGenerationProgressStep(
       id: id,
@@ -246,7 +236,7 @@ class StoryGenerationProgressStep {
       status: status ?? this.status,
       detail: detail ?? this.detail,
       bullets: bullets ?? this.bullets,
-      previewImagePaths: previewImagePaths ?? this.previewImagePaths,
+      previewAssetIds: previewAssetIds ?? this.previewAssetIds,
     );
   }
 }
@@ -302,10 +292,7 @@ class StoryGenerationRequest {
 }
 
 class StoryGenerationOutput {
-  const StoryGenerationOutput({
-    required this.story,
-    required this.photos,
-  });
+  const StoryGenerationOutput({required this.story, required this.photos});
 
   final StoryEntity story;
   final List<PhotoEntity> photos;

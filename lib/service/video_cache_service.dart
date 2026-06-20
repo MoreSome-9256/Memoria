@@ -46,7 +46,12 @@ class VideoCacheService {
     final normalizedSections = sections
         .map(
           (section) => <String, dynamic>{
-            'photoPath': section['photo']?['path'] as String? ?? '',
+            'mediaFingerprint':
+                section['photo']?['fingerprint'] as String? ?? '',
+            'mediaKind': section['photo']?['mediaKind'] as String? ?? '',
+            'dateTaken': section['photo']?['dateTaken'],
+            'width': section['photo']?['width'],
+            'height': section['photo']?['height'],
             'text': section['text'] as String? ?? '',
           },
         )
@@ -81,17 +86,25 @@ class VideoCacheService {
     return digest.toString();
   }
 
-  /// 获取缓存目录（用户不可见，自动清理）
+  /// 获取视频缓存目录。
+  ///
+  /// 这是生成视频的主缓存位置，由设置页缓存管理统一清理。
+  /// 不写入系统相册 / Movies；需要给用户在 iOS 文件 App 中查看时，
+  /// 再复制一份到 Documents/StoryExports。
   Future<Directory> getCacheDirectory() async {
-    final tempDir = await getTemporaryDirectory();
-    final cacheDir = Directory(path.join(tempDir.path, _cacheSubdir));
+    final supportDir = await getApplicationSupportDirectory();
+    final cacheDir = Directory(path.join(supportDir.path, _cacheSubdir));
     if (!await cacheDir.exists()) {
       await cacheDir.create(recursive: true);
     }
     return cacheDir;
   }
 
-  /// 获取导出目录（用户可见，需要保持整洁）
+  /// 获取 iOS 文件 App 可见的私有导出目录。
+  ///
+  /// StoryExports 位于 App 私有 Documents 下；配合 Info.plist 的
+  /// UIFileSharingEnabled / LSSupportsOpeningDocumentsInPlace 暴露给“文件”App。
+  /// 这里保存的是缓存视频的展示副本，缓存源文件仍由 getCacheDirectory() 管理。
   Future<Directory> getExportsDirectory() async {
     final docDir = await getApplicationDocumentsDirectory();
     final exportsDir = Directory(path.join(docDir.path, _exportsSubdir));
@@ -128,13 +141,6 @@ class VideoCacheService {
       return cachedFile.path;
     }
 
-    final exportsDir = await getExportsDirectory();
-    final exportedFile = File(path.join(exportsDir.path, 'Story_$sessionId.mp4'));
-    if (await exportedFile.exists()) {
-      _sessionCache[sessionId] = exportedFile.path;
-      return exportedFile.path;
-    }
-
     return null;
   }
 
@@ -165,10 +171,22 @@ class VideoCacheService {
     return cachedPath;
   }
 
-  /// 将视频移动到导出目录（用户可见）
-  Future<String> moveToExportsDirectory(String sourcePath, {String? customName}) async {
+  /// 确保 iOS 文件 App 可见目录中存在当前视频。
+  ///
+  /// 注意：这是复制，不是移动。用户如果删掉 StoryExports 下的展示副本，
+  /// 只要缓存源文件还在，下次打开文件 App 前会自动补齐。
+  Future<String> ensureExportedVideoAvailable(
+    String sourcePath, {
+    String? cacheKey,
+    String? customName,
+  }) async {
+    final sourceFile = File(sourcePath);
+    if (!await sourceFile.exists()) {
+      throw FileSystemException('缓存视频不存在，无法复制到 StoryExports', sourcePath);
+    }
+
     final exportsDir = await getExportsDirectory();
-    final fileName = customName ?? 'Story_${DateTime.now().millisecondsSinceEpoch}.mp4';
+    final fileName = customName ?? _exportFileNameFor(sourcePath, cacheKey: cacheKey);
     final destPath = path.join(exportsDir.path, fileName);
 
     final destFile = File(destPath);
@@ -176,7 +194,7 @@ class VideoCacheService {
       return destPath;
     }
     
-    await File(sourcePath).copy(destPath);
+    await sourceFile.copy(destPath);
     
     // 清理旧的导出文件（保留最近10个）
     await _cleanOldExports(exportsDir, keepCount: 10);
@@ -184,10 +202,42 @@ class VideoCacheService {
     return destPath;
   }
 
+  /// 兼容旧调用名；实际行为是复制到 StoryExports，不移动源缓存。
+  Future<String> moveToExportsDirectory(String sourcePath, {String? customName}) {
+    return ensureExportedVideoAvailable(sourcePath, customName: customName);
+  }
+
+  String _exportFileNameFor(String sourcePath, {String? cacheKey}) {
+    final normalizedKey = cacheKey?.trim();
+    if (normalizedKey != null && normalizedKey.isNotEmpty) {
+      return 'Story_$normalizedKey.mp4';
+    }
+
+    final sourceName = path.basenameWithoutExtension(sourcePath).trim();
+    if (sourceName.isNotEmpty) {
+      final name =
+          sourceName.startsWith('Story_') ? sourceName : 'Story_$sourceName';
+      return '$name.mp4';
+    }
+
+    return 'Story_${DateTime.now().millisecondsSinceEpoch}.mp4';
+  }
+
   String _legacySessionId(List<Map<String, dynamic>> sections) {
     final legacyData = {
-      'images': sections.map((s) => s['photo']['path'] as String).toList(),
-      'texts': sections.map((s) => s['text'] as String).toList(),
+      'sections': sections
+          .map(
+            (section) => <String, dynamic>{
+              'mediaFingerprint':
+                  section['photo']?['fingerprint'] as String? ?? '',
+              'mediaKind': section['photo']?['mediaKind'] as String? ?? '',
+              'dateTaken': section['photo']?['dateTaken'],
+              'width': section['photo']?['width'],
+              'height': section['photo']?['height'],
+              'text': section['text'] as String? ?? '',
+            },
+          )
+          .toList(growable: false),
     };
     final jsonString = jsonEncode(legacyData);
     final bytes = utf8.encode(jsonString);
@@ -233,6 +283,7 @@ class VideoCacheService {
           final fileName = path.basename(file.path);
           // 仅删除本次导出产生的临时文件
           if (fileName.startsWith('silent_temp_') || 
+              fileName.startsWith('mux_temp_') ||
               fileName.startsWith('temp_audio_') ||
               fileName.startsWith('safe_custom_audio_')) {
             try {

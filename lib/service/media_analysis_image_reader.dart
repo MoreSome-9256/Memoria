@@ -1,7 +1,5 @@
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -158,6 +156,7 @@ class MediaAnalysisImageReader {
     String assetId, {
     required bool videoLike,
     int maxFrames = defaultFrameCount,
+    int imageSize = defaultAnalysisSize,
   }) async {
     final asset = await AssetEntity.fromId(assetId);
     if (asset != null) {
@@ -165,7 +164,7 @@ class MediaAnalysisImageReader {
         final frameBytes = await _readAssetFrameBytes(
           asset,
           frameCount: maxFrames,
-          imageSize: defaultAnalysisSize,
+          imageSize: imageSize,
         );
         if (frameBytes.frames.isNotEmpty) {
           return _writeFrameByteList(
@@ -179,7 +178,7 @@ class MediaAnalysisImageReader {
       }
       final bytes = await _readAssetThumbnail(
         asset,
-        const ThumbnailSize.square(defaultAnalysisSize),
+        ThumbnailSize.square(imageSize),
         quality: 92,
       );
       if (bytes != null && bytes.isNotEmpty) {

@@ -1,12 +1,10 @@
 // 相册页面，负责照片浏览、事件查看和标签筛选。
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'dart:collection';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:photo_manager/photo_manager.dart';
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/event_entity.dart';
@@ -20,6 +18,7 @@ import '../../service/event_service.dart';
 import '../../service/junk_photo_cleanup_service.dart';
 import '../../service/junk_photo_filter_service.dart';
 import '../../service/app_ai_settings_service.dart';
+import '../../service/media_permission_service.dart';
 import '../../service/photo_service.dart';
 import '../../service/story_queue_service.dart';
 import '../../service/unified_analysis_pipeline_service.dart';
@@ -48,7 +47,6 @@ enum _ImportAction {
   addMorePhotos,
   requestFullAccess,
   managePermissions,
-  cleanLowValue,
 }
 
 // Keep the tag overview and detail sheet on the same snapshot window so a
@@ -76,6 +74,8 @@ class AlbumPage extends StatefulWidget {
 
 enum _AlbumViewMode { tags, moments }
 
+enum _LocalCleanupAction { identifyLowValue, analysisData, allLocalCache }
+
 class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   static const double _contentBottomInset = 118;
   static const int _tagBrowserYieldChunk = 120;
@@ -83,7 +83,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   bool _isDeletingCurrentTask = false;
   bool _isClearingLocalCache = false;
   bool _tagBrowserAiRecoveryTriggered = false;
-  bool _hiddenPendingAnalysisPromptForSession = false;
+  bool _hiddenPendingAnalysisPrompt = false;
   bool _autoResumePendingStarted = false;
   int _pendingAnalysisCandidateCount = 0;
   bool _isShowingJunkCleanupDialog = false;
@@ -105,9 +105,12 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   String? _momentsFastScrollerLabel;
 
   // UI streams for moments and tag browser data.
-  late Stream<Map<String, List<Event>>> _uiEventsStream;
   late Stream<_AlbumTagBrowserData> _albumTagBrowserStream;
+  StreamSubscription<List<EventEntity>>? _momentsSubscription;
   StreamSubscription<void>? _pendingAnalysisSubscription;
+  Map<String, List<Event>>? _groupedMoments;
+  Object? _momentsError;
+  bool _momentsLoading = true;
 
   void _startRefresh({
     bool clearCacheFirst = false,
@@ -196,9 +199,14 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
       setState(() {
         _pendingAnalysisCandidateCount = count;
         if (count == 0) {
-          _hiddenPendingAnalysisPromptForSession = false;
+          _hiddenPendingAnalysisPrompt = false;
         }
       });
+    }
+    if (count == 0) {
+      unawaited(
+        AppAiSettingsService.instance.setPendingAnalysisPromptDismissed(false),
+      );
     }
 
     if (count > 0 &&
@@ -214,6 +222,26 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
         unawaited(_resumePendingAnalysisCandidates());
       }
     }
+  }
+
+  Future<void> _loadPendingAnalysisPromptPreference() async {
+    final hidden = await AppAiSettingsService.instance
+        .isPendingAnalysisPromptDismissed();
+    if (!mounted || hidden == _hiddenPendingAnalysisPrompt) {
+      return;
+    }
+    setState(() {
+      _hiddenPendingAnalysisPrompt = hidden;
+    });
+  }
+
+  Future<void> _hidePendingAnalysisPrompt() async {
+    if (mounted) {
+      setState(() {
+        _hiddenPendingAnalysisPrompt = true;
+      });
+    }
+    await AppAiSettingsService.instance.setPendingAnalysisPromptDismissed(true);
   }
 
   Future<void> _resumePendingAnalysisCandidates() async {
@@ -260,7 +288,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
             FilledButton(
               onPressed: () async {
                 Navigator.pop(context);
-                await PhotoManager.openSetting();
+                await MediaPermissionService.openSystemSettings();
               },
               child: const Text('去系统设置'),
             ),
@@ -270,31 +298,106 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _deleteCurrentAnalysisTask() async {
-    if (_isDeletingCurrentTask) {
+  Future<void> _showLocalCleanupDialog() async {
+    if (_isDeletingCurrentTask || _isClearingLocalCache) {
       return;
     }
-    final confirmed = await showDialog<bool>(
+    final foregroundProgress =
+        UnifiedAnalysisProgressStore.instance.progress.value;
+    final localCacheCleanupUnavailable =
+        _isStartingImport ||
+        AlbumRefreshService().isRunning ||
+        foregroundProgress.isRunning ||
+        AIService().isAnalyzing;
+    final selected = await showDialog<_LocalCleanupAction>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除当前任务'),
-        content: const Text(
-          '将中断当前前台任务，并清空本地数据库中的 AI 分析结果、候选队列、事件聚类、向量索引和低价值标记。照片记录和系统相册原图不会删除。',
+        title: const Text('整理与清理'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '后台识别低价值图片',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              const Text('在前台服务中分批检查已完成分析的照片。识别完成后可确认标记，不会直接删除系统相册原图。'),
+              const SizedBox(height: 16),
+              const Text(
+                '清空分析字段',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                '停止并删除当前分析任务，清空 AI 标签、向量、OCR、人脸和事件聚类；保留照片记录、已确认的低价值状态与系统相册原图，之后可重新分析。',
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                '清空全部本地缓存',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                '删除应用数据库中的照片记录、已保存故事、事件、推荐、人物、媒体索引和全部 AI 分析结果；不删除系统相册原图，也不会自动重新扫描。',
+              ),
+              if (localCacheCleanupUnavailable) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  '当前正在扫描或分析，只能先清空分析字段；全部本地缓存需要任务停止后才能清理。',
+                  style: TextStyle(color: Colors.orange),
+                ),
+              ],
+            ],
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(context).pop(),
             child: const Text('取消'),
           ),
-          FilledButton.icon(
-            onPressed: () => Navigator.of(context).pop(true),
-            icon: const Icon(Icons.delete_sweep_outlined),
-            label: const Text('删除任务'),
+          OutlinedButton(
+            onPressed: localCacheCleanupUnavailable
+                ? null
+                : () => Navigator.of(
+                    context,
+                  ).pop(_LocalCleanupAction.identifyLowValue),
+            child: const Text('识别低价值图片'),
+          ),
+          OutlinedButton(
+            onPressed: () =>
+                Navigator.of(context).pop(_LocalCleanupAction.analysisData),
+            child: const Text('清空分析字段'),
+          ),
+          FilledButton(
+            onPressed: localCacheCleanupUnavailable
+                ? null
+                : () => Navigator.of(
+                    context,
+                  ).pop(_LocalCleanupAction.allLocalCache),
+            child: const Text('清空全部本地缓存'),
           ),
         ],
       ),
     );
-    if (confirmed != true || !mounted) {
+    if (!mounted) {
+      return;
+    }
+    switch (selected) {
+      case _LocalCleanupAction.identifyLowValue:
+        await _startBackgroundJunkCleanup();
+      case _LocalCleanupAction.analysisData:
+        await _clearAnalysisData();
+      case _LocalCleanupAction.allLocalCache:
+        await _clearAllLocalCache();
+      case null:
+        return;
+    }
+  }
+
+  Future<void> _clearAnalysisData() async {
+    if (_isDeletingCurrentTask) {
       return;
     }
 
@@ -333,85 +436,48 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<PermissionState> _requestPhotoPermission({
-    required String title,
-    required String message,
-    required RequestType type,
-  }) async {
-    var state = await PhotoManager.requestPermissionExtend(
-      requestOption: PermissionRequestOption(
-        androidPermission: AndroidPermission(type: type, mediaLocation: false),
-      ),
-    );
-    if (state.hasAccess) return state;
+  Future<PermissionState> _requestPhotoPermission() async {
+    final state = await MediaPermissionService.requestAnalysisPermissions();
+    final hasLocationMetadataAccess =
+        await MediaPermissionService.hasLocationMetadataAccess();
+    if (state.hasAccess && hasLocationMetadataAccess) return state;
 
     if (!mounted) return state;
 
-    final retry = await showDialog<bool>(
+    await showDialog<void>(
       context: context,
-      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
+        title: const Text('需要照片分析权限'),
+        content: Text(
+          !state.hasAccess
+              ? 'Memoria 需要读取您允许访问的照片和视频。您可以选择部分照片或允许全部照片。'
+              : 'Memoria 已能读取照片，但还缺少“照片和视频中的位置信息”权限。没有该权限会导致地点索引缺失，因此本次打标签不会启动。',
+        ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
+            onPressed: () => Navigator.pop(ctx),
             child: const Text('取消'),
           ),
           FilledButton(
             onPressed: () async {
-              final s = await PhotoManager.requestPermissionExtend(
-                requestOption: PermissionRequestOption(
-                  androidPermission: AndroidPermission(
-                    type: type,
-                    mediaLocation: false,
-                  ),
-                ),
-              );
-              if (ctx.mounted) {
-                Navigator.pop(ctx, s.hasAccess);
-              }
+              await MediaPermissionService.openSystemSettings();
+              if (ctx.mounted) Navigator.pop(ctx);
             },
-            child: const Text('授予权限'),
+            child: const Text('打开系统设置'),
           ),
         ],
       ),
     );
-
-    if (retry != true || !mounted) return state;
-
-    state = await PhotoManager.requestPermissionExtend(
-      requestOption: PermissionRequestOption(
-        androidPermission: AndroidPermission(type: type, mediaLocation: false),
-      ),
-    );
-
-    if (!state.hasAccess && mounted) {
-      await showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('权限被拒绝'),
-          content: const Text('请在系统设置中手动开启相册访问权限。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('知道了'),
-            ),
-          ],
-        ),
-      );
-    }
-
     return state;
   }
 
   Future<void> _showRefreshOptions() async {
-    final permState = await _requestPhotoPermission(
-      title: '需要相册访问权限',
-      message: 'Memoria 需要读取您的照片和视频，才能进行分析和管理。',
-      type: RequestType.all,
-    );
-    if (!permState.hasAccess || !mounted) return;
+    final permState = await _requestPhotoPermission();
+    if (!permState.hasAccess ||
+        !await MediaPermissionService.hasLocationMetadataAccess() ||
+        !mounted) {
+      return;
+    }
     final isLimited = permState.isLimited;
 
     final selected = await showModalBottomSheet<_ImportAction>(
@@ -457,13 +523,6 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
                   onTap: () => Navigator.pop(context, _ImportAction.rebuildAll),
                 ),
                 ListTile(
-                  leading: const Icon(Icons.delete_sweep_outlined),
-                  title: const Text('一键标记低价值图片'),
-                  subtitle: const Text('确认全部待处理候选，后续扫描和检索将跳过'),
-                  onTap: () =>
-                      Navigator.pop(context, _ImportAction.cleanLowValue),
-                ),
-                ListTile(
                   leading: const Icon(Icons.tune),
                   title: const Text('管理照片访问权限'),
                   subtitle: const Text('修改授权范围、选择分析相册'),
@@ -490,21 +549,11 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
       case _ImportAction.rebuildAll:
         await _confirmAndRebuildAnalysis();
       case _ImportAction.addMorePhotos:
-        if (Platform.isAndroid) {
-          await <Permission>[Permission.photos, Permission.videos].request();
-        } else {
-          await PhotoManager.presentLimited(type: RequestType.all);
-        }
+        await MediaPermissionService.selectMorePhotos();
         PhotoService().invalidateScanSessionCache();
       case _ImportAction.requestFullAccess:
-        final state = await PhotoManager.requestPermissionExtend(
-          requestOption: const PermissionRequestOption(
-            androidPermission: AndroidPermission(
-              type: RequestType.all,
-              mediaLocation: false,
-            ),
-          ),
-        );
+        await MediaPermissionService.openSystemSettings();
+        final state = await MediaPermissionService.readPermissionState();
         PhotoService().invalidateScanSessionCache();
         if (!mounted) return;
         final text = state.isAuth
@@ -520,7 +569,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
                 ? SnackBarAction(
                     label: '系统设置',
                     onPressed: () {
-                      unawaited(PhotoManager.openSetting());
+                      unawaited(MediaPermissionService.openSystemSettings());
                     },
                   )
                 : null,
@@ -530,50 +579,28 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
         await Navigator.of(context).push<void>(
           MaterialPageRoute<void>(builder: (_) => const MediaAccessRangePage()),
         );
-      case _ImportAction.cleanLowValue:
-        await _cleanAllLowValuePhotos();
     }
   }
 
-  Future<void> _cleanAllLowValuePhotos() async {
-    final report = await AIService().refreshJunkCleanupReportFromDatabase(
-      replaceExisting: false,
-    );
-    if (!mounted) return;
-    if (report == null || !report.hasCandidates) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('当前没有待确认的低价值候选。')));
-      return;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('一键标记低价值图片'),
-        content: Text(
-          '将 ${report.totalCount} 张待处理候选标记为低价值。记录和系统相册原图都会保留，后续扫描、打标签和检索将跳过。',
+  Future<void> _startBackgroundJunkCleanup() async {
+    try {
+      await UnifiedAnalysisPipelineService().startJunkCleanup();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('已在后台开始分批识别低价值图片。完成后可在相册页确认处理。'),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('确认标记'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    final marked = await JunkPhotoCleanupService().markCandidatesAsLowValue(
-      report.candidates,
-    );
-    AIService().clearPendingJunkCleanupReport();
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('已标记 $marked 张低价值图片，后续扫描和检索将跳过。')));
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('无法启动低价值图片识别: $error'),
+        ),
+      );
+    }
   }
 
   Future<void> _confirmAndRebuildAnalysis() async {
@@ -601,43 +628,49 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _clearLocalCacheOnly() async {
+  Future<void> _clearAllLocalCache() async {
     if (_isClearingLocalCache) {
       return;
     }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('清空本地缓存'),
-          content: const Text('这会删除本地相册缓存和 AI 分析结果，但不会删除原始图片和视频，也不会自动重新扫描。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('清空缓存'),
-            ),
-          ],
-        );
-      },
-    );
-    if (confirmed != true || !mounted) {
+    final foregroundProgress =
+        UnifiedAnalysisProgressStore.instance.progress.value;
+    if (_isStartingImport ||
+        AlbumRefreshService().isRunning ||
+        foregroundProgress.isRunning ||
+        AIService().isAnalyzing) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('请先停止当前扫描或分析任务，再清空全部本地缓存。'),
+        ),
+      );
       return;
     }
-
     setState(() => _isClearingLocalCache = true);
     try {
       await PhotoService().clearAllCachedData();
+      AIService().clearPendingJunkCleanupReport();
+      _DeferredImageLoadScheduler.reset();
+      PaintingBinding.instance.imageCache.clear();
+      PaintingBinding.instance.imageCache.clearLiveImages();
+      await _refreshPendingAnalysisPrompt();
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           behavior: SnackBarBehavior.floating,
-          content: Text('本地缓存已清空。'),
+          content: Text('全部本地缓存已清空。'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('清空本地缓存失败: $error'),
         ),
       );
     } finally {
@@ -730,25 +763,35 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    AIService().junkCleanupReportListenable.addListener(
-      _onJunkCleanupReportChanged,
-    );
     UnifiedAnalysisProgressStore.instance.progress.addListener(
       _onForegroundProgressForCardChanged,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _onForegroundProgressForCardChanged();
+        unawaited(_loadPendingAnalysisPromptPreference());
         unawaited(AIService().refreshJunkCleanupReportFromDatabase());
       }
     });
-    final uiEventsSource = _debounceStream<List<EventEntity>>(
-      EventService().watchEvents(),
-      const Duration(milliseconds: 420),
-    );
-    _uiEventsStream = uiEventsSource
-        .asyncMap((eventEntities) => _groupEvents(eventEntities))
-        .asBroadcastStream();
+    _momentsSubscription =
+        _debounceStream<List<EventEntity>>(
+          EventService().watchEvents(),
+          const Duration(milliseconds: 420),
+        ).listen(
+          (eventEntities) {
+            unawaited(_refreshGroupedMoments(eventEntities));
+          },
+          onError: (error, stackTrace) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _momentsError = error;
+              _momentsLoading = false;
+            });
+          },
+          cancelOnError: false,
+        );
 
     _albumTagBrowserStream =
         _debounceStream<void>(
@@ -777,6 +820,28 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
         ).listen((_) {
           unawaited(_refreshPendingAnalysisPrompt());
         });
+  }
+
+  Future<void> _refreshGroupedMoments(List<EventEntity> eventEntities) async {
+    try {
+      final grouped = await _groupEvents(eventEntities);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _groupedMoments = grouped;
+        _momentsError = null;
+        _momentsLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _momentsError = error;
+        _momentsLoading = false;
+      });
+    }
   }
 
   Future<_AlbumTagBrowserData> _buildAlbumTagBrowserData(
@@ -819,12 +884,10 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    AIService().junkCleanupReportListenable.removeListener(
-      _onJunkCleanupReportChanged,
-    );
     UnifiedAnalysisProgressStore.instance.progress.removeListener(
       _onForegroundProgressForCardChanged,
     );
+    _momentsSubscription?.cancel();
     _pendingAnalysisSubscription?.cancel();
     _momentsFastScrollerHideTimer?.cancel();
     _foregroundCardElapsedTimer?.cancel();
@@ -893,10 +956,6 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
       _foregroundCardElapsedTimer?.cancel();
       _foregroundCardElapsedTimer = null;
     }
-  }
-
-  void _onJunkCleanupReportChanged() {
-    unawaited(_handleJunkCleanupReportChanged());
   }
 
   void _submitSemanticSearch() {
@@ -999,26 +1058,16 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   IconButton(
-                    icon: _isDeletingCurrentTask
+                    icon: _isDeletingCurrentTask || _isClearingLocalCache
                         ? const SizedBox.square(
                             dimension: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.cleaning_services),
-                    onPressed: _isDeletingCurrentTask
+                        : const Icon(Icons.cleaning_services_outlined),
+                    onPressed: _isDeletingCurrentTask || _isClearingLocalCache
                         ? null
-                        : () => unawaited(_deleteCurrentAnalysisTask()),
-                    tooltip: '删除当前任务并清空 AI 分析字段',
-                  ),
-                  IconButton(
-                    icon: _isClearingLocalCache
-                        ? const SizedBox.square(
-                            dimension: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.cleaning_services),
-                    onPressed: isBusy ? null : _clearLocalCacheOnly,
-                    tooltip: '清空本地缓存',
+                        : () => unawaited(_showLocalCleanupDialog()),
+                    tooltip: '整理与清理',
                   ),
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
@@ -1179,7 +1228,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
         AlbumRefreshService().isRunning ||
         UnifiedAnalysisProgressStore.instance.progress.value.isRunning ||
         AIService().isAnalyzing;
-    if (count <= 0 || _hiddenPendingAnalysisPromptForSession || isBusy) {
+    if (count <= 0 || _hiddenPendingAnalysisPrompt || isBusy) {
       return const SizedBox.shrink();
     }
 
@@ -1203,11 +1252,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
             ),
           ),
           TextButton(
-            onPressed: () {
-              setState(() {
-                _hiddenPendingAnalysisPromptForSession = true;
-              });
-            },
+            onPressed: () => unawaited(_hidePendingAnalysisPrompt()),
             child: const Text('隐藏'),
           ),
           FilledButton(
@@ -1474,7 +1519,7 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
         }
 
         return CustomScrollView(
-          cacheExtent: 700,
+          scrollCacheExtent: const ScrollCacheExtent.pixels(700),
           slivers: [
             SliverPadding(
               padding: EdgeInsets.fromLTRB(
@@ -1507,77 +1552,70 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   }
 
   Widget _buildMomentsView() {
-    return StreamBuilder<Map<String, List<Event>>>(
-      stream: _uiEventsStream,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
-          return _buildTopIndeterminateLoading();
-        }
+    if (_momentsLoading && _groupedMoments == null) {
+      return _buildTopIndeterminateLoading();
+    }
 
-        if (snapshot.hasError) {
-          return _buildErrorState(snapshot.error.toString());
-        }
+    final error = _momentsError;
+    if (error != null) {
+      return _buildErrorState(error.toString());
+    }
 
-        final groupedEvents = snapshot.data ?? {};
-        if (groupedEvents.isEmpty) {
-          return _buildEmptyState();
-        }
+    final groupedEvents = _groupedMoments ?? const <String, List<Event>>{};
+    if (groupedEvents.isEmpty) {
+      return _buildEmptyState();
+    }
 
-        final items = <Object>[];
-        final sectionKeys = <String, GlobalKey>{};
-        for (final entry in groupedEvents.entries) {
-          items.add(entry.key);
-          items.addAll(entry.value);
-          sectionKeys[entry.key] = _momentSectionKeys[entry.key] ?? GlobalKey();
-        }
-        _momentSectionKeys
-          ..clear()
-          ..addAll(sectionKeys);
+    final items = <Object>[];
+    final sectionKeys = <String, GlobalKey>{};
+    for (final entry in groupedEvents.entries) {
+      items.add(entry.key);
+      items.addAll(entry.value);
+      sectionKeys[entry.key] = _momentSectionKeys[entry.key] ?? GlobalKey();
+    }
+    _momentSectionKeys
+      ..clear()
+      ..addAll(sectionKeys);
 
-        return Stack(
-          children: [
-            NotificationListener<ScrollNotification>(
-              onNotification: (notification) {
-                if (notification is ScrollUpdateNotification ||
-                    notification is UserScrollNotification) {
-                  _handleMomentsScrollActivity();
-                }
-                return false;
-              },
-              child: ListView.builder(
-                controller: _momentsScrollController,
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  16,
-                  16,
-                  _contentBottomInset + MediaQuery.of(context).padding.bottom,
-                ),
-                itemCount: items.length,
-                itemBuilder: (context, index) {
-                  final item = items[index];
-                  if (item is String) {
-                    return Padding(
-                      key: _momentSectionKeys[item],
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      child: Text(
-                        item,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    );
-                  }
-                  return EventCard(event: item as Event);
-                },
-              ),
+    return Stack(
+      children: [
+        NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            if (notification is ScrollUpdateNotification ||
+                notification is UserScrollNotification) {
+              _handleMomentsScrollActivity();
+            }
+            return false;
+          },
+          child: ListView.builder(
+            controller: _momentsScrollController,
+            padding: EdgeInsets.fromLTRB(
+              16,
+              16,
+              16,
+              _contentBottomInset + MediaQuery.of(context).padding.bottom,
             ),
-            _buildMomentsFastScroller(
-              groupedEvents.keys.toList(growable: false),
-            ),
-          ],
-        );
-      },
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final item = items[index];
+              if (item is String) {
+                return Padding(
+                  key: _momentSectionKeys[item],
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: Text(
+                    item,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                );
+              }
+              return EventCard(event: item as Event);
+            },
+          ),
+        ),
+        _buildMomentsFastScroller(groupedEvents.keys.toList(growable: false)),
+      ],
     );
   }
 
@@ -1834,17 +1872,18 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
   ) async {
     final grouped = <String, List<Event>>{};
     final photoBox = ObjectBoxService().store.box<PhotoEntity>();
-    final coverIds = eventEntities
-        .expand((event) => event.photoIds.take(3))
+    final eventPhotoIds = eventEntities
+        .expand((event) => event.photoIds)
         .toSet()
         .toList(growable: false);
-    final coverEntities = photoBox
-        .getMany(coverIds)
+    final eventPhotoEntities = photoBox
+        .getMany(eventPhotoIds)
         .whereType<PhotoEntity>()
+        .where((photo) => !JunkPhotoFilterService.isConfirmedJunk(photo.aiTags))
         .toList(growable: false);
-    final coverById = {for (final photo in coverEntities) photo.id: photo};
+    final photoById = {for (final photo in eventPhotoEntities) photo.id: photo};
     Future<List<PhotoEntity>> loadPhotos(List<int> ids) async => ids
-        .map((id) => coverById[id])
+        .map((id) => photoById[id])
         .whereType<PhotoEntity>()
         .toList(growable: false);
 
@@ -1854,6 +1893,9 @@ class _AlbumPageState extends State<AlbumPage> with WidgetsBindingObserver {
       final event = await eventEntities[i].toPreviewModel(
         loadPhotoEntities: loadPhotos,
       );
+      if (event.photoCount <= 0) {
+        continue;
+      }
       allEvents.add(event);
       if (i % 8 == 0) {
         await Future<void>.delayed(Duration.zero);

@@ -29,14 +29,9 @@ class MobileClipTagService {
   static const double _coarseScoreThreshold = 0.16;
   static const double _coarseProbabilityThreshold = 0.035;
   static const double _coarseScoreMargin = 0.075;
-  static const Map<MemoriaTagDimension, double> _dimensionThresholds =
-      <MemoriaTagDimension, double>{
-        MemoriaTagDimension.subject: 0.165,
-        MemoriaTagDimension.scene: 0.17,
-        MemoriaTagDimension.activity: 0.18,
-        MemoriaTagDimension.atmosphere: 0.19,
-        MemoriaTagDimension.media: 0.205,
-      };
+  static const double _coarseFallbackScoreFloor = 0.04;
+  static const double _fineScoreFloor = 0.04;
+  static const double _fineDisplayScoreGap = 0.055;
 
   static const Set<String> _blockedTags = <String>{};
 
@@ -393,7 +388,7 @@ class MobileClipTagService {
     final limited = normalized
         .take(math.min(topK, normalized.length))
         .toList(growable: false);
-    return _filterConfidentCoarseCandidates(limited);
+    return selectCoarseCandidatesForTesting(limited);
   }
 
   Future<List<MobileClipTagDiagnostic>> retrieveTagDiagnostics(
@@ -408,28 +403,20 @@ class MobileClipTagService {
 
     await warmUp();
 
-    final coarseDiagnostics = await retrieveCoarseTagDiagnostics(
-      imageEmbedding,
-      topK: coarseTopK,
-    );
-    if (coarseDiagnostics.isEmpty) {
+    final rankedCandidates = _rankFineCandidates(imageEmbedding);
+    final selected = _selectFineCandidates(rankedCandidates, topK: topK);
+    if (selected.isEmpty) {
       return _otherFallbackDiagnostics();
     }
 
-    final selectedCoarseIds = coarseDiagnostics
-        .map((item) => item.coarseId)
-        .toSet();
-    final coarseProbabilityById = <String, double>{
-      for (final item in coarseDiagnostics) item.coarseId: item.probability,
-    };
+    return _attachFineProbabilities(selected);
+  }
+
+  List<_TagScoreCandidate> _rankFineCandidates(List<double> imageEmbedding) {
     final scored = <_TagScoreCandidate>[];
     for (final definition in memoriaMasterTagDefinitions) {
       final label = definition.label.trim();
       if (label.isEmpty || _isBlockedLabel(label)) {
-        continue;
-      }
-      final coarseId = memoriaFineLabelToCoarseId[label];
-      if (coarseId == null || !selectedCoarseIds.contains(coarseId)) {
         continue;
       }
       final prototype = _prototypeByLabel[label];
@@ -442,43 +429,46 @@ class MobileClipTagService {
         imageEmbedding,
         prototype,
       );
-      final weightedScore = _applyCoarseWeight(
-        score,
-        coarseProbabilityById[coarseId] ?? 0,
+      final candidate = _TagScoreCandidate(
+        definition: definition,
+        score: score,
+        weightedScore: score,
       );
-      final threshold =
-          _dimensionThresholds[definition.primaryDimension] ?? 0.2;
-      if (score < threshold) {
-        continue;
-      }
-      scored.add(
-        _TagScoreCandidate(
-          definition: definition,
-          score: score,
-          weightedScore: weightedScore,
-        ),
-      );
+      scored.add(candidate);
     }
-
-    if (scored.isEmpty) {
-      return _otherFallbackDiagnostics();
-    }
-
     scored.sort((a, b) => b.weightedScore.compareTo(a.weightedScore));
-    final rankedCandidates = <_TagScoreCandidate>[...scored];
+    return scored;
+  }
+
+  List<_TagScoreCandidate> _selectFineCandidates(
+    List<_TagScoreCandidate> rankedCandidates, {
+    required int topK,
+  }) {
+    if (rankedCandidates.isEmpty || topK <= 0) {
+      return const <_TagScoreCandidate>[];
+    }
+    final topScore = rankedCandidates.first.score;
+    if (!topScore.isFinite || topScore < _fineScoreFloor) {
+      return const <_TagScoreCandidate>[];
+    }
+    final displayThreshold = math.max(
+      _fineScoreFloor,
+      topScore - _fineDisplayScoreGap,
+    );
 
     final selected = <_TagScoreCandidate>[];
     final selectedLabels = <String>{};
-    final dynamicFineTopK = _resolveDynamicFineTopK(
+    final dynamicTopK = _resolveDynamicFineTopK(
       rankedCandidates
           .map((candidate) => candidate.weightedScore)
           .toList(growable: false),
       maxTopK: topK,
-      minTopK: math.max(5, coarseDiagnostics.length + 1),
+      minTopK: 1,
     );
 
     void tryAdd(_TagScoreCandidate candidate) {
-      if (selected.length >= dynamicFineTopK) {
+      if (selected.length >= dynamicTopK ||
+          candidate.score < displayThreshold) {
         return;
       }
       final label = candidate.definition.label;
@@ -489,25 +479,13 @@ class MobileClipTagService {
       selectedLabels.add(label);
     }
 
-    for (final coarse in coarseDiagnostics) {
-      final best = _bestCandidateForCoarse(scored, coarse.coarseId);
-      if (best != null) {
-        tryAdd(best);
-      }
-    }
-
     for (final candidate in rankedCandidates) {
       tryAdd(candidate);
-      if (selected.length >= dynamicFineTopK) {
+      if (selected.length >= dynamicTopK) {
         break;
       }
     }
-
-    if (selected.isEmpty) {
-      return _otherFallbackDiagnostics();
-    }
-
-    return _attachFineProbabilities(selected);
+    return selected;
   }
 
   bool _isBlockedLabel(String label) {
@@ -515,18 +493,6 @@ class MobileClipTagService {
       return true;
     }
     return TagSanitizer.isBlockedExactTag(label);
-  }
-
-  _TagScoreCandidate? _bestCandidateForCoarse(
-    List<_TagScoreCandidate> candidates,
-    String coarseId,
-  ) {
-    for (final candidate in candidates) {
-      if (memoriaFineLabelToCoarseId[candidate.definition.label] == coarseId) {
-        return candidate;
-      }
-    }
-    return null;
   }
 
   String _coarseLabelForFineTag(String label) {
@@ -600,6 +566,58 @@ class MobileClipTagService {
         .toList(growable: false);
   }
 
+  @visibleForTesting
+  List<MobileClipCoarseDiagnostic> selectCoarseCandidatesForTesting(
+    List<MobileClipCoarseDiagnostic> ranked,
+  ) {
+    final confident = _filterConfidentCoarseCandidates(ranked);
+    if (confident.isNotEmpty) {
+      return confident;
+    }
+    return _fallbackCoarseCandidates(ranked);
+  }
+
+  List<MobileClipCoarseDiagnostic> _fallbackCoarseCandidates(
+    List<MobileClipCoarseDiagnostic> ranked,
+  ) {
+    if (ranked.isEmpty) {
+      return const <MobileClipCoarseDiagnostic>[];
+    }
+    final bestScore = ranked.first.score;
+    if (!bestScore.isFinite || bestScore < _coarseFallbackScoreFloor) {
+      return const <MobileClipCoarseDiagnostic>[];
+    }
+    return <MobileClipCoarseDiagnostic>[ranked.first];
+  }
+
+  @visibleForTesting
+  List<MobileClipTagDiagnostic> selectFineTagsForTesting(
+    Map<String, double> scoreByLabel, {
+    int topK = _defaultTopK,
+  }) {
+    final scored = <_TagScoreCandidate>[];
+    for (final definition in memoriaMasterTagDefinitions) {
+      final label = definition.label.trim();
+      final score = scoreByLabel[label];
+      if (score == null || label.isEmpty || _isBlockedLabel(label)) {
+        continue;
+      }
+      scored.add(
+        _TagScoreCandidate(
+          definition: definition,
+          score: score,
+          weightedScore: score,
+        ),
+      );
+    }
+    scored.sort((a, b) => b.weightedScore.compareTo(a.weightedScore));
+    final selected = _selectFineCandidates(scored, topK: topK);
+    if (selected.isEmpty) {
+      return _otherFallbackDiagnostics();
+    }
+    return _attachFineProbabilities(selected);
+  }
+
   List<MobileClipTagDiagnostic> _otherFallbackDiagnostics() {
     return const <MobileClipTagDiagnostic>[
       MobileClipTagDiagnostic(
@@ -654,11 +672,6 @@ class MobileClipTagService {
       }
     }
     return count;
-  }
-
-  double _applyCoarseWeight(double fineScore, double coarseProbability) {
-    final coarseBoost = 0.9 + (coarseProbability * 0.35);
-    return fineScore * coarseBoost;
   }
 
   List<double> _softmaxProbabilities(List<double> scores) {

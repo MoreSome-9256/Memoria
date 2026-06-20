@@ -1,7 +1,8 @@
-/// 故事提示词辅助工具，根据照片元数据拼装更丰富的叙事描述。
+// 故事提示词辅助工具，根据照片元数据拼装更丰富的叙事描述。
 
 import '../models/entity/event_entity.dart';
 import '../models/entity/photo_entity.dart';
+import 'ocr_policy.dart';
 import 'tag_sanitizer.dart';
 
 class StoryPromptHelper {
@@ -18,6 +19,13 @@ class StoryPromptHelper {
         photo.aiTags ?? const <String>[],
       );
       final tags = cleanTags.isEmpty ? '无标签' : cleanTags.join(', ');
+      final caption = photo.aiCaption?.trim() ?? '';
+      final ocrSummary =
+          OcrPolicy.effectiveSummary(
+            tags: photo.ocrTags ?? const <String>[],
+            text: photo.ocrText,
+          ) ??
+          '';
       final areaParts =
           [photo.province?.trim(), photo.city?.trim(), photo.district?.trim()]
               .where((item) => item != null && item.isNotEmpty)
@@ -43,7 +51,9 @@ class StoryPromptHelper {
       final desc =
           'Image $i: 拍摄于 $timeStr'
           '${locationText.isNotEmpty ? '，位置线索：$locationText' : ''}'
-          '，标签：$tags';
+          '，标签：$tags'
+          '${caption.isNotEmpty ? '，画面描述：$caption' : ''}'
+          '${ocrSummary.isNotEmpty ? '，画面文字：$ocrSummary' : ''}';
       descriptions.add(desc);
     }
     return descriptions;

@@ -1,6 +1,7 @@
-/// 相册搜索页面，支持语义检索和关键词检索照片。
+// 相册搜索页面，支持语义检索和关键词检索照片。
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../../models/entity/photo_entity.dart';
 import '../../models/vo/semantic_search_models.dart';
@@ -224,7 +225,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
     );
   }
 
-  Widget _buildRelatedOnlyNotice() {
+  Widget _buildRelatedOnlyNotice(SemanticSearchResult result) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -233,9 +234,9 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         color: const Color(0xFFFFF4E5),
         border: Border.all(color: const Color(0xFFF4B267)),
       ),
-      child: const Text(
-        '未找到您所需的图片，只找到一些相关图片。',
-        style: TextStyle(
+      child: Text(
+        result.noExactMatchMessage ?? '没有找到完全匹配的照片，下面是可能相关的结果。',
+        style: const TextStyle(
           color: Color(0xFF8A4B08),
           fontWeight: FontWeight.w700,
           height: 1.35,
@@ -283,11 +284,33 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         ),
       );
     }
+    for (final range in query.timeRanges.where(
+      (item) => item.hasAnnualDayRange,
+    )) {
+      chips.add(
+        _planChip(
+          Icons.date_range_rounded,
+          '每年 ${range.annualStartMonth}月${range.annualStartDayOfMonth}日'
+          '-${range.annualEndMonth}月${range.annualEndDayOfMonth}日',
+        ),
+      );
+    }
+    if (query.weekdays.isNotEmpty) {
+      chips.add(
+        _planChip(Icons.view_week_rounded, _formatWeekdays(query.weekdays)),
+      );
+    }
     for (final location in query.locations.take(4)) {
       chips.add(_planChip(Icons.place_rounded, location.text));
     }
     for (final semantic in query.positiveSemantics.take(3)) {
       chips.add(_planChip(Icons.auto_awesome_rounded, semantic.text));
+    }
+    for (final semantic in query.recallSemantics.take(3)) {
+      chips.add(_planChip(Icons.manage_search_rounded, semantic.text));
+    }
+    for (final semantic in query.negativeSemantics.take(3)) {
+      chips.add(_planChip(Icons.block_rounded, '-${semantic.text}'));
     }
     final attributes = query.attributes;
     if (attributes.minFaceCount != null) {
@@ -356,11 +379,44 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         '${minute.toString().padLeft(2, '0')}';
   }
 
+  static const _weekdayNames = [
+    '',
+    '周一',
+    '周二',
+    '周三',
+    '周四',
+    '周五',
+    '周六',
+    '周日',
+  ];
+
+  String _formatWeekdays(List<int> weekdays) {
+    if (weekdays.length == 7) return '每天';
+    final sorted = List<int>.from(weekdays)..sort();
+    final names = sorted.map((d) => _weekdayNames[d]).toList();
+    if (const [6, 7].every(sorted.contains) &&
+        sorted.length == 2) {
+      return '周末';
+    }
+    if (const [1, 2, 3, 4, 5].every(sorted.contains) &&
+        sorted.length == 5) {
+      return '工作日';
+    }
+    return names.join('、');
+  }
+
   Widget _buildControlPanel(
     List<PhotoEntity> allPhotos,
     Map<int, SemanticSearchHit> hits,
   ) {
     final tagSummaries = _buildFineTagSummaries(allPhotos, hits);
+    final explanations = allPhotos
+        .map((photo) => hits[photo.id])
+        .whereType<SemanticSearchHit>()
+        .expand((hit) => hit.explanation)
+        .toSet()
+        .take(4)
+        .toList(growable: false);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -439,6 +495,24 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
                 ],
               ),
             ),
+          ],
+          if (explanations.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(
+              '匹配依据',
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            for (final explanation in explanations)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '• $explanation',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
           ],
         ],
       ),
@@ -920,7 +994,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
         ),
         child: SafeArea(
           child: CustomScrollView(
-            cacheExtent: 700,
+            scrollCacheExtent: const ScrollCacheExtent.pixels(700),
             slivers: [
               SliverToBoxAdapter(
                 child: Padding(
@@ -963,7 +1037,7 @@ class _AlbumSearchPageState extends State<AlbumSearchPage> {
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                    child: _buildRelatedOnlyNotice(),
+                    child: _buildRelatedOnlyNotice(result),
                   ),
                 ),
               if ((_isLockedResultMode && currentPhotos.isNotEmpty) ||

@@ -1,4 +1,4 @@
-/// 面向 UI 展示的照片值对象，整合标签、描述和人脸信息。
+// 面向 UI 展示的照片值对象，整合标签、描述和人脸信息。
 
 import 'dart:typed_data';
 
@@ -22,7 +22,7 @@ class Photo {
   Photo({
     required this.id,
     this.location,
-    required this.path,
+    this.path = '',
     required this.dateTaken,
     this.tags = const [],
     this.caption,

@@ -18,7 +18,6 @@ import 'package:photo_album/view/pages/welcome_page.dart';
 import 'package:photo_album/service/album_selection_preference_service.dart';
 
 import 'face_cluster_debug_page.dart';
-import 'internvl_lab_page.dart';
 import 'junk_photo_trash_page.dart';
 import 'local_vlm_test_page.dart';
 import 'media_access_range_page.dart';
@@ -1154,20 +1153,6 @@ class _ProfilePageState extends State<ProfilePage> {
                                   MaterialPageRoute<void>(
                                     builder: (context) =>
                                         const LocalVlmTestPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                            ListTile(
-                              leading: const Icon(Icons.bug_report_outlined),
-                              title: const Text('InternVL Lab'),
-                              subtitle: const Text('SmolVLM2 描述实验入口'),
-                              trailing: const Icon(Icons.chevron_right),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (context) =>
-                                        const InternvlLabPage(),
                                   ),
                                 );
                               },

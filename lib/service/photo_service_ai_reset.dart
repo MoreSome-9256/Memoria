@@ -31,8 +31,11 @@ extension PhotoServiceAiReset on PhotoService {
       photo.imageEmbedding = null;
       photo.ocrText = null;
       photo.ocrTags = <String>[];
+      photo.isOcrAnalyzed = false;
+      photo.isCaptionAnalyzed = false;
       photo.faceCount = 0;
       photo.smileProb = 0.0;
+      photo.isFaceAnalyzed = false;
       photo.joyScore = 0.0;
       photo.eventId = null;
     }
@@ -57,7 +60,10 @@ extension PhotoServiceAiReset on PhotoService {
   }
 
   Future<List<PhotoEntity>> loadPendingJunkCandidatePhotos() async {
-    return _loadPhotosWithAiTag(JunkPhotoFilterService.pendingJunkCandidateTag);
+    return _loadPhotosWithAiTag(
+      JunkPhotoFilterService.pendingJunkCandidateTag,
+      limit: 300,
+    );
   }
 
   Future<List<PhotoEntity>> loadAnalyzedPhotosForJunkScoring() async {
@@ -72,17 +78,34 @@ extension PhotoServiceAiReset on PhotoService {
     }
   }
 
-  Future<List<PhotoEntity>> _loadPhotosWithAiTag(String tag) async {
+  Future<List<PhotoEntity>> _loadPhotosWithAiTag(
+    String tag, {
+    int? limit,
+  }) async {
     final query = _photoBox
         .query(PhotoEntity_.isAiAnalyzed.equals(true))
         .order(PhotoEntity_.timestamp, flags: Order.descending)
         .build();
-    final photos = query.find();
+    final photoIds = query.findIds();
     query.close();
-    final junkPhotos = photos
-        .where((photo) => photo.aiTags?.contains(tag) ?? false)
-        .toList(growable: false);
-    return reconcileAccessiblePhotos(junkPhotos);
+    const batchSize = 256;
+    final junkPhotos = <PhotoEntity>[];
+    for (var offset = 0; offset < photoIds.length; offset += batchSize) {
+      final end = math.min(offset + batchSize, photoIds.length);
+      junkPhotos.addAll(
+        _photoBox
+            .getMany(photoIds.sublist(offset, end))
+            .whereType<PhotoEntity>()
+            .where((photo) => photo.aiTags?.contains(tag) ?? false),
+      );
+      if (limit != null && junkPhotos.length >= limit) {
+        break;
+      }
+    }
+    final selected = limit == null
+        ? junkPhotos
+        : junkPhotos.take(limit).toList(growable: false);
+    return reconcileAccessiblePhotos(selected);
   }
 
   Future<int> requeueAllPhotosForAi() async {
@@ -97,11 +120,12 @@ extension PhotoServiceAiReset on PhotoService {
       return 0;
     }
 
-    final taxonomyLabels = memoriaMasterLabels.toSet();
+    final taxonomyLabels = <String>{
+      ...memoriaMasterLabels,
+      ...memoriaLegacyCoarseLabelToCoarseId.keys,
+    };
     const passthroughLabels = <String>{
-      '截图',
       '视频',
-      memoriaOtherLabel,
       JunkPhotoFilterService.junkCandidateTag,
       JunkPhotoFilterService.pendingJunkCandidateTag,
       JunkPhotoFilterService.keptJunkCandidateTag,
@@ -112,10 +136,26 @@ extension PhotoServiceAiReset on PhotoService {
     final updatedPhotoIds = <int>[];
     for (final photo in photos) {
       final aiTags = photo.aiTags ?? const <String>[];
+      final normalizedAiTags = aiTags
+          .map((tag) => tag.trim())
+          .where((tag) => tag.isNotEmpty)
+          .toList(growable: false);
       final isJunkCandidate =
           aiTags.contains(JunkPhotoFilterService.junkCandidateTag) ||
           aiTags.contains(JunkPhotoFilterService.pendingJunkCandidateTag) ||
           aiTags.contains(JunkPhotoFilterService.keptJunkCandidateTag);
+      final mediaKind = MediaTypeHelper.fromStorageValue(
+        photo.mediaKind,
+        path: photo.path,
+      );
+      final isOnlyOtherResult =
+          normalizedAiTags.isNotEmpty &&
+          normalizedAiTags.every((tag) => tag == memoriaOtherLabel);
+      final isStaleOtherOnlyImageResult =
+          photo.isAiAnalyzed &&
+          !isJunkCandidate &&
+          mediaKind == MemoriaMediaKind.image &&
+          isOnlyOtherResult;
       final needsReset =
           photo.isAiAnalyzed &&
           !isJunkCandidate &&
@@ -124,13 +164,13 @@ extension PhotoServiceAiReset on PhotoService {
       final hasOutdatedTags =
           photo.isAiAnalyzed &&
           aiTags.isNotEmpty &&
-          aiTags.any(
+          normalizedAiTags.any(
             (tag) =>
-                !taxonomyLabels.contains(tag.trim()) &&
-                !passthroughLabels.contains(tag.trim()),
+                !taxonomyLabels.contains(tag) &&
+                !passthroughLabels.contains(tag),
           );
 
-      if (!needsReset && !hasOutdatedTags) {
+      if (!needsReset && !hasOutdatedTags && !isStaleOtherOnlyImageResult) {
         continue;
       }
 
@@ -141,8 +181,11 @@ extension PhotoServiceAiReset on PhotoService {
       photo.imageEmbedding = null;
       photo.ocrText = null;
       photo.ocrTags = <String>[];
+      photo.isOcrAnalyzed = false;
+      photo.isCaptionAnalyzed = false;
       photo.faceCount = 0;
       photo.smileProb = 0.0;
+      photo.isFaceAnalyzed = false;
       photo.joyScore = 0.0;
       updatedCount++;
       updatedPhotos.add(photo);
@@ -205,8 +248,11 @@ extension PhotoServiceAiReset on PhotoService {
       photo.imageEmbedding = null;
       photo.ocrText = null;
       photo.ocrTags = <String>[];
+      photo.isOcrAnalyzed = false;
+      photo.isCaptionAnalyzed = false;
       photo.faceCount = 0;
       photo.smileProb = 0.0;
+      photo.isFaceAnalyzed = false;
       photo.joyScore = 0.0;
       updatedCount++;
     }
@@ -217,6 +263,70 @@ extension PhotoServiceAiReset on PhotoService {
 
     debugPrint('🔁 已将 $updatedCount 张低质量候选重新加入正常 AI 打标队列');
     return updatedCount;
+  }
+
+  Future<int> requeuePhotosMissingEnabledAttributes(
+    AppAiSettings settings,
+  ) async {
+    var missingCondition = PhotoEntity_.isCaptionAnalyzed.equals(false);
+    if (settings.ocrEnabled) {
+      missingCondition = missingCondition.or(
+        PhotoEntity_.isOcrAnalyzed.equals(false),
+      );
+    }
+    if (settings.faceAnalysisEnabled) {
+      missingCondition = missingCondition.or(
+        PhotoEntity_.isFaceAnalyzed.equals(false),
+      );
+    }
+    final query = _photoBox
+        .query(PhotoEntity_.isAiAnalyzed.equals(true).and(missingCondition))
+        .build();
+    final missingIds = query
+        .find()
+        .where((photo) {
+          if (JunkPhotoFilterService.hasFinalDecision(photo.aiTags)) {
+            return false;
+          }
+          final kind = MediaTypeHelper.fromStorageValue(
+            photo.mediaKind,
+            path: photo.path,
+          );
+          if (kind != MemoriaMediaKind.image) return false;
+          return !photo.isCaptionAnalyzed ||
+              (settings.ocrEnabled && !photo.isOcrAnalyzed) ||
+              (settings.faceAnalysisEnabled && !photo.isFaceAnalyzed);
+        })
+        .map((photo) => photo.id)
+        .toSet();
+    query.close();
+
+    final analyzedQuery = _photoBox
+        .query(PhotoEntity_.isAiAnalyzed.equals(true))
+        .build();
+    final analyzedIds = analyzedQuery.findIds();
+    analyzedQuery.close();
+    const batchSize = 256;
+    for (var offset = 0; offset < analyzedIds.length; offset += batchSize) {
+      final end = math.min(offset + batchSize, analyzedIds.length);
+      final photos = _photoBox
+          .getMany(analyzedIds.sublist(offset, end))
+          .whereType<PhotoEntity>();
+      for (final photo in photos) {
+        if (JunkPhotoFilterService.hasFinalDecision(photo.aiTags)) continue;
+        final semanticTags = (photo.aiTags ?? const <String>[]).where(
+          (tag) => !JunkPhotoFilterService.isInternalJunkTag(tag),
+        );
+        if (semanticTags.isEmpty) {
+          missingIds.add(photo.id);
+        }
+      }
+    }
+    if (missingIds.isEmpty) return 0;
+
+    final count = await requeuePhotosForAiByIds(missingIds);
+    debugPrint('🔁 已将 $count 张缺少标签或已启用属性分析的照片重新加入队列');
+    return count;
   }
 
   List<int> loadPendingAiPhotoIds({int? limit}) {
@@ -361,6 +471,9 @@ extension PhotoServiceAiReset on PhotoService {
       photo.imageEmbedding = null;
       photo.ocrText = null;
       photo.ocrTags = [];
+      photo.isOcrAnalyzed = false;
+      photo.isCaptionAnalyzed = false;
+      photo.isFaceAnalyzed = false;
     }
 
     // 3. 批量写回数据库

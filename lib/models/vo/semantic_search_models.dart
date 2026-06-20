@@ -1,4 +1,4 @@
-/// 语义检索相关类型集合，定义查询严格度和路由模式等枚举。
+// 语义检索相关类型集合，定义查询严格度和路由模式等枚举。
 
 import '../entity/photo_entity.dart';
 
@@ -27,6 +27,10 @@ class SemanticSearchTimeRange {
     this.localEndMinute,
     this.recurringStartMonth,
     this.recurringEndMonth,
+    this.annualStartMonth,
+    this.annualStartDayOfMonth,
+    this.annualEndMonth,
+    this.annualEndDayOfMonth,
   });
 
   final int? startTimeMs;
@@ -40,14 +44,27 @@ class SemanticSearchTimeRange {
   final int? localEndMinute;
   final int? recurringStartMonth;
   final int? recurringEndMonth;
+  final int? annualStartMonth;
+  final int? annualStartDayOfMonth;
+  final int? annualEndMonth;
+  final int? annualEndDayOfMonth;
 
   bool get hasDateBoundary => startTimeMs != null || endTimeMs != null;
   bool get hasLocalTimeWindow =>
       localStartMinute != null && localEndMinute != null;
   bool get hasRecurringMonthRange =>
       recurringStartMonth != null && recurringEndMonth != null;
+  bool get hasAnnualMonthDayRange =>
+      annualStartMonth != null &&
+      annualStartDayOfMonth != null &&
+      annualEndMonth != null &&
+      annualEndDayOfMonth != null;
+  bool get hasAnnualDayRange => hasAnnualMonthDayRange;
   bool get hasConstraint =>
-      hasDateBoundary || hasLocalTimeWindow || hasRecurringMonthRange;
+      hasDateBoundary ||
+      hasLocalTimeWindow ||
+      hasRecurringMonthRange ||
+      hasAnnualDayRange;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -61,6 +78,10 @@ class SemanticSearchTimeRange {
       'local_end_minute': localEndMinute,
       'recurring_start_month': recurringStartMonth,
       'recurring_end_month': recurringEndMonth,
+      'annual_start_month': annualStartMonth,
+      'annual_start_day_of_month': annualStartDayOfMonth,
+      'annual_end_month': annualEndMonth,
+      'annual_end_day_of_month': annualEndDayOfMonth,
       'reason': reason,
     };
   }
@@ -73,6 +94,17 @@ class SemanticSearchLocation {
     this.aliases = const <String>[],
     this.timezone,
     this.utcOffsetMinutes,
+    this.strictness = 'exact',
+    this.allowDescendants = false,
+    this.allowNearbySiblings = false,
+    this.countryCandidates = const <String>[],
+    this.amapPoiId,
+    this.amapAoiId,
+    this.adcode,
+    this.centerLatAmapE6,
+    this.centerLonAmapE6,
+    this.coreRadiusMeters = 2500,
+    this.softRadiusMeters = 8000,
   });
 
   final String text;
@@ -80,6 +112,41 @@ class SemanticSearchLocation {
   final List<String> aliases;
   final String? timezone;
   final int? utcOffsetMinutes;
+  final String strictness;
+  final bool allowDescendants;
+  final bool allowNearbySiblings;
+  final List<String> countryCandidates;
+  final String? amapPoiId;
+  final String? amapAoiId;
+  final String? adcode;
+  final int? centerLatAmapE6;
+  final int? centerLonAmapE6;
+  final int coreRadiusMeters;
+  final int softRadiusMeters;
+
+  bool get hasResolvedCenter =>
+      centerLatAmapE6 != null && centerLonAmapE6 != null;
+
+  SemanticSearchLocation copyWithType(String nextType) {
+    return SemanticSearchLocation(
+      text: text,
+      type: nextType,
+      aliases: aliases,
+      timezone: timezone,
+      utcOffsetMinutes: utcOffsetMinutes,
+      strictness: strictness,
+      allowDescendants: allowDescendants,
+      allowNearbySiblings: allowNearbySiblings,
+      countryCandidates: countryCandidates,
+      amapPoiId: amapPoiId,
+      amapAoiId: amapAoiId,
+      adcode: adcode,
+      centerLatAmapE6: centerLatAmapE6,
+      centerLonAmapE6: centerLonAmapE6,
+      coreRadiusMeters: coreRadiusMeters,
+      softRadiusMeters: softRadiusMeters,
+    );
+  }
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -88,6 +155,17 @@ class SemanticSearchLocation {
       'aliases': aliases,
       'timezone': timezone,
       'utc_offset_minutes': utcOffsetMinutes,
+      'strictness': strictness,
+      'allow_descendants': allowDescendants,
+      'allow_nearby_siblings': allowNearbySiblings,
+      'country_candidates': countryCandidates,
+      'amap_poi_id': amapPoiId,
+      'amap_aoi_id': amapAoiId,
+      'adcode': adcode,
+      'center_lat_amap_e6': centerLatAmapE6,
+      'center_lon_amap_e6': centerLonAmapE6,
+      'core_radius_meters': coreRadiusMeters,
+      'soft_radius_meters': softRadiusMeters,
     };
   }
 }
@@ -118,8 +196,14 @@ class SemanticSearchCoarseTag {
 class SemanticSearchSemanticItem {
   const SemanticSearchSemanticItem({required this.text, required this.weight});
 
+  static final RegExp _cjkPattern = RegExp(
+    r'[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]',
+  );
+
   final String text;
   final double weight;
+
+  bool get containsCjk => _cjkPattern.hasMatch(text);
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{'text': text, 'weight': weight};
@@ -189,6 +273,7 @@ class SemanticSearchQuery {
     required this.negativeSemantics,
     required this.estimatedResultCount,
     required this.attributes,
+    this.weekdays = const <int>[],
     required this.usedLlm,
     required this.llmConfigured,
     required this.parserSource,
@@ -234,13 +319,15 @@ class SemanticSearchQuery {
   final List<SemanticSearchSemanticItem> negativeSemantics;
   final SemanticSearchEstimatedResultCount estimatedResultCount;
   final SemanticSearchAttributes attributes;
+  final List<int> weekdays;
   final bool usedLlm;
   final bool llmConfigured;
   final String parserSource;
   final String debugJson;
   final String notes;
 
-  bool get hasTimeConstraints => timeRanges.any((item) => item.hasConstraint);
+  bool get hasTimeConstraints =>
+      weekdays.isNotEmpty || timeRanges.any((item) => item.hasConstraint);
   bool get hasLocationConstraints => locations.isNotEmpty;
   bool get hasCoarseTags => coarseTags.isNotEmpty;
   bool get hasPositiveSemantics => positiveSemantics.isNotEmpty;
@@ -280,6 +367,7 @@ class SemanticSearchQuery {
     List<SemanticSearchSemanticItem>? negativeSemantics,
     SemanticSearchEstimatedResultCount? estimatedResultCount,
     SemanticSearchAttributes? attributes,
+    List<int>? weekdays,
     bool? usedLlm,
     bool? llmConfigured,
     String? parserSource,
@@ -299,6 +387,7 @@ class SemanticSearchQuery {
       negativeSemantics: negativeSemantics ?? this.negativeSemantics,
       estimatedResultCount: estimatedResultCount ?? this.estimatedResultCount,
       attributes: attributes ?? this.attributes,
+      weekdays: weekdays ?? this.weekdays,
       usedLlm: usedLlm ?? this.usedLlm,
       llmConfigured: llmConfigured ?? this.llmConfigured,
       parserSource: parserSource ?? this.parserSource,

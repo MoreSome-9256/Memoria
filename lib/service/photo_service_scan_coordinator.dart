@@ -123,7 +123,14 @@ class _PhotoScanCoordinator {
         if (existing == null) {
           newAssets.add(asset);
         } else {
-          await _refreshExistingThumbnailIfNeeded(existing, asset);
+          final refreshed = await _PhotoAssetBuilder(
+            _service,
+          )._refreshIfChanged(existing, asset, refreshThumbnail: false);
+          if (refreshed != null) {
+            _service._photoBox.put(refreshed);
+          } else {
+            await _refreshExistingThumbnailIfNeeded(existing, asset);
+          }
         }
       }
       if (newAssets.isEmpty) {
@@ -216,14 +223,7 @@ class _PhotoScanCoordinator {
     final requestType = settings.includeVideos
         ? RequestType.common
         : RequestType.image;
-    final state = await PhotoManager.requestPermissionExtend(
-      requestOption: PermissionRequestOption(
-        androidPermission: AndroidPermission(
-          type: requestType,
-          mediaLocation: false,
-        ),
-      ),
-    );
+    final state = await MediaPermissionService.readPermissionState();
     if (!state.hasAccess) {
       throw const PhotoScanException(
         PhotoScanError.permissionDenied,
@@ -232,7 +232,10 @@ class _PhotoScanCoordinator {
     }
 
     final albSel = await AlbumSelectionPreferenceService().loadSelection();
-    final selectedIds = albSel.selectedAlbumIds.toSet();
+    final selectedIds = MediaPermissionService.effectiveAlbumWhitelist(
+      state: state,
+      savedAlbumIds: albSel.selectedAlbumIds,
+    );
     final albumStates = <_IncrementalAlbumState>[];
 
     if (selectedIds.isEmpty) {
@@ -267,7 +270,7 @@ class _PhotoScanCoordinator {
       }
     }
 
-    if (runCleanupOnce) {
+    if (runCleanupOnce && !state.isLimited) {
       _service._removeUnavailablePhotos().ignore();
     }
 
@@ -357,14 +360,7 @@ class _PhotoScanCoordinator {
     final requestType = settings.includeVideos
         ? RequestType.common
         : RequestType.image;
-    final state = await PhotoManager.requestPermissionExtend(
-      requestOption: PermissionRequestOption(
-        androidPermission: AndroidPermission(
-          type: requestType,
-          mediaLocation: false,
-        ),
-      ),
-    );
+    final state = await MediaPermissionService.readPermissionState();
     if (!state.hasAccess) {
       throw const PhotoScanException(
         PhotoScanError.permissionDenied,
@@ -373,11 +369,18 @@ class _PhotoScanCoordinator {
     }
 
     final albSel = await AlbumSelectionPreferenceService().loadSelection();
-    final selectedIds = albSel.selectedAlbumIds.toSet();
+    final selectedIds = MediaPermissionService.effectiveAlbumWhitelist(
+      state: state,
+      savedAlbumIds: albSel.selectedAlbumIds,
+    );
 
     // 没有选中的相册 → 用 onlyAll 路径获取全部
     if (selectedIds.isEmpty) {
-      return _resolveAllAlbums(requestType, runCleanupOnce, forceRefresh);
+      return _resolveAllAlbums(
+        requestType,
+        runCleanupOnce && !state.isLimited,
+        forceRefresh,
+      );
     }
 
     // 按选定相册分别加载
@@ -434,7 +437,7 @@ class _PhotoScanCoordinator {
     _cachedTotalCount = unique.length;
     _cachedSelectionSignature = signature;
 
-    if (runCleanupOnce) {
+    if (runCleanupOnce && !state.isLimited) {
       _service._removeUnavailablePhotos().ignore();
     }
 

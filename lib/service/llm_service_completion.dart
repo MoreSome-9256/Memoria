@@ -77,9 +77,6 @@ extension LLMServiceCompletion on LLMService {
     double? topP,
     Duration? requestTimeout,
   }) async {
-    final baseUrl = _baseUrl.endsWith('/')
-        ? _baseUrl.substring(0, _baseUrl.length - 1)
-        : _baseUrl;
     final apiPath = _apiPath.startsWith('/') ? _apiPath : '/$_apiPath';
     final isChatCompletions = apiPath.contains('/chat/completions');
     final requestBody = _buildRequestBody(
@@ -91,18 +88,10 @@ extension LLMServiceCompletion on LLMService {
       topP: topP,
     );
 
-    final headers = <String, String>{};
-    if (_apiKey.trim().isNotEmpty) {
-      headers['Authorization'] = 'Bearer $_apiKey';
-    }
-
-    final response = await _dio.post(
-      '$baseUrl$apiPath',
-      options: Options(
-        headers: headers.isEmpty ? null : headers,
-        receiveTimeout: requestTimeout,
-        sendTimeout: requestTimeout,
-      ),
+    final response = await ApiProxyService.instance.post<Map<String, dynamic>>(
+      '/v1/llm/chat/completions',
+      receiveTimeout: requestTimeout,
+      sendTimeout: requestTimeout,
       data: requestBody,
     );
 
@@ -155,9 +144,6 @@ extension LLMServiceCompletion on LLMService {
     required Uint8List imageBytes,
     required String mimeType,
   }) async {
-    final baseUrl = _baseUrl.endsWith('/')
-        ? _baseUrl.substring(0, _baseUrl.length - 1)
-        : _baseUrl;
     final apiPath = _apiPath.startsWith('/') ? _apiPath : '/$_apiPath';
     final isChatCompletions = apiPath.contains('/chat/completions');
     final requestBody = _buildVisionRequestBody(
@@ -167,9 +153,8 @@ extension LLMServiceCompletion on LLMService {
       useChatCompletions: isChatCompletions,
     );
 
-    final response = await _dio.post(
-      '$baseUrl$apiPath',
-      options: Options(headers: {'Authorization': 'Bearer $_apiKey'}),
+    final response = await ApiProxyService.instance.post<Map<String, dynamic>>(
+      '/v1/llm/chat/completions',
       data: requestBody,
     );
 

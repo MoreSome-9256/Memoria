@@ -138,7 +138,6 @@ class StoryEntity {
   static Photo _convertToPhoto(PhotoEntity entity) {
     return Photo(
       id: entity.assetId,
-      path: entity.path,
       dateTaken: DateTime.fromMillisecondsSinceEpoch(entity.timestamp),
       tags: entity.aiTags ?? [],
       caption: entity.aiCaption?.trim(),

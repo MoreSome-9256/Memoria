@@ -7,15 +7,12 @@ import '../../models/entity/photo_entity.dart';
 import '../../models/entity/story_entity.dart';
 import '../../models/vo/photo.dart';
 import '../../models/vo/story_section.dart';
-import '../widgets/path_image.dart';
+import '../widgets/photo_image.dart';
 import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 
 class DigitalAlbumResult {
-  const DigitalAlbumResult({
-    required this.sections,
-    required this.saved,
-  });
+  const DigitalAlbumResult({required this.sections, required this.saved});
 
   final List<StorySection> sections;
   final bool saved;
@@ -98,9 +95,7 @@ class _DigitalAlbumPageState extends State<DigitalAlbumPage> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text(
-            page.kind == _AlbumPageKind.story ? '编辑故事文案' : '编辑图片说明',
-          ),
+          title: Text(page.kind == _AlbumPageKind.story ? '编辑故事文案' : '编辑图片说明'),
           content: TextField(
             controller: controller,
             minLines: 4,
@@ -147,9 +142,9 @@ class _DigitalAlbumPageState extends State<DigitalAlbumPage> {
     }
 
     if (widget.storyEntityId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('当前故事缺少存储 ID，无法保存数字相册修改')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前故事缺少存储 ID，无法保存数字相册修改')));
       return;
     }
 
@@ -165,17 +160,21 @@ class _DigitalAlbumPageState extends State<DigitalAlbumPage> {
       }
 
       final photos = store.box<PhotoEntity>().getMany(story.photoIds);
-      final existingPhotos = photos.whereType<PhotoEntity>().toList(growable: false);
+      final existingPhotos = photos.whereType<PhotoEntity>().toList(
+        growable: false,
+      );
 
       final photoByAssetId = <String, PhotoEntity>{
         for (final photo in existingPhotos) photo.assetId: photo,
       };
 
       final sectionMaps = _sections
-          .map((section) => <String, dynamic>{
-                'text': section.text,
-                'photo': section.photo,
-              })
+          .map(
+            (section) => <String, dynamic>{
+              'text': section.text,
+              'photo': section.photo,
+            },
+          )
           .toList(growable: false);
 
       story.content = StoryEntity.sectionsToMarkdown(sectionMaps);
@@ -373,7 +372,9 @@ class _DigitalAlbumPageState extends State<DigitalAlbumPage> {
       }
     }
 
-    final firstSentence = splitIndex >= 0 ? text.substring(0, splitIndex + 1) : text;
+    final firstSentence = splitIndex >= 0
+        ? text.substring(0, splitIndex + 1)
+        : text;
     if (firstSentence.length <= 36) {
       return firstSentence;
     }
@@ -422,8 +423,10 @@ class _DigitalAlbumPageState extends State<DigitalAlbumPage> {
       },
       child: Shortcuts(
         shortcuts: const <ShortcutActivator, Intent>{
-          SingleActivator(LogicalKeyboardKey.arrowLeft): _PreviousAlbumPageIntent(),
-          SingleActivator(LogicalKeyboardKey.arrowRight): _NextAlbumPageIntent(),
+          SingleActivator(LogicalKeyboardKey.arrowLeft):
+              _PreviousAlbumPageIntent(),
+          SingleActivator(LogicalKeyboardKey.arrowRight):
+              _NextAlbumPageIntent(),
         },
         child: Actions(
           actions: <Type, Action<Intent>>{
@@ -452,7 +455,8 @@ class _DigitalAlbumPageState extends State<DigitalAlbumPage> {
                 title: const Text('数字相册'),
                 actions: [
                   IconButton(
-                    onPressed: _pages.isNotEmpty && _pages[_currentPage].isEditable
+                    onPressed:
+                        _pages.isNotEmpty && _pages[_currentPage].isEditable
                         ? _editCurrentPage
                         : null,
                     icon: const Icon(Icons.edit_note),
@@ -520,8 +524,9 @@ class _DigitalAlbumPageState extends State<DigitalAlbumPage> {
                           ),
                           const SizedBox(width: 12),
                           IconButton.filled(
-                            onPressed:
-                                _currentPage < _pages.length - 1 ? _goNext : null,
+                            onPressed: _currentPage < _pages.length - 1
+                                ? _goNext
+                                : null,
                             icon: const Icon(Icons.chevron_right),
                           ),
                         ],
@@ -585,25 +590,25 @@ class _DigitalAlbumSheet extends StatelessWidget {
         Text(
           'Digital Album',
           style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                letterSpacing: 1.8,
-                color: Colors.brown.shade300,
-              ),
+            letterSpacing: 1.8,
+            color: Colors.brown.shade300,
+          ),
         ),
         const SizedBox(height: 14),
         Text(
           page.title,
           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-                color: const Color(0xFF4B3328),
-              ),
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF4B3328),
+          ),
         ),
         const SizedBox(height: 10),
         Text(
           page.body,
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                height: 1.5,
-                color: const Color(0xFF7B6255),
-              ),
+            height: 1.5,
+            color: const Color(0xFF7B6255),
+          ),
         ),
         const SizedBox(height: 24),
         Expanded(
@@ -611,8 +616,8 @@ class _DigitalAlbumSheet extends StatelessWidget {
             borderRadius: BorderRadius.circular(24),
             child: page.photo == null
                 ? Container(color: const Color(0xFFF3E7DD))
-                : PathImage(
-                    path: page.photo!.path,
+                : PhotoImage(
+                    photo: page.photo!,
                     width: double.infinity,
                     fit: BoxFit.cover,
                   ),
@@ -636,24 +641,24 @@ class _DigitalAlbumSheet extends StatelessWidget {
         Text(
           page.title,
           style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-                color: const Color(0xFF4B3328),
-              ),
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF4B3328),
+          ),
         ),
         const SizedBox(height: 14),
         Text(
           page.body,
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                height: 1.7,
-                color: const Color(0xFF7B6255),
-              ),
+            height: 1.7,
+            color: const Color(0xFF7B6255),
+          ),
         ),
         const Spacer(),
         Text(
           '新的章节从这里展开',
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                color: Colors.brown.shade300,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.labelLarge?.copyWith(color: Colors.brown.shade300),
         ),
         const SizedBox(height: 14),
         _AlbumPageFooter(
@@ -674,8 +679,8 @@ class _DigitalAlbumSheet extends StatelessWidget {
         Expanded(
           child: ClipRRect(
             borderRadius: BorderRadius.circular(22),
-            child: PathImage(
-              path: page.photo!.path,
+            child: PhotoImage(
+              photo: page.photo!,
               width: double.infinity,
               fit: BoxFit.cover,
             ),
@@ -710,8 +715,8 @@ class _DigitalAlbumSheet extends StatelessWidget {
           height: 220,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(22),
-            child: PathImage(
-              path: page.photo!.path,
+            child: PhotoImage(
+              photo: page.photo!,
               width: double.infinity,
               fit: BoxFit.cover,
             ),
@@ -744,24 +749,24 @@ class _DigitalAlbumSheet extends StatelessWidget {
         Text(
           page.title,
           style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-                color: const Color(0xFF4B3328),
-              ),
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF4B3328),
+          ),
         ),
         const SizedBox(height: 14),
         Text(
           page.body,
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                height: 1.7,
-                color: const Color(0xFF7B6255),
-              ),
+            height: 1.7,
+            color: const Color(0xFF7B6255),
+          ),
         ),
         const Spacer(),
         Text(
           page.footer,
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                color: Colors.brown.shade300,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.labelLarge?.copyWith(color: Colors.brown.shade300),
         ),
         const SizedBox(height: 14),
         _AlbumPageFooter(
@@ -775,10 +780,7 @@ class _DigitalAlbumSheet extends StatelessWidget {
 }
 
 class _AlbumHeader extends StatelessWidget {
-  const _AlbumHeader({
-    required this.title,
-    required this.footer,
-  });
+  const _AlbumHeader({required this.title, required this.footer});
 
   final String title;
   final String footer;
@@ -791,16 +793,16 @@ class _AlbumHeader extends StatelessWidget {
         Text(
           title,
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w800,
-                color: const Color(0xFF4B3328),
-              ),
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF4B3328),
+          ),
         ),
         const SizedBox(height: 6),
         Text(
           footer,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Colors.brown.shade300,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: Colors.brown.shade300),
         ),
       ],
     );
@@ -843,9 +845,9 @@ class _EditableTextCard extends StatelessWidget {
                   Text(
                     title,
                     style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          color: Colors.brown.shade400,
-                        ),
+                      fontWeight: FontWeight.w800,
+                      color: Colors.brown.shade400,
+                    ),
                   ),
                   const Spacer(),
                   if (onEdit != null)
@@ -858,9 +860,9 @@ class _EditableTextCard extends StatelessWidget {
                   child: Text(
                     text.trim().isEmpty ? '点击这里填写本页内容' : text,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          height: dense ? 1.65 : 1.8,
-                          color: const Color(0xFF5D4538),
-                        ),
+                      height: dense ? 1.65 : 1.8,
+                      color: const Color(0xFF5D4538),
+                    ),
                   ),
                 ),
               ),
@@ -892,9 +894,9 @@ class _AlbumPageFooter extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Text(
             '$pageNumber / $totalPages',
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: foreground,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.labelMedium?.copyWith(color: foreground),
           ),
         ),
         Expanded(child: Divider(color: foreground.withValues(alpha: 0.4))),
@@ -903,13 +905,7 @@ class _AlbumPageFooter extends StatelessWidget {
   }
 }
 
-enum _AlbumPageKind {
-  cover,
-  chapter,
-  caption,
-  story,
-  ending,
-}
+enum _AlbumPageKind { cover, chapter, caption, story, ending }
 
 class _AlbumPageDraft {
   const _AlbumPageDraft({

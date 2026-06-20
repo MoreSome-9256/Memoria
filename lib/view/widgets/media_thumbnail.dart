@@ -7,7 +7,7 @@ import '../../utils/media_type_helper.dart';
 class MediaThumbnail extends StatefulWidget {
   const MediaThumbnail({
     super.key,
-    required this.path,
+    this.path = '',
     this.assetId,
     this.kind,
     this.thumbnailBytes,
@@ -88,21 +88,39 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
           children: [
             child,
             Positioned(
-              right: 8,
-              bottom: 8,
+              right: 6,
+              bottom: 6,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.54),
-                  borderRadius: BorderRadius.circular(999),
+                  borderRadius: BorderRadius.circular(6),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.all(5),
-                  child: Icon(
-                    kind == MemoriaMediaKind.video
-                        ? Icons.play_arrow_rounded
-                        : Icons.motion_photos_on_outlined,
-                    size: 16,
-                    color: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 4,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        kind == MemoriaMediaKind.video
+                            ? Icons.play_arrow_rounded
+                            : Icons.motion_photos_on_outlined,
+                        size: 14,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        kind == MemoriaMediaKind.video ? '视频' : '动态',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          height: 1,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -194,9 +212,11 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
       decoration: BoxDecoration(color: Colors.grey.shade200),
       child: Center(
         child: Icon(
-          kind == MemoriaMediaKind.video
-              ? Icons.play_arrow_rounded
-              : Icons.image_outlined,
+          switch (kind) {
+            MemoriaMediaKind.video => Icons.play_arrow_rounded,
+            MemoriaMediaKind.dynamicImage => Icons.motion_photos_on_outlined,
+            MemoriaMediaKind.image => Icons.image_outlined,
+          },
           color: Colors.grey.shade500,
         ),
       ),
@@ -213,12 +233,13 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
       return cached;
     }
 
-    final kind =
-        widget.kind ??
-        await MediaTypeHelper.resolve(
-          path: widget.path,
-          assetId: widget.assetId,
-        );
+    final resolvedKind = await MediaTypeHelper.resolve(
+      path: widget.path,
+      assetId: widget.assetId,
+    );
+    final kind = resolvedKind == MemoriaMediaKind.image
+        ? indexedKind
+        : resolvedKind;
     final indexedThumbBytes = await MediaThumbnailCacheService.instance
         .decompressBytes(widget.thumbnailBytes);
     if (indexedThumbBytes != null && indexedThumbBytes.isNotEmpty) {
@@ -235,9 +256,12 @@ class _MediaThumbnailState extends State<MediaThumbnail> {
             .loadAssetThumbnailById(assetId);
         final assetThumb = result?.bytes;
         if (assetThumb != null && assetThumb.isNotEmpty) {
+          final assetKind = result!.kind == MemoriaMediaKind.image
+              ? kind
+              : result.kind;
           return _remember(
             cacheKey,
-            _MediaThumbnailData(kind: result!.kind, thumbnailBytes: assetThumb),
+            _MediaThumbnailData(kind: assetKind, thumbnailBytes: assetThumb),
           );
         }
       } catch (error, stackTrace) {

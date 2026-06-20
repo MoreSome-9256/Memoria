@@ -33,6 +33,12 @@ class AlbumTagBrowserService {
 
   static final AlbumTagBrowserService _instance =
       AlbumTagBrowserService._internal();
+  static const Set<String> _genericLowInformationTags = <String>{
+    '人物',
+    '美食',
+    '风景',
+  };
+  static const String _standaloneVideoCoarseId = 'video_media';
 
   factory AlbumTagBrowserService() => _instance;
 
@@ -55,6 +61,9 @@ class AlbumTagBrowserService {
         continue;
       }
       for (final coarseId in coarseIds) {
+        if (coarseId == _standaloneVideoCoarseId) {
+          continue;
+        }
         clusterPhotos.putIfAbsent(coarseId, () => <PhotoEntity>[]).add(photo);
         final fineCounts = fineCountsByCoarse.putIfAbsent(
           coarseId,
@@ -77,6 +86,9 @@ class AlbumTagBrowserService {
 
     final clusters = <AlbumCoarseTagCluster>[];
     for (final definition in memoriaCoarseTagDefinitions) {
+      if (definition.id == _standaloneVideoCoarseId) {
+        continue;
+      }
       final photosInCluster = clusterPhotos[definition.id];
       if (photosInCluster == null || photosInCluster.isEmpty) {
         continue;
@@ -233,12 +245,31 @@ class AlbumTagBrowserService {
   }
 
   List<String> browsableTagsForPhoto(PhotoEntity photo) {
-    final raw = TagSanitizer.sanitizeVisualTags(
+    if (!photo.isAiAnalyzed) {
+      return const <String>[];
+    }
+    final rawTags = TagSanitizer.sanitizeVisualTags(
       photo.aiTags ?? const <String>[],
     );
-    return raw
+    final mapped = rawTags
         .where((tag) => memoriaAlbumTagLabelToCoarseId.containsKey(tag))
+        .toSet()
         .toList(growable: false);
+    return _collapsePureLowInformationTags(mapped);
+  }
+
+  List<String> _collapsePureLowInformationTags(List<String> tags) {
+    if (tags.length <= 1) {
+      return tags;
+    }
+    if (!tags.every(_isLowInformationTag)) {
+      return tags;
+    }
+    final primary = tags.firstWhere(
+      (tag) => tag != memoriaOtherLabel,
+      orElse: () => tags.first,
+    );
+    return <String>[primary];
   }
 
   Set<String> browsableCoarseIdsForPhoto(PhotoEntity photo) {
@@ -246,6 +277,9 @@ class AlbumTagBrowserService {
     for (final tag in browsableTagsForPhoto(photo)) {
       final coarseId = memoriaAlbumTagLabelToCoarseId[tag];
       if (coarseId != null && coarseId.isNotEmpty) {
+        if (coarseId == _standaloneVideoCoarseId) {
+          continue;
+        }
         coarseIds.add(coarseId);
       }
     }
@@ -265,5 +299,11 @@ class AlbumTagBrowserService {
       default:
         return 0.66;
     }
+  }
+
+  bool _isLowInformationTag(String tag) {
+    return tag == memoriaOtherLabel ||
+        memoriaLegacyCoarseLabelToCoarseId.containsKey(tag) ||
+        _genericLowInformationTags.contains(tag);
   }
 }

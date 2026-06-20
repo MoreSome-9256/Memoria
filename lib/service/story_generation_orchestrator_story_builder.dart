@@ -135,8 +135,11 @@ extension _StoryGenerationOrchestratorStoryBuilder
           ..targetPlatform = request.targetPlatform;
 
     // 在故事首次创建时固化音乐二进制到数据库（zstd 压缩）
-    if (request.customMusicPath != null && request.customMusicPath!.trim().isNotEmpty) {
-      final rawBytes = await StoryService.loadMusicBytes(request.customMusicPath);
+    if (request.customMusicPath != null &&
+        request.customMusicPath!.trim().isNotEmpty) {
+      final rawBytes = await StoryService.loadMusicBytes(
+        request.customMusicPath,
+      );
       if (rawBytes != null && rawBytes.isNotEmpty) {
         story.originalMusicHash = sha256.convert(rawBytes).toString();
         story.customMusicBytes = await StoryService.zstdCompress(rawBytes);
@@ -148,18 +151,18 @@ extension _StoryGenerationOrchestratorStoryBuilder
     store.runInTransaction(TxMode.write, () {
       // 删除旧的自动保存记录（只保留最新一个）
       final storyBox = store.box<StoryEntity>();
-      final autoSavedQuery = storyBox.query(
-        StoryEntity_.isManuallySaved.equals(false),
-      ).build();
+      final autoSavedQuery = storyBox
+          .query(StoryEntity_.isManuallySaved.equals(false))
+          .build();
       final autoSavedStories = autoSavedQuery.find()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       autoSavedQuery.close();
-      
+
       // 删除除了即将保存的这个之外的所有自动保存记录
       if (autoSavedStories.isNotEmpty) {
         storyBox.removeMany(autoSavedStories.map((s) => s.id).toList());
       }
-      
+
       // 保存新的自动保存记录
       storyBox.put(story);
     });
@@ -273,7 +276,7 @@ extension _StoryGenerationOrchestratorStoryBuilder
         '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
   }
 
-  String _formatPayloadMeta(OnDeviceInternvlImagePayload payload) {
+  String _formatPayloadMeta(_LocalVlmImagePayload payload) {
     final hasLatLng = payload.latitude != null && payload.longitude != null;
     final location = payload.locationName.trim().isEmpty
         ? '未知地点'
@@ -323,5 +326,4 @@ extension _StoryGenerationOrchestratorStoryBuilder
     }
     return null;
   }
-
 }

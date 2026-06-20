@@ -457,9 +457,9 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
                     ),
                     label: Text(
                       _selectedPhotoIds.isEmpty
-                          ? (_isDeleteMode ? '移入系统回收站' : '加入故事队列')
+                          ? (_isDeleteMode ? '移入回收站' : '加入故事队列')
                           : (_isDeleteMode
-                                ? '移入系统回收站 ${_selectedPhotoIds.length}'
+                                ? '移入回收站 ${_selectedPhotoIds.length}'
                                 : '加入故事队列 ${_selectedPhotoIds.length}'),
                     ),
                   ),
@@ -545,7 +545,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
     if (_selectedPhotoIds.isEmpty) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('请至少选择一张照片再删除')));
+      ).showSnackBar(const SnackBar(content: Text('请至少选择一张照片再标记')));
       return;
     }
 
@@ -553,9 +553,9 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('移入系统回收站'),
+          title: const Text('移入低价值回收站'),
           content: Text(
-            '将 ${_selectedPhotoIds.length} 张照片移入系统相册回收站，系统会再次请求确认。是否继续？',
+            '将 ${_selectedPhotoIds.length} 张照片标记为低价值候选，可在回收站中恢复或确认删除。是否继续？',
           ),
           actions: [
             TextButton(
@@ -564,7 +564,7 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('移入回收站'),
+              child: const Text('确认标记'),
             ),
           ],
         );
@@ -579,8 +579,18 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
         .where((photo) => _selectedPhotoIds.contains(photo.id))
         .toList(growable: false);
 
-    final removedCount = await JunkPhotoCleanupService()
-        .movePhotosToSystemTrash(selected);
+    final markedCount = await JunkPhotoCleanupService()
+        .markCandidatesAsLowValue(
+          selected.map(
+            (e) => JunkPhotoCleanupCandidate(
+              photoId: e.id,
+              assetId: e.assetId,
+              path: e.path,
+              timestamp: e.timestamp,
+              reasons: const [],
+            ),
+          ),
+        );
     for (final entity in selected) {
       StoryQueueService().removePhoto(entity.assetId);
     }
@@ -598,7 +608,9 @@ class _AlbumTagClusterSheetState extends State<_AlbumTagClusterSheet> {
       SnackBar(
         behavior: SnackBarBehavior.floating,
         content: Text(
-          removedCount > 0 ? '已将 $removedCount 张照片移入系统回收站' : '没有删除任何照片',
+          markedCount > 0
+              ? '已将 $markedCount 张照片移入低价值回收站'
+              : '没有标记任何照片',
         ),
       ),
     );

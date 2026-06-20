@@ -146,8 +146,8 @@ Face 向量会被同步写入：
 
 可选外部服务：
 
-- 高德逆地理：`AMAP_WEB_KEY`
-- LLM：`LLM_BASE_URL`、`LLM_API_PATH`、`LLM_MODEL`、`LLM_API_KEY`
+- 云端代理：`API_PROXY_BASE_URL`
+- LLM：`LLM_AUTH_MODE=cognito_proxy`、`LLM_MODEL`
 - 可选视觉模型：`LLM_VISION_MODEL`
 
 ## 如何启动
@@ -182,36 +182,31 @@ dart run build_runner build --delete-conflicting-outputs
 
 先准备本地 profile：
 
-```bash
-mkdir -p config/profiles
-cp config/profiles/dev.example.json config/profiles/dev.json
+仓库已经包含不含 provider key 的代理 profile：
+
+```text
+config/profiles/proxy.json
 ```
-
-然后填写：
-
-- LLM
-- AMap
-- Cognito
 
 启动方式：
 
 ```bash
 # macOS / Linux
-./launch.sh dev
+./launch.sh proxy
 
 # Windows PowerShell
-./launch.ps1 dev
+./launch.ps1 proxy
 ```
 
 或直接使用 Flutter：
 
 ```bash
-flutter run --dart-define-from-file=config/profiles/dev.json
+flutter run --dart-define-from-file=config/profiles/proxy.json
 ```
 
 当前支持：
 
-- `dev -> config/profiles/dev.json`
+- `proxy -> config/profiles/proxy.json`
 - `prod -> config/profiles/prod.json`
 
 ## 运行参数
@@ -222,7 +217,7 @@ flutter run --dart-define-from-file=config/profiles/dev.json
 
 ```bash
 flutter run \
-  --dart-define-from-file=config/profiles/dev.json \
+  --dart-define-from-file=config/profiles/proxy.json \
   --dart-define=MOBILECLIP_VECTOR_PROBE=true
 ```
 

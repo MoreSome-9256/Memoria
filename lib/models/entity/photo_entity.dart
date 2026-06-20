@@ -1,4 +1,4 @@
-/// 照片元数据的核心 ObjectBox 实体，保存尺寸、位置、标签和向量信息。
+// 照片元数据的核心 ObjectBox 实体，保存尺寸、位置、标签和向量信息。
 
 import 'dart:typed_data';
 
@@ -16,7 +16,23 @@ class PhotoEntity {
   @Index()
   late int timestamp;
 
-  // 📐 图片尺寸信息 (用于过滤截图和UI占位)
+  // Search-time mechanical indexes. Keep these derived from [timestamp].
+  @Index()
+  int capturedAtMillis = 0;
+  @Index()
+  int capturedYear = 0;
+  @Index()
+  int capturedMonth = 0;
+  @Index()
+  int capturedDay = 0;
+  @Index()
+  int capturedMinuteOfDay = 0;
+  @Index()
+  int capturedWeekday = 0;
+  @Index()
+  int searchIndexVersion = 0;
+
+  // 📐 图片尺寸信息（仅用于媒体展示和布局）
   late int width;
   late int height;
 
@@ -31,19 +47,52 @@ class PhotoEntity {
   // 📍 地理坐标 (WGS84 标准坐标)
   double? latitude;
   double? longitude;
+  @Index()
+  int? latAmapE6;
+  @Index()
+  int? lonAmapE6;
+  @Index()
+  String? geoCellFine;
+  @Index()
+  String? geoCellMid;
+  @Index()
+  String? geoCellCoarse;
 
   // 🏙️ 地址信息 (高德解析结果)
+  @Index()
+  String? country;
+
   @Index()
   String? province; // 省：北京市 / 山东省
 
   @Index()
   String? city; // 市：北京市 / 青岛市 (直辖市这里可能为空或与省相同)
 
+  @Index()
   String? district; // 区：朝阳区 / 市南区
+  @Index()
   String? locationName; // 更细粒度地点：学校/商场/园区/楼栋/POI
+  @Index()
   String? formattedAddress; // 完整地址：北京市朝阳区xx街道...
 
+  @Index()
   String? adcode; // 城市编码 (如 110101)，用于精确数据分析
+  @Index()
+  String? township;
+  @Index()
+  String? businessAreaText;
+  @Index()
+  String? aoiNameText;
+  @Index()
+  String? poiNameText;
+  @Index()
+  String? aoiIdText;
+  @Index()
+  String? poiIdText;
+  @Index()
+  String? geoTextTokens;
+  int geoIndexedAt = 0;
+  int geoIndexVersion = 0;
 
   // 状态标记
   bool isLocationProcessed = false;
@@ -58,10 +107,13 @@ class PhotoEntity {
   List<double>? imageEmbedding; // MobileCLIP 图像向量，用于后续聚类
   String? ocrText; // OCR 提取出的原始文本
   List<String>? ocrTags; // 从 OCR 文本中提炼出的短标签
+  bool isOcrAnalyzed = false;
+  bool isCaptionAnalyzed = false;
 
   // 👤 人脸识别信息 (用于后续 AI 选图)
   int faceCount = 0; // 检测到的人脸数量
   double smileProb = 0.0; // 微笑概率 (0.0 - 1.0)
+  bool isFaceAnalyzed = false;
 
   // 😊 情感分析 (AI 增强)
   double? joyScore; // 欢乐值评分 (0.0 - 1.0)，综合人脸微笑度和场景标签
@@ -72,24 +124,4 @@ class PhotoEntity {
 
   // 计算图片宽高比
   double get aspectRatio => width > 0 ? width / height : 1.0;
-
-  // 判断是否可能是截图 (极端比例)
-  bool get isProbablyScreenshot {
-    final normalizedPath = path.toLowerCase();
-    const screenshotKeywords = <String>[
-      'screenshot',
-      'screen_shot',
-      'screen-shot',
-      'screen shot',
-      'capture',
-      'screen capture',
-      '截屏',
-      '截图',
-    ];
-    if (screenshotKeywords.any(normalizedPath.contains)) {
-      return true;
-    }
-    final ratio = aspectRatio;
-    return ratio > 0 && ratio < 0.52;
-  }
 }

@@ -102,6 +102,8 @@ class AppAiSettingsService {
   static const _modelBatchSizeKey = 'ai_settings_model_batch_size';
   static const _autoResumeKey = 'ai_settings_auto_resume';
   static const _autoAnalyzeNewKey = 'ai_settings_auto_analyze_new';
+  static const _pendingAnalysisPromptDismissedKey =
+      'ai_settings_pending_analysis_prompt_dismissed';
 
   final ValueNotifier<AppAiSettings> notifier = ValueNotifier<AppAiSettings>(
     AppAiSettings.defaults,
@@ -120,6 +122,21 @@ class AppAiSettingsService {
   Future<AppAiSettings> load() async {
     await initialize();
     return notifier.value;
+  }
+
+  Future<bool> isPendingAnalysisPromptDismissed() async {
+    await initialize();
+    return _prefs!.getBool(_pendingAnalysisPromptDismissedKey) ?? false;
+  }
+
+  Future<void> setPendingAnalysisPromptDismissed(bool dismissed) async {
+    await initialize();
+    final prefs = _prefs!;
+    if (dismissed) {
+      await prefs.setBool(_pendingAnalysisPromptDismissedKey, true);
+    } else {
+      await prefs.remove(_pendingAnalysisPromptDismissedKey);
+    }
   }
 
   Future<void> save(AppAiSettings settings) async {

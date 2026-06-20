@@ -2,6 +2,7 @@ import '../models/entity/photo_entity.dart';
 import '../models/vo/semantic_search_models.dart';
 import '../utils/tag_sanitizer.dart';
 import '../data/tag_taxonomy_v2.dart';
+import 'geo_coordinate_service.dart';
 
 class SemanticSearchMetadataMatcher {
   const SemanticSearchMetadataMatcher();
@@ -18,6 +19,9 @@ class SemanticSearchMetadataMatcher {
         .toList(growable: false);
     final recurringMonthRanges = query.timeRanges
         .where((range) => range.hasRecurringMonthRange)
+        .toList(growable: false);
+    final annualDayRanges = query.timeRanges
+        .where((range) => range.hasAnnualDayRange)
         .toList(growable: false);
 
     if (dateRanges.isNotEmpty &&
@@ -40,7 +44,33 @@ class SemanticSearchMetadataMatcher {
         )) {
       return false;
     }
+    if (annualDayRanges.isNotEmpty &&
+        !annualDayRanges.any((range) => matchesAnnualDay(photo, range))) {
+      return false;
+    }
+    if (query.weekdays.isNotEmpty) {
+      final date = DateTime.fromMillisecondsSinceEpoch(
+        normalizeTimestampMs(photo.timestamp),
+      );
+      if (!query.weekdays.contains(date.weekday)) return false;
+    }
     return true;
+  }
+
+  bool matchesAnnualDay(PhotoEntity photo, SemanticSearchTimeRange range) {
+    final date = DateTime.fromMillisecondsSinceEpoch(
+      normalizeTimestampMs(photo.timestamp),
+    );
+    return _matchesAnnualMonthDay(date, range);
+  }
+
+  bool _matchesAnnualMonthDay(DateTime date, SemanticSearchTimeRange range) {
+    final current = date.month * 100 + date.day;
+    final start = range.annualStartMonth! * 100 + range.annualStartDayOfMonth!;
+    final end = range.annualEndMonth! * 100 + range.annualEndDayOfMonth!;
+    return start <= end
+        ? current >= start && current <= end
+        : current >= start || current <= end;
   }
 
   bool matchesRecurringMonth(PhotoEntity photo, SemanticSearchTimeRange range) {
@@ -190,8 +220,32 @@ class SemanticSearchMetadataMatcher {
   }
 
   double _scoreLocation(PhotoEntity photo, SemanticSearchLocation location) {
+    if (location.type == 'region_concept' &&
+        location.countryCandidates.any(
+          (country) => photo.country?.contains(country) == true,
+        )) {
+      return 1.0;
+    }
+    final idMatched =
+        (location.amapPoiId?.isNotEmpty == true &&
+            photo.poiIdText?.contains('|${location.amapPoiId}|') == true) ||
+        (location.amapAoiId?.isNotEmpty == true &&
+            photo.aoiIdText?.contains('|${location.amapAoiId}|') == true);
+    if (idMatched) return 1.0;
     final weightedParts = <_WeightedLocationPart>[
       _WeightedLocationPart(photo.locationName, 1.0, _LocationFieldScope.poi),
+      _WeightedLocationPart(photo.poiNameText, 1.0, _LocationFieldScope.poi),
+      _WeightedLocationPart(photo.aoiNameText, 0.98, _LocationFieldScope.poi),
+      _WeightedLocationPart(
+        photo.businessAreaText,
+        0.88,
+        _LocationFieldScope.address,
+      ),
+      _WeightedLocationPart(
+        photo.geoTextTokens,
+        0.95,
+        _LocationFieldScope.address,
+      ),
       _WeightedLocationPart(
         photo.formattedAddress,
         0.92,
@@ -200,6 +254,8 @@ class SemanticSearchMetadataMatcher {
       _WeightedLocationPart(photo.district, 0.82, _LocationFieldScope.district),
       _WeightedLocationPart(photo.city, 0.72, _LocationFieldScope.city),
       _WeightedLocationPart(photo.province, 0.58, _LocationFieldScope.province),
+      _WeightedLocationPart(photo.country, 0.55, _LocationFieldScope.province),
+      _WeightedLocationPart(photo.township, 0.76, _LocationFieldScope.district),
       _WeightedLocationPart(photo.adcode, 0.50, _LocationFieldScope.code),
     ];
     final primary = _normalizeLocationText(location.text);
@@ -231,6 +287,17 @@ class SemanticSearchMetadataMatcher {
           best = score;
         }
       }
+    }
+    if (location.hasResolvedCenter &&
+        photo.latAmapE6 != null &&
+        photo.lonAmapE6 != null) {
+      final distance = GeoCoordinateService.distanceMeters(
+        photo.latAmapE6! / 1000000,
+        photo.lonAmapE6! / 1000000,
+        location.centerLatAmapE6! / 1000000,
+        location.centerLonAmapE6! / 1000000,
+      );
+      if (distance <= location.coreRadiusMeters) return mathMin(0.82, 1.0);
     }
     return best;
   }
@@ -316,7 +383,7 @@ class SemanticSearchMetadataMatcher {
   }
 
   bool _looksLikeBroadContext(String value) {
-    return RegExp('(景区|风景区|区域|片区|街道|社区|村|城区|市区|玄武湖|公园|湖)\$').hasMatch(value);
+    return RegExp('(景区|风景区|区域|片区|街道|社区|村|城区|市区|公园|湖)\$').hasMatch(value);
   }
 
   String _normalizeLocationText(String? value) {

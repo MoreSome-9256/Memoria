@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # Usage:
-#   ./tool/prepare_ios_profile.sh dev debug
+#   ./tool/prepare_ios_profile.sh proxy debug
 #   ./tool/prepare_ios_profile.sh prod release
 
-PROFILE="${1:-dev}"
+PROFILE="${1:-proxy}"
 BUILD_MODE="${2:-debug}"
 
 case "${BUILD_MODE}" in
@@ -26,7 +26,7 @@ fi
 PROFILE_FILE="${APP_ROOT}/config/profiles/${PROFILE}.json"
 if [[ ! -f "${PROFILE_FILE}" ]]; then
   echo "Profile file not found: ${PROFILE_FILE}"
-  echo "Create it from template: ${APP_ROOT}/config/profiles/dev.example.json"
+  echo "Use ${APP_ROOT}/config/profiles/proxy.json or create a private profile."
   exit 1
 fi
 

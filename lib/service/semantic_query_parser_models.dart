@@ -148,6 +148,18 @@ const List<_CoarseSeed> _coarseSeeds = <_CoarseSeed>[
     ],
   ),
   _CoarseSeed(
+    id: 'atmosphere_mood',
+    labelZh: '氛围情绪',
+    labelEn: 'atmosphere and mood',
+    aliases: <String>['氛围', '情绪', '心情', '温馨', '浪漫', '安静', '热闹', '庄重'],
+    prototypePrompt:
+        'a photo with a clear visual mood such as warm lively quiet romantic or solemn atmosphere',
+    shortPrompts: <String>[
+      'a photo with a clear emotional atmosphere',
+      'a warm quiet lively romantic or solemn memory photo',
+    ],
+  ),
+  _CoarseSeed(
     id: 'document_screenshot',
     labelZh: '文档截图',
     labelEn: 'document screenshot',

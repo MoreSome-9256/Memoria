@@ -1,0 +1,17 @@
+{
+  "API_PROXY_BASE_URL": "https://t55ki90eu6.execute-api.ap-northeast-2.amazonaws.com",
+  "LLM_AUTH_MODE": "cognito_proxy",
+  "LLM_MODEL": "deepseek-chat",
+  "AWS_REGION": "ap-northeast-2",
+  "COGNITO_USER_POOL_ID": "ap-northeast-2_ZRjUXjhmI",
+  "COGNITO_APP_CLIENT_ID": "34ftru4193s0unvm9kgdt9u3s4",
+  "COGNITO_IDENTITY_POOL_ID": "",
+  "FACE_EMBEDDING_ONNX_FILE": "",
+  "FACE_EMBEDDING_ONNX_ASSET": "assets/face/arcface.onnx",
+  "FACE_EMBEDDING_MODEL_VERSION": "arcface_onnx_v1",
+  "FACE_EMBEDDING_INPUT_SIZE": "112",
+  "FACE_EMBEDDING_INPUT_LAYOUT": "nhwc",
+  "FACE_EMBEDDING_MEAN": "127.5",
+  "FACE_EMBEDDING_STD": "128.0",
+  "ENABLE_ML_KIT_OCR": "true"
+}

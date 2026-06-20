@@ -7,11 +7,15 @@ import mobileclip
 import jieba.posseg as pseg
 
 # ================= 🌟 核心配置区 =================
-# 从系统环境变量里读取，不要写死在代码里
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+# 从系统环境变量里读取 Cognito ID token，不要写 provider key。
+API_PROXY_BASE_URL = os.getenv(
+    "MEMORIA_API_PROXY_BASE_URL",
+    "https://t55ki90eu6.execute-api.ap-northeast-2.amazonaws.com",
+).rstrip("/")
+API_PROXY_ID_TOKEN = os.getenv("MEMORIA_API_PROXY_ID_TOKEN", "")
 
-if not DEEPSEEK_API_KEY:
-    print("❌ 错误：请先在终端设置环境变量 DEEPSEEK_API_KEY")
+if not API_PROXY_ID_TOKEN:
+    print("❌ 错误：请先在终端设置环境变量 MEMORIA_API_PROXY_ID_TOKEN")
 TXT_FILE = "ai_tools/现代汉语常用词表.txt"
 OUTPUT_DICT_FILE = "ai_tools/ds_filtered_dict.json"      # 🌟 新增：保存 DS 中间翻译词表的路径
 OUTPUT_VECTOR_FILE = "ai_tools/expanded_tags_vectors.json"
@@ -52,9 +56,9 @@ def batch_translate(words, batch_size=75):
     total_batches = (len(words) + batch_size - 1) // batch_size
     print(f"🌐 [阶段 2/3] 准备将 {len(words)} 个词分成 {total_batches} 批发送给 AI (每批 {batch_size} 个)...")
 
-    url = "https://api.deepseek.com/chat/completions"
+    url = f"{API_PROXY_BASE_URL}/v1/llm/chat/completions"
     headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Authorization": f"Bearer {API_PROXY_ID_TOKEN}",
         "Content-Type": "application/json"
     }
 

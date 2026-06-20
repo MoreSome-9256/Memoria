@@ -22,10 +22,21 @@ void main() {
         _deferredImagePartPath,
       ]) {
         final source = File(path).readAsStringSync();
+        final firstDirective = source
+            .split(RegExp(r'\r?\n'))
+            .map((line) => line.trim())
+            .firstWhere(
+              (line) =>
+                  line.isNotEmpty &&
+                  !line.startsWith('//') &&
+                  !line.startsWith('/*') &&
+                  !line.startsWith('*'),
+              orElse: () => '',
+            );
 
         expect(
-          source.trimLeft(),
-          startsWith("part of 'album_page.dart';"),
+          firstDirective,
+          "part of 'album_page.dart';",
           reason: '$path must be included through album_page.dart',
         );
         expect(

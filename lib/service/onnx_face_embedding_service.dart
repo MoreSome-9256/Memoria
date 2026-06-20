@@ -1,5 +1,6 @@
-/// ONNX 人脸嵌入服务，负责调用 ONNX 模型提取人脸向量。
+// ONNX 人脸嵌入服务，负责调用 ONNX 模型提取人脸向量。
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -52,6 +53,8 @@ class OnnxFaceEmbeddingService extends FaceEmbeddingService {
   bool _warmAttempted = false;
   bool _isAvailable = false;
   String? _unavailableReason;
+  Future<void>? _warmUpInFlight;
+  Future<void> _inferenceTail = Future<void>.value();
 
   int get _inputSize => int.tryParse(_inputSizeOverride) ?? 112;
   bool get _isNhwcInput => _inputLayoutOverride.trim().toLowerCase() != 'nchw';
@@ -60,6 +63,11 @@ class OnnxFaceEmbeddingService extends FaceEmbeddingService {
 
   @override
   Future<void> warmUp() async {
+    final activeWarmUp = _warmUpInFlight;
+    if (activeWarmUp != null) {
+      await activeWarmUp;
+      return;
+    }
     if (_warmAttempted) {
       if (!_isAvailable && _fallbackService != null) {
         await _fallbackService.warmUp();
@@ -67,6 +75,16 @@ class OnnxFaceEmbeddingService extends FaceEmbeddingService {
       return;
     }
 
+    final future = _warmUp();
+    _warmUpInFlight = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_warmUpInFlight, future)) _warmUpInFlight = null;
+    }
+  }
+
+  Future<void> _warmUp() async {
     _warmAttempted = true;
     try {
       final session = await _loadSession();
@@ -100,6 +118,7 @@ class OnnxFaceEmbeddingService extends FaceEmbeddingService {
     _warmAttempted = false;
     _isAvailable = false;
     _unavailableReason = null;
+    _warmUpInFlight = null;
     _fallbackService?.resetWarmState();
   }
 
@@ -108,7 +127,20 @@ class OnnxFaceEmbeddingService extends FaceEmbeddingService {
     if (imageBytes.isEmpty) {
       return null;
     }
+    final previous = _inferenceTail;
+    final completer = Completer<void>();
+    _inferenceTail = completer.future;
+    await previous;
+    try {
+      return await _embedFaceCropBytesLocked(imageBytes);
+    } finally {
+      completer.complete();
+    }
+  }
 
+  Future<FaceEmbeddingResult?> _embedFaceCropBytesLocked(
+    Uint8List imageBytes,
+  ) async {
     await warmUp();
     if (!_isAvailable) {
       return _fallbackService?.embedFaceCropBytes(imageBytes);

@@ -8,6 +8,7 @@ import 'package:photo_manager/photo_manager.dart';
 
 import '../../service/album_selection_preference_service.dart';
 import '../../service/photo_service.dart';
+import '../../service/media_permission_service.dart';
 
 class MediaAccessRangePage extends StatefulWidget {
   const MediaAccessRangePage({super.key});
@@ -20,8 +21,11 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
   bool _batteryOptimized = false;
   bool _loadingBattery = true;
   PermissionState? _permState;
+  bool? _hasLocationMetadataAccess;
+  bool _requestingLocationMetadata = false;
   List<_AlbumItem> _albums = [];
   Set<String> _selectedIds = {};
+  int _savedAlbumWhitelistCount = 0;
   bool _loadingAlbums = true;
 
   @override
@@ -42,24 +46,29 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
   }
 
   Future<void> _loadPermissionAndAlbums() async {
-    final state = await PhotoManager.requestPermissionExtend(
-      requestOption: const PermissionRequestOption(
-        androidPermission: AndroidPermission(
-          type: RequestType.all,
-          mediaLocation: false,
-        ),
-      ),
-    );
+    final state = await MediaPermissionService.readPermissionState();
+    PermissionState? locationMetadataState;
+    if (Platform.isAndroid && state.hasAccess) {
+      locationMetadataState = state;
+    }
+    final hasLocationMetadataAccess = locationMetadataState == null
+        ? null
+        : await MediaPermissionService.hasLocationMetadataAccess();
     final sel = await AlbumSelectionPreferenceService().loadSelection();
     if (!mounted) return;
     _permState = state;
+    _hasLocationMetadataAccess = hasLocationMetadataAccess;
+    _savedAlbumWhitelistCount = sel.selectedAlbumIds.length;
 
     if (state.hasAccess) {
       final allAlbums = await PhotoManager.getAssetPathList(
         type: RequestType.common,
       );
 
-      final savedIds = sel.selectedAlbumIds.toSet();
+      final savedIds = MediaPermissionService.effectiveAlbumWhitelist(
+        state: state,
+        savedAlbumIds: sel.selectedAlbumIds,
+      );
       final selectedIds = <String>{};
       for (final album in allAlbums) {
         final lower = album.name.toLowerCase();
@@ -67,15 +76,6 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
             savedIds.contains(album.name) ||
             savedIds.contains(lower)) {
           selectedIds.add(album.id);
-        }
-      }
-
-      if (selectedIds.isEmpty) {
-        for (final album in allAlbums) {
-          final lower = album.name.toLowerCase();
-          if (lower == 'dcim' || lower == 'camera' || lower == '相机') {
-            selectedIds.add(album.id);
-          }
         }
       }
 
@@ -125,18 +125,38 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
   }
 
   Future<void> _requestPermission() async {
-    final state = await PhotoManager.requestPermissionExtend(
-      requestOption: const PermissionRequestOption(
-        androidPermission: AndroidPermission(
-          type: RequestType.all,
-          mediaLocation: false,
-        ),
-      ),
-    );
+    final state = await MediaPermissionService.requestAnalysisPermissions();
     if (!mounted) return;
     setState(() => _permState = state);
     if (state.hasAccess) {
       await _loadPermissionAndAlbums();
+    }
+  }
+
+  Future<void> _requestLocationMetadataPermission() async {
+    setState(() => _requestingLocationMetadata = true);
+    try {
+      final state = await MediaPermissionService.requestAnalysisPermissions();
+      final hasLocationMetadataAccess =
+          await MediaPermissionService.hasLocationMetadataAccess();
+      if (!mounted) return;
+      setState(() {
+        _permState = state;
+        _hasLocationMetadataAccess = hasLocationMetadataAccess;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            hasLocationMetadataAccess
+                ? '已允许读取照片拍摄地点；重新分析时会补齐地点索引'
+                : '未获得拍摄地点权限，地点搜索将只使用已有数据',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _requestingLocationMetadata = false);
+      }
     }
   }
 
@@ -219,16 +239,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                         children: [
                           TextButton.icon(
                             onPressed: () async {
-                              if (Platform.isAndroid) {
-                                await <Permission>[
-                                  Permission.photos,
-                                  Permission.videos,
-                                ].request();
-                              } else {
-                                await PhotoManager.presentLimited(
-                                  type: RequestType.all,
-                                );
-                              }
+                              await MediaPermissionService.selectMorePhotos();
                               PhotoService().invalidateScanSessionCache();
                               if (!mounted) return;
                               setState(() => _loadingAlbums = true);
@@ -239,6 +250,13 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                               size: 18,
                             ),
                             label: const Text('选择更多照片'),
+                          ),
+                          TextButton.icon(
+                            onPressed: () async {
+                              await MediaPermissionService.openSystemSettings();
+                            },
+                            icon: const Icon(Icons.settings_outlined, size: 18),
+                            label: const Text('允许全部照片'),
                           ),
                         ],
                       ),
@@ -258,8 +276,76 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
           ),
           const SizedBox(height: 16),
 
+          if (Platform.isAndroid && hasAccess) ...[
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.location_on_outlined,
+                          color: theme.colorScheme.primary,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            '照片拍摄地点',
+                            style: theme.textTheme.titleMedium,
+                          ),
+                        ),
+                        Icon(
+                          _hasLocationMetadataAccess ?? false
+                              ? Icons.check_circle
+                              : Icons.info_outline,
+                          color: _hasLocationMetadataAccess ?? false
+                              ? Colors.green
+                              : Colors.orange,
+                          size: 20,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Android 会单独保护照片原始文件中的 GPS。允许后，重新打标签会补齐地点、景区和附近地标索引；这不会获取设备实时位置。',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 12),
+                    if (_hasLocationMetadataAccess == null)
+                      const LinearProgressIndicator()
+                    else if (_hasLocationMetadataAccess!)
+                      Text(
+                        '已允许读取拍摄地点',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.green,
+                        ),
+                      )
+                    else
+                      FilledButton.tonalIcon(
+                        onPressed: _requestingLocationMetadata
+                            ? null
+                            : _requestLocationMetadataPermission,
+                        icon: _requestingLocationMetadata
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.location_on_outlined, size: 18),
+                        label: const Text('允许读取拍摄地点'),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
           // ── 相册列表 ──
-          if (hasAccess) ...[
+          if (hasAccess && !isLimited) ...[
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -278,7 +364,7 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '选中需要进行分析的相册，未选中的相册将被跳过。',
+                      '未选择时使用系统当前允许访问的全部照片；选择相册后，将只分析白名单内的相册。',
                       style: theme.textTheme.bodySmall,
                     ),
                     const SizedBox(height: 12),
@@ -309,6 +395,17 @@ class _MediaAccessRangePageState extends State<MediaAccessRangePage> {
             ),
             const SizedBox(height: 16),
           ],
+          if (isLimited)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  '当前按系统选择的部分照片进行分析。部分授权下不叠加相册白名单，避免再次过滤已授权照片。'
+                  '${_savedAlbumWhitelistCount > 0 ? ' 已保存的 $_savedAlbumWhitelistCount 个相册白名单会暂时停用，并在允许全部照片后自动恢复。' : ''}',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+            ),
 
           // ── 电池优化 ──
           if (Platform.isAndroid)

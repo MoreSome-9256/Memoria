@@ -1,20 +1,20 @@
 // 创作流程页面，承载故事生成的具体操作步骤。
 
-import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import '../../data/tag_taxonomy_v2.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../service/semantic_photo_search_service.dart';
 import '../../utils/ocr_policy.dart';
+import '../../utils/media_type_helper.dart';
 import '../../utils/tag_sanitizer.dart';
 import '../../models/event.dart';
 import '../../models/vo/photo.dart';
 import '../../models/ai_theme.dart';
-import '../widgets/path_image.dart';
+import '../widgets/media_thumbnail.dart';
 import 'story_config_page.dart';
 
 class _CreateLaunchPhotoRecord {
@@ -114,6 +114,96 @@ _CreateLaunchResult _buildCreateLaunchResult(_CreateLaunchRequest request) {
   );
 }
 
+class _CreateSearchPhotoRecord {
+  const _CreateSearchPhotoRecord({required this.id});
+
+  factory _CreateSearchPhotoRecord.fromEntity(PhotoEntity photo) {
+    return _CreateSearchPhotoRecord(id: photo.id);
+  }
+
+  final int id;
+}
+
+class _CreateSearchMergeRequest {
+  const _CreateSearchMergeRequest({
+    required this.exactRecords,
+    required this.relatedRecords,
+    required this.maxResults,
+  });
+
+  final List<_CreateSearchPhotoRecord> exactRecords;
+  final List<_CreateSearchPhotoRecord> relatedRecords;
+  final int maxResults;
+}
+
+List<int> _mergeCreateSearchPhotoIds(_CreateSearchMergeRequest request) {
+  final mergedIds = <int>[];
+  final seen = <int>{};
+
+  for (final record in [...request.exactRecords, ...request.relatedRecords]) {
+    if (seen.add(record.id)) {
+      mergedIds.add(record.id);
+    }
+    if (mergedIds.length >= request.maxResults) {
+      break;
+    }
+  }
+
+  return mergedIds;
+}
+
+@visibleForTesting
+List<PhotoEntity> mergeCreateSearchPhotosForTesting({
+  required Iterable<PhotoEntity> exactPhotos,
+  required Iterable<PhotoEntity> relatedPhotos,
+  int maxResults = 300,
+}) {
+  return _mergeCreateSearchPhotos(
+    exactPhotos: exactPhotos,
+    relatedPhotos: relatedPhotos,
+    maxResults: maxResults,
+  );
+}
+
+@visibleForTesting
+List<int> mergeCreateSearchPhotoIdsForTesting({
+  required Iterable<PhotoEntity> exactPhotos,
+  required Iterable<PhotoEntity> relatedPhotos,
+  int maxResults = 300,
+}) {
+  return _mergeCreateSearchPhotoIds(
+    _CreateSearchMergeRequest(
+      exactRecords: exactPhotos
+          .map(_CreateSearchPhotoRecord.fromEntity)
+          .toList(growable: false),
+      relatedRecords: relatedPhotos
+          .map(_CreateSearchPhotoRecord.fromEntity)
+          .toList(growable: false),
+      maxResults: maxResults,
+    ),
+  );
+}
+
+List<PhotoEntity> _mergeCreateSearchPhotos({
+  required Iterable<PhotoEntity> exactPhotos,
+  required Iterable<PhotoEntity> relatedPhotos,
+  required int maxResults,
+}) {
+  final merged = <PhotoEntity>[];
+  final seen = <int>{};
+
+  for (final photo in [...exactPhotos, ...relatedPhotos]) {
+    if (seen.add(photo.id)) {
+      merged.add(photo);
+    }
+    if (merged.length >= maxResults) {
+      break;
+    }
+  }
+
+  return merged;
+}
+
 class CreatePage extends StatefulWidget {
   const CreatePage({super.key});
 
@@ -126,6 +216,8 @@ class _CreatePageState extends State<CreatePage> {
   final SemanticPhotoSearchService _semanticPhotoSearchService =
       SemanticPhotoSearchService();
   bool _isSearching = false;
+  String? _searchError;
+  String? _searchNotice;
   static const int _maxSemanticResults = 300;
 
   // 搜索结果
@@ -172,6 +264,8 @@ class _CreatePageState extends State<CreatePage> {
       _isSearching = false;
       _searchResults = <PhotoEntity>[];
       _selectedPhotoIds.clear();
+      _searchError = null;
+      _searchNotice = null;
     });
   }
 
@@ -186,25 +280,36 @@ class _CreatePageState extends State<CreatePage> {
       _isSearching = true;
       _searchResults = <PhotoEntity>[];
       _selectedPhotoIds.clear();
+      _searchError = null;
+      _searchNotice = null;
     });
 
     List<PhotoEntity> matchedPhotos;
+    String? searchError;
+    String? searchNotice;
     try {
       final result = await _semanticPhotoSearchService.search(query.trim());
-      final merged = <PhotoEntity>[];
-      final seen = <int>{};
-      for (final photo in [...result.exactPhotos, ...result.relatedPhotos]) {
-        if (photo.isProbablyScreenshot) {
-          continue;
-        }
-        if (seen.add(photo.id)) {
-          merged.add(photo);
-        }
-        if (merged.length >= _maxSemanticResults) {
-          break;
-        }
-      }
-      matchedPhotos = merged;
+      searchNotice = result.noExactMatchMessage;
+      final photoById = <int, PhotoEntity>{
+        for (final photo in [...result.exactPhotos, ...result.relatedPhotos])
+          photo.id: photo,
+      };
+      final mergedIds = await compute(
+        _mergeCreateSearchPhotoIds,
+        _CreateSearchMergeRequest(
+          exactRecords: result.exactPhotos
+              .map(_CreateSearchPhotoRecord.fromEntity)
+              .toList(growable: false),
+          relatedRecords: result.relatedPhotos
+              .map(_CreateSearchPhotoRecord.fromEntity)
+              .toList(growable: false),
+          maxResults: _maxSemanticResults,
+        ),
+      );
+      matchedPhotos = mergedIds
+          .map((id) => photoById[id])
+          .whereType<PhotoEntity>()
+          .toList(growable: false);
       _logDebug(
         '🧠 [统一语义检索] exact=${result.exactPhotos.length} '
         'related=${result.relatedPhotos.length} '
@@ -213,6 +318,7 @@ class _CreatePageState extends State<CreatePage> {
     } catch (e) {
       _logDebug('⚠️ 统一语义检索失败: $e');
       matchedPhotos = const <PhotoEntity>[];
+      searchError = e.toString().replaceFirst(RegExp(r'^\w+Exception:\s*'), '');
     }
 
     _logDebug("🎯 [综合过滤] 最终命中照片数: ${matchedPhotos.length}");
@@ -220,6 +326,8 @@ class _CreatePageState extends State<CreatePage> {
     if (mounted) {
       setState(() {
         _searchResults = matchedPhotos;
+        _searchError = searchError;
+        _searchNotice = searchNotice;
         _selectedPhotoIds
           ..clear()
           ..addAll(matchedPhotos.map((photo) => photo.id));
@@ -377,6 +485,8 @@ class _CreatePageState extends State<CreatePage> {
                             color: Color(0xFFD17EAD),
                           ),
                         )
+                      : _searchError != null
+                      ? _buildSearchErrorState()
                       : _searchResults.isEmpty
                       ? _buildEmptyState()
                       : _buildPhotoGrid(),
@@ -487,7 +597,7 @@ class _CreatePageState extends State<CreatePage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '为您搜集到${_searchResults.length}张相关照片',
+                  _searchNotice ?? '为您搜集到${_searchResults.length}张匹配照片',
                   style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
                 ),
               ],
@@ -563,7 +673,7 @@ class _CreatePageState extends State<CreatePage> {
   // 🖼️ 构建无黑罩的照片网格
   Widget _buildPhotoGrid() {
     return GridView.builder(
-      cacheExtent: 700,
+      scrollCacheExtent: const ScrollCacheExtent.pixels(700),
       padding: const EdgeInsets.only(
         left: 20,
         right: 20,
@@ -580,8 +690,6 @@ class _CreatePageState extends State<CreatePage> {
       itemBuilder: (context, index) {
         final photo = _searchResults[index];
         final isSelected = _selectedPhotoIds.contains(photo.id);
-        final file = File(photo.path);
-
         return GestureDetector(
           onTap: () => _toggleSelection(photo.id),
           child: Stack(
@@ -589,7 +697,17 @@ class _CreatePageState extends State<CreatePage> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(18),
-                child: PathImage(path: file.path, fit: BoxFit.cover),
+                child: MediaThumbnail(
+                  path: photo.path,
+                  assetId: photo.assetId,
+                  kind: MediaTypeHelper.fromStorageValue(
+                    photo.mediaKind,
+                    path: photo.path,
+                  ),
+                  thumbnailBytes: photo.thumbnailBytes,
+                  fit: BoxFit.cover,
+                  showBadge: false,
+                ),
               ),
 
               // 2. 右上角的选择指示器 (无黑罩，还原设计图的清爽感)
@@ -769,6 +887,38 @@ class _CreatePageState extends State<CreatePage> {
             ).textTheme.bodyLarge?.copyWith(color: Colors.grey),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSearchErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline_rounded,
+              size: 72,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            const SizedBox(height: 16),
+            Text('搜索未完成', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text(
+              _searchError ?? '未知错误',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              onPressed: () => _performSearch(_searchController.text),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('重试'),
+            ),
+          ],
+        ),
       ),
     );
   }

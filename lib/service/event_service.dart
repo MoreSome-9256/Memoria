@@ -1,4 +1,4 @@
-/// 事件聚合服务，负责按时间、位置和内容把照片整理成事件。
+// 事件聚合服务，负责按时间、位置和内容把照片整理成事件。
 
 import '../data/tag_taxonomy_v2.dart';
 import '../models/entity/photo_entity.dart';
@@ -10,7 +10,7 @@ import '../utils/tag_sanitizer.dart';
 import '../utils/event_cluster_helper.dart';
 import '../utils/smart_title_generator.dart';
 import '../service/llm_service.dart';
-import '../service/amap_geo_service.dart';
+import 'geo_cell_cache_service.dart';
 import 'junk_photo_filter_service.dart';
 
 class EventService {
@@ -52,11 +52,14 @@ class EventService {
     initialTimeThresholdHours: 4,
     baseDistanceThresholdKm: 12,
     sameCityTimeThresholdHours: 6,
-    sameCityDistanceThresholdKm: 20,
+    sameCityDistanceThresholdKm: 12,
     fallbackSameCityDistanceKm: 45,
     sameDayMergeGapHours: 10,
     crossDayMergeGapHours: 18,
     minPhotosPerClusterForMerge: 1,
+    shortTimeLocationSplitHours: 2,
+    shortTimeLocationSplitDistanceKm: 12,
+    maxMergeDistanceKm: 12,
     enableSameDayTravelMerge: true,
     enableCrossDayTravelMerge: true,
   );
@@ -89,7 +92,7 @@ class EventService {
     if (maxPhotos != null) query.limit = maxPhotos;
     final recentPhotos = query
         .find()
-        .where((photo) => !JunkPhotoFilterService.isQuarantined(photo.aiTags))
+        .where((photo) => !JunkPhotoFilterService.isConfirmedJunk(photo.aiTags))
         .toList(growable: false);
     query.close();
 
@@ -181,10 +184,9 @@ class EventService {
     for (final event in events) {
       try {
         print("开始解析事件地址: id=${event.id}");
-        final addr = await AmapGeoService.reverseGeocode(
+        final addr = await GeoCellCacheService.instance.reverseGeocode(
           latitude: event.avgLatitude!,
           longitude: event.avgLongitude!,
-          extensions: 'all',
         );
 
         if (addr == null) {
@@ -273,10 +275,9 @@ class EventService {
       if (lat == null || lon == null) continue;
 
       try {
-        final addr = await AmapGeoService.reverseGeocode(
+        final addr = await GeoCellCacheService.instance.reverseGeocode(
           latitude: lat,
           longitude: lon,
-          extensions: 'all',
         );
 
         if (addr == null) {
@@ -287,12 +288,22 @@ class EventService {
         store.runInTransaction(TxMode.write, () {
           final latest = photoBox.get(photo.id);
           if (latest == null) return;
+          latest.country = addr.country;
           latest.province = addr.province;
           latest.city = addr.city;
           latest.district = addr.district;
           latest.locationName = addr.locationName;
           latest.adcode = addr.adcode;
           latest.formattedAddress = addr.formattedAddress;
+          latest.township = addr.township;
+          latest.businessAreaText = addr.businessAreaText;
+          latest.aoiNameText = addr.aoiNameText;
+          latest.poiNameText = addr.poiNameText;
+          latest.aoiIdText = addr.aoiIdText;
+          latest.poiIdText = addr.poiIdText;
+          latest.geoTextTokens = addr.geoTextTokens;
+          latest.geoIndexedAt = DateTime.now().millisecondsSinceEpoch;
+          latest.geoIndexVersion = 1;
           latest.isLocationProcessed = true;
           photoBox.put(latest);
         });
@@ -420,7 +431,12 @@ class EventService {
                   .and(PhotoEntity_.isAiAnalyzed.equals(true)),
             )
             .build();
-        final analyzedPhotos = analyzedQ.find();
+        final analyzedPhotos = analyzedQ
+            .find()
+            .where(
+              (photo) => !JunkPhotoFilterService.isConfirmedJunk(photo.aiTags),
+            )
+            .toList(growable: false);
         analyzedQ.close();
 
         if (analyzedPhotos.isEmpty) {
@@ -626,12 +642,8 @@ class EventService {
         }
       }
 
-      if (photo.isProbablyScreenshot) {
-        addTag('截图');
-      }
-
       if (textTags.isEmpty) {
-        addTag(photo.isProbablyScreenshot ? '屏幕' : '文字');
+        addTag('文字');
       }
 
       return textTags.take(5).toList(growable: false);
@@ -648,10 +660,7 @@ class EventService {
     final ocrText = OcrPolicy.effectiveText(photo.ocrText);
     final textLikeAiCount = aiTags.where(_textSceneTags.contains).length;
 
-    return photo.isProbablyScreenshot ||
-        ocrTags.length >= 2 ||
-        ocrText.length >= 12 ||
-        textLikeAiCount >= 2;
+    return ocrTags.length >= 2 || ocrText.length >= 12 || textLikeAiCount >= 2;
   }
 
   bool _looksUsefulOcrTag(String tag) {

@@ -1,21 +1,20 @@
-/// 应用入口文件。
-///
-/// 这里负责启动 Flutter 应用，并在首屏展示前完成基础运行时准备：
-/// 初始化绑定、配置 Amplify Cognito、启动 ObjectBox、恢复待处理的 AI
-/// 分析任务，以及根据登录状态在欢迎页和主应用树之间分流。
-///
-/// 调试页和 AI 能力开关都从应用设置或开发者入口进入，不在启动时预热模型。
+// 应用入口文件。
+//
+// 这里负责启动 Flutter 应用，并在首屏展示前完成基础运行时准备：
+// 初始化绑定、配置 Amplify Cognito、启动 ObjectBox、恢复待处理的 AI
+// 分析任务，以及根据登录状态在欢迎页和主应用树之间分流。
+//
+// 调试页和 AI 能力开关都从应用设置或开发者入口进入，不在启动时预热模型。
 
 import 'dart:async';
 
-import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
-import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:photo_album/service/amplify_cognito_config.dart';
 import 'package:photo_album/service/album_refresh_service.dart';
+import 'package:photo_album/service/amplify_auth_bootstrap_service.dart';
 import 'package:photo_album/service/app_ai_settings_service.dart';
 import 'package:photo_album/service/cognito_auth_service.dart';
+import 'package:photo_album/service/media_permission_service.dart';
 import 'package:photo_album/service/photo_service.dart';
 import 'package:photo_album/service/ai_progress_notification_service.dart';
 import 'package:photo_album/service/unified_analysis_pipeline_service.dart';
@@ -31,20 +30,6 @@ void main() async {
   PaintingBinding.instance.imageCache.maximumSizeBytes = 200 * 1024 * 1024;
   PaintingBinding.instance.imageCache.maximumSize = 800;
   runApp(const MyApp());
-}
-
-Future<void> _configureAmplifyAuth() async {
-  try {
-    if (Amplify.isConfigured) {
-      return;
-    }
-    await Amplify.addPlugin(AmplifyAuthCognito());
-    await Amplify.configure(AmplifyCognitoConfig.build());
-  } on FormatException catch (e) {
-    debugPrint('Amplify auth skipped: ${e.message}');
-  } catch (e) {
-    debugPrint('Amplify auth configure failed: $e');
-  }
 }
 
 class MyApp extends StatelessWidget {
@@ -108,9 +93,13 @@ class _StartupGateState extends State<_StartupGate> {
 
 class _AppStartupCoordinator {
   Future<void>? _startupFuture;
+  bool _authConfigured = false;
 
   Future<_LaunchTarget> resolveLaunchTarget() async {
     await _ensureStartupComplete();
+    if (!_authConfigured) {
+      return _LaunchTarget.welcome;
+    }
     final signedIn = await const CognitoAuthService().tryIsSignedIn();
     return signedIn == false ? _LaunchTarget.welcome : _LaunchTarget.signedIn;
   }
@@ -121,7 +110,7 @@ class _AppStartupCoordinator {
     }
     _startupFuture = Future<void>(() async {
       await AIProgressNotificationService().initialize();
-      await _configureAmplifyAuth();
+      _authConfigured = await AmplifyAuthBootstrapService.ensureConfigured();
       try {
         await ObjectBoxService().init();
       } catch (error) {
@@ -134,16 +123,20 @@ class _AppStartupCoordinator {
         'OCR policy: ml_kit_enabled=${OcrPolicy.mlKitEnabled} (runtime setting)',
       );
       if (aiSettings.autoAnalyzeNewPhotos) {
-        unawaited(
-          AlbumRefreshService().startRefresh(
-            clearCacheFirst: false,
-            analyzeWithAi: true,
-          ),
-        );
+        if (await MediaPermissionService.hasAnalysisPermissions()) {
+          unawaited(
+            AlbumRefreshService().startRefresh(
+              clearCacheFirst: false,
+              analyzeWithAi: true,
+            ),
+          );
+        }
       } else if (aiSettings.autoResumeAnalysis) {
-        unawaited(
-          UnifiedAnalysisPipelineService().startPendingAnalysisCandidates(),
-        );
+        if (await MediaPermissionService.hasAnalysisPermissions()) {
+          unawaited(
+            UnifiedAnalysisPipelineService().startPendingAnalysisCandidates(),
+          );
+        }
       }
     });
     return _startupFuture!;

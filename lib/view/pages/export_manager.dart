@@ -34,6 +34,9 @@ class ExportManager {
     required bool useCameraFrame,
     required bool useGlowRing,
     required bool useCloudBorder,
+    // 🌟 新增滤镜参数
+    required double imageSaturation,
+    required String imageFilterType,
     int? storyEntityId,
     /// 若提供，导出完成后直接调起系统分享，不弹"导出成功"对话框
     void Function(String videoPath)? onShareReady,
@@ -85,10 +88,14 @@ class ExportManager {
                       useCameraFrame: useCameraFrame,
                       useGlowRing: useGlowRing,
                       useCloudBorder: useCloudBorder,
+                      // 🌟 新增：把参数继续往下传给打工仔
+                      imageSaturation: imageSaturation,
+                      imageFilterType: imageFilterType,
                        storyEntityId: storyEntityId,
                        onProgress: (p) => progressNotifier.value = p,
                        onComplete: (String finalPath, Future<String>? aiCopy) {
-                        overlayEntry.remove();
+                        if (overlayEntry.mounted) overlayEntry.remove();
+                        progressNotifier.dispose();
                         isExporting = false;
 
                         if (onShareReady != null) {
@@ -104,6 +111,17 @@ class ExportManager {
                             sections,
                           );
                         }
+                      },
+                      onError: (error, stackTrace) {
+                        if (overlayEntry.mounted) overlayEntry.remove();
+                        progressNotifier.dispose();
+                        isExporting = false;
+                        ScaffoldMessenger.of(rootNavigator.context).showSnackBar(
+                          SnackBar(
+                            behavior: SnackBarBehavior.fixed,
+                            content: Text('视频导出失败：$error'),
+                          ),
+                        );
                       },
                     ),
                   ),

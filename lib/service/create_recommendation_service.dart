@@ -6,8 +6,10 @@ import '../models/vo/semantic_search_models.dart';
 import '../objectbox.g.dart';
 import '../storage/objectbox/objectbox_service.dart';
 import 'photo_service.dart';
+import 'app_ai_settings_service.dart';
 import 'junk_photo_filter_service.dart';
 import 'recommendation_query_template_service.dart';
+import 'searchable_photo_policy.dart';
 import 'semantic_photo_search_service.dart';
 import 'semantic_query_parser_service.dart';
 
@@ -28,6 +30,7 @@ class CreateRecommendationService {
   static const int _normalRefreshBudget = 4;
   static const int _forceRefreshBudget = 8;
   static const int _recommendationRefreshConcurrency = 3;
+  static const int _locationPresetPhotoSample = 2000;
 
   final RecommendationQueryTemplateService _templateService =
       RecommendationQueryTemplateService();
@@ -44,7 +47,17 @@ class CreateRecommendationService {
     final recBox = store.box<CreateRecommendationEntity>();
     final now = DateTime.now();
     final nowMs = now.millisecondsSinceEpoch;
-    final photos = photoBox.getAll();
+    final photoQuery = photoBox
+        .query(PhotoEntity_.isAiAnalyzed.equals(true))
+        .order(PhotoEntity_.timestamp, flags: Order.descending)
+        .build();
+    photoQuery.limit = _locationPresetPhotoSample;
+    final settings = await AppAiSettingsService.instance.load();
+    final photos = SearchablePhotoPolicy.filter(
+      photoQuery.find(),
+      settings: settings,
+    );
+    photoQuery.close();
     final presets = _buildPresets(now, photos);
     final presetKeys = presets.map((item) => item.recommendationKey).toSet();
     final existing = recBox.getAll();
@@ -233,6 +246,12 @@ class CreateRecommendationService {
       ..nextCheckAt = nowMs + refreshInterval.inMilliseconds;
 
     store.runInTransaction(TxMode.write, () => recBox.put(entity));
+  }
+
+  List<PhotoEntity> mergeRecommendationPhotosForTesting(
+    SemanticSearchResult result,
+  ) {
+    return _mergeRecommendationPhotos(result);
   }
 
   List<_ResolvedRecommendationPreset> _buildPresets(
@@ -764,7 +783,7 @@ class CreateRecommendationService {
     final merged = <PhotoEntity>[];
     final seen = <int>{};
     for (final photo in result.exactPhotos) {
-      if (!seen.add(photo.id) || _isConfirmedJunk(photo)) continue;
+      if (!seen.add(photo.id) || _isQuarantinedJunk(photo)) continue;
       if (result.query.isMetadataOnly) {
         merged.add(photo);
         continue;
@@ -783,9 +802,8 @@ class CreateRecommendationService {
     return merged;
   }
 
-  bool _isConfirmedJunk(PhotoEntity photo) {
-    return photo.aiTags?.contains(JunkPhotoFilterService.junkCandidateTag) ??
-        false;
+  bool _isQuarantinedJunk(PhotoEntity photo) {
+    return JunkPhotoFilterService.isQuarantined(photo.aiTags);
   }
 
   String _buildFingerprint(List<PhotoEntity> photos) {
@@ -810,9 +828,6 @@ class CreateRecommendationService {
 
   double _coverScore(PhotoEntity photo) {
     var score = 0.0;
-    if (!photo.isProbablyScreenshot) {
-      score += 2.0;
-    }
     if ((photo.aiCaption ?? '').trim().isNotEmpty) {
       score += 0.2;
     }

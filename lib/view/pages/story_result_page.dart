@@ -1,8 +1,10 @@
-/// 故事结果页面，展示生成后的故事内容和分享入口。
+// 故事结果页面，展示生成后的故事内容和分享入口。
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -19,7 +21,8 @@ import '../../models/vo/photo.dart';
 import '../../models/vo/story_section.dart';
 import '../../service/story_service.dart';
 import '../../utils/ocr_policy.dart';
-import '../widgets/path_image.dart';
+import '../widgets/photo_image.dart';
+import '../widgets/asset_backed_image.dart';
 import 'digital_album_book_page.dart';
 import 'story_video_page.dart';
 import '../../storage/objectbox/objectbox_service.dart';
@@ -172,7 +175,6 @@ class StoryResultPage extends StatefulWidget {
           photoEntity.city ??
           photoEntity.province ??
           '未知地点',
-      path: photoEntity.path,
       dateTaken: DateTime.fromMillisecondsSinceEpoch(photoEntity.timestamp),
       tags: photoEntity.aiTags ?? const <String>[],
       caption: photoEntity.aiCaption?.trim(),
@@ -230,9 +232,6 @@ class StoryResultPage extends StatefulWidget {
     final overrideVlmCaption = overridePhoto.vlmCaption?.trim();
 
     return basePhoto.copyWith(
-      path: overridePhoto.path.trim().isNotEmpty
-          ? overridePhoto.path
-          : basePhoto.path,
       location: (overrideLocation?.isNotEmpty ?? false)
           ? overridePhoto.location
           : basePhoto.location,
@@ -268,6 +267,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
   bool _isSaving = false;
   bool _hasSaved = false;
   bool _isSaved = false;
+  int? _liveStoryEntityId;
 
   @override
   void initState() {
@@ -286,6 +286,131 @@ class _StoryResultPageState extends State<StoryResultPage> {
           _isSaved = story.isManuallySaved;
         });
       }
+    } catch (_) {}
+  }
+
+  int? get _effectiveStoryEntityId =>
+      widget.storyEntityId ?? _liveStoryEntityId;
+
+  Future<int?> _ensureStoryEntity() async {
+    final existing = _effectiveStoryEntityId;
+    if (existing != null) return existing;
+
+    try {
+      final sectionMaps = _sections
+          .map(
+            (section) => <String, dynamic>{
+              'text': section.text,
+              'photo': section.photo,
+            },
+          )
+          .toList(growable: false);
+
+      final story = StoryEntity()
+        ..title = widget.title
+        ..subtitle = widget.subtitle
+        ..content = StoryEntity.sectionsToMarkdown(sectionMaps)
+        ..createdAt = DateTime.now().millisecondsSinceEpoch
+        ..updatedAt = DateTime.now().millisecondsSinceEpoch
+        ..eventId = 0
+        ..photoIds = _photoEntityIdsForSections(_sections)
+        ..photoCount = _sections.length
+        ..isManuallySaved = false;
+
+      final store = ObjectBoxService().store;
+      final storyBox = store.box<StoryEntity>();
+      storyBox.put(story);
+
+      if (mounted) {
+        setState(() {
+          _liveStoryEntityId = story.id;
+        });
+      }
+      return story.id;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  List<int> _photoEntityIdsForSections(Iterable<StorySection> sections) {
+    final ids = <int>[];
+    try {
+      final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+      for (final section in sections) {
+        final assetId = section.photo.id.trim();
+        if (assetId.isEmpty) {
+          continue;
+        }
+        final query = photoBox
+            .query(PhotoEntity_.assetId.equals(assetId))
+            .build();
+        query.limit = 1;
+        final photo = query.findFirst();
+        query.close();
+        if (photo != null && photo.id != 0) {
+          ids.add(photo.id);
+        }
+      }
+    } catch (_) {}
+    return ids;
+  }
+
+  List<StorySection> _sectionsWithResolvedPhotos(
+    Iterable<StorySection> sections,
+  ) {
+    final resolved = <StorySection>[];
+    try {
+      final photoBox = ObjectBoxService().store.box<PhotoEntity>();
+      for (final section in sections) {
+        final assetId = section.photo.id.trim();
+        PhotoEntity? entity;
+        if (assetId.isNotEmpty) {
+          final query = photoBox
+              .query(PhotoEntity_.assetId.equals(assetId))
+              .build();
+          query.limit = 1;
+          entity = query.findFirst();
+          query.close();
+        }
+        final photo = entity == null
+            ? section.photo
+            : StoryResultPage._mergePhotoEntityData(section.photo, entity);
+        resolved.add(section.copyWith(photo: photo));
+      }
+    } catch (_) {
+      return _sections.toList(growable: false);
+    }
+    return resolved;
+  }
+
+  Future<void> _syncUnsavedStoryDraft(
+    int storyEntityId,
+    List<StorySection> sections,
+  ) async {
+    try {
+      final store = ObjectBoxService().store;
+      final storyBox = store.box<StoryEntity>();
+      final story = storyBox.get(storyEntityId);
+      if (story == null || story.isManuallySaved) {
+        return;
+      }
+
+      final sectionMaps = sections
+          .map(
+            (section) => <String, dynamic>{
+              'text': section.text,
+              'photo': section.photo,
+            },
+          )
+          .toList(growable: false);
+      story
+        ..title = widget.title
+        ..subtitle = widget.subtitle
+        ..content = StoryEntity.sectionsToMarkdown(sectionMaps)
+        ..updatedAt = DateTime.now().millisecondsSinceEpoch
+        ..photoIds = _photoEntityIdsForSections(sections)
+        ..photoCount = sections.length;
+      storyBox.put(story);
     } catch (_) {}
   }
 
@@ -328,10 +453,14 @@ class _StoryResultPageState extends State<StoryResultPage> {
     if (_isSaving) {
       return;
     }
-    if (widget.storyEntityId == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('无法保存：缺少故事 ID')));
+
+    final storyEntityId = _effectiveStoryEntityId ?? await _ensureStoryEntity();
+    if (storyEntityId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('无法保存：缺少故事 ID')));
+      }
       return;
     }
 
@@ -342,7 +471,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
     try {
       final store = ObjectBoxService().store;
       final storyBox = store.box<StoryEntity>();
-      final story = storyBox.get(widget.storyEntityId!);
+      final story = storyBox.get(storyEntityId);
       if (story == null) {
         throw StateError('Story not found');
       }
@@ -427,32 +556,21 @@ class _StoryResultPageState extends State<StoryResultPage> {
       return;
     }
 
-    // 如果有缓存的视频，直接分享视频
-    if (widget.storyEntityId != null) {
-      try {
-        final store = ObjectBoxService().store;
-        final storyBox = store.box<StoryEntity>();
-        final story = storyBox.get(widget.storyEntityId!);
-        if (story?.cachedVideoPath != null &&
-            await File(story!.cachedVideoPath!).exists()) {
-          final caption = [
-            widget.title,
-            if (widget.subtitle.trim().isNotEmpty) widget.subtitle.trim(),
-          ].join(' · ');
-          await Share.shareXFiles([
-            XFile(story.cachedVideoPath!, mimeType: 'video/mp4'),
-          ], text: caption);
-          return;
-        }
-      } catch (_) {
-        // 视频分享失败，回退到海报分享
-      }
-    }
-
     int styleIndex = 0;
 
     while (mounted) {
-      final posterFile = await _generateSharePosterFile(styleIndex: styleIndex);
+      late final File posterFile;
+      try {
+        posterFile = await _generateSharePosterFile(styleIndex: styleIndex);
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('分享长图生成失败，图片资源未能完整加载: $error')));
+        return;
+      }
       final storyCaption = [
         widget.title,
         if (widget.subtitle.trim().isNotEmpty) widget.subtitle.trim(),
@@ -498,7 +616,13 @@ class _StoryResultPageState extends State<StoryResultPage> {
   }
 
   Future<File> _generateSharePosterFile({int styleIndex = 0}) async {
-    await _precachePosterImages();
+    final photos = <Photo>[
+      widget.heroImage,
+      ..._sections.map((section) => section.photo),
+    ];
+    final resolvedImageBytes = await _resolvePosterImageBytes(photos);
+    await _precachePosterImages(resolvedImageBytes.values);
+
     if (!mounted || !context.mounted) {
       throw StateError('Share poster generation was cancelled');
     }
@@ -517,30 +641,23 @@ class _StoryResultPageState extends State<StoryResultPage> {
     late OverlayEntry overlayEntry;
     overlayEntry = OverlayEntry(
       builder: (overlayContext) {
-        return Positioned.fill(
+        return Positioned(
+          top: -99999,
+          left: 0,
           child: Material(
-            color: Colors.transparent,
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: OverflowBox(
-                alignment: Alignment.topCenter,
-                minWidth: 1080,
-                maxWidth: 1080,
-                minHeight: 0,
-                maxHeight: double.infinity,
-                child: SizedBox(
-                  width: 1080,
-                  child: RepaintBoundary(
-                    key: boundaryKey,
-                    child: _StorySharePoster(
-                      title: widget.title,
-                      subtitle: widget.subtitle,
-                      heroImage: widget.heroImage,
-                      sections: _sections,
-                      targetPlatform: widget.targetPlatform,
-                      styleIndex: styleIndex,
-                    ),
-                  ),
+            type: MaterialType.transparency,
+            child: SizedBox(
+              width: 1080,
+              child: RepaintBoundary(
+                key: boundaryKey,
+                child: _StorySharePoster(
+                  title: widget.title,
+                  subtitle: widget.subtitle,
+                  heroImage: widget.heroImage,
+                  sections: _sections,
+                  targetPlatform: widget.targetPlatform,
+                  styleIndex: styleIndex,
+                  resolvedImageBytes: resolvedImageBytes,
                 ),
               ),
             ),
@@ -553,11 +670,24 @@ class _StoryResultPageState extends State<StoryResultPage> {
 
     try {
       await WidgetsBinding.instance.endOfFrame;
-      await Future<void>.delayed(const Duration(milliseconds: 80));
 
       final renderObject = boundaryKey.currentContext?.findRenderObject();
       if (renderObject is! RenderRepaintBoundary) {
         throw StateError('Share poster is not ready');
+      }
+
+      int frameCount = 0;
+      while (frameCount < 8) {
+        final completer = Completer<void>();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!completer.isCompleted) completer.complete();
+        });
+        await completer.future;
+        frameCount++;
+        if (frameCount >= 3) {
+          final size = renderObject.size;
+          if (size.height > 100) break;
+        }
       }
 
       final image = await renderObject.toImage(pixelRatio: 2.0);
@@ -573,46 +703,64 @@ class _StoryResultPageState extends State<StoryResultPage> {
     }
   }
 
-  Future<void> _precachePosterImages() async {
-    final paths = <String>{
-      widget.heroImage.path,
-      for (final section in _sections) section.photo.path,
-    }.where((item) => item.trim().isNotEmpty).take(16).toList(growable: false);
-
-    for (final imagePath in paths) {
-      final uri = Uri.tryParse(imagePath);
-      final scheme = uri?.scheme.toLowerCase();
-      final provider = scheme == 'http' || scheme == 'https'
-          ? NetworkImage(imagePath) as ImageProvider
-          : FileImage(_localImageFile(imagePath, uri));
-      try {
-        await precacheImage(
-          provider,
-          context,
-        ).timeout(const Duration(milliseconds: 900));
-      } catch (_) {
-        // Missing or slow images should not block sharing; poster widgets show
-        // their own placeholder if an image cannot be decoded in time.
+  Future<Map<String, Uint8List>> _resolvePosterImageBytes(
+    Iterable<Photo> photos,
+  ) async {
+    final resolved = <String, Uint8List>{};
+    final uniquePhotos = <String, Photo>{};
+    for (final photo in photos) {
+      final assetId = photo.id.trim();
+      if (assetId.isEmpty) {
+        throw StateError('照片缺少 assetId，无法生成分享长图');
       }
+      uniquePhotos.putIfAbsent(assetId, () => photo);
     }
+
+    for (final entry in uniquePhotos.entries) {
+      if (resolved.containsKey(entry.key)) {
+        continue;
+      }
+      final bytes = await resolveAssetBackedImageBytes(entry.value);
+      if (bytes == null || bytes.isEmpty) {
+        throw StateError('无法读取照片 ${entry.key} 的系统缩略图');
+      }
+      resolved[entry.key] = bytes;
+    }
+
+    if (resolved.length != uniquePhotos.length) {
+      throw StateError(
+        '分享长图图片加载不完整: ${resolved.length}/${uniquePhotos.length}',
+      );
+    }
+    return resolved;
   }
 
-  File _localImageFile(String imagePath, Uri? uri) {
-    if (uri != null && uri.scheme.toLowerCase() == 'file') {
-      return File(uri.toFilePath());
+  Future<void> _precachePosterImages(Iterable<Uint8List> byteSets) async {
+    if (!mounted) return;
+    for (final bytes in byteSets) {
+      if (bytes.isEmpty) continue;
+      await precacheImage(MemoryImage(bytes), context);
     }
-    return File(imagePath);
   }
 
   Future<void> _openDigitalAlbum() async {
+    final storyEntityId = _effectiveStoryEntityId ?? await _ensureStoryEntity();
+    if (!mounted) return;
+
+    final albumSections = _sectionsWithResolvedPhotos(_sections);
+    if (storyEntityId != null) {
+      await _syncUnsavedStoryDraft(storyEntityId, albumSections);
+    }
+    if (!mounted) return;
+
     final result = await Navigator.of(context).push<DigitalAlbumBookResult>(
       MaterialPageRoute<DigitalAlbumBookResult>(
         builder: (context) => DigitalAlbumBookPage(
           title: widget.title,
           subtitle: widget.subtitle,
-          sections: _sections,
+          sections: albumSections,
           storyTemplateId: widget.storyTemplateId,
-          storyEntityId: widget.storyEntityId,
+          storyEntityId: storyEntityId,
         ),
       ),
     );
@@ -632,17 +780,12 @@ class _StoryResultPageState extends State<StoryResultPage> {
     }
 
     final playbackSections = <StorySection>[];
-    for (var index = 0; index < _sections.length; index++) {
-      final section = _sections[index];
-      final indexedCaption =
-          widget.videoCaptions != null && index < widget.videoCaptions!.length
-          ? widget.videoCaptions![index].trim()
-          : '';
+    for (final section in _sections) {
       final mappedCaption =
           widget.videoCaptionByPhotoId[section.photo.id]?.trim() ?? '';
-      final preferredCaption = indexedCaption.isNotEmpty
-          ? indexedCaption
-          : (mappedCaption.isNotEmpty ? mappedCaption : section.text);
+      final preferredCaption = mappedCaption.isNotEmpty
+          ? mappedCaption
+          : section.text;
       playbackSections.add(section.copyWith(text: preferredCaption));
     }
 
@@ -669,11 +812,12 @@ class _StoryResultPageState extends State<StoryResultPage> {
 
     // 解析音乐文件路径（优先从数据库二进制恢复）
     String? resolvedMusicPath;
-    if (widget.storyEntityId != null) {
+    final storyEntityId = _effectiveStoryEntityId;
+    if (storyEntityId != null) {
       try {
         final store = ObjectBoxService().store;
         final storyBox = store.box<StoryEntity>();
-        final story = storyBox.get(widget.storyEntityId!);
+        final story = storyBox.get(storyEntityId);
         if (story != null) {
           resolvedMusicPath = await StoryService.resolveMusicFile(story);
         }
@@ -683,10 +827,10 @@ class _StoryResultPageState extends State<StoryResultPage> {
 
     // 从数据库恢复上次导出的视频参数
     Map<String, dynamic>? savedParams;
-    if (widget.storyEntityId != null) {
+    if (storyEntityId != null) {
       try {
         final storyBox = ObjectBoxService().store.box<StoryEntity>();
-        final story = storyBox.get(widget.storyEntityId!);
+        final story = storyBox.get(storyEntityId);
         if (story?.videoParamsJson != null) {
           savedParams =
               jsonDecode(story!.videoParamsJson!) as Map<String, dynamic>;
@@ -694,6 +838,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
       } catch (_) {}
     }
 
+    if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => StoryVideoPage(
@@ -704,7 +849,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
           isHorizontal: widget.isHorizontal,
           dynamicBeatData: widget.dynamicBeatData,
           targetPlatform: widget.targetPlatform,
-          storyEntityId: widget.storyEntityId,
+          storyEntityId: storyEntityId,
           onComplete: (_, _) {},
           currentTextStyle:
               savedParams?['currentTextStyle'] as String? ?? 'hero',
@@ -756,7 +901,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
               background: Stack(
                 fit: StackFit.expand,
                 children: [
-                  PathImage(path: widget.heroImage.path, fit: BoxFit.cover),
+                  PhotoImage(photo: widget.heroImage, fit: BoxFit.cover),
                   Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -826,8 +971,8 @@ class _StoryResultPageState extends State<StoryResultPage> {
                       borderRadius: BorderRadius.circular(8),
                       child: AspectRatio(
                         aspectRatio: 4 / 3,
-                        child: PathImage(
-                          path: section.photo.path,
+                        child: PhotoImage(
+                          photo: section.photo,
                           width: double.infinity,
                           height: double.infinity,
                           fit: BoxFit.cover,
@@ -987,6 +1132,7 @@ class _StorySharePoster extends StatelessWidget {
     required this.sections,
     required this.targetPlatform,
     this.styleIndex = 0,
+    this.resolvedImageBytes,
   });
 
   final String title;
@@ -995,6 +1141,7 @@ class _StorySharePoster extends StatelessWidget {
   final List<StorySection> sections;
   final String targetPlatform;
   final int styleIndex;
+  final Map<String, Uint8List>? resolvedImageBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -1209,10 +1356,18 @@ class _StorySharePoster extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 34),
-        _PosterHeroCard(photo: heroImage),
+        _PosterHeroCard(
+          photo: heroImage,
+          resolvedBytes: resolvedImageBytes?[heroImage.id.trim()],
+        ),
         const SizedBox(height: 32),
         for (var index = 0; index < visibleSections.length; index++)
-          _PosterSectionCard(section: visibleSections[index], index: index),
+          _PosterSectionCard(
+            section: visibleSections[index],
+            index: index,
+            resolvedBytes:
+                resolvedImageBytes?[visibleSections[index].photo.id.trim()],
+          ),
         const SizedBox(height: 26),
         Container(
           width: double.infinity,
@@ -1247,9 +1402,10 @@ class _StorySharePoster extends StatelessWidget {
 }
 
 class _PosterHeroCard extends StatelessWidget {
-  const _PosterHeroCard({required this.photo});
+  const _PosterHeroCard({required this.photo, this.resolvedBytes});
 
   final Photo photo;
+  final Uint8List? resolvedBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -1273,9 +1429,10 @@ class _PosterHeroCard extends StatelessWidget {
             clipper: _PosterShapeClipper(style: 2),
             child: AspectRatio(
               aspectRatio: 1.28,
-              child: _PosterPathImage(
-                path: photo.path,
+              child: _PosterPhotoImage(
+                photo: photo,
                 alignment: Alignment.center,
+                resolvedBytes: resolvedBytes,
               ),
             ),
           ),
@@ -1312,10 +1469,15 @@ class _PosterHeroCard extends StatelessWidget {
 }
 
 class _PosterSectionCard extends StatelessWidget {
-  const _PosterSectionCard({required this.section, required this.index});
+  const _PosterSectionCard({
+    required this.section,
+    required this.index,
+    this.resolvedBytes,
+  });
 
   final StorySection section;
   final int index;
+  final Uint8List? resolvedBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -1328,6 +1490,7 @@ class _PosterSectionCard extends StatelessWidget {
         photo: section.photo,
         index: index,
         compact: index % 3 == 1,
+        resolvedBytes: resolvedBytes,
       ),
     );
     final textBlock = _PosterTextBlock(text: text, index: index);
@@ -1351,11 +1514,13 @@ class _PosterFramedImage extends StatelessWidget {
     required this.photo,
     required this.index,
     required this.compact,
+    this.resolvedBytes,
   });
 
   final Photo photo;
   final int index;
   final bool compact;
+  final Uint8List? resolvedBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -1377,9 +1542,10 @@ class _PosterFramedImage extends StatelessWidget {
         clipper: _PosterShapeClipper(style: index % 4),
         child: AspectRatio(
           aspectRatio: compact ? 0.9 : 1.16,
-          child: _PosterPathImage(
-            path: photo.path,
+          child: _PosterPhotoImage(
+            photo: photo,
             alignment: Alignment.center,
+            resolvedBytes: resolvedBytes,
           ),
         ),
       ),
@@ -1443,26 +1609,33 @@ class _PosterTextBlock extends StatelessWidget {
   }
 }
 
-class _PosterPathImage extends StatelessWidget {
-  const _PosterPathImage({
-    required this.path,
+class _PosterPhotoImage extends StatelessWidget {
+  const _PosterPhotoImage({
+    required this.photo,
     this.alignment = Alignment.center,
+    this.resolvedBytes,
   });
 
-  final String path;
+  final Photo photo;
   final AlignmentGeometry alignment;
+  final Uint8List? resolvedBytes;
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(color: Color(0xFFE4DDD0)),
-      child: PathImage(
-        path: path,
+    if (resolvedBytes != null && resolvedBytes!.isNotEmpty) {
+      return Image.memory(
+        resolvedBytes!,
         fit: BoxFit.cover,
         width: double.infinity,
         height: double.infinity,
         alignment: alignment,
-        enableSmartCache: false,
+        gaplessPlayback: true,
+      );
+    }
+    return const ColoredBox(
+      color: Color(0xFFB00020),
+      child: Center(
+        child: Icon(Icons.error_outline, color: Colors.white, size: 48),
       ),
     );
   }

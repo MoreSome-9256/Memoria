@@ -2,9 +2,12 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/services.dart';
+import 'package:photo_manager/photo_manager.dart';
+import 'package:video_player/video_player.dart';
 import 'dart:ui';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:math' as math;
@@ -13,14 +16,14 @@ import '../../models/vo/story_section.dart';
 import '../../effects/subtitle_effect.dart';
 import '../../effects/glitch_effect.dart';
 import '../../effects/static_filters.dart';
-import 'dart:ui' as ui;
-import 'package:flutter/rendering.dart';
 import 'package:path_provider/path_provider.dart';
 import 'export_manager.dart';
 import 'publish_page.dart';
 import '../../service/music_service.dart';
 import '../../service/video_cache_service.dart';
-import '../widgets/path_image.dart';
+import '../../utils/media_type_helper.dart';
+import '../widgets/photo_image.dart';
+import '../widgets/asset_backed_image.dart';
 import '../../models/entity/face_entity.dart';
 import '../../objectbox.g.dart';
 import '../../storage/objectbox/objectbox_service.dart';
@@ -111,12 +114,15 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
   int _currentIndex = 0;
   bool _isPlaying = false;
+  bool _isStartingPlayback = false;
+  bool _hasInitializedPlayback = false;
   StreamSubscription? _positionSubscription;
+  Future<void>? _mediaWarmupFuture;
+  final Map<String, VideoPlayerController> _videoControllers = {};
+  final Map<String, File?> _resolvedMediaFiles = {};
 
-  // 🌟 核心新增：记录音频循环播放的状态
-  int _audioLoopCount = 0; // 记圈器：已经循环了几遍？
-  double _lastAudioPositionMs = 0; // 上一次拿到的播放进度
   int _singleLoopMs = 15000; // 单首音乐的真实长度
+  double _lastTimelinePositionMs = 0;
 
   // 🌟 1. 声明一个本地的可变切片列表
   late List<StorySection> _localSections;
@@ -140,6 +146,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   double _textYPosition = 0.8;
   double _textSize = 24.0;
   final String _fontFamily = 'sans-serif'; // 以后可以接入 Google Fonts
+
+  double _imageSaturation = 1.0; // 默认饱和度为 1.0
+  String _imageFilterType = 'none'; // 默认无滤镜
 
   bool _isExporting = false; // 🌟 控制是否处于导出模式
   double _exportProgress = 0.0; // 🌟 导出百分比 (0.0 到 1.0)
@@ -201,9 +210,82 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       _currentLyricText = "";
     }
 
-    // 🌟 修复 1：挂上离合，踩下油门！
-    _initAudioAndListener(); // 启动音频实时监听
-    _togglePlay(); // 自动开始播放
+    _mediaWarmupFuture = _warmPlaybackMedia();
+    unawaited(_startPlaybackFromBeginning()); // 等资源就绪后自动从头播放
+  }
+
+  Future<void> _warmPlaybackMedia() async {
+    await warmAssetBackedImages(_localSections.map((section) => section.photo));
+    final futures = <Future<void>>[];
+    for (final section in _localSections) {
+      final photo = section.photo;
+      final kind = MediaTypeHelper.fromStorageValue(
+        photo.mediaKind,
+        path: photo.path,
+      );
+      if (kind == MemoriaMediaKind.video ||
+          kind == MemoriaMediaKind.dynamicImage) {
+        futures.add(
+          _resolveMediaFile(photo).then((file) {
+            _resolvedMediaFiles[_mediaControllerKey(photo)] = file;
+          }),
+        );
+      }
+      if (kind == MemoriaMediaKind.video) {
+        futures.add(_prepareVideoController(photo));
+      }
+    }
+    await Future.wait(futures);
+    if (mounted) setState(() {});
+  }
+
+  String _mediaControllerKey(dynamic photo) {
+    final id = (photo.id as String?)?.trim() ?? '';
+    if (id.isNotEmpty) return id;
+    return (photo.path as String?)?.trim() ?? '';
+  }
+
+  Future<File?> _resolveMediaFile(dynamic photo) async {
+    final assetId = (photo.id as String?)?.trim();
+    if (assetId != null && assetId.isNotEmpty) {
+      try {
+        final asset = await AssetEntity.fromId(assetId);
+        final file = await asset?.file;
+        if (file != null && await file.exists()) {
+          return file;
+        }
+      } catch (_) {}
+    }
+
+    final rawPath = (photo.path as String?)?.trim();
+    if (rawPath == null || rawPath.isEmpty) return null;
+    final uri = Uri.tryParse(rawPath);
+    final file = uri?.scheme == 'file' ? File.fromUri(uri!) : File(rawPath);
+    return await file.exists() ? file : null;
+  }
+
+  Future<void> _prepareVideoController(dynamic photo) async {
+    final key = _mediaControllerKey(photo);
+    if (key.isEmpty || _videoControllers.containsKey(key)) return;
+
+    final file = _resolvedMediaFiles[key] ?? await _resolveMediaFile(photo);
+    if (file == null) return;
+
+    VideoPlayerController? controller;
+    try {
+      controller = VideoPlayerController.file(
+        file,
+        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+      );
+      await controller.initialize();
+      await controller.setVolume(0);
+      await controller.setLooping(true);
+      await controller.pause();
+      _videoControllers[key] = controller;
+    } catch (error, stackTrace) {
+      await controller?.dispose();
+      debugPrint('故事视频素材预加载失败: media=${file.path} error=$error\n$stackTrace');
+    }
   }
 
   void _applyBeatData(Map<String, dynamic> beatResponse) {
@@ -239,6 +321,32 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       return 0;
     }
     return index.clamp(0, widget.sections.length - 1).toInt();
+  }
+
+  int _storyTimelineDurationMs() {
+    if (_singleLoopMs > 0) return _singleLoopMs;
+    final sectionCount = _localSections.isEmpty
+        ? widget.sections.length
+        : _localSections.length;
+    if (sectionCount <= 0) return _beatIntervalMs * 8;
+
+    final totalBeatsNeeded = sectionCount * 8;
+    if (_beatData.length > totalBeatsNeeded) {
+      final value = (_beatData[totalBeatsNeeded]['ms'] as num?)?.toInt();
+      if (value != null && value > 0) return value;
+    }
+    return math.max(_beatIntervalMs, totalBeatsNeeded * _beatIntervalMs);
+  }
+
+  int _targetSectionIndexForTime(double currentTimeMs) {
+    final sectionCount = _localSections.isEmpty
+        ? widget.sections.length
+        : _localSections.length;
+    if (sectionCount <= 1) return 0;
+    final durationMs = _storyTimelineDurationMs();
+    if (durationMs <= 0) return 0;
+    final progress = (currentTimeMs / durationMs).clamp(0.0, 0.999999);
+    return _clampSectionIndex((progress * sectionCount).floor());
   }
 
   // ==========================================
@@ -356,46 +464,26 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       debugPrint("⚠️ 已触发本地动态兜底：根据音频时长生成 ${_beatData.length} 个密集节拍");
     }
 
-    // 🌟 2. 核心补丁：无限繁衍节拍数据！
-    // 假设我们粗暴地把它复制 20 遍（足以应付 5 分钟的视频）
-    if (_beatData.isNotEmpty && _beatData.last['ms'] < singleLoopMs * 1.5) {
-      List<Map<String, dynamic>> extendedBeats = [];
-      List<dynamic> originalBeats = List.from(_beatData); // 拷贝原版 15 秒的节拍
-
-      for (int loopIndex = 0; loopIndex < 20; loopIndex++) {
-        // 每循环一次，时间戳就要加上单曲的总时长
-        int timeOffset = loopIndex * singleLoopMs;
-
-        for (var beat in originalBeats) {
-          extendedBeats.add({
-            'ms': (beat['ms'] as int) + timeOffset,
-            'energy': beat['energy'],
-          });
-        }
-      }
-      _beatData = extendedBeats; // 替换成拥有几百个节拍的“超级节拍本”！
-      debugPrint("🔄 已将节拍数据无缝循环扩充至 ${_beatData.length} 个节拍！");
-    }
-
-    // 🌟 3. 设置播放器为无限循环模式
-    await _audioPlayer.setReleaseMode(ReleaseMode.loop);
-    _positionSubscription = _audioPlayer.onPositionChanged.listen((Duration p) {
+    // 音乐本身只播放一遍；完整回忆播完后由 timeline 统一重启画面与音乐。
+    await _audioPlayer.setReleaseMode(ReleaseMode.stop);
+    _positionSubscription = _audioPlayer.onPositionChanged.listen((
+      Duration p,
+    ) async {
       if (_beatData.isEmpty || _isExporting) return; // 导出时不要干扰
 
       double currentPosMs = p.inMilliseconds.toDouble();
 
-      // ==========================================
-      // 🌟 核心补丁：精准捕获“循环重置”瞬间！
-      // ==========================================
-      // 如果当前时间突然比上一次的时间小了超过 1 秒，说明它肯定是从头开始循环了！
-      if (currentPosMs < _lastAudioPositionMs - 1000) {
-        _audioLoopCount++;
-        debugPrint("🔄 音乐第 $_audioLoopCount 次循环，当前真实总时长已延长！");
+      final timelineDurationMs = _storyTimelineDurationMs().toDouble();
+      if (timelineDurationMs > 0 && currentPosMs >= timelineDurationMs) {
+        await _startPlaybackFromBeginning();
+        return;
       }
-      _lastAudioPositionMs = currentPosMs;
 
-      // 🌟 真实的连续时间 = 当前播放条位置 + (已经循环的圈数 * 一圈的总时长)
-      double currentTimeMs = currentPosMs + (_audioLoopCount * _singleLoopMs);
+      final currentTimeMs = currentPosMs;
+      if (currentTimeMs < _lastTimelinePositionMs - 250) {
+        _currentBeatIndexForPreview = -1;
+      }
+      _lastTimelinePositionMs = currentTimeMs;
 
       // 1. 找当前是第几拍
       int targetBeatIndex = 0;
@@ -427,37 +515,86 @@ class _StoryVideoPageState extends State<StoryVideoPage>
           // _enableFlash = false;
         }
 
-        // 🖼️ 决定切图 (每 8 拍切一张)
-        int beatsPerImage = 8;
-        int targetImageIndex = _clampSectionIndex(
-          targetBeatIndex ~/ beatsPerImage,
-        );
+        final targetImageIndex = _targetSectionIndexForTime(currentTimeMs);
 
-        if (mounted) {
+        if (mounted && targetImageIndex != _currentIndex) {
+          final previousPhoto =
+              _localSections[_clampSectionIndex(_currentIndex)].photo;
+          final nextPhoto = _localSections[targetImageIndex].photo;
+          await _restartSectionMedia(previousPhoto, nextPhoto);
           setState(() {
             _currentIndex = targetImageIndex;
-            // 🌟 替换掉之前的 _lyricQueue 逻辑
-            _currentLyricText = widget.sections[_currentIndex].text;
+            _currentLyricText = _localSections[_currentIndex].text;
           });
         }
       }
     });
 
     _audioPlayer.onPlayerComplete.listen((event) {
-      if (mounted) {
-        setState(() {
-          _isPlaying = false;
-          _currentIndex = 0;
-          _currentBeatIndexForPreview = -1;
-          // 🌟 记得在这里把循环记录清零
-          _audioLoopCount = 0;
-          _lastAudioPositionMs = 0;
-          if (widget.sections.isNotEmpty) {
-            _currentLyricText = widget.sections[0].text;
-          }
-        });
-      }
+      if (mounted) unawaited(_startPlaybackFromBeginning());
     });
+
+    _hasInitializedPlayback = true;
+  }
+
+  Future<void> _restartSectionMedia(
+    dynamic previousPhoto,
+    dynamic nextPhoto,
+  ) async {
+    final previous = _videoControllers[_mediaControllerKey(previousPhoto)];
+    if (previous != null) {
+      unawaited(previous.pause());
+    }
+
+    final next = _videoControllers[_mediaControllerKey(nextPhoto)];
+    if (next != null && next.value.isInitialized) {
+      await next.seekTo(Duration.zero);
+      await next.play();
+    }
+  }
+
+  Future<void> _startPlaybackFromBeginning() async {
+    if (_isStartingPlayback) return;
+    _isStartingPlayback = true;
+    try {
+      await _mediaWarmupFuture;
+      if (!_hasInitializedPlayback) {
+        await _initAudioAndListener();
+      }
+      if (!mounted) return;
+
+      _lastTimelinePositionMs = 0;
+      _currentBeatIndexForPreview = -1;
+      final firstIndex = _clampSectionIndex(0);
+      _currentIndex = firstIndex;
+      _currentLyricText = _localSections[firstIndex].text;
+
+      for (final controller in _videoControllers.values) {
+        await controller.pause();
+        await controller.seekTo(Duration.zero);
+      }
+      final firstController =
+          _videoControllers[_mediaControllerKey(
+            _localSections[firstIndex].photo,
+          )];
+      if (firstController != null && firstController.value.isInitialized) {
+        await firstController.play();
+      }
+
+      final playableAudioPath = _resolvePlayableAudioPath();
+      if (playableAudioPath != null) {
+        await _audioPlayer.play(DeviceFileSource(playableAudioPath));
+      } else {
+        await _audioPlayer.play(AssetSource('audio/sandal_leap.mp3'));
+      }
+      if (mounted) {
+        setState(() => _isPlaying = true);
+      }
+    } catch (error, stackTrace) {
+      debugPrint('自动播放启动失败: $error\n$stackTrace');
+    } finally {
+      _isStartingPlayback = false;
+    }
   }
 
   @override
@@ -466,22 +603,27 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     _continuousTimeController.dispose();
     _positionSubscription?.cancel();
     _audioPlayer.dispose();
+    for (final controller in _videoControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
   Future<void> _togglePlay() async {
     if (_isPlaying) {
       await _audioPlayer.pause();
+      final controller =
+          _videoControllers[_mediaControllerKey(
+            _localSections[_clampSectionIndex(_currentIndex)].photo,
+          )];
+      await controller?.pause();
     } else {
-      // 🌟 核心改动：判断音乐来源
-      final playableAudioPath = _resolvePlayableAudioPath();
-      if (playableAudioPath != null) {
-        // 如果是用户手动导入的音乐，使用 DeviceFileSource
-        await _audioPlayer.play(DeviceFileSource(playableAudioPath));
-      } else {
-        // 否则播放 assets 里的默认测试音乐
-        await _audioPlayer.play(AssetSource('audio/sandal_leap.mp3'));
-      }
+      await _audioPlayer.resume();
+      final controller =
+          _videoControllers[_mediaControllerKey(
+            _localSections[_clampSectionIndex(_currentIndex)].photo,
+          )];
+      await controller?.play();
     }
     if (mounted) {
       setState(() {
@@ -695,7 +837,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       return const Scaffold(body: Center(child: Text('无内容')));
     }
 
-    final currentSection = widget.sections[_clampSectionIndex(_currentIndex)];
+    final currentSection = _localSections[_clampSectionIndex(_currentIndex)];
     final mediaQuery = MediaQuery.of(context);
 
     // 🌟 核心判断：当前是不是第 0 帧（片头帧）
@@ -768,9 +910,14 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                     },
                     child: AnimatedSwitcher(
                       duration: 800.ms,
-                      child: _buildPureImageLayer(
-                        currentSection.photo,
-                        subtitleLayer,
+                      child: ColorGradingEffect(
+                        // 🌟 给当前图片套上电影级调色
+                        saturation: _imageSaturation,
+                        filterType: _imageFilterType,
+                        child: _buildPureImageLayer(
+                          currentSection.photo,
+                          subtitleLayer,
+                        ),
                       ),
                     ),
                   ),
@@ -868,7 +1015,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         screenBody = Stack(
           fit: StackFit.expand,
           children: [
-            PathImage(path: currentSection.photo.path, fit: BoxFit.cover),
+            _buildPlaybackMedia(currentSection.photo, fit: BoxFit.cover),
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
               child: Container(color: Colors.black.withValues(alpha: 0.6)),
@@ -901,98 +1048,6 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         ],
       ),
     );
-  }
-  // 🎥 核心特效：Ken Burns 运镜效应 (缓慢放大)
-  /*Widget _buildKenBurnsImage(String imagePath) {
-    final file = File(imagePath);
-    return TweenAnimationBuilder(
-      key: ValueKey<String>(imagePath), // Key 变了，动画就会重置并重新执行
-      tween: Tween<double>(begin: 1.0, end: 1.15), // 从原尺寸缓慢放大到 1.15 倍
-      duration: const Duration(seconds: 5), // 设定略大于图片停留时间的动画
-      builder: (context, scale, child) {
-        return Transform.scale(
-          scale: scale,
-          child: file.existsSync()
-              ? PathImage(
-                  path: file.path,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  height: double.infinity,
-                )
-              : Container(color: Colors.grey[900]), // 找不到图的防崩兜底
-        );
-      },
-    );
-  }*/
-
-  // 🎬 核心特效：根据长宽比自适应的视觉层（已支持字幕嵌入）
-  Widget _buildAdaptiveImageLayer(var photo, Widget subtitle) {
-    final file = File(photo.path);
-    // 🎯 呼叫智能裁切雷达
-    final Alignment smartAlignment = _calculateFaceAlignment(photo);
-
-    // 1. 基础的 Ken Burns 放大动画
-    Widget kenBurnsAnimation = TweenAnimationBuilder(
-      tween: Tween<double>(begin: 1.0, end: 1.15),
-      duration: const Duration(seconds: 5),
-      builder: (context, scale, child) {
-        return Transform.scale(
-          scale: scale,
-          child: file.existsSync()
-              ? PathImage(
-                  path: file.path,
-                  fit: BoxFit.cover,
-                  alignment: smartAlignment,
-                  width: double.infinity,
-                  height: double.infinity,
-                )
-              : Container(color: Colors.grey[900]),
-        );
-      },
-    );
-
-    // 🌟 将图片和字幕打包成一个“容器内容”
-    Widget containerContent = Stack(
-      fit: StackFit.expand,
-      children: [
-        kenBurnsAnimation,
-        // 🔒 字幕现在被“锁”在了这个 Stack 里，它的 Alignment 将相对于这个容器
-        subtitle,
-      ],
-    );
-
-    // 🌟 竖屏模式：依然铺满全屏
-    if (!widget.isHorizontal) {
-      return SizedBox.expand(
-        key: ValueKey<String>(photo.path),
-        child: containerContent,
-      );
-    }
-    // 🌟 横屏模式：16:9 居中，字幕会被 ClipRect 限制在框内
-    else {
-      return Stack(
-        key: ValueKey<String>(photo.path),
-        fit: StackFit.expand,
-        children: [
-          // 底层模糊背景
-          if (file.existsSync()) PathImage(path: file.path, fit: BoxFit.cover),
-          BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-            child: Container(color: Colors.black.withValues(alpha: 0.6)),
-          ),
-          // 2. 核心 16:9 画幅层
-          Center(
-            child: AspectRatio(
-              aspectRatio: 16 / 9,
-              child: ClipRect(
-                // 🚀 这里是关键！内容（含字幕）现在只会在 16:9 的框内显示
-                child: containerContent,
-              ),
-            ),
-          ),
-        ],
-      );
-    }
   }
 
   // 控件 UI 层
@@ -1074,12 +1129,11 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   // 🎬 视频按钮：检查缓存 → 分享，否则导出 → 分享
   Future<void> _onVideoButtonPressed() async {
     // 1. 计算当前参数对应的缓存 key
-    final sectionsData = widget.sections.map((s) {
-      return {
-        'photo': {'path': s.photo.path},
-        'text': s.text,
-      };
-    }).toList();
+    final sectionsData = widget.sections
+        .asMap()
+        .entries
+        .map((entry) => _sectionCacheData(entry.value, entry.key))
+        .toList();
     final dynamicBeatData = _beatData.isNotEmpty
         ? {'data': _beatData, 'bpm': 60000 / _beatIntervalMs}
         : null;
@@ -1166,8 +1220,40 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       useCameraFrame: _useCameraFrame,
       useGlowRing: _useGlowRing,
       useCloudBorder: _useCloudBorder,
+      // 🌟 新增：把用户当前调好的滤镜发往后台！
+      imageSaturation: _imageSaturation,
+      imageFilterType: _imageFilterType,
     );
     Navigator.pop(context);
+  }
+
+  Map<String, dynamic> _sectionCacheData(StorySection section, int index) {
+    final photo = section.photo;
+    return <String, dynamic>{
+      'photo': <String, dynamic>{
+        'fingerprint': _mediaCacheFingerprint(photo, index),
+        'mediaKind': photo.mediaKind,
+        'dateTaken': photo.dateTaken.millisecondsSinceEpoch,
+        'width': photo.width,
+        'height': photo.height,
+      },
+      'text': section.text,
+    };
+  }
+
+  String _mediaCacheFingerprint(dynamic photo, int index) {
+    final bytes = photo.thumbnailBytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      return 'thumb:${sha256.convert(bytes)}';
+    }
+    return [
+      'meta',
+      index,
+      photo.dateTaken.millisecondsSinceEpoch,
+      photo.mediaKind,
+      photo.width,
+      photo.height,
+    ].join(':');
   }
 
   // 🎛️ 导演控制台面板
@@ -1229,6 +1315,92 @@ class _StoryVideoPageState extends State<StoryVideoPage>
                               const SizedBox(height: 16),
 
                               // --- 下面完全是你的原有代码，一字未改 ---
+                              const Divider(color: Colors.white24, height: 32),
+                              const Text(
+                                '🎨 色彩与滤镜',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+
+                              // 🌟 新增：滤镜风格下拉框
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text(
+                                    '影像风格',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  DropdownButton<String>(
+                                    value: _imageFilterType,
+                                    dropdownColor: Colors.grey[900],
+                                    style: const TextStyle(
+                                      color: Colors.orangeAccent,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    underline: const SizedBox(),
+                                    items: const [
+                                      DropdownMenuItem(
+                                        value: 'none',
+                                        child: Text('原画 (Original)'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'cinematic',
+                                        child: Text('青橙电影 (Cinematic)'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'vintage',
+                                        child: Text('复古胶片 (Vintage)'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'cyberpunk',
+                                        child: Text('赛博霓虹 (Cyber)'),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: 'bw',
+                                        child: Text('黑白往事 (B&W)'),
+                                      ),
+                                    ],
+                                    onChanged: (val) {
+                                      if (val != null) {
+                                        setModalState(
+                                          () => _imageFilterType = val,
+                                        );
+                                        setState(() {});
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+
+                              // 🌟 新增：色相饱和度滑块
+                              Row(
+                                children: [
+                                  const Text(
+                                    '色彩饱和',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  Expanded(
+                                    child: Slider(
+                                      value: _imageSaturation,
+                                      min: 0.0, // 0 = 纯灰
+                                      max: 2.0, // 2 = 色彩爆炸
+                                      divisions: 20,
+                                      activeColor: Colors.orangeAccent,
+                                      onChanged: (val) {
+                                        setModalState(
+                                          () => _imageSaturation = val,
+                                        );
+                                        setState(() {});
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
 
                               // 1. 震动幅度滑块
                               Row(
@@ -1640,105 +1812,10 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     return Alignment(alignX.clamp(-1.0, 1.0), alignY.clamp(-1.0, 1.0));
   }
 
-  void _updateStateForFrame(int frameIndex) {
-    if (_beatData.isEmpty) return;
-
-    double currentTimeMs = (frameIndex / 24.0) * 1000.0;
-
-    int targetBeatIndex = 0;
-    for (int j = 0; j < _beatData.length; j++) {
-      if (currentTimeMs >= _beatData[j]['ms']) {
-        targetBeatIndex = j;
-      } else {
-        break;
-      }
-    }
-
-    double currentEnergy =
-        (_beatData[targetBeatIndex]['energy'] as num?)?.toDouble() ?? 0.0;
-    double timeSinceBeat = currentTimeMs - _beatData[targetBeatIndex]['ms'];
-
-    // 计算当前节拍度过了多少百分比 (0.0 到 1.0)
-    double beatProgress = (timeSinceBeat / _beatIntervalMs).clamp(0.0, 1.0);
-
-    // 🌟 手动拨动动画控制器的指针，让离线导出的每一帧和实时预览一模一样！
-    _vfxController.value = beatProgress;
-
-    if (currentEnergy > 0.15) {
-      _shakeIntensity = currentEnergy * 15.0 * (_shakeFrequency / 15.0);
-      // _enableFlash = true;
-    } else {
-      _shakeIntensity = 0.0;
-      // _enableFlash = false;
-    }
-
-    int targetImageIndex = targetBeatIndex ~/ 8;
-    if (targetImageIndex >= widget.sections.length) {
-      targetImageIndex = widget.sections.length - 1;
-    }
-    // 🌟 核心补偿：在离线导出时，手动驱动 Glitch 的时间轴！
-    // 假设它是 2000 毫秒一循环，我们算出当前进度
-    if (_isExporting) {
-      _continuousTimeController.value = (currentTimeMs % 2000.0) / 2000.0;
-    }
-
-    setState(() {
-      _currentIndex = targetImageIndex;
-      // 🌟 替换掉之前的 _lyricQueue 逻辑
-      _currentLyricText = widget.sections[_currentIndex].text;
-    });
-  }
-
-  // 📸 全新：直接抓取 RGBA 原始像素，并强制裁剪为偶数分辨率
-  Future<(Uint8List?, int, int)> _captureFrameRgba() async {
-    try {
-      RenderRepaintBoundary boundary =
-          _renderKey.currentContext!.findRenderObject()
-              as RenderRepaintBoundary;
-
-      // 这里直接用设备真实像素比，保证导出帧不被人为降采样。
-      final pixelRatio = MediaQuery.of(context).devicePixelRatio;
-      ui.Image rawImage = await boundary.toImage(pixelRatio: pixelRatio);
-
-      int width = rawImage.width;
-      int height = rawImage.height;
-
-      // 🌟 核心保命机制：硬件编码器强制要求长宽为偶数！
-      if (width % 2 != 0) width -= 1;
-      if (height % 2 != 0) height -= 1;
-
-      ui.Image finalImage = rawImage;
-
-      // 如果原图有奇数边，我们在内存里用画布把它强行切成偶数
-      if (width != rawImage.width || height != rawImage.height) {
-        final recorder = ui.PictureRecorder();
-        final canvas = ui.Canvas(recorder);
-        canvas.drawImageRect(
-          rawImage,
-          Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
-          Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
-          Paint(),
-        );
-        finalImage = await recorder.endRecording().toImage(width, height);
-      }
-
-      // 洗出相片：直接输出原始内存像素 RGBA！彻底告别 PNG 压缩和硬盘 I/O！
-      ByteData? byteData = await finalImage.toByteData(
-        format: ui.ImageByteFormat.rawRgba,
-      );
-      return (byteData?.buffer.asUint8List(), width, height);
-    } catch (e) {
-      debugPrint("❌ 抓拍当前帧失败: $e");
-      return (null, 0, 0);
-    }
-  }
-
   // 🎬 专门给取景器提供纯净画面的层（无黑边）
   // 🌟 修改点 1：把参数里的 String imagePath 改成 var photo (或者 PhotoEntity photo)
   Widget _buildPureImageLayer(var photo, Widget subtitle) {
     // 🌟 修改点 2：从传进来的 photo 对象里提取真正的路径
-    final file = File(photo.path);
-
     // 🎯 呼叫智能裁切雷达
     final Alignment smartAlignment = _calculateFaceAlignment(photo);
 
@@ -1752,20 +1829,71 @@ class _StoryVideoPageState extends State<StoryVideoPage>
           builder: (context, scale, child) {
             return Transform.scale(
               scale: scale,
-              child: file.existsSync()
-                  ? PathImage(
-                      path: file.path,
-                      fit: BoxFit.cover,
-                      alignment: smartAlignment, // 🎯 装备雷达
-                      width: double.infinity,
-                      height: double.infinity,
-                    )
-                  : Container(color: Colors.grey[900]),
+              child: _buildPlaybackMedia(
+                photo,
+                fit: BoxFit.cover,
+                alignment: smartAlignment,
+              ),
             );
           },
         ),
         subtitle,
       ],
+    );
+  }
+
+  Widget _buildPlaybackMedia(
+    dynamic photo, {
+    BoxFit fit = BoxFit.cover,
+    AlignmentGeometry alignment = Alignment.center,
+  }) {
+    final kind = MediaTypeHelper.fromStorageValue(
+      photo.mediaKind,
+      path: photo.path,
+    );
+    if (kind == MemoriaMediaKind.video) {
+      final controller = _videoControllers[_mediaControllerKey(photo)];
+      if (controller != null && controller.value.isInitialized) {
+        return FittedBox(
+          fit: fit,
+          alignment: alignment,
+          clipBehavior: Clip.hardEdge,
+          child: SizedBox(
+            width: controller.value.size.width,
+            height: controller.value.size.height,
+            child: VideoPlayer(controller),
+          ),
+        );
+      }
+    }
+    if (kind == MemoriaMediaKind.dynamicImage) {
+      final key = _mediaControllerKey(photo);
+      final file = _resolvedMediaFiles[key];
+      if (file != null && file.existsSync()) {
+        return Image.file(
+          file,
+          fit: fit,
+          alignment: alignment,
+          width: double.infinity,
+          height: double.infinity,
+          gaplessPlayback: true,
+          errorBuilder: (_, _, _) => PhotoImage(
+            photo: photo,
+            fit: fit,
+            alignment: alignment,
+            width: double.infinity,
+            height: double.infinity,
+          ),
+        );
+      }
+    }
+
+    return PhotoImage(
+      photo: photo,
+      fit: fit,
+      alignment: alignment,
+      width: double.infinity,
+      height: double.infinity,
     );
   }
 

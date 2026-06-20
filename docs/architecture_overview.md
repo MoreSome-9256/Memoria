@@ -320,8 +320,7 @@ WelcomePage ──→ SignInPage ──→ WidgetTree
 ### 5.3 Amplify 配置
 
 - 使用 Cognito User Pools
-- 配置从 `config/profiles/dev.json` 读取
-- 替代方案: `lib/config/profiles/dev.example.json` (模板)
+- 配置从本地 profile 读取，例如 `config/profiles/proxy.json`
 
 ---
 
@@ -1024,7 +1023,7 @@ UI 结构:
 
 | 文件 | 功能 |
 |------|------|
-| `llm_service.dart` | 主入口: 配置管理 (API key, endpoint) |
+| `llm_service.dart` | 主入口: Cognito 代理配置与 endpoint 管理 |
 | `llm_service_completion.dart` | LLM 补全调用 |
 | `llm_service_titles.dart` | 标题/主题生成: `generateCreativeTitles()`, `generateTags()` |
 | `llm_service_story_music.dart` | 音乐相关: `generateMusicPrompt()`, `generateSocialMediaCopy()` |
@@ -1163,9 +1162,8 @@ UI 结构:
 
 ### 24.1 配置文件
 
-- `config/profiles/dev.json` — 开发配置 (API Key, Endpoint 等)
-- `config/profiles/dev.example.json` — 配置模板
-- 通过 `--dart-define=PROFILE=dev` 选择
+- `config/profiles/proxy.json` — Cognito 代理运行配置，不保存 provider key
+- 通过 `--dart-define-from-file=config/profiles/proxy.json` 注入
 
 ### 24.2 Dart-Define 开关
 

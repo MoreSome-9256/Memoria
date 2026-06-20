@@ -37,6 +37,7 @@ class PublishPage extends StatefulWidget {
 
 class _PublishPageState extends State<PublishPage> {
   final TextEditingController _copyController = TextEditingController();
+  final GlobalKey _shareButtonKey = GlobalKey();
   bool _isLoading = true;
 
   @override
@@ -121,6 +122,7 @@ class _PublishPageState extends State<PublishPage> {
         [XFile(widget.exportedVideoPath)],
         text: shareText,
         subject: '${widget.title} - ${widget.subtitle}',
+        sharePositionOrigin: _sharePositionOrigin(),
       );
     } catch (e) {
       if (mounted) {
@@ -136,6 +138,25 @@ class _PublishPageState extends State<PublishPage> {
         );
       }
     }
+  }
+
+  Rect _sharePositionOrigin() {
+    final renderObject =
+        _shareButtonKey.currentContext?.findRenderObject() ??
+        context.findRenderObject();
+    if (renderObject is RenderBox && renderObject.hasSize) {
+      final rect = renderObject.localToGlobal(Offset.zero) & renderObject.size;
+      if (!rect.isEmpty) {
+        return rect;
+      }
+    }
+
+    final screenSize = MediaQuery.sizeOf(context);
+    return Rect.fromCenter(
+      center: Offset(screenSize.width / 2, screenSize.height / 2),
+      width: 1,
+      height: 1,
+    );
   }
 
   /// 用 Flutter 内置播放器播放视频，有完整的退出控制
@@ -164,7 +185,7 @@ class _PublishPageState extends State<PublishPage> {
 
   /// 保存视频并打开
   /// Android: 使用系统文件选择器让用户选择保存位置
-  /// iOS: 保存到共享文件夹并打开文件APP展示
+  /// iOS: 保存到共享文件夹并打开文件 App 展示
   Future<void> _openFolder() async {
     final videoFile = File(widget.exportedVideoPath);
     if (!videoFile.existsSync()) {
@@ -186,8 +207,10 @@ class _PublishPageState extends State<PublishPage> {
     try {
       if (Platform.isAndroid) {
         await _saveVideoOnAndroid(videoFile);
-      } else {
+      } else if (Platform.isIOS) {
         await _saveVideoOnIOS(videoFile);
+      } else {
+        throw UnsupportedError('当前平台暂不支持打开系统文件 App');
       }
     } catch (e) {
       if (mounted) {
@@ -424,6 +447,7 @@ class _PublishPageState extends State<PublishPage> {
 
                         // 1. 一键分享（主操作）
                         SizedBox(
+                          key: _shareButtonKey,
                           width: double.infinity,
                           child: FilledButton.icon(
                             onPressed: _isLoading ? null : _shareVideo,

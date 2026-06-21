@@ -105,20 +105,12 @@ class StoryGenerationOrchestrator {
     emit(headline: '准备开始生成故事');
 
     try {
-      activateStep(
-        'sort',
-        detail: request.preserveSelectionOrder
-            ? '正在整理所选图片并保持队列顺序'
-            : '正在整理所选图片并按时间排序',
-      );
+      activateStep('sort', detail: '正在整理所选图片并保持用户顺序');
       final selectedPhotos = await _loadSelectedPhotoEntities(request);
       if (selectedPhotos.isEmpty) {
         throw StateError('当前没有可用于生成故事的照片');
       }
-      final sortedPhotos = request.preserveSelectionOrder
-          ? List<PhotoEntity>.from(selectedPhotos)
-          : (List<PhotoEntity>.from(selectedPhotos)
-              ..sort((a, b) => a.timestamp.compareTo(b.timestamp)));
+      final sortedPhotos = List<PhotoEntity>.from(selectedPhotos);
       completeStep(
         'sort',
         detail: '已整理 ${sortedPhotos.length} 张图片',

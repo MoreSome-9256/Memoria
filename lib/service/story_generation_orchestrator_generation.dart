@@ -101,18 +101,13 @@ extension _StoryGenerationOrchestratorGeneration
     final photos = q.find();
     q.close();
 
-    if (request.preserveSelectionOrder) {
-      final byAssetId = <String, PhotoEntity>{
-        for (final photo in photos) photo.assetId: photo,
-      };
-      return request.selectedPhotos
-          .map((photo) => byAssetId[photo.id])
-          .whereType<PhotoEntity>()
-          .toList(growable: false);
-    }
-
-    photos.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    return photos;
+    final byAssetId = <String, PhotoEntity>{
+      for (final photo in photos) photo.assetId: photo,
+    };
+    return request.selectedPhotos
+        .map((photo) => byAssetId[photo.id])
+        .whereType<PhotoEntity>()
+        .toList(growable: false);
   }
 
   List<String> _buildMetadataBullets(List<PhotoEntity> photos) {
@@ -200,14 +195,13 @@ extension _StoryGenerationOrchestratorGeneration
     if (photos.length <= maxCount) {
       return photos;
     }
-    final sampled = <PhotoEntity>{photos.first, photos.last};
+    final sampledIndexes = <int>{0, photos.length - 1};
     final lastIndex = photos.length - 1;
     for (var i = 1; i < maxCount - 1; i++) {
       final index = ((lastIndex * i) / (maxCount - 1)).round();
-      sampled.add(photos[index]);
+      sampledIndexes.add(index);
     }
-    final result = sampled.toList(growable: false)
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    return result;
+    final orderedIndexes = sampledIndexes.toList(growable: false)..sort();
+    return orderedIndexes.map((index) => photos[index]).toList(growable: false);
   }
 }

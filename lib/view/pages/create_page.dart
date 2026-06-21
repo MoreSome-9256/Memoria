@@ -11,11 +11,10 @@ import '../../service/semantic_photo_search_service.dart';
 import '../../utils/ocr_policy.dart';
 import '../../utils/media_type_helper.dart';
 import '../../utils/tag_sanitizer.dart';
-import '../../models/event.dart';
 import '../../models/vo/photo.dart';
-import '../../models/ai_theme.dart';
+import '../../service/story_queue_service.dart';
 import '../widgets/media_thumbnail.dart';
-import 'story_config_page.dart';
+import 'story_queue_page.dart';
 
 class _CreateLaunchPhotoRecord {
   const _CreateLaunchPhotoRecord({
@@ -412,35 +411,15 @@ class _CreatePageState extends State<CreatePage> {
       return;
     }
 
-    final virtualTheme = AITheme(
-      id: 'manual_theme',
-      emoji: '✨',
+    StoryQueueService().replacePhotos(
+      launchResult.photos,
+      semanticSearchQuery: _searchController.text.trim(),
       title: themeTitle,
       subtitle: '自定义回忆',
     );
-    final virtualEvent = Event(
-      id: '-1',
-      title: themeTitle,
-      season: '精选',
-      year: launchResult.startYear,
-      location: '多地精选',
-      startDate: launchResult.startDate,
-      endDate: launchResult.endDate,
-      photos: launchResult.photos,
-      aiThemes: [virtualTheme],
-    );
-
-    // 🌟 5. 携带合规的虚拟数据，正式起飞前往配置页！
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => ConfigPage(
-          event: virtualEvent,
-          selectedPhotos: virtualEvent.photos,
-          selectedTheme: virtualTheme,
-          semanticSearchQuery: _searchController.text.trim(),
-        ),
-      ),
+      MaterialPageRoute(builder: (context) => const StoryQueuePage()),
     );
   }
 

@@ -82,9 +82,9 @@ class StoryService {
         return null;
       }
 
-      // 1. 按时间顺序排序照片（确保故事的连贯性）
-      final sortedPhotos = List<PhotoEntity>.from(selectedPhotos)
-        ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      // The caller supplies the user-confirmed order. Never infer a different
+      // order from timestamps or database query results.
+      final sortedPhotos = List<PhotoEntity>.from(selectedPhotos);
       final promptTagsByPhoto = sortedPhotos
           .map(_buildPromptTagsForPhoto)
           .toList(growable: false);

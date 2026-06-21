@@ -270,7 +270,6 @@ class StoryGenerationRequest {
     this.enableAutoCaptions = true,
     this.manualCaptionsText,
     this.semanticSearchQuery,
-    this.preserveSelectionOrder = false,
     this.storyTemplateId,
   });
 
@@ -287,7 +286,6 @@ class StoryGenerationRequest {
   final bool enableAutoCaptions;
   final String? manualCaptionsText;
   final String? semanticSearchQuery;
-  final bool preserveSelectionOrder;
   final String? storyTemplateId;
 }
 

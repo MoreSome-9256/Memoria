@@ -68,13 +68,11 @@ class StoryResultPage extends StatefulWidget {
     required bool isHorizontal,
     required String targetPlatform,
   }) {
-    final videoCaptionMap = <String, String>{};
-    if (videoCaptions != null && videoCaptions.isNotEmpty) {
+    final persistedCaptions = storyEntity.videoCaptionByAssetId;
+    final videoCaptionMap = <String, String>{...persistedCaptions};
+    if (videoCaptions != null) {
       for (var i = 0; i < photos.length && i < videoCaptions.length; i++) {
-        final caption = videoCaptions[i].trim();
-        if (caption.isNotEmpty) {
-          videoCaptionMap[photos[i].assetId] = caption;
-        }
+        videoCaptionMap[photos[i].assetId] = videoCaptions[i].trim();
       }
     }
 
@@ -147,7 +145,11 @@ class StoryResultPage extends StatefulWidget {
       dynamicBeatData: dynamicBeatData,
       isHorizontal: isHorizontal,
       targetPlatform: targetPlatform,
-      videoCaptions: videoCaptions,
+      videoCaptions:
+          videoCaptions ??
+          photos
+              .map((photo) => videoCaptionMap[photo.assetId] ?? '')
+              .toList(growable: false),
     );
   }
 
@@ -316,6 +318,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
         ..photoIds = _photoEntityIdsForSections(_sections)
         ..photoCount = _sections.length
         ..isManuallySaved = false;
+      story.setVideoCaptions(widget.videoCaptionByPhotoId);
 
       final store = ObjectBoxService().store;
       final storyBox = store.box<StoryEntity>();
@@ -486,6 +489,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
           .toList(growable: false);
 
       story.content = StoryEntity.sectionsToMarkdown(sectionMaps);
+      story.setVideoCaptions(widget.videoCaptionByPhotoId);
       story.updatedAt = DateTime.now().millisecondsSinceEpoch;
       story.isManuallySaved = true; // 标记为手动保存
       if (widget.customMusicPath != null &&
@@ -781,11 +785,11 @@ class _StoryResultPageState extends State<StoryResultPage> {
 
     final playbackSections = <StorySection>[];
     for (final section in _sections) {
-      final mappedCaption =
-          widget.videoCaptionByPhotoId[section.photo.id]?.trim() ?? '';
-      final preferredCaption = mappedCaption.isNotEmpty
-          ? mappedCaption
-          : section.text;
+      final preferredCaption = StoryEntity.resolveVideoCaption(
+        captions: widget.videoCaptionByPhotoId,
+        assetId: section.photo.id,
+        fallback: section.text,
+      );
       playbackSections.add(section.copyWith(text: preferredCaption));
     }
 
@@ -793,9 +797,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
       return const <StorySection>[];
     }
 
-    final random = math.Random();
-    final introPhoto =
-        playbackSections[random.nextInt(playbackSections.length)].photo;
+    final introPhoto = playbackSections.first.photo;
     final introSection = StorySection(text: '__INTRO__', photo: introPhoto);
     return <StorySection>[introSection, ...playbackSections];
   }

@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../models/entity/photo_entity.dart';
 import '../../models/vo/photo.dart';
-import '../../models/event.dart';
-import '../../models/ai_theme.dart';
+import '../../service/story_queue_service.dart';
 import '../../utils/media_type_helper.dart';
 import '../../utils/tag_sanitizer.dart';
 import '../../utils/ocr_policy.dart';
 import '../widgets/media_thumbnail.dart';
-import '../pages/story_config_page.dart'; // 请确认这个路径匹配你的项目目录结构
+import '../pages/story_queue_page.dart';
 
 class SelectPhotosPage extends StatefulWidget {
   final List<PhotoEntity> photos;
@@ -70,41 +69,15 @@ class _SelectPhotosPageState extends State<SelectPhotosPage> {
         .toList();
     final mappedPhotos = selectedEntities.map(_mapPhotoEntityToPhoto).toList();
 
-    // 计算时间范围
-    final sortedDates = mappedPhotos.map((p) => p.dateTaken).toList()..sort();
-    final startDate = sortedDates.first;
-    final endDate = sortedDates.last;
-
-    final virtualTheme = AITheme(
-      id: 'chat_theme',
-      emoji: '✨',
+    StoryQueueService().replacePhotos(
+      mappedPhotos,
+      semanticSearchQuery: widget.topic,
       title: widget.topic,
       subtitle: '来自对话回忆',
     );
-    final virtualEvent = Event(
-      id: '-1', // 强制指定为 -1 以触发 ConfigPage 的云端 AI 重写标题逻辑
-      title: widget.topic,
-      season: '智能精选',
-      year: startDate.year,
-      location: '记忆瞬间',
-      startDate: startDate,
-      endDate: endDate,
-      photos: mappedPhotos,
-      aiThemes: [virtualTheme],
-    );
-
-    // 跳转配置页
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => ConfigPage(
-          event: virtualEvent,
-          selectedPhotos: mappedPhotos,
-          selectedTheme: virtualTheme,
-          semanticSearchQuery: widget.topic,
-          preservePhotoOrder: true, // 保持用户在聊天里看到的顺序
-        ),
-      ),
+      MaterialPageRoute(builder: (context) => const StoryQueuePage()),
     );
   }
 

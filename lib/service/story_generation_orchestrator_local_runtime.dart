@@ -231,9 +231,7 @@ extension _StoryGenerationOrchestratorLocalRuntime
     Map<String, dynamic>? musicWorkflowAnalysis,
   }) {
     final semanticSearchQuery = request.semanticSearchQuery?.trim();
-    final orderingHint = request.preserveSelectionOrder
-        ? '按用户故事队列顺序'
-        : '按时间排序后';
+    const orderingHint = '按用户在生成前确认的图片顺序';
     final semanticHint =
         semanticSearchQuery == null || semanticSearchQuery.isEmpty
         ? ''

@@ -11,6 +11,7 @@ import '../models/entity/story_entity.dart';
 import '../models/vo/photo.dart';
 import '../models/vo/story_generation_models.dart';
 import '../utils/ocr_policy.dart';
+import '../storage/objectbox/objectbox_service.dart';
 import 'llm_service.dart';
 import 'music_service.dart';
 
@@ -81,6 +82,14 @@ class StoryVideoPreparationService {
             request.manualCaptionsText?.trim() ?? '',
             photos.length,
           );
+
+    // Video captions are part of the story, not transient page state. Persist
+    // every entry, including intentionally empty captions.
+    story.setVideoCaptions(<String, String>{
+      for (var i = 0; i < photos.length; i++)
+        photos[i].assetId: i < captions.length ? captions[i] : '',
+    });
+    ObjectBoxService().store.box<StoryEntity>().put(story);
 
     return StoryVideoPreparationResult(
       customMusicPath: preparedMusicPath,

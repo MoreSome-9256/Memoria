@@ -81,7 +81,7 @@ class ConfigPage extends StatefulWidget {
     required this.selectedPhotos,
     required this.selectedTheme,
     this.semanticSearchQuery,
-    this.preservePhotoOrder = false,
+    this.preservePhotoOrder = true,
   });
 
   @override
@@ -342,7 +342,6 @@ class _ConfigPageState extends State<ConfigPage> {
             enableAutoCaptions: _enableAutoCaptions,
             manualCaptionsText: _manualCaptionsController.text.trim(),
             semanticSearchQuery: widget.semanticSearchQuery?.trim(),
-            preserveSelectionOrder: widget.preservePhotoOrder,
             storyTemplateId: _selectedStoryTemplateId,
           ),
         ),

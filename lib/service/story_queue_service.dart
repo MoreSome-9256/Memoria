@@ -46,6 +46,8 @@ class StoryQueueService {
 
   final ValueNotifier<List<StoryQueueItem>> queueListenable =
       ValueNotifier<List<StoryQueueItem>>(const <StoryQueueItem>[]);
+  String? _launchTitle;
+  String? _launchSubtitle;
 
   List<StoryQueueItem> get items => queueListenable.value;
 
@@ -97,6 +99,18 @@ class StoryQueueService {
     return addedCount;
   }
 
+  void replacePhotos(
+    List<Photo> photos, {
+    String? semanticSearchQuery,
+    String? title,
+    String? subtitle,
+  }) {
+    queueListenable.value = const <StoryQueueItem>[];
+    _launchTitle = title?.trim();
+    _launchSubtitle = subtitle?.trim();
+    addPhotos(photos, semanticSearchQuery: semanticSearchQuery);
+  }
+
   void removePhoto(String photoId) {
     final next = queueListenable.value
         .where((item) => item.photo.id != photoId)
@@ -105,6 +119,8 @@ class StoryQueueService {
   }
 
   void clear() {
+    _launchTitle = null;
+    _launchSubtitle = null;
     if (queueListenable.value.isEmpty) {
       return;
     }
@@ -168,6 +184,12 @@ class StoryQueueService {
     String title = '我的故事队列',
     String subtitle = 'Queue picks',
   }) {
+    final effectiveTitle = _launchTitle?.isNotEmpty == true
+        ? _launchTitle!
+        : title;
+    final effectiveSubtitle = _launchSubtitle?.isNotEmpty == true
+        ? _launchSubtitle!
+        : subtitle;
     final orderedPhotos = queueListenable.value
         .map((item) => item.photo.copyWith(isSelected: true))
         .toList(growable: false);
@@ -182,12 +204,12 @@ class StoryQueueService {
     final theme = AITheme(
       id: 'story_queue_theme',
       emoji: '\u2728',
-      title: title,
-      subtitle: subtitle,
+      title: effectiveTitle,
+      subtitle: effectiveSubtitle,
     );
     final event = Event(
       id: 'story_queue_event',
-      title: title,
+      title: effectiveTitle,
       season: _seasonOf(startDate),
       year: startDate.year,
       location: _resolveLocation(orderedPhotos),

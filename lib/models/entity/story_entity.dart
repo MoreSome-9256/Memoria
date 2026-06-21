@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:objectbox/objectbox.dart';
@@ -23,7 +24,7 @@ class StoryEntity {
   // 🔗 关联信息
   @Index()
   late int eventId; // 来源事件 ID
-  List<int> photoIds = []; // 选中的照片 ID 列表（按时间顺序）
+  List<int> photoIds = []; // 选中的照片 ID 列表（用户确认顺序）
 
   // 🎨 元数据
   int photoCount = 0; // 照片数量（冗余字段）
@@ -37,6 +38,35 @@ class StoryEntity {
   String? originalMusicHash; // 压缩前原始二进制的 SHA256，用于缓存文件去重
   String? dynamicBeatDataJson; // 音乐节拍数据（JSON）
   String? videoParamsJson; // 视频渲染参数（JSON，含文字样式、特效等）
+  String? videoCaptionsJson; // 视频字幕（JSON object: assetId -> caption）
+
+  Map<String, String> get videoCaptionByAssetId {
+    final raw = videoCaptionsJson?.trim();
+    if (raw == null || raw.isEmpty) return const <String, String>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const <String, String>{};
+      return <String, String>{
+        for (final entry in decoded.entries)
+          if (entry.key.toString().trim().isNotEmpty)
+            entry.key.toString(): entry.value?.toString() ?? '',
+      };
+    } catch (_) {
+      return const <String, String>{};
+    }
+  }
+
+  void setVideoCaptions(Map<String, String> captions) {
+    videoCaptionsJson = jsonEncode(captions);
+  }
+
+  static String resolveVideoCaption({
+    required Map<String, String> captions,
+    required String assetId,
+    required String fallback,
+  }) {
+    return captions.containsKey(assetId) ? captions[assetId]!.trim() : fallback;
+  }
 
   // 📅 格式化创建时间
   String get createdAtText {
@@ -69,7 +99,7 @@ class StoryEntity {
 
   // 🔄 解析 Markdown 为 StorySection 列表（用于 UI 展示）
   /// StorySection 定义在 story_result_page.dart 中
-  /// 这里返回一个 List<Map<String, dynamic>> 供 UI 层转换
+  /// 这里返回一个 `List<Map<String, dynamic>>` 供 UI 层转换
   List<Map<String, dynamic>> parseToSections(List<PhotoEntity> photos) {
     final sections = <Map<String, dynamic>>[];
     final lines = content.split('\n');

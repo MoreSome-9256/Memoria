@@ -1163,7 +1163,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(11, 1699499076567489273),
     name: 'StoryEntity',
-    lastPropertyId: const obx_int.IdUid(20, 6949953431353183473),
+    lastPropertyId: const obx_int.IdUid(21, 4569927762541315981),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1284,6 +1284,12 @@ final _entities = <obx_int.ModelEntity>[
       obx_int.ModelProperty(
         id: const obx_int.IdUid(20, 6949953431353183473),
         name: 'originalMusicHash',
+        type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(21, 4569927762541315981),
+        name: 'videoCaptionsJson',
         type: 9,
         flags: 0,
       ),
@@ -3142,7 +3148,10 @@ obx_int.ModelDefinition getObjectBoxModel() {
         final originalMusicHashOffset = object.originalMusicHash == null
             ? null
             : fbb.writeString(object.originalMusicHash!);
-        fbb.startTable(21);
+        final videoCaptionsJsonOffset = object.videoCaptionsJson == null
+            ? null
+            : fbb.writeString(object.videoCaptionsJson!);
+        fbb.startTable(22);
         fbb.addInt64(0, object.id);
         fbb.addOffset(1, titleOffset);
         fbb.addOffset(2, subtitleOffset);
@@ -3163,6 +3172,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
         fbb.addOffset(17, dynamicBeatDataJsonOffset);
         fbb.addOffset(18, videoParamsJsonOffset);
         fbb.addOffset(19, originalMusicHashOffset);
+        fbb.addOffset(20, videoCaptionsJsonOffset);
         fbb.finish(fbb.endTable());
         return object.id;
       },
@@ -3252,7 +3262,10 @@ obx_int.ModelDefinition getObjectBoxModel() {
           ).vTableGetNullable(buffer, rootOffset, 40)
           ..originalMusicHash = const fb.StringReader(
             asciiOptimization: true,
-          ).vTableGetNullable(buffer, rootOffset, 42);
+          ).vTableGetNullable(buffer, rootOffset, 42)
+          ..videoCaptionsJson = const fb.StringReader(
+            asciiOptimization: true,
+          ).vTableGetNullable(buffer, rootOffset, 44);
 
         return object;
       },
@@ -4776,6 +4789,11 @@ class StoryEntity_ {
   /// See [StoryEntity.originalMusicHash].
   static final originalMusicHash = obx.QueryStringProperty<StoryEntity>(
     _entities[9].properties[19],
+  );
+
+  /// See [StoryEntity.videoCaptionsJson].
+  static final videoCaptionsJson = obx.QueryStringProperty<StoryEntity>(
+    _entities[9].properties[20],
   );
 }
 

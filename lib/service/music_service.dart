@@ -16,9 +16,13 @@ class MusicService {
   static Future<Map<String, dynamic>?> analyzeAudio(String filePath) async {
     try {
       debugPrint('🎵 本地分析音频: $filePath');
-      final result =
-          await _analyzeWithMusicFeatureAnalyzer(filePath) ??
-          await _localAnalyzer.analyze(filePath);
+      // The deterministic PCM/onset implementation is the primary source.
+      // The plugin is useful as a fallback, but its duration/tempo metadata is
+      // not trusted as the authority for the video timeline.
+      final rawResult =
+          await _localAnalyzer.analyze(filePath) ??
+          await _analyzeWithMusicFeatureAnalyzer(filePath);
+      final result = rawResult == null ? null : normalizeAnalysis(rawResult);
       if (result == null) {
         debugPrint('❌ 本地音乐分析失败');
         return null;
@@ -31,6 +35,74 @@ class MusicService {
       debugPrint('❌ 本地音乐分析异常: $error');
       return null;
     }
+  }
+
+  /// Rejects malformed analyzer output and returns a monotonic beat timeline.
+  /// Kept public so persisted analysis from older app versions can be cleaned
+  /// before preview/export as well.
+  static Map<String, dynamic>? normalizeAnalysis(Map<String, dynamic> raw) {
+    final bpmValue = raw['bpm'];
+    if (bpmValue is! num || !bpmValue.toDouble().isFinite || bpmValue <= 0) {
+      return null;
+    }
+    var bpm = bpmValue.toDouble();
+    while (bpm < 70) {
+      bpm *= 2;
+    }
+    while (bpm > 180) {
+      bpm /= 2;
+    }
+    if (bpm < 60 || bpm > 200) return null;
+
+    final durationValue = raw['duration_ms'];
+    // A bogus metadata duration must not allocate an unbounded beat list.
+    final durationMs =
+        durationValue is num &&
+            durationValue > 0 &&
+            durationValue <= const Duration(hours: 6).inMilliseconds
+        ? durationValue.toInt()
+        : null;
+    final rawBeats = raw['data'];
+    final beats = <Map<String, dynamic>>[];
+    if (rawBeats is List) {
+      for (final item in rawBeats.take(100000)) {
+        if (item is! Map) continue;
+        final msValue = item['ms'];
+        if (msValue is! num || !msValue.toDouble().isFinite) continue;
+        final ms = msValue.toInt();
+        if (ms < 0 || (durationMs != null && ms >= durationMs)) continue;
+        final energyValue = item['energy'];
+        final energy = energyValue is num && energyValue.toDouble().isFinite
+            ? energyValue.toDouble().clamp(0.0, 1.0)
+            : 0.2;
+        beats.add(<String, dynamic>{'ms': ms, 'energy': energy});
+      }
+    }
+    beats.sort((a, b) => (a['ms'] as int).compareTo(b['ms'] as int));
+    final deduplicated = <Map<String, dynamic>>[];
+    for (final beat in beats) {
+      if (deduplicated.isEmpty || deduplicated.last['ms'] != beat['ms']) {
+        deduplicated.add(beat);
+      }
+    }
+
+    final intervalMs = (60000 / bpm).round();
+    if (deduplicated.length < 2 && durationMs != null) {
+      deduplicated.clear();
+      for (var ms = 0; ms < durationMs; ms += intervalMs) {
+        deduplicated.add(<String, dynamic>{'ms': ms, 'energy': 0.2});
+      }
+    }
+    if (deduplicated.isEmpty) {
+      deduplicated.add(<String, dynamic>{'ms': 0, 'energy': 0.2});
+    }
+
+    return <String, dynamic>{
+      ...raw,
+      'bpm': double.parse(bpm.toStringAsFixed(1)),
+      'data': deduplicated,
+      'duration_ms': ?durationMs,
+    };
   }
 
   static Future<Map<String, dynamic>?> _analyzeWithMusicFeatureAnalyzer(

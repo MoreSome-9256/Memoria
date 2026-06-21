@@ -22,6 +22,7 @@ import '../../service/llm_service.dart';
 import '../../service/music_service.dart';
 import '../../service/motion_photo_service.dart';
 import '../../service/story_service.dart';
+import '../../service/story_video_timeline.dart';
 import '../../service/video_cache_service.dart';
 import '../../storage/objectbox/objectbox_service.dart';
 import '../../utils/media_type_helper.dart';
@@ -130,7 +131,6 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
   List<dynamic> _beatData = []; // 存完整的 JSON 数据（包含 ms 和 energy）
   late final Future<void> _beatLoadFuture;
-  int? _audioDurationMs;
 
   // 💥 震动与闪光控制器
   late AnimationController _vfxController;
@@ -183,8 +183,10 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   }
 
   void _applyBeatData(Map<String, dynamic> beatResponse) {
-    final data = beatResponse['data'];
-    final bpmRaw = beatResponse['bpm'];
+    final normalized = MusicService.normalizeAnalysis(beatResponse);
+    if (normalized == null) return;
+    final data = normalized['data'];
+    final bpmRaw = normalized['bpm'];
     if (data is! List || data.isEmpty || bpmRaw is! num || bpmRaw <= 0) {
       return;
     }
@@ -192,10 +194,6 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     setState(() {
       _beatData = data;
       _beatIntervalMs = (60000 / bpmRaw.toDouble()).round();
-      final durationRaw = beatResponse['duration_ms'];
-      _audioDurationMs = durationRaw is num && durationRaw > 0
-          ? durationRaw.toInt()
-          : null;
     });
 
     debugPrint(
@@ -484,41 +482,15 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
   }
 
   int _storyTimelineDurationMs() {
-    if (_audioDurationMs != null && _audioDurationMs! > 0) {
-      return _audioDurationMs!;
-    }
-
-    final durationRaw = widget.dynamicBeatData?['duration_ms'];
-    if (durationRaw is num && durationRaw > 0) {
-      return durationRaw.toInt();
-    }
-
-    final data = widget.dynamicBeatData?['data'];
-    if (data is List && data.isNotEmpty) {
-      final lastMs = (data.last as Map?)?['ms'];
-      if (lastMs is num && lastMs > 0) {
-        return lastMs.toInt() + _beatIntervalMs;
-      }
-    }
-
-    if (_beatData.isNotEmpty) {
-      final lastMs = (_beatData.last as Map?)?['ms'];
-      if (lastMs is num && lastMs > 0) {
-        return lastMs.toInt() + _beatIntervalMs;
-      }
-    }
-
-    final totalBeatsNeeded = widget.sections.length * 8;
-    return math.max(_beatIntervalMs, totalBeatsNeeded * _beatIntervalMs);
+    return StoryVideoTimeline.durationMsForSections(widget.sections.length);
   }
 
   int _targetSectionIndexForTime(double currentTimeMs, int storyDurationMs) {
     if (widget.sections.length <= 1 || storyDurationMs <= 0) return 0;
-    final progress = (currentTimeMs / storyDurationMs).clamp(0.0, 0.999999);
-    return (progress * widget.sections.length)
-        .floor()
-        .clamp(0, widget.sections.length - 1)
-        .toInt();
+    return StoryVideoTimeline.sectionIndexAt(
+      timeMs: currentTimeMs,
+      sectionCount: widget.sections.length,
+    );
   }
 
   // 📸 直接抓取 RGBA 原始像素，并强制裁剪为偶数分辨率。
@@ -644,7 +616,8 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         final store = ObjectBoxService().store;
         final storyBox = store.box<StoryEntity>();
         final story = storyBox.get(widget.storyEntityId!);
-        if (story?.cachedVideoPath != null &&
+        if (story?.cachedVideoKey == _exportCacheKey &&
+            story?.cachedVideoPath != null &&
             await File(story!.cachedVideoPath!).exists()) {
           cachedVideoPath = story.cachedVideoPath;
           debugPrint('✅ 使用故事实体固化视频路径: $cachedVideoPath');
@@ -890,9 +863,9 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       // -c:v copy: 直接复制视频流，不重新编码
       // -c:a aac: 使用 AAC 编码音频
       final command =
-          '-y -i "$videoPath" -i "$audioPath" '
+          '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
           '-map 0:v:0 -map 1:a:0 '
-          '-t $duration -c:v copy -c:a aac -b:a 128k -shortest "$outputPath"';
+          '-t $duration -c:v copy -c:a aac -b:a 128k "$outputPath"';
 
       debugPrint('🎬 FFmpeg (stream copy): $command');
 
@@ -940,10 +913,10 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       // -b:v: 视频比特率
       // -preset: 编码速度预设（仅软件编码）
       final command =
-          '-y -i "$videoPath" -i "$audioPath" '
+          '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
           '-map 0:v:0 -map 1:a:0 '
           '-t $duration -c:v $videoCodec -b:v 2500k -c:a aac -b:a 128k '
-          '-shortest "$outputPath"';
+          '"$outputPath"';
 
       debugPrint('🎬 FFmpeg (hardware accel): $command');
 
@@ -961,10 +934,10 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         if (videoCodec != 'libx264') {
           debugPrint('⚠️ 硬件加速失败，尝试软件编码...');
           final softwareCommand =
-              '-y -i "$videoPath" -i "$audioPath" '
+              '-y -i "$videoPath" -stream_loop -1 -i "$audioPath" '
               '-map 0:v:0 -map 1:a:0 '
               '-t $duration -c:v libx264 -preset ultrafast -b:v 2500k '
-              '-c:a aac -b:a 128k -shortest "$outputPath"';
+              '-c:a aac -b:a 128k "$outputPath"';
 
           debugPrint('🎬 FFmpeg (software): $softwareCommand');
 
@@ -1193,8 +1166,8 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
     final mediaFrames = _exportMediaFrames[sectionIndex];
     if (mediaFrames != null && mediaFrames.isNotEmpty) {
       final localFrame = frameIndex - _sectionStartFrame(sectionIndex);
-      final frameFile = mediaFrames[
-          localFrame.clamp(0, mediaFrames.length - 1).toInt()];
+      final frameFile =
+          mediaFrames[localFrame.clamp(0, mediaFrames.length - 1).toInt()];
       if (_preparedMediaFrame?.path != frameFile.path) {
         final previousFrame = _preparedMediaFrame;
         _preparedMediaFrame = frameFile;
@@ -1216,8 +1189,9 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
   int _sectionFrameCount(int sectionIndex) {
     if (widget.sections.isEmpty || _exportTotalFrames <= 0) return 1;
-    final end = ((sectionIndex + 1) * _exportTotalFrames / widget.sections.length)
-        .ceil();
+    final end =
+        ((sectionIndex + 1) * _exportTotalFrames / widget.sections.length)
+            .ceil();
     return math.max(1, end - _sectionStartFrame(sectionIndex));
   }
 
@@ -1263,7 +1237,10 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
       try {
         final inputPath = sourceCopy.path.replaceAll('"', '\\"');
-        final pattern = '${framesDir.path}/frame_%05d.jpg'.replaceAll('"', '\\"');
+        final pattern = '${framesDir.path}/frame_%05d.jpg'.replaceAll(
+          '"',
+          '\\"',
+        );
         final session = await FFmpegKit.execute(
           '-y -stream_loop -1 -i "$inputPath" '
           '-vf "fps=24,scale=1920:-2" -frames:v $frameCount -q:v 2 "$pattern"',
@@ -1271,11 +1248,12 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
         if (!ReturnCode.isSuccess(await session.getReturnCode())) {
           throw StateError('FFmpeg 无法提取视频帧');
         }
-        final files = (await framesDir.list().toList())
-            .whereType<File>()
-            .where((file) => file.path.toLowerCase().endsWith('.jpg'))
-            .toList(growable: false)
-          ..sort((a, b) => a.path.compareTo(b.path));
+        final files =
+            (await framesDir.list().toList())
+                .whereType<File>()
+                .where((file) => file.path.toLowerCase().endsWith('.jpg'))
+                .toList(growable: false)
+              ..sort((a, b) => a.path.compareTo(b.path));
         if (files.isEmpty) {
           throw StateError('视频未产生可用帧');
         }

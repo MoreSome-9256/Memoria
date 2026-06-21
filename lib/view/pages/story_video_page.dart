@@ -20,6 +20,7 @@ import 'package:path_provider/path_provider.dart';
 import 'export_manager.dart';
 import 'publish_page.dart';
 import '../../service/music_service.dart';
+import '../../service/story_video_timeline.dart';
 import '../../service/video_cache_service.dart';
 import '../../utils/media_type_helper.dart';
 import '../widgets/photo_image.dart';
@@ -289,8 +290,10 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   }
 
   void _applyBeatData(Map<String, dynamic> beatResponse) {
-    final data = beatResponse['data'];
-    final bpmRaw = beatResponse['bpm'];
+    final normalized = MusicService.normalizeAnalysis(beatResponse);
+    if (normalized == null) return;
+    final data = normalized['data'];
+    final bpmRaw = normalized['bpm'];
     if (data is! List || data.isEmpty || bpmRaw is! num || bpmRaw <= 0) {
       return;
     }
@@ -324,18 +327,16 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   }
 
   int _storyTimelineDurationMs() {
-    if (_singleLoopMs > 0) return _singleLoopMs;
     final sectionCount = _localSections.isEmpty
         ? widget.sections.length
         : _localSections.length;
-    if (sectionCount <= 0) return _beatIntervalMs * 8;
-
-    final totalBeatsNeeded = sectionCount * 8;
-    if (_beatData.length > totalBeatsNeeded) {
-      final value = (_beatData[totalBeatsNeeded]['ms'] as num?)?.toInt();
-      if (value != null && value > 0) return value;
+    final plannedDuration = StoryVideoTimeline.durationMsForSections(
+      sectionCount,
+    );
+    if (_hasInitializedPlayback && _singleLoopMs > 0) {
+      return math.min(plannedDuration, _singleLoopMs);
     }
-    return math.max(_beatIntervalMs, totalBeatsNeeded * _beatIntervalMs);
+    return plannedDuration;
   }
 
   int _targetSectionIndexForTime(double currentTimeMs) {
@@ -343,10 +344,13 @@ class _StoryVideoPageState extends State<StoryVideoPage>
         ? widget.sections.length
         : _localSections.length;
     if (sectionCount <= 1) return 0;
-    final durationMs = _storyTimelineDurationMs();
-    if (durationMs <= 0) return 0;
-    final progress = (currentTimeMs / durationMs).clamp(0.0, 0.999999);
-    return _clampSectionIndex((progress * sectionCount).floor());
+    return _clampSectionIndex(
+      StoryVideoTimeline.sectionIndexAtDuration(
+        timeMs: currentTimeMs,
+        sectionCount: sectionCount,
+        durationMs: _storyTimelineDurationMs(),
+      ),
+    );
   }
 
   // ==========================================

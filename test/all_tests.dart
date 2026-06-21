@@ -17,6 +17,7 @@ import 'service/mobileclip_tag_service_test.dart'
     as mobileclip_tag_service_test;
 import 'service/mobileclip2_semantic_index_service_test.dart'
     as mobileclip2_semantic_index_service_test;
+import 'service/music_service_test.dart' as music_service_test;
 import 'service/photo_attribute_background_service_test.dart'
     as photo_attribute_background_service_test;
 import 'service/semantic_photo_search_service_test.dart'
@@ -26,6 +27,7 @@ import 'service/story_location_manifest_simulation_test.dart'
 import 'service/theme_cluster_service_test.dart' as theme_cluster_service_test;
 import 'service/travel_memory_detector_test.dart'
     as travel_memory_detector_test;
+import 'service/story_video_timeline_test.dart' as story_video_timeline_test;
 import 'utils/dbscan_algorithm_test.dart' as dbscan_algorithm_test;
 import 'utils/event_cluster_helper_test.dart' as event_cluster_helper_test;
 import 'utils/story_prompt_helper_test.dart' as story_prompt_helper_test;
@@ -58,10 +60,12 @@ void main() {
   face_cluster_service_test.main();
   media_embedding_record_test.main();
   mobileclip2_semantic_index_service_test.main();
+  music_service_test.main();
   photo_attribute_background_service_test.main();
   story_location_manifest_simulation_test.main();
   theme_cluster_service_test.main();
   travel_memory_detector_test.main();
+  story_video_timeline_test.main();
   dbscan_algorithm_test.main();
   event_cluster_helper_test.main();
   story_prompt_helper_test.main();

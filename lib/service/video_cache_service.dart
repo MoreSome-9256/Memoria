@@ -15,7 +15,7 @@ class VideoCacheService {
   // 缓存配置
   static const String _cacheSubdir = 'VideoCache';
   static const String _exportsSubdir = 'StoryExports';
-  
+
   // 内存缓存：sessionId -> 视频路径
   final Map<String, String> _sessionCache = {};
 
@@ -58,6 +58,8 @@ class VideoCacheService {
         .toList(growable: false);
 
     final fingerprintData = <String, dynamic>{
+      // Bump whenever the render timeline semantics change.
+      'renderTimelineVersion': 2,
       'title': title,
       'subtitle': subtitle,
       'sections': normalizedSections,
@@ -79,7 +81,7 @@ class VideoCacheService {
       'useGlowRing': useGlowRing,
       'useCloudBorder': useCloudBorder,
     };
-    
+
     final jsonString = jsonEncode(fingerprintData);
     final bytes = utf8.encode(jsonString);
     final digest = sha256.convert(bytes);
@@ -135,7 +137,7 @@ class VideoCacheService {
     // 检查文件缓存
     final cacheDir = await getCacheDirectory();
     final cachedFile = File(path.join(cacheDir.path, '$sessionId.mp4'));
-    
+
     if (await cachedFile.exists()) {
       _sessionCache[sessionId] = cachedFile.path;
       return cachedFile.path;
@@ -161,13 +163,13 @@ class VideoCacheService {
       _sessionCache[sessionId] = cachedPath;
       return cachedPath;
     }
-    
+
     // 复制到缓存目录
     await File(videoPath).copy(cachedPath);
-    
+
     // 更新内存缓存
     _sessionCache[sessionId] = cachedPath;
-    
+
     return cachedPath;
   }
 
@@ -186,24 +188,28 @@ class VideoCacheService {
     }
 
     final exportsDir = await getExportsDirectory();
-    final fileName = customName ?? _exportFileNameFor(sourcePath, cacheKey: cacheKey);
+    final fileName =
+        customName ?? _exportFileNameFor(sourcePath, cacheKey: cacheKey);
     final destPath = path.join(exportsDir.path, fileName);
 
     final destFile = File(destPath);
     if (await destFile.exists()) {
       return destPath;
     }
-    
+
     await sourceFile.copy(destPath);
-    
+
     // 清理旧的导出文件（保留最近10个）
     await _cleanOldExports(exportsDir, keepCount: 10);
-    
+
     return destPath;
   }
 
   /// 兼容旧调用名；实际行为是复制到 StoryExports，不移动源缓存。
-  Future<String> moveToExportsDirectory(String sourcePath, {String? customName}) {
+  Future<String> moveToExportsDirectory(
+    String sourcePath, {
+    String? customName,
+  }) {
     return ensureExportedVideoAvailable(sourcePath, customName: customName);
   }
 
@@ -215,8 +221,9 @@ class VideoCacheService {
 
     final sourceName = path.basenameWithoutExtension(sourcePath).trim();
     if (sourceName.isNotEmpty) {
-      final name =
-          sourceName.startsWith('Story_') ? sourceName : 'Story_$sourceName';
+      final name = sourceName.startsWith('Story_')
+          ? sourceName
+          : 'Story_$sourceName';
       return '$name.mp4';
     }
 
@@ -245,19 +252,22 @@ class VideoCacheService {
   }
 
   /// 清理旧的导出文件
-  Future<void> _cleanOldExports(Directory exportsDir, {int keepCount = 10}) async {
+  Future<void> _cleanOldExports(
+    Directory exportsDir, {
+    int keepCount = 10,
+  }) async {
     try {
       final files = await exportsDir.list().toList();
       final videoFiles = files.whereType<File>().where((file) {
         return file.path.toLowerCase().endsWith('.mp4');
       }).toList();
-      
+
       if (videoFiles.length > keepCount) {
         // 按修改时间排序
         videoFiles.sort((a, b) {
           return b.statSync().modified.compareTo(a.statSync().modified);
         });
-        
+
         // 删除最旧的文件
         for (int i = keepCount; i < videoFiles.length; i++) {
           try {
@@ -277,12 +287,12 @@ class VideoCacheService {
     try {
       final tempDir = await getTemporaryDirectory();
       final files = await tempDir.list().toList();
-      
+
       for (var file in files) {
         if (file is File) {
           final fileName = path.basename(file.path);
           // 仅删除本次导出产生的临时文件
-          if (fileName.startsWith('silent_temp_') || 
+          if (fileName.startsWith('silent_temp_') ||
               fileName.startsWith('mux_temp_') ||
               fileName.startsWith('temp_audio_') ||
               fileName.startsWith('safe_custom_audio_')) {
@@ -308,13 +318,13 @@ class VideoCacheService {
         await cacheDir.delete(recursive: true);
         debugPrint('✅ 已清理缓存目录: ${cacheDir.path}');
       }
-      
+
       // 清理内存缓存
       _sessionCache.clear();
-      
+
       // 重新创建缓存目录
       await cacheDir.create(recursive: true);
-      
+
       return;
     } catch (e) {
       debugPrint('❌ 清理缓存失败: $e');
@@ -327,12 +337,12 @@ class VideoCacheService {
     try {
       final cacheDir = await getCacheDirectory();
       final exportsDir = await getExportsDirectory();
-      
+
       int cacheFileCount = 0;
       int cacheTotalSize = 0;
       int exportFileCount = 0;
       int exportTotalSize = 0;
-      
+
       if (await cacheDir.exists()) {
         final cacheFiles = await cacheDir.list().toList();
         for (var file in cacheFiles) {
@@ -343,7 +353,7 @@ class VideoCacheService {
           }
         }
       }
-      
+
       if (await exportsDir.exists()) {
         final exportFiles = await exportsDir.list().toList();
         for (var file in exportFiles) {
@@ -354,7 +364,7 @@ class VideoCacheService {
           }
         }
       }
-      
+
       return {
         'cacheFileCount': cacheFileCount,
         'cacheTotalSize': cacheTotalSize,
@@ -382,9 +392,9 @@ class VideoCacheService {
   Future<List<Map<String, dynamic>>> getExportFiles() async {
     final exportsDir = await getExportsDirectory();
     final files = await exportsDir.list().toList();
-    
+
     final result = <Map<String, dynamic>>[];
-    
+
     for (var file in files) {
       if (file is File && file.path.toLowerCase().endsWith('.mp4')) {
         final stat = await file.stat();
@@ -398,10 +408,10 @@ class VideoCacheService {
         });
       }
     }
-    
+
     // 按修改时间倒序排列
     result.sort((a, b) => b['modified'].compareTo(a['modified']));
-    
+
     return result;
   }
 
@@ -414,7 +424,7 @@ class VideoCacheService {
   String _formatDate(DateTime date) {
     final now = DateTime.now();
     final difference = now.difference(date);
-    
+
     if (difference.inDays > 7) {
       return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
     } else if (difference.inDays > 0) {

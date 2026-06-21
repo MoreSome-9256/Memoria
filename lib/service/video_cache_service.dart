@@ -59,7 +59,7 @@ class VideoCacheService {
 
     final fingerprintData = <String, dynamic>{
       // Bump whenever the render timeline semantics change.
-      'renderTimelineVersion': 2,
+      'renderTimelineVersion': 3,
       'title': title,
       'subtitle': subtitle,
       'sections': normalizedSections,

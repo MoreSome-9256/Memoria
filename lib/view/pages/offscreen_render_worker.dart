@@ -264,6 +264,13 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
 
     final currentSection = widget.sections[_currentIndex];
     final bool isIntro = _currentIndex == 0;
+    final sectionFrameIndex = _exportTotalFrames <= 0
+        ? 0
+        : (_exportFrameIndex - _sectionStartFrame(_currentIndex)).clamp(
+            0,
+            _exportTotalFrames,
+          );
+    final sectionElapsedMs = (sectionFrameIndex / 24 * 1000).round();
 
     final subtitleLayer = SubtitleEffectLayer(
       text: isIntro ? "" : _currentLyricText,
@@ -273,6 +280,7 @@ class _OffscreenRenderWorkerState extends State<OffscreenRenderWorker>
       fontFamily: 'sans-serif',
       blurIntensity: widget.textBlurIntensity,
       vfxController: _vfxController,
+      deterministicElapsedMs: sectionElapsedMs,
     );
 
     // 1. 定义纯净的视频内容层

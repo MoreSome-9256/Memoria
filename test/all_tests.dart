@@ -1,4 +1,5 @@
 import 'data/tag_taxonomy_v2_test.dart' as tag_taxonomy_v2_test;
+import 'effects/subtitle_effect_test.dart' as subtitle_effect_test;
 import 'service/app_ai_settings_service_test.dart'
     as app_ai_settings_service_test;
 import 'service/analysis_pipeline_queue_test.dart'
@@ -28,6 +29,9 @@ import 'service/theme_cluster_service_test.dart' as theme_cluster_service_test;
 import 'service/travel_memory_detector_test.dart'
     as travel_memory_detector_test;
 import 'service/story_video_timeline_test.dart' as story_video_timeline_test;
+import 'service/story_video_caption_persistence_test.dart'
+    as story_video_caption_persistence_test;
+import 'service/story_queue_order_test.dart' as story_queue_order_test;
 import 'utils/dbscan_algorithm_test.dart' as dbscan_algorithm_test;
 import 'utils/event_cluster_helper_test.dart' as event_cluster_helper_test;
 import 'utils/story_prompt_helper_test.dart' as story_prompt_helper_test;
@@ -44,6 +48,7 @@ import 'view/story_generation_progress_page_test.dart'
 
 void main() {
   tag_taxonomy_v2_test.main();
+  subtitle_effect_test.main();
   app_ai_settings_service_test.main();
   analysis_pipeline_queue_test.main();
   album_tag_browser_service_test.main();
@@ -66,6 +71,8 @@ void main() {
   theme_cluster_service_test.main();
   travel_memory_detector_test.main();
   story_video_timeline_test.main();
+  story_video_caption_persistence_test.main();
+  story_queue_order_test.main();
   dbscan_algorithm_test.main();
   event_cluster_helper_test.main();
   story_prompt_helper_test.main();

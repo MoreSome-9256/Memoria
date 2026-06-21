@@ -27,6 +27,7 @@ class SubtitleEffectLayer extends StatefulWidget {
   final String fontFamily;
   final double blurIntensity;
   final AnimationController vfxController;
+  final int? deterministicElapsedMs;
 
   const SubtitleEffectLayer({
     super.key,
@@ -37,7 +38,17 @@ class SubtitleEffectLayer extends StatefulWidget {
     required this.fontFamily,
     required this.blurIntensity,
     required this.vfxController,
+    this.deterministicElapsedMs,
   });
+
+  static int deterministicVisibleCharacterCount({
+    required int textLength,
+    required int elapsedMs,
+  }) {
+    if (textLength <= 0) return 0;
+    final revealProgress = (elapsedMs / 800).clamp(0.0, 1.0);
+    return (textLength * revealProgress).ceil().clamp(0, textLength);
+  }
 
   @override
   State<SubtitleEffectLayer> createState() => _SubtitleEffectLayerState();
@@ -120,6 +131,11 @@ class _SubtitleEffectLayerState extends State<SubtitleEffectLayer> {
       height: 1.5,
       letterSpacing: 2.0,
     );
+
+    final deterministicElapsedMs = widget.deterministicElapsedMs;
+    if (deterministicElapsedMs != null) {
+      return _buildDeterministicExportWidget(baseStyle, deterministicElapsedMs);
+    }
 
     switch (widget.effectType) {
       case 'layered':
@@ -455,5 +471,128 @@ class _SubtitleEffectLayerState extends State<SubtitleEffectLayer> {
             )
             .shimmer(duration: 800.ms);
     }
+  }
+
+  Widget _buildDeterministicExportWidget(TextStyle baseStyle, int elapsedMs) {
+    // Entry animation is intentionally short: every three-second media slot
+    // must contain the complete subtitle regardless of export throughput.
+    final entryProgress = Curves.easeOutCubic.transform(
+      (elapsedMs / 400).clamp(0.0, 1.0),
+    );
+    Widget content;
+
+    switch (widget.effectType) {
+      case 'typewriter':
+        final charCount =
+            SubtitleEffectLayer.deterministicVisibleCharacterCount(
+              textLength: widget.text.length,
+              elapsedMs: elapsedMs,
+            );
+        content = Text(
+          widget.text.substring(0, charCount),
+          key: ValueKey<String>('export_typewriter_${widget.text}'),
+          style: baseStyle,
+          textAlign: TextAlign.center,
+        );
+        break;
+      case 'cards':
+        content = Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 12,
+          children: widget.text
+              .split('')
+              .map((char) {
+                if (char.trim().isEmpty) {
+                  return SizedBox(width: widget.fontSize * 0.5);
+                }
+                return Container(
+                  padding: EdgeInsets.all(widget.fontSize * 0.2),
+                  decoration: BoxDecoration(
+                    color: Colors.pinkAccent.withValues(alpha: 0.8),
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                  child: Text(
+                    char,
+                    style: baseStyle.copyWith(
+                      shadows: const [],
+                      letterSpacing: 0,
+                    ),
+                  ),
+                );
+              })
+              .toList(growable: false),
+        );
+        break;
+      case 'outline':
+        final strokeWidth = widget.fontSize * 0.15;
+        content = Wrap(
+          alignment: WrapAlignment.center,
+          spacing: widget.fontSize * 0.1,
+          children: widget.text
+              .split('')
+              .asMap()
+              .entries
+              .map((entry) {
+                final char = entry.value;
+                if (char.trim().isEmpty) {
+                  return SizedBox(width: widget.fontSize * 0.5);
+                }
+                return Transform.translate(
+                  offset: Offset(
+                    0,
+                    (entry.key.isEven ? -1 : 1) * widget.fontSize * 0.15,
+                  ),
+                  child: Stack(
+                    children: <Widget>[
+                      Text(
+                        char,
+                        style: baseStyle.copyWith(
+                          foreground: Paint()
+                            ..style = PaintingStyle.stroke
+                            ..strokeWidth = strokeWidth
+                            ..color = Colors.white,
+                        ),
+                      ),
+                      Text(
+                        char,
+                        style: baseStyle.copyWith(color: Colors.grey[800]),
+                      ),
+                    ],
+                  ),
+                );
+              })
+              .toList(growable: false),
+        );
+        break;
+      case 'hero':
+        content = Transform.scale(
+          scale: 1 + widget.vfxController.value * 0.1,
+          child: Text(
+            widget.text,
+            style: baseStyle,
+            textAlign: TextAlign.center,
+          ),
+        );
+        break;
+      default:
+        content = Text(
+          widget.text,
+          key: ValueKey<String>('export_subtitle_${widget.text}'),
+          style: baseStyle,
+          textAlign: TextAlign.center,
+        );
+    }
+
+    return Opacity(
+      opacity: entryProgress,
+      child: Transform.translate(
+        offset: Offset(0, (1 - entryProgress) * widget.fontSize * 0.5),
+        child: Transform.scale(
+          scale: 0.9 + entryProgress * 0.1,
+          child: content,
+        ),
+      ),
+    );
   }
 }

@@ -84,7 +84,7 @@
             ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
             <ActionContent
                title = "Run Script"
-               scriptText = "# Type a script or drag a script file from your workspace to insert its path.&#10;cd &quot;${SRCROOT}/..&quot;&#10;&#10;/opt/homebrew/share/flutter/bin/flutter build ios \&#10;  --config-only \&#10;  --debug \&#10;  --dart-define-from-file=config/profiles/dev.json&#10;">
+               scriptText = "# Type a script or drag a script file from your workspace to insert its path.&#10;cd &quot;${SRCROOT}/..&quot;&#10;&#10;/opt/homebrew/share/flutter/bin/flutter build ios \&#10;  --config-only \&#10;  --debug \&#10;  --dart-define-from-file=config/profiles/proxy.json&#10;">
                <EnvironmentBuildable>
                   <BuildableReference
                      BuildableIdentifier = "primary"

@@ -117,6 +117,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   bool _isPlaying = false;
   bool _isStartingPlayback = false;
   bool _hasInitializedPlayback = false;
+  bool _isPlaybackSuspendedForNavigation = false;
   StreamSubscription? _positionSubscription;
   Future<void>? _mediaWarmupFuture;
   final Map<String, VideoPlayerController> _videoControllers = {};
@@ -473,7 +474,11 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     _positionSubscription = _audioPlayer.onPositionChanged.listen((
       Duration p,
     ) async {
-      if (_beatData.isEmpty || _isExporting) return; // 导出时不要干扰
+      if (_beatData.isEmpty ||
+          _isExporting ||
+          _isPlaybackSuspendedForNavigation) {
+        return;
+      }
 
       double currentPosMs = p.inMilliseconds.toDouble();
 
@@ -535,7 +540,9 @@ class _StoryVideoPageState extends State<StoryVideoPage>
     });
 
     _audioPlayer.onPlayerComplete.listen((event) {
-      if (mounted) unawaited(_startPlaybackFromBeginning());
+      if (mounted && !_isPlaybackSuspendedForNavigation) {
+        unawaited(_startPlaybackFromBeginning());
+      }
     });
 
     _hasInitializedPlayback = true;
@@ -558,7 +565,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
   }
 
   Future<void> _startPlaybackFromBeginning() async {
-    if (_isStartingPlayback) return;
+    if (_isStartingPlayback || _isPlaybackSuspendedForNavigation) return;
     _isStartingPlayback = true;
     try {
       await _mediaWarmupFuture;
@@ -622,6 +629,7 @@ class _StoryVideoPageState extends State<StoryVideoPage>
           )];
       await controller?.pause();
     } else {
+      _isPlaybackSuspendedForNavigation = false;
       await _audioPlayer.resume();
       final controller =
           _videoControllers[_mediaControllerKey(
@@ -633,6 +641,17 @@ class _StoryVideoPageState extends State<StoryVideoPage>
       setState(() {
         _isPlaying = !_isPlaying;
       });
+    }
+  }
+
+  Future<void> _suspendPlaybackForNavigation() async {
+    _isPlaybackSuspendedForNavigation = true;
+    await _audioPlayer.pause();
+    await Future.wait(
+      _videoControllers.values.map((controller) => controller.pause()),
+    );
+    if (mounted) {
+      setState(() => _isPlaying = false);
     }
   }
 
@@ -1184,6 +1203,8 @@ class _StoryVideoPageState extends State<StoryVideoPage>
 
     if (existingPath != null && await File(existingPath).exists()) {
       // 3a. 缓存命中 → 跳转发布页面（复用已有视频 + 文案）
+      if (!mounted) return;
+      await _suspendPlaybackForNavigation();
       if (!mounted) return;
       final path = existingPath;
       await Navigator.of(context).push(

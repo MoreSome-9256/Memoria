@@ -1,21 +1,12 @@
 /// 照片描述服务，负责生成单张照片的标题和说明文字。
 
 import 'dart:io';
-import 'dart:math' as math;
 
 import '../data/tag_taxonomy_v2.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
-import 'llm_service.dart';
 
 class PhotoCaptionService {
-  PhotoCaptionService({LLMService? llmService})
-    : _llmService = llmService ?? LLMService();
-
-  final LLMService _llmService;
-
-  bool get prefersAsyncGeneration => _llmService.isVisionApiConfigured;
-
   static const Set<String> _blockedRoleTags = <String>{
     '学生',
     '同学',
@@ -61,33 +52,6 @@ class PhotoCaptionService {
     final sanitizedVisualTags = _sanitizeCaptionTags(visualTags);
     final sanitizedOcrTags = OcrPolicy.effectiveTags(ocrTags, maxTags: 6);
     final trimmedOcrText = OcrPolicy.effectiveText(ocrText);
-
-    if (_llmService.isVisionApiConfigured) {
-      try {
-        final imageBytes = await imageFile.readAsBytes();
-        final caption = await _llmService.generatePhotoCaption(
-          imageBytes: imageBytes,
-          mimeType: _inferMimeType(imageFile.path),
-          tags: sanitizedVisualTags,
-          ocrTags: sanitizedOcrTags,
-          ocrText: trimmedOcrText,
-          location: _normalizeLocation(location),
-          takenAt: takenAt,
-          isTextHeavy: _looksTextHeavy(
-            sanitizedVisualTags,
-            sanitizedOcrTags,
-            trimmedOcrText,
-          ),
-          faceCount: faceCount,
-        );
-        final cleaned = _cleanCaption(caption);
-        if (cleaned != null) {
-          return cleaned;
-        }
-      } catch (_) {
-        // Fall back to local caption synthesis if the vision endpoint is not available.
-      }
-    }
 
     return _buildLocalCaption(
       visualTags: sanitizedVisualTags,
@@ -231,51 +195,5 @@ class PhotoCaptionService {
       return '夜晚';
     }
     return '深夜';
-  }
-
-  String _inferMimeType(String path) {
-    final lower = path.toLowerCase();
-    if (lower.endsWith('.png')) {
-      return 'image/png';
-    }
-    if (lower.endsWith('.webp')) {
-      return 'image/webp';
-    }
-    return 'image/jpeg';
-  }
-
-  String? _cleanCaption(String? raw) {
-    if (raw == null) {
-      return null;
-    }
-
-    var cleaned = raw.trim();
-    cleaned = cleaned.replaceFirst(RegExp(r'^[\d一二三四五六七八九十]+[、.：:\s]+'), '');
-    cleaned = cleaned.replaceAll(RegExp(r'["“”]'), '');
-    cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ').trim();
-
-    if (cleaned.isEmpty) {
-      return null;
-    }
-
-    final firstSentence = cleaned
-        .split(RegExp(r'[\n。！？!]'))
-        .map((part) => part.trim())
-        .firstWhere((part) => part.isNotEmpty, orElse: () => cleaned);
-    cleaned = firstSentence;
-
-    if (cleaned.length > 36) {
-      cleaned = cleaned.substring(0, math.min(cleaned.length, 36)).trim();
-    }
-
-    if (cleaned.length < 4) {
-      return null;
-    }
-
-    if (_blockedRoleTags.any(cleaned.contains)) {
-      return null;
-    }
-
-    return cleaned;
   }
 }

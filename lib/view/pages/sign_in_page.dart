@@ -62,10 +62,18 @@ class _SignInPageState extends State<SignInPage> {
         _error = '登录未完成，下一步: ${result.nextStep.signInStep.name}';
       });
     } on AuthException catch (e) {
+      if (_isAlreadySignedInError(e)) {
+        _openHome();
+        return;
+      }
       setState(() {
         _error = e.message;
       });
-    } catch (_) {
+    } catch (error) {
+      if (_isAlreadySignedInError(error)) {
+        _openHome();
+        return;
+      }
       setState(() {
         _error = '登录失败，请稍后重试';
       });
@@ -76,6 +84,21 @@ class _SignInPageState extends State<SignInPage> {
         });
       }
     }
+  }
+
+  bool _isAlreadySignedInError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('already signed in') ||
+        message.contains('already authenticated') ||
+        message.contains('已经登录') ||
+        message.contains('已登录');
+  }
+
+  void _openHome() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => const WidgetTree()),
+      (_) => false,
+    );
   }
 
   @override

@@ -124,3 +124,4 @@ run_output.txt
 /config/profiles/*.json
 !/config/profiles/*.example.json
 !/config/profiles/proxy.json
+/.docx*/

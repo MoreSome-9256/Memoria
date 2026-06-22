@@ -691,8 +691,8 @@ class UnifiedAnalysisPipelineService {
       photo.mediaKind,
       path: photo.path,
     );
+    types.add(PhotoAttributeType.caption);
     if (mediaKind == MemoriaMediaKind.image) {
-      types.add(PhotoAttributeType.caption);
       if (settings.ocrEnabled) {
         types.add(PhotoAttributeType.ocr);
       }
@@ -711,7 +711,9 @@ class UnifiedAnalysisPipelineService {
       photo.mediaKind,
       path: photo.path,
     );
-    if (mediaKind != MemoriaMediaKind.image) return true;
+    if (mediaKind != MemoriaMediaKind.image) {
+      return photo.isCaptionAnalyzed;
+    }
     return photo.isCaptionAnalyzed &&
         (!settings.ocrEnabled || photo.isOcrAnalyzed) &&
         (!settings.faceAnalysisEnabled || photo.isFaceAnalyzed);

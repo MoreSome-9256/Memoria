@@ -41,7 +41,7 @@ void main() {
     service.resetForTesting();
   });
 
-  test('pipeline requests visual attributes only for image photos', () {
+  test('pipeline requests local captions for every media type', () {
     final pipeline = UnifiedAnalysisPipelineService();
 
     final imageTypes = pipeline.attributeTypesForAnalyzedPhotoForTesting(
@@ -57,7 +57,10 @@ void main() {
       PhotoAttributeType.ocr,
       PhotoAttributeType.caption,
     });
-    expect(videoTypes, <PhotoAttributeType>{PhotoAttributeType.location});
+    expect(videoTypes, <PhotoAttributeType>{
+      PhotoAttributeType.location,
+      PhotoAttributeType.caption,
+    });
   });
 
   test('pipeline honors disabled OCR and face analysis settings', () {
@@ -104,6 +107,16 @@ void main() {
       ),
       isTrue,
     );
+  });
+
+  test('video completion requires its local caption', () {
+    final pipeline = UnifiedAnalysisPipelineService();
+    final video = _photo(id: 2, mediaKind: 'video', path: '/photos/2.mp4');
+
+    expect(pipeline.hasCompletedEnabledAttributesForTesting(video), isFalse);
+
+    video.isCaptionAnalyzed = true;
+    expect(pipeline.hasCompletedEnabledAttributesForTesting(video), isTrue);
   });
 }
 

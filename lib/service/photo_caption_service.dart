@@ -1,7 +1,5 @@
 /// 照片描述服务，负责生成单张照片的标题和说明文字。
 
-import 'dart:io';
-
 import '../data/tag_taxonomy_v2.dart';
 import '../utils/ocr_policy.dart';
 import '../utils/tag_sanitizer.dart';
@@ -41,7 +39,6 @@ class PhotoCaptionService {
   };
 
   Future<String> generateCaption({
-    required File imageFile,
     required List<String> visualTags,
     required List<String> ocrTags,
     required String ocrText,

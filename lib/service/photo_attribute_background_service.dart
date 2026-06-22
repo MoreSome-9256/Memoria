@@ -331,6 +331,13 @@ class PhotoAttributeBackgroundService {
       path: photo.path,
     );
     if (mediaKind != MemoriaMediaKind.image) {
+      if (runCaption) {
+        await _persistCaptionAndOcr(
+          photo: photo,
+          photoBox: photoBox,
+          runOcr: false,
+        );
+      }
       return;
     }
 
@@ -421,16 +428,16 @@ class PhotoAttributeBackgroundService {
   Future<void> _persistCaptionAndOcr({
     required PhotoEntity photo,
     required Box<PhotoEntity> photoBox,
-    required File imageFile,
+    File? imageFile,
     required bool runOcr,
   }) async {
     final visualTags = photo.aiTags ?? const <String>[];
-    final shouldRunOcr = runOcr && OcrService.shouldRunOcr(visualTags);
+    final shouldRunOcr =
+        runOcr && imageFile != null && OcrService.shouldRunOcr(visualTags);
     final ocrResult = shouldRunOcr
         ? await OcrService().analyzeImageFile(imageFile)
         : OcrResult.empty();
     final caption = await PhotoCaptionService().generateCaption(
-      imageFile: imageFile,
       visualTags: visualTags,
       ocrTags: ocrResult.tags,
       ocrText: ocrResult.text,

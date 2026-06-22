@@ -292,7 +292,9 @@ extension PhotoServiceAiReset on PhotoService {
             photo.mediaKind,
             path: photo.path,
           );
-          if (kind != MemoriaMediaKind.image) return false;
+          if (kind != MemoriaMediaKind.image) {
+            return !photo.isCaptionAnalyzed;
+          }
           return !photo.isCaptionAnalyzed ||
               (settings.ocrEnabled && !photo.isOcrAnalyzed) ||
               (settings.faceAnalysisEnabled && !photo.isFaceAnalyzed);

@@ -788,7 +788,7 @@ class _StoryResultPageState extends State<StoryResultPage> {
       final preferredCaption = StoryEntity.resolveVideoCaption(
         captions: widget.videoCaptionByPhotoId,
         assetId: section.photo.id,
-        fallback: section.text,
+        fallback: _shortVideoFallback(section.photo),
       );
       playbackSections.add(section.copyWith(text: preferredCaption));
     }
@@ -800,6 +800,20 @@ class _StoryResultPageState extends State<StoryResultPage> {
     final introPhoto = playbackSections.first.photo;
     final introSection = StorySection(text: '__INTRO__', photo: introPhoto);
     return <StorySection>[introSection, ...playbackSections];
+  }
+
+  String _shortVideoFallback(Photo photo) {
+    final source = photo.caption?.trim() ?? '';
+    if (source.isNotEmpty) {
+      final firstClause = source.split(RegExp(r'[。！？.!?\n]')).first.trim();
+      if (firstClause.isNotEmpty) {
+        return firstClause.length <= 24
+            ? firstClause
+            : '${firstClause.substring(0, 23)}…';
+      }
+    }
+    if (photo.tags.isNotEmpty) return photo.tags.take(3).join(' · ');
+    return '这一刻，值得记住';
   }
 
   void _openVideoPreview() async {

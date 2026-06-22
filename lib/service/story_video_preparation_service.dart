@@ -8,7 +8,6 @@ import 'package:path_provider/path_provider.dart';
 
 import '../models/entity/photo_entity.dart';
 import '../models/entity/story_entity.dart';
-import '../models/vo/photo.dart';
 import '../models/vo/story_generation_models.dart';
 import '../utils/ocr_policy.dart';
 import '../storage/objectbox/objectbox_service.dart';
@@ -129,7 +128,7 @@ class StoryVideoPreparationService {
       );
     } catch (error) {
       debugPrint('视频字幕生成失败，使用故事文本兜底: $error');
-      return _fallbackCaptionsFromStory(story, photos);
+      return _fallbackCaptions(photos);
     }
   }
 
@@ -148,24 +147,24 @@ class StoryVideoPreparationService {
     );
   }
 
-  List<String> _fallbackCaptionsFromStory(
-    StoryEntity story,
-    List<PhotoEntity> photos,
-  ) {
-    final sectionMaps = story.parseToSections(photos);
-    final byAssetId = <String, String>{};
-    for (final item in sectionMaps) {
-      final photo = item['photo'];
-      final text = (item['text'] as String? ?? '').trim();
-      if (photo is Photo) {
-        byAssetId[photo.id] = text;
+  List<String> _fallbackCaptions(List<PhotoEntity> photos) {
+    // 故事正文是画册文案，长度和语气都不适合作为视频字幕。
+    return photos.map(_shortFallbackCaption).toList(growable: false);
+  }
+
+  String _shortFallbackCaption(PhotoEntity photo) {
+    final source = photo.aiCaption?.trim() ?? '';
+    if (source.isNotEmpty) {
+      final firstClause = source.split(RegExp(r'[。！？.!?\n]')).first.trim();
+      if (firstClause.isNotEmpty) {
+        return firstClause.length <= 24
+            ? firstClause
+            : '${firstClause.substring(0, 23)}…';
       }
     }
-    return photos
-        .map(
-          (photo) => byAssetId[photo.assetId] ?? photo.aiCaption?.trim() ?? '',
-        )
-        .toList(growable: false);
+    final tags = photo.aiTags ?? const <String>[];
+    if (tags.isNotEmpty) return tags.take(3).join(' · ');
+    return '这一刻，值得记住';
   }
 
   String _describePhoto(PhotoEntity photo) {
